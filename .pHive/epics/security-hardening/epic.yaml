@@ -1,0 +1,29 @@
+name: security-hardening
+title: Pre-launch security fixes — Windows key/data colocation + SSRF hardening
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [security]
+  roster: [researcher, technical-writer, tpm, security-reviewer]
+  per_tag_reasoning:
+    security: "Both fixes are confirmed findings from the project's own pre-launch security audit — direct match."
+  confidence: matched
+  gate_decisions:
+    security: included
+
+stories:
+  - id: windows-key-data-separation
+    title: "Windows fallback: separate key path from data path"
+    complexity: low
+    depends_on: []
+  - id: ssrf-hardening
+    title: "SSRF hardening in fetchAndExtractLink() — IP validation, timeout, size cap"
+    complexity: low
+    depends_on: []

@@ -1,0 +1,100 @@
+id: windows-key-data-separation
+epic: security-hardening
+title: "Windows fallback: separate key path from data path"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  `src/lib/security/key-path.ts`'s Windows fallback (`getKeyConfigDir()`,
+  when `XDG_CONFIG_HOME` is unset) currently resolves to
+  `%LOCALAPPDATA%\gigradar\` — the IDENTICAL directory
+  `src/lib/store/path.ts`'s `getDefaultDataDir()` resolves to on the same
+  fallback path, defeating the encrypted-local-storage epic's core
+  security property (key never lives next to the data it protects).
+  POSIX paths are already correctly separated (`~/.config/gigradar` vs.
+  `~/.local/share/gigradar`); only the Windows fallback is broken.
+
+  Change `getKeyConfigDir()`'s Windows fallback to
+  `path.join(base, "gigradar-config")` — a genuinely distinct sibling
+  directory. `getDefaultDataDir()`'s Windows fallback is UNCHANGED (no
+  migration needed for the DB/config.json/.env/session files — nothing
+  currently depends on the old, broken key location since it was never
+  correctly separated for any real Windows user).
+
+  Add a new shared test asserting `getKeyConfigDir() !== getDefaultDataDir()`
+  for the real current platform AND for simulated fallback states — this
+  guarantee is SCOPED to the fallback code path (not a hard block on a
+  user explicitly setting `XDG_CONFIG_HOME`/`XDG_DATA_HOME` to the same
+  value themselves — that's their own configuration choice). Add a
+  non-blocking, one-time warning in `getOrCreateKey()` if it ever detects
+  the resolved key and data directories are identical, for ANY reason —
+  catches the user-misconfiguration case too, without a hard failure.
+
+acceptance_criteria:
+  - "Given no XDG_CONFIG_HOME/XDG_DATA_HOME env vars set and process.platform simulated as 'win32', when getKeyConfigDir() and getDefaultDataDir() are both called, then they resolve to genuinely different directories."
+  - "Given the same simulated Windows state, when getKeyConfigDir() is called repeatedly, then it returns the exact same path every time (stable, not randomized)."
+  - "Given POSIX platforms (macOS/Linux), when getKeyConfigDir() and getDefaultDataDir() are checked, then they remain unchanged from their current, already-correct behavior — no regression."
+  - "Given XDG_CONFIG_HOME and XDG_DATA_HOME are both explicitly set to the SAME value by test simulation, when getOrCreateKey() is called, then it logs a one-time warning (not a thrown error) noting the key and data directories are identical."
+  - "Given the real current platform (whatever this repo's test suite actually runs on), when the new shared test runs, then it passes without needing a real Windows machine."
+
+steps:
+  - id: implement
+    description: Change key-path.ts's Windows fallback per the description above; add the getOrCreateKey() collision warning.
+    agent: developer
+  - id: test
+    description: Write the shared getKeyConfigDir() !== getDefaultDataDir() test (real platform + simulated Windows/POSIX states) and the collision-warning test.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the fix doesn't change getDefaultDataDir()'s behavior at all (no migration needed), and that the collision warning is genuinely non-blocking.
+    agent: security-reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/security-hardening.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+  key_files:
+    - path: src/lib/security/key-path.ts
+      purpose: "getKeyConfigDir()'s Windows fallback — the exact line being fixed."
+    - path: src/lib/store/path.ts
+      purpose: "getDefaultDataDir() — confirmed UNCHANGED by this story, the comparison target for the new test."
+    - path: src/lib/security/vault.ts
+      purpose: "getOrCreateKey() — where the new one-time collision warning is added."
+
+design_decisions:
+  - decision: "gigradar-config" as the new Windows key-path fallback directory name
+    rationale: Mirrors the POSIX split's intent (~/.config vs ~/.local/share — different parent roots) without requiring Windows to have a first-class config/data distinction; minimal, non-breaking (no real Windows install ever had a correctly-separated key path to migrate away from).
+  - decision: User-set-both-XDG-vars-to-the-same-value is a warning, not a hard failure
+    rationale: Grill H2 — a user's own deliberate env var configuration isn't this epic's concern to override with a thrown error, but a cheap, non-blocking warning still catches the case rather than silently ignoring it.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.key_data_path_separation_verified
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "npm test; confirm the new shared separation test passes for real-platform and simulated-Windows states"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: low
+    description: The fix is unverifiable on a real Windows machine in this development environment.
+    mitigation: The test simulates the Windows fallback path logic directly by checking function output given a simulated process.platform/env state, matching how this project already tests XDG resolution without needing every real OS.
+
+references:
+  - .pHive/epics/security-hardening/docs/design-discussion.md
+  - .pHive/epics/security-hardening/docs/grill-record.md
