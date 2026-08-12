@@ -1,0 +1,54 @@
+name: core-team
+description: >
+  Single team for gigradar — the codebase is one module today (src/lib only;
+  src/app/ for the planned Next.js dashboard does not exist yet). Split into
+  frontend/backend-specific teams once src/app/ lands and warrants it.
+lead: team-lead
+methodology: classic
+
+members:
+  - agent: backend-developer
+    role: Core plugin framework, gate/match engine, source adapters, apply runner
+    domain:
+      - path: src/lib/**
+        read: true
+        write: true
+        delete: false
+
+  - agent: frontend-developer
+    role: Next.js config UI / dashboard (not yet scaffolded — src/app/ is planned, not present)
+    domain:
+      - path: src/app/**
+        read: true
+        write: true
+        delete: false
+
+  - agent: tester
+    role: Test authoring and execution (vitest) — currently zero test files, highest-priority gap
+    domain:
+      - path: "src/**/*.test.ts"
+        read: true
+        write: true
+        delete: false
+
+  - agent: reviewer
+    role: Code review
+    tool_access: [codex]   # codex CLI detected on this machine
+
+context:
+  tech_stack:
+    frontend: next.js (planned, not yet scaffolded)
+    backend: typescript
+    validation: zod
+    test_runner: vitest
+  commit_granularity: medium
+  pr_style: single-commit
+  review_depth: standard
+  notes: |
+    Generated from kickoff discovery (2026-08-10). No linters/formatters/CI
+    detected yet. See .pHive/project-profile.yaml -> legacy_source for the
+    private predecessor tool this core is porting logic from (platform
+    adapters, gate tiering, 4-check auto-apply gate, draft/interview tracking).
+    Core/user-layer separation is non-negotiable — see docs/ARCHITECTURE.md.
+
+team_memory_path: .pHive/team-memories/core-team/

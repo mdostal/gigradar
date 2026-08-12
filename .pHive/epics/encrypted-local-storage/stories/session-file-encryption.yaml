@@ -1,0 +1,112 @@
+id: session-file-encryption
+epic: encrypted-local-storage
+title: "Encrypt captured session-state files at rest (session-capture.ts write, browser-session.ts migrate-on-read)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [vault-module]
+
+description: |
+  Wire vault-module's primitives into captured browser session-state files
+  (per-source `${sourceId}-session.json`), per the design doc's §3 step 4.
+
+  `src/lib/auth/session-capture.ts`: its atomic temp-file+rename write
+  (currently inline, around the existing write call) now passes the
+  serialized storageState JSON through `encrypt()` before writing.
+  **Export the atomic-write helper** (e.g. `writeStorageStateAtomically()`)
+  from this file — it's not exported today, and `browser-session.ts`'s
+  migrate-on-read (below) needs the identical temp-file+rename+0600
+  discipline rather than a second, duplicated implementation.
+
+  `src/lib/auth/browser-session.ts`'s `readStorageStateFile()`: call
+  `isEncryptedEnvelope()` on the raw file content. If true, `decrypt()`
+  before `JSON.parse()`. If false (legacy plaintext), parse directly AND
+  immediately re-write it `encrypt()`-wrapped, using the atomic-write
+  helper exported from session-capture.ts above (this is a standalone
+  externally-facing read — always migrate-write on legacy content, no
+  internal/external distinction needed here since this file has no
+  save.ts-style dual-read-path complication).
+
+  **Wire the key-loss detection's session-directory scan** (vault-module's
+  `getOrCreateKey(hasAnyEncryptedFileFn)`): the caller of `getOrCreateKey()`
+  (wherever the first call in the process happens — likely load.ts, but any
+  consumer could be first) needs a `hasAnyEncryptedFileFn` that checks
+  config.json, `.env`, AND every file in the session-state directory. This
+  story adds the session-directory-scan portion (listing files in the
+  session directory and checking each with `isEncryptedEnvelope()`) —
+  whichever consumer story lands second in execution order should confirm
+  the combined check is complete across all three locations, since each
+  consumer story only directly owns its own piece.
+
+  Update `browser-session.test.ts` and `session-capture.test.ts`'s existing
+  plaintext-based fixtures/assertions for the new format, and add
+  `XDG_CONFIG_HOME` test isolation.
+
+acceptance_criteria:
+  - "Given a freshly captured session (finishCapture()), when the resulting file is read directly off disk, then its raw bytes are an encrypted envelope, never plaintext storageState JSON."
+  - "Given an existing plaintext session-state fixture, when readStorageStateFile() reads it, then it decrypts (no-op, since it's plaintext) and parses correctly, AND the file on disk is now an encrypted envelope after the call."
+  - "Given an already-encrypted session-state file, when readStorageStateFile() reads it, then it decrypts, parses, and origin-filters correctly, with no further write."
+  - "Given a corrupted/tampered session-state file (a flipped byte within its ciphertext), when readStorageStateFile() attempts to read it, then it throws the vault module's specific tamper error, surfaced with an actionable, session-file-specific message."
+  - "Given the atomic-write helper, when inspected, then it is exported from session-capture.ts and imported (not duplicated) by browser-session.ts."
+  - "Given getOrCreateKey()'s hasAnyEncryptedFileFn, when the session directory contains an already-encrypted session file but the key file is missing, then it correctly returns true (encrypted data exists), causing getOrCreateKey() to throw the key-loss error rather than silently minting an orphan key."
+
+steps:
+  - id: implement
+    description: Export the atomic-write helper from session-capture.ts, wire encrypt()/decrypt() into both files' read/write paths per the description above, and implement the session-directory-scan portion of the key-loss check.
+    agent: developer
+  - id: test
+    description: Rewrite browser-session.test.ts and session-capture.test.ts's plaintext-based fixtures/assertions for the new format, add XDG_CONFIG_HOME isolation, and add tests for every acceptance criterion above.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the exported atomic-write helper is genuinely reused (not duplicated), the origin-scoping filter in browser-session.ts still runs correctly against decrypted content, and the session-directory-scan correctly integrates into the combined key-loss check alongside config.json/.env.
+    agent: security-reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/encrypted-local-storage.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    dependency: playwright (existing, unchanged)
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: "Atomic write of a freshly captured session — the helper this story exports and encrypts."
+    - path: src/lib/auth/browser-session.ts
+      purpose: "readStorageStateFile() — the migrate-on-read path; origin-scoping filter runs AFTER decrypt, unchanged otherwise."
+    - path: src/lib/security/vault.ts
+      purpose: "encrypt()/decrypt()/isEncryptedEnvelope()/getOrCreateKey() from vault-module."
+
+design_decisions:
+  - decision: Export session-capture.ts's atomic-write helper rather than duplicating it in browser-session.ts
+    rationale: Collaborative review caught that the migrate-on-read path in browser-session.ts needs the exact same temp-file+rename+0600 discipline already proven in session-capture.ts — reuse, not a second implementation.
+  - decision: Origin-scoping filtering happens after decryption, unchanged in position/logic otherwise
+    rationale: Encryption is a storage-layer concern; the origin-allowlist safety filter's semantics (documented as safety-critical in browser-session.ts's existing JSDoc) are untouched by this epic.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.session_files_encrypted_at_rest
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manual smoke test: capture a session (or use a plaintext fixture), confirm the resulting file is an encrypted envelope on disk, and confirm a live source adapter using it still authenticates correctly"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: A bug in the migrate-on-read write could corrupt the user's OWN real, already-captured GoFractional session, requiring a re-login through the capture UI to recover.
+    mitigation: Round-trip tests against a realistic fixture before touching any real session file; manual smoke test explicitly calls this out.
+
+references:
+  - .pHive/epics/encrypted-local-storage/docs/design-discussion.md
+  - .pHive/epics/encrypted-local-storage/docs/grill-record.md

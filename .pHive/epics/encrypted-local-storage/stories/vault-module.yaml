@@ -1,0 +1,117 @@
+id: vault-module
+epic: encrypted-local-storage
+title: "Vault module: AES-256-GCM encrypt/decrypt, key storage, key-loss detection"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Build `src/lib/security/vault.ts` and `src/lib/security/key-path.ts` (new
+  files) — the foundation every consumer story (config-json-encryption,
+  env-encryption, session-file-encryption) builds on. This story does NOT
+  touch load.ts/save.ts/browser-session.ts/session-capture.ts — it lands the
+  primitives in isolation, proven by its own tests, before any existing
+  shipped code is modified (deliberate sequencing from the design doc's
+  scale-assessment rationale: isolate the highest-stakes piece first).
+
+  `key-path.ts`: `getKeyPath()` — mirrors `src/lib/store/path.ts`'s
+  `getDefaultDataDir()` XDG-resolution pattern, but rooted at
+  `XDG_CONFIG_HOME` (`~/.config/gigradar/key` on POSIX, Windows
+  `%LOCALAPPDATA%`-equivalent per the existing project convention) — a
+  directory SEPARATE from `XDG_DATA_HOME` (where config.json/.env/session
+  files/gigs.db live), by design: this is the epic's core security
+  property (key never lives next to the data it protects).
+
+  `vault.ts`:
+  - `getOrCreateKey(hasAnyEncryptedFileFn: () => boolean): Buffer` — if the
+    key file exists, read and return its 32 bytes. If it doesn't: call
+    `hasAnyEncryptedFileFn()` (injected by the caller, since only the
+    caller knows where to check — config.json, .env, and the session
+    directory all live in modules this story doesn't touch). If it returns
+    true, throw a specific, actionable error: the key is gone but encrypted
+    data exists, meaning that data is now permanently unreadable — name
+    what to do next (re-run config setup, re-capture sessions). If it
+    returns false (true first run), generate `crypto.randomBytes(32)`,
+    write it atomically with `0600`, and return it.
+  - `encrypt(plaintext: string): string` — AES-256-GCM: `crypto.randomBytes(12)`
+    IV, `createCipheriv`, returns a JSON envelope string
+    `{v:1, iv: base64, tag: base64, data: base64}`.
+  - `decrypt(envelopeJson: string): string` — reverse; throws a specific
+    "encrypted file is corrupted or has been tampered with" error
+    distinctly (a different message/type) from a generic parse failure, on
+    a GCM auth-tag mismatch.
+  - `isEncryptedEnvelope(raw: string): boolean` — true only for content that
+    is valid JSON matching the exact `{v, iv, tag, data}` shape (all
+    required, `v` a number, the other three strings); anything else
+    (including any other valid JSON, or non-JSON text) is false —
+    legacy plaintext.
+
+acceptance_criteria:
+  - "Given a plaintext string, when encrypt() then decrypt() are called in sequence, then the original plaintext is returned exactly."
+  - "Given an encrypted envelope, when a byte within the DECODED (base64-decoded) ciphertext or tag is flipped and then re-encoded, then decrypt() throws a specific, distinctly-identifiable 'corrupted or tampered' error — not a generic JSON/base64 parse error."
+  - "Given no key file and hasAnyEncryptedFileFn() returning false, when getOrCreateKey() is called, then a new 32-byte key is generated, written to getKeyPath() with mode 0600, and returned."
+  - "Given no key file and hasAnyEncryptedFileFn() returning true, when getOrCreateKey() is called, then it throws a specific error naming that existing encrypted data is now unreadable and what to do next — it does NOT silently generate a new key."
+  - "Given an existing key file, when getOrCreateKey() is called multiple times (regardless of hasAnyEncryptedFileFn()'s return value), then it returns the exact same key bytes every time."
+  - "Given isEncryptedEnvelope(), when called against a real config.json's plaintext content, a real storageState JSON's plaintext content, and a valid encrypted envelope, then it returns false, false, and true respectively."
+  - "Given getKeyPath(), when XDG_CONFIG_HOME is set in the environment, then the key path resolves under it; when unset, it falls back to the platform default (~/.config on POSIX)."
+
+steps:
+  - id: implement
+    description: Write key-path.ts and vault.ts per the description above.
+    agent: developer
+  - id: test
+    description: Write unit tests covering every acceptance criterion, including the tamper-detection test's decode-flip-reencode methodology (not a naive JSON-text byte flip) per the design doc's verification plan.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review the crypto usage (correct IV length/uniqueness, correct GCM tag handling, no key material ever logged) and the key-loss-vs-first-run branch logic for correctness.
+    agent: security-reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/encrypted-local-storage.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    runtime: "node:crypto (built-in, zero new dependencies)"
+  key_files:
+    - path: src/lib/store/path.ts
+      purpose: "getDefaultDataDir()'s existing XDG-resolution pattern — key-path.ts mirrors this exact structure, rooted at XDG_CONFIG_HOME instead."
+
+design_decisions:
+  - decision: Key lives under XDG_CONFIG_HOME, data lives under XDG_DATA_HOME — deliberately separate directories
+    rationale: Grill H1/research-brief's highest-named risk — a key stored next to the data it protects provides no real security margin over today's 0600-plaintext approach.
+  - decision: getOrCreateKey() takes an injected hasAnyEncryptedFileFn() rather than knowing consumer file locations itself
+    rationale: vault.ts is a generic primitives module; only the calling code (config/auth modules) knows where config.json, .env, and session files live. Keeps vault.ts free of cross-module knowledge while still allowing the accurate first-run-vs-lost-key check the collaborative review demanded.
+  - decision: Tamper-detection test decodes base64 to raw bytes before flipping, rather than flipping the JSON text directly
+    rationale: Collaborative review (test-coverage lens) — flipping JSON/base64 TEXT risks breaking base64 decoding itself (a different, less meaningful failure) instead of actually exercising GCM's auth-tag verification.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.encrypted_storage_vault_coverage
+  direction: up
+  unit: percent
+  baseline: 0
+  target: 100
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "vitest coverage for src/lib/security/vault.ts and key-path.ts; confirm all acceptance criteria have a corresponding passing test via npm test"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: high
+    description: A bug in the key-loss-vs-first-run branch could either silently orphan a key (data loss) or wrongly block a genuine first run.
+    mitigation: Dedicated acceptance criteria and tests for both branches of getOrCreateKey(); security-reviewer step specifically checks this logic.
+
+references:
+  - .pHive/epics/encrypted-local-storage/docs/design-discussion.md
+  - .pHive/epics/encrypted-local-storage/docs/grill-record.md
+  - .pHive/epics/encrypted-local-storage/docs/research-brief.md

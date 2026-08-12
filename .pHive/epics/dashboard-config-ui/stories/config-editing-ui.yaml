@@ -1,0 +1,122 @@
+id: config-editing-ui
+epic: dashboard-config-ui
+title: Config editing UI — Profile/Needs/Sources/RoleArea/schedule form
+status: pending
+complexity: high
+methodology: classic
+depends_on: [app-foundation, config-write-path]
+
+description: |
+  The second half of "configure sources and criteria... without
+  hand-editing JSON or running CLI scripts": a form covering the full
+  `Config` shape, consuming `config-write-path`'s `save.ts`.
+
+  Build `src/app/config/page.tsx` (or similar):
+  - Form sections: `Profile` (name, roles[], skills[], timezone,
+    optional homeBase), `Needs` (all 7 fields, all required), `Sources`
+    (list of `SourceConfig`: id, enabled toggle, settings), `RoleArea`
+    (optional — coreTitles/keywords/redKeywords, tri-state: unset vs.
+    empty-but-set, per the type's documented semantics), `schedule`
+    (optional cron string).
+  - `SourceConfig.settings` (opaque `Record<string,unknown>`): a
+    key/value PAIRS EDITOR (add row: key, value) — NOT a raw JSON
+    textarea. This is a deliberate UX decision (team review — ui-designer:
+    a raw-JSON blob would directly contradict this epic's own "no
+    hand-editing JSON" bar). `env:`-prefixed values are shown and
+    editable as literal strings (e.g. a value field containing
+    `env:BRAINTRUST_API_KEY`) — never resolved, never fetched from
+    `process.env` for display.
+  - **First-run handling**: if no `config.json` exists yet (per
+    `config-write-path`'s ENOENT-tolerant read), the form renders BLANK/
+    from a sensible empty shape — not an error page. This is explicitly
+    the initial-setup path, not just an editor for an already-valid file.
+  - Save via a Server Action wrapping `save()` from `config-write-path`,
+    REUSING the shared convention established in `dashboard-results-view`
+    (typed `{ok,error}` return, `revalidatePath()` after a successful
+    save).
+  - On a validation failure (from `ConfigSchema.safeParse` inside
+    `save()`), surface the specific field-level error in the form — not a
+    generic "save failed" message.
+
+acceptance_criteria:
+  - "Given an existing valid config.json, when /config loads, then all fields render pre-populated with the raw (unresolved) document's values, including env: references shown as literal strings, never resolved."
+  - "Given no config.json exists, when /config loads, then a blank/empty-shaped form renders without error — usable for first-run setup."
+  - "Given a form edit is submitted, when the Server Action calls save(), then the change persists to disk AND is visible on a page reload (via revalidatePath, matching dashboard-results-view's established pattern) — verified under both next dev and next build && next start."
+  - "Given a SourceConfig.settings key/value pair with an env: value is edited and re-saved, when the file is independently inspected, then the env: string is preserved verbatim — never resolved to the actual secret value (exercises config-write-path's guarantee through this real UI path, not just that story's own unit tests)."
+  - "Given an edit produces a document that fails ConfigSchema validation (e.g. a required Needs field cleared), when submitted, then a specific, field-level error displays in the form — not a generic failure message, and nothing is written to disk."
+  - "Given roleArea or schedule are left unset, when saved, then they remain absent from the written document (not defaulted to empty objects/strings) — preserving their documented 'omitted is valid' semantics."
+
+steps:
+  - id: research
+    description: Read config-write-path's save.ts (once available) and its exact function signature/error shape. Read dashboard-results-view's Server Action pattern (the {ok,error}+revalidatePath convention) to replicate exactly, not reinvent. Read src/lib/types.ts's full Config shape again for form-field completeness.
+    agent: researcher
+  - id: implement
+    description: Build the config form, key/value settings editor, first-run handling, and the Server Action reusing the established convention, per the description above.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write automated tests for the Server Action (validation-failure case, successful-save case) against a temp config file. Manually verify the full acceptance criteria in a real browser, including the first-run blank-form case and the env: preservation round-trip, under both dev and build+start modes.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation for correctness, confirm the Server Action pattern matches dashboard-results-view's convention exactly (not a divergent variant), confirm env: values are never resolved anywhere in the rendering path, and confirm roleArea/schedule's optional semantics are preserved correctly.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/dashboard-config-ui.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    framework: next.js 15 (app router, server actions)
+    styling: tailwind css
+  key_files:
+    - path: src/lib/config/save.ts
+      purpose: "Built by config-write-path — this story's Server Action wraps it directly, never reimplementing its logic."
+    - path: src/app/page.tsx
+      purpose: "dashboard-results-view's Server Action pattern to replicate exactly for consistency."
+    - path: src/lib/types.ts
+      purpose: "Full Config/Profile/Needs/SourceConfig/RoleAreaConfig shape the form must cover."
+
+design_decisions:
+  - decision: Key/value pairs editor for SourceConfig.settings, not a raw JSON textarea
+    rationale: Team review (ui-designer) — a raw-JSON blob directly contradicts this epic's own "no hand-editing JSON" done-bar. A fully-typed per-source settings schema stays deferred (real additional scope), but a structured key/value editor is a small addition over a textarea.
+  - decision: Reuse dashboard-results-view's exact Server Action convention
+    rationale: Team review (architect) — nothing else in the epic forces the two Server Actions toward consistency; this story explicitly follows the precedent the prior story established rather than inventing a second pattern.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's roadmap to mark the Next.js config UI item as shipped, with a short 'how to configure gigradar' pointer for new users."
+
+metric:
+  applies: true
+  name: gigradar.config_editable_via_ui
+  direction: up
+  unit: bool
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manually edit and save a Config through /config, reload, confirm the edit persisted and no secret was resolved into the saved file"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: high
+    description: If this UI accidentally displays or round-trips a RESOLVED secret value anywhere (e.g. by calling loadConfig() instead of the raw-read path), it would defeat the entire point of config-write-path's isolation.
+    mitigation: Acceptance criteria explicitly test the env: preservation round-trip through the real UI/Server-Action path, not just config-write-path's own isolated unit tests — this is the integration-level proof.
+  - severity: medium
+    description: A key/value editor for arbitrary settings is less discoverable than a per-source-typed form would be — a user still has to know what keys a given source expects.
+    mitigation: Accepted as this epic's scope boundary (design-discussion §3 step 4); a fully-typed per-source settings schema is named as explicitly deferred, not silently dropped.
+
+references:
+  - path: .pHive/epics/dashboard-config-ui/docs/design-discussion.md
+    relevant_excerpt: |
+      SourceConfig.settings... gets a key/value pairs editor (add row:
+      key, value — not a raw JSON blob) as the v1 UX... A fully-typed
+      per-source settings schema... stays deferred — genuinely larger
+      scope, not needed to avoid raw JSON.

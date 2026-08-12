@@ -1,0 +1,117 @@
+id: resume-link-ui
+epic: profile-overview-ingestion
+title: "Extract-from-resume/link UI + Server Action wiring"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [profile-ingestion-module]
+
+description: |
+  Wire `profile-ingestion-module`'s `extract.ts`/`env-store.ts` into a real
+  Server Action and the config UI, per the design doc's §3 steps 1, 4, 5.
+
+  1. **`next.config.js`**: raise `experimental.serverActions.bodySizeLimit`
+     (e.g. to 10MB) — the default 1MB is too small for a real resume PDF.
+  2. **`src/app/config/actions.ts`**: two new Server Actions —
+     `setAnthropicApiKeyAction(formData)` (wraps `env-store.ts`'s
+     `setEnvVar('ANTHROPIC_API_KEY', ...)`, returns `ActionResult<void>`),
+     and `extractProfileFromResumeAction(formData)` (accepts a `FormData`
+     file upload + a links textarea value, resolves the API key fresh via
+     `env-store.ts`'s read-side helper INSIDE the handler — never
+     `process.env`, never module scope — and returns
+     `ActionResult<{roles: string[], skills: string[], warnings: string[]}>`;
+     a missing API key returns a specific error pointing at the new API-key
+     field, not a generic SDK error). The uploaded file's bytes are used
+     only for the duration of this call and never written to disk by this
+     code (Next.js's own Server Action file-upload handling is unchanged;
+     this story adds no new persistence).
+  3. **`src/app/config/config-client.tsx`**: a password-style "Anthropic
+     API key" input wired to `setAnthropicApiKeyAction`, labeled as the one
+     field that writes to `.env` rather than `config.json`. Below it, an
+     "Extract from resume/link" control: a file input (PDF/plain text) +
+     a links textarea + a button wired to `extractProfileFromResumeAction`.
+     On success: extracted `roles`/`skills` are MERGED (case-insensitive,
+     trimmed dedup) into the existing draft `profile.roles`/`profile.skills`
+     arrays — never a replace (deliberate divergence from `role-templates`'
+     overwrite-on-apply, per design doc §3 step 5). The button shows a
+     pending/loading state during the call. Any `warnings` entries render
+     as small inline notices near the links input. Nothing is persisted
+     until the user's own, separate, existing Save action.
+
+acceptance_criteria:
+  - "Given a valid Anthropic API key is entered and submitted, when setAnthropicApiKeyAction() completes, then .env on disk contains the key (encrypted) and other existing .env vars are preserved."
+  - "Given no API key has been set, when 'Extract from resume/link' is clicked, then the action returns a specific error naming the API-key field, not a generic authentication failure."
+  - "Given a real resume file upload (a realistic-sized PDF, exercising the raised body-size limit), when submitted, then the action does not reject it for size."
+  - "Given a successful extraction returns roles/skills that overlap (case-insensitively) with what's already in the draft, when merged, then the draft contains no duplicate entries."
+  - "Given a mixed batch of 3 links where 1 fails, when the action completes, then the UI shows the successful extraction results from the resume and the other 2 links, plus one inline warning for the failed link — not a blank/failed state."
+  - "Given the extract button is clicked, when the LLM call is in flight, then the button shows a visible pending/loading state (not a silent, indefinite-looking freeze)."
+  - "Given extracted skills/roles are merged into the draft, when the user then clicks the existing Save button, then config.json is updated with the merged values — exercising the existing, unmodified save path."
+  - "Given no changes are made after extraction (the user navigates away without saving), when config.json is inspected, then it is unchanged — extraction alone never persists anything."
+
+steps:
+  - id: implement
+    description: Wire the Server Actions and config-client.tsx UI per the description above, including the merge-not-replace logic, loading state, and per-link warning display.
+    agent: developer
+  - id: test
+    description: Write tests covering every acceptance criterion, including the mixed-link partial-failure case and the never-persists-without-explicit-save regression test, and manually verify the picker in a real browser against a mocked or sandboxed action where feasible.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the merge (not replace) semantics are correctly implemented and clearly distinct from role-templates' apply behavior, the API key is resolved per-request (not cached at module scope), and nothing is persisted without an explicit Save.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/profile-overview-ingestion.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    framework: next.js 15 (app router, server actions)
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "Existing form + role-templates' draft-then-Apply picker — this story extends it, reusing the UI SHAPE but not the overwrite semantics."
+    - path: src/app/config/actions.ts
+      purpose: "Existing Server Action conventions (ActionResult<T>) this story's two new actions follow."
+    - path: src/lib/profile-ingestion/extract.ts
+      purpose: "profile-ingestion-module's extraction function this story's Server Action calls."
+    - path: src/lib/config/env-store.ts
+      purpose: "profile-ingestion-module's .env writer/reader this story's two Server Actions both use."
+
+design_decisions:
+  - decision: Merge (case-insensitive, trimmed dedup), never replace, when applying extracted skills/roles
+    rationale: Collaborative review + grill C1 — a resume is additive enrichment of an existing profile, not a full-profile reset the way role-templates' template swap is; claiming identical UX to role-templates while silently changing this behavior would be misleading.
+  - decision: Nothing persists until the user's existing Save action, including the API key field's own write (which persists immediately to .env, distinct from the profile draft's Save-gated persistence)
+    rationale: The API key write is a discrete, single-purpose action (like any other credential setup) — no reason to gate it behind the unrelated profile-draft Save button; the profile extraction result IS gated behind Save, consistent with every other draft field in this form.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md to describe the resume/link ingestion feature, the in-memory-only resume handling decision, and the new Anthropic API key field's write-to-.env behavior."
+
+metric:
+  applies: true
+  name: gigradar.resume_link_extraction_available
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manual end-to-end test with the owner's own real resume and a real public link against the real Anthropic API"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: A bug in the merge-not-replace logic could silently duplicate or drop existing profile.skills/roles entries.
+    mitigation: Dedicated acceptance criteria and tests for the dedup case; review step specifically checks this against role-templates' differing behavior.
+  - severity: low
+    description: A real end-to-end test against the live Anthropic API costs real money and requires the owner's own key — cannot be fully automated in CI.
+    mitigation: Automated suite mocks the Anthropic client entirely (profile-ingestion-module story); this story's manual verification step is the one live-API check, done once, deliberately.
+
+references:
+  - .pHive/epics/profile-overview-ingestion/docs/design-discussion.md
+  - .pHive/epics/profile-overview-ingestion/docs/grill-record.md

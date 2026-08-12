@@ -1,0 +1,119 @@
+id: tiering-role-area-classifier
+epic: find-pipeline-foundation
+title: Role-area tiering module (green/yellow/red) wired into the runner
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [braintrust-adapter-runner-integration]
+
+description: |
+  This is Slice 2 of the epic's vertical plan: a new tiering module that
+  classifies each gated Gig as green/yellow/red role-area fit, wired into
+  runRadar() after gate() and persisted alongside the gig record.
+
+  Build src/lib/matching/tiering.ts as a pure function, sibling to
+  src/lib/matching/gate.ts, following the SAME pattern: no I/O, an
+  ok()/fail()-style reason-accumulator, returns a tier + why. Takes a Gig
+  plus a NEW user-configured role-area config type (add to src/lib/types.ts)
+  — NOT hardcoded keywords, per docs/ARCHITECTURE.md's core/user-layer
+  boundary. Translate the *shape* of legacy config.mjs's precedence rules
+  (title-first, word-boundary keyword matching: green.coreTitles in title →
+  GREEN even if a domain word also appears; red.keywords in title → RED;
+  broader green.keywords in title+description → GREEN; yellow.keywords →
+  YELLOW; nothing matched → YELLOW, never a hard reject) — never its
+  hardcoded personal keyword lists (fCTO/tech-leadership terms belong to
+  the project owner's private config, not this OSS core).
+
+  Extend MatchResult (or wrap it) in src/lib/types.ts to carry a `tier`
+  field — it has none today. Wire tiering into runRadar() to run after
+  gate() and persist the tier via the store built in
+  persistence-layer-sqlite (this "persist the tier" half of the story
+  depends on the runner integration from braintrust-adapter-runner-
+  integration already existing — the tiering *computation* itself has no
+  such dependency, but this story's full scope, as corrected during H/V
+  team review, does).
+
+acceptance_criteria:
+  - "Given a gig whose title contains a green.coreTitles match, when tiering runs, then it returns GREEN regardless of any domain/industry word also present."
+  - "Given a gig whose title contains a red.keywords match and no coreTitles match, when tiering runs, then it returns RED."
+  - "Given a gig whose title+description contains a green.keywords match but no coreTitles/red match, when tiering runs, then it returns GREEN."
+  - "Given a gig matching none of the configured keyword sets, when tiering runs, then it returns YELLOW (never a hard reject — unmatched means 'surface it', not 'drop it')."
+  - "Given tiering runs for a Braintrust gig through the real runRadar() pipeline, when the run persists, then the stored record includes the computed tier (exercises the real runner + store path, not just tiering.ts's own unit tests)."
+  - "Golden-fixture unit tests exist for each precedence rule above, mirroring gate.ts's existing testable-pure-function shape."
+
+steps:
+  - id: research
+    description: Re-read legacy the legacy tool's codebase/config.mjs's ROLE_AREAS precedence-order comments in full (already partially captured in research-brief.md) to confirm the exact precedence rules to translate. Confirm the MatchResult extension approach (extend vs wrap) against gate.ts's actual return shape.
+    agent: researcher
+  - id: implement
+    description: Implement src/lib/matching/tiering.ts, the role-area config type in types.ts, the MatchResult tier field, and wire tiering into runRadar() (compute + persist via the existing store from persistence-layer-sqlite/braintrust-adapter-runner-integration).
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write golden-fixture unit tests per precedence rule (title-match-first, word-boundary matching, unmatched-means-yellow) plus a runner-integration test confirming a real Braintrust gig's persisted record carries the correct tier.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation and tests for correctness, confirm no hardcoded personal role/keyword data landed in src/lib (core/user-layer boundary check), and confirm the precedence order exactly matches the researched legacy spec.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/find-pipeline-foundation.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    runtime: node
+    test_runner: vitest
+  key_files:
+    - path: src/lib/matching/gate.ts
+      purpose: "The pure-function, reason-accumulator pattern tiering.ts must follow — read in full before implementing, don't just skim the shape."
+    - path: src/lib/types.ts
+      purpose: Where MatchResult lives today (no tier field) and where the new role-area config type is added.
+    - path: src/lib/apply/runner.ts
+      purpose: The integration point — call tiering after gate(), persist the result.
+
+design_decisions:
+  - decision: Tiering scoped as ONE story covering both computation and persistence-wiring, rather than split further
+    rationale: H/V team review (architect) confirmed the computation itself is independent of persistence, but flagged that the story's "persist the tier" half is not — since this story necessarily depends on braintrust-adapter-runner-integration already existing (for something to persist into and a runner shape to extend), splitting further would not unlock any real parallelism given the epic's actual execution order.
+
+cross_cutting:
+  - concern: documentation
+    action: "Add the tiering module and its role-area config shape to docs/ARCHITECTURE.md's Contracts section (currently lists only Profile/Needs/Source/Gig/MatchResult as 'src/lib/types.ts is the source of truth') — document the new config type and the green/yellow/red precedence order."
+
+metric:
+  applies: true
+  name: gigradar.gated_results_with_tier_ratio
+  direction: up
+  unit: ratio
+  baseline: 0.0
+  target: 1.0
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "run runRadar() against the enabled Braintrust adapter; confirm 100% of persisted MatchResult records carry a non-null tier field"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: Legacy config.mjs's precedence order is documented in comments but has no existing TypeScript equivalent to build against — getting the order subtly wrong (e.g. checking keywords before coreTitles) silently misclassifies gigs without any test catching it unless the golden fixtures specifically cover the precedence-conflict case (a title with both a green coreTitle AND a red keyword).
+    mitigation: Acceptance criteria explicitly require a test for "green.coreTitles match wins regardless of a domain word also present" — the precedence-conflict case is a named test, not incidental coverage.
+
+references:
+  - path: .pHive/epics/find-pipeline-foundation/docs/research-brief.md
+    relevant_excerpt: |
+      Precedence when classifying a gig: 1. green.coreTitles matched in the
+      TITLE -> GREEN (unambiguous tech leadership) 2. red.keywords matched in
+      the TITLE -> RED 3. green.keywords matched in title+desc -> GREEN
+      4. yellow.keywords matched in title+desc -> YELLOW 5. nothing matched
+      -> YELLOW (unknown -> surface, don't reject)
+  - path: .pHive/epics/find-pipeline-foundation/docs/vertical-plan.md
+    relevant_excerpt: |
+      Correction from H/V team review (architect): tiering computation is
+      independent of persistence, but Slice 2's own scope also includes
+      "persist the tier"... Slice 2 as scoped is NOT freely reorderable
+      ahead of Slice 1a/1b.

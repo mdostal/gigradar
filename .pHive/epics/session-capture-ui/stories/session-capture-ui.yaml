@@ -1,0 +1,120 @@
+id: session-capture-ui
+epic: session-capture-ui
+title: Session capture UI — capture-login flow in the config editor
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [origin-registry-extraction, session-capture-mechanism]
+
+description: |
+  The user-facing payoff: a "Capture login" button per browser-session
+  source within the existing `/config` page, closing the loop on
+  "log in through the UI" without ever touching `playwright-cli` directly.
+
+  This story depends on BOTH prior stories (not just the capture
+  mechanism) — it needs `origins.ts`'s `SOURCE_ORIGINS` to enumerate which
+  sources support capture and their login URLs, not just
+  `session-capture.ts`'s start/finish/cancel functions.
+
+  Extend `src/app/config/config-client.tsx` (or add a sibling
+  component): for each `SourceConfig` entry whose id appears in
+  `SOURCE_ORIGINS`, show a "Capture login" button.
+  - Click → a Server Action wrapping `startCapture(sourceId, loginUrl)`
+    (the login URL per source needs a small mapping — e.g. alongside
+    `SOURCE_ORIGINS`, or a new small constant; decide during
+    implementation which is cleaner, both are equally valid). Returns the
+    `captureId`, stored in client component state.
+  - UI shows: "A browser window opened — log in to <source>, then click
+    'I'm done'." plus a Cancel button. NO polling — purely user-driven
+    (per the design's decided no-polling approach).
+  - "I'm done" → a Server Action wrapping `finishCapture(captureId)`. On
+    success, AUTO-WRITE the returned path into that source's
+    `SourceConfig.settings.sessionStatePath` via `saveConfig()` (from
+    `config-write-path`, reused) — directly serves "no hand-editing JSON."
+    Show a success confirmation. On failure (e.g. the zero-cookies sanity
+    check tripped), show the specific error message from
+    `finishCapture()`, not a generic failure.
+  - Cancel → a Server Action wrapping `cancelCapture(captureId)`, clears
+    the UI state, writes nothing.
+  - All three new Server Actions reuse the established `ActionResult<T>`
+    + `revalidatePath("/config")` convention from `dashboard-config-ui`.
+
+acceptance_criteria:
+  - "Given a SourceConfig whose id is in SOURCE_ORIGINS, when /config renders, then a 'Capture login' button appears for it."
+  - "Given 'Capture login' is clicked, when startCapture() succeeds, then the UI shows the waiting state with an 'I'm done' and a Cancel button, and NO polling/auto-refresh occurs (verified by confirming no interval/polling timer exists in the component)."
+  - "Given 'I'm done' is clicked and finishCapture() succeeds, when the action completes, then SourceConfig.settings.sessionStatePath is auto-written via saveConfig() with the captured file's path, and the UI shows a success confirmation."
+  - "Given finishCapture() fails (e.g. the zero-cookies sanity check), when this happens, then the UI shows the SPECIFIC error message returned, not a generic 'capture failed.'"
+  - "Given Cancel is clicked, when cancelCapture() completes, then the UI returns to its pre-capture state and no file is written anywhere."
+  - "Given a real, low-stakes test login (not the owner's real GoFractional account) is completed end-to-end through this UI, when finished, then the resulting session file is valid and a real adapter (constructed for the test, or GoFractional itself only as a final confirmation pass) can use it successfully on a subsequent run."
+
+steps:
+  - id: research
+    description: Read session-capture-mechanism's exact function signatures (once available) and origin-registry-extraction's SOURCE_ORIGINS shape. Re-read dashboard-config-ui's config-client.tsx and actions.ts for the exact Server Action + client-state patterns to follow.
+    agent: researcher
+  - id: implement
+    description: Build the capture UI flow and its three Server Actions per the description above, reusing the established ActionResult convention.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write automated tests for the three new Server Actions (mocking session-capture.ts's functions) covering success and failure paths. Manually verify the full flow in a real browser against a LOW-STAKES test login first (per the design's decided verification approach — not the owner's real account), then a single confirmation pass against a real source.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation for correctness, confirm no polling exists, confirm the auto-write-to-config path correctly preserves other config fields (full-document semantics from config-write-path), and confirm error messages surface specifically, not generically.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/session-capture-ui.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    framework: next.js 15 (app router, server actions)
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: "Built by session-capture-mechanism — this story's Server Actions wrap its start/finish/cancel functions directly."
+    - path: src/lib/sources/origins.ts
+      purpose: "Built by origin-registry-extraction — SOURCE_ORIGINS enumerates which sources this UI shows a capture button for."
+    - path: src/app/config/config-client.tsx
+      purpose: "The existing config form (from dashboard-config-ui) this story extends with per-source capture buttons."
+    - path: src/lib/config/save.ts
+      purpose: "saveConfig() — reused to auto-write the captured session path into SourceConfig.settings."
+
+design_decisions:
+  - decision: No polling — purely user-driven "I'm done" click
+    rationale: Design discussion §3 step 3 — there's no reliable generic way to detect "login complete" across different sites' auth flows (some redirect, some don't; MFA timing varies); an explicit user action is simpler and more honest than a polling heuristic that could be wrong.
+  - decision: Verify against a low-stakes test login first, real GoFractional account only as final confirmation
+    rationale: Team review (tpm) — making the owner's real, currently-working account the primary proof of brand-new stateful code risks breaking a session this project actually depends on.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's roadmap to mark guided session capture as shipped, replacing the manual playwright-cli bootstrap note with a pointer to the new UI flow (keeping the manual path documented as a fallback, not deleting it)."
+
+metric:
+  applies: true
+  name: gigradar.session_captured_via_ui
+  direction: up
+  unit: bool
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "complete a real capture flow end-to-end through /config against a low-stakes test login, confirm the resulting session file works with a real adapter"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: Auto-writing to config.json on capture success could interact unexpectedly with a user who has an in-progress, unsaved edit elsewhere in the same config form.
+    mitigation: Full-document replace-on-save (config-write-path's established mechanism) always re-reads the current raw file at write time, so this auto-write is no different in kind from any other save — accepted as consistent with existing behavior, not a new risk class.
+
+references:
+  - path: .pHive/epics/session-capture-ui/docs/design-discussion.md
+    relevant_excerpt: |
+      Should finishCapture() auto-write the captured path into that
+      source's SourceConfig.settings... decided: yes, auto-write...
+      directly serves the "no hand-editing JSON" bar.

@@ -1,0 +1,37 @@
+{
+  "profile": {
+    "name": "Ada Example",
+    "roles": ["Fractional CTO", "Principal Architect"],
+    "skills": ["TypeScript", "System Architecture", "Team Leadership"],
+    "timezone": "America/Chicago",
+    "homeBase": { "city": "Chicago, IL", "lat": 41.8781, "lng": -87.6298 }
+  },
+  "needs": {
+    "minRate": 150,
+    "highRate": 250,
+    "maxHours": 20,
+    "maxHoursAtHighRate": 40,
+    "allowContractToHire": false,
+    "freshStageOnly": true,
+    "remoteOnly": true
+  },
+  "sources": [
+    {
+      "id": "braintrust",
+      "enabled": true,
+      "settings": {
+        "apiKey": "env:BRAINTRUST_API_KEY"
+      }
+    },
+    {
+      "id": "builtin",
+      "enabled": true
+    }
+  ],
+  "roleArea": {
+    "coreTitles": ["Fractional CTO", "Principal Architect"],
+    "keywords": ["fractional", "advisory", "architecture"],
+    "redKeywords": ["junior", "intern"]
+  },
+  "schedule": "0 9 * * *"
+}

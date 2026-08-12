@@ -1,0 +1,235 @@
+{
+  "count": 5,
+  "next": null,
+  "previous": "http://app.usebraintrust.com/api/jobs/?role=5",
+  "results": [
+    {
+      "id": 17583,
+      "title": "Senior AWS Cloud Infrastructure Engineer \u2013 DNS & Edge (LATAM-Remote)",
+      "employer": {
+        "id": 6869,
+        "name": "O3 World",
+        "name_color": "--dark-red",
+        "link": "/employers/6869/",
+        "full_link": "https://app.usebraintrust.com/employers/6869/",
+        "logo": "https://d1m1s6un1a8qgj.cloudfront.net/media/employer_logo_image/O3_lV8PFOC.png",
+        "logo_thumbnail": "https://d1m1s6un1a8qgj.cloudfront.net/media/cache/d1/67/d167710a4a6e8680292ba36f69d7ae20.png",
+        "has_logo_set": true,
+        "logo_background_color": "--soft-red"
+      },
+      "budget_minimum_usd": "75.00",
+      "budget_maximum_usd": "85.00",
+      "payment_type": "hourly",
+      "main_skills": [
+        {
+          "id": 487,
+          "name": "AWS",
+          "is_default": true,
+          "order": 61,
+          "matched": false
+        },
+        {
+          "id": 2489,
+          "name": "DNS",
+          "is_default": true,
+          "order": 681,
+          "matched": false
+        },
+        {
+          "id": 2213,
+          "name": "CDN",
+          "is_default": true,
+          "order": 1430,
+          "matched": false
+        }
+      ],
+      "created": "2026-07-22T12:59:54.448829Z",
+      "contract_type": "long",
+      "deadline": null,
+      "timezones": [
+        {
+          "timezone": "EST/EDT",
+          "timezone_utc_offset": "-5.00"
+        }
+      ],
+      "expected_hours_per_week": 20,
+      "role": {
+        "id": 5,
+        "name": "Engineering",
+        "is_default": true,
+        "order": 0,
+        "name_plural": "Engineers",
+        "is_featured": true,
+        "color": "green"
+      },
+      "openings_left": 1,
+      "job_skills": [
+        120814,
+        120815,
+        120816,
+        120817,
+        120818,
+        120819,
+        120820,
+        120821
+      ],
+      "locations": [
+        {
+          "location": "Argentina",
+          "place_id": "ChIJZ8b99fXKvJURqA_wKpl3Lz0",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "AR",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Bolivia",
+          "place_id": "ChIJlaK7d4nfXpERv-0VAbvCnhw",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "BO",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Brazil",
+          "place_id": "ChIJzyjM68dZnAARYz4p8gYVWik",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "BR",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Chile",
+          "place_id": "ChIJL68lBEHFYpYRHbkCERPhBQU",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "CL",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Costa Rica",
+          "place_id": "ChIJJcmsIWLlko8RK5qBNSX3VGI",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "CR",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Dominican Republic",
+          "place_id": "ChIJ9bbx3jiIr44R4PcNBiQPAqY",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "DO",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Ecuador",
+          "place_id": "ChIJ1UuaqN2HI5ARAjecEQSvdp0",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "EC",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "El Salvador",
+          "place_id": "ChIJVwZkWaYnY48RMkiFmOsWmm8",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "SV",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Guatemala",
+          "place_id": "ChIJa1DnNlATiIURu9WEWzcrmDU",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "GT",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Honduras",
+          "place_id": "ChIJzzG3cxp1ao8RZIL7toLe0X4",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "HN",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Mexico",
+          "place_id": "ChIJU1NoiDs6BIQREZgJa760ZO0",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "MX",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Nicaragua",
+          "place_id": "ChIJzSL_zgDCEI8RtRWsP-Wn-sg",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "NI",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Panama",
+          "place_id": "ChIJ4yu-yIMVpo8Rz5ulH03g7nk",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "PA",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Paraguay",
+          "place_id": "ChIJYz3xkDQIXJQR8y5YHWH_-rM",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "PY",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Peru",
+          "place_id": "ChIJ9RRZwFDIBZERSAYheRIBnvI",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "PE",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Puerto Rico",
+          "place_id": "ChIJ-aeSGyaWAowRGpsEGCjsNvM",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "PR",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Uruguay",
+          "place_id": "ChIJCd5f-zoHdZURSlIWYGGWVUo",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "UY",
+          "state": null,
+          "city": null
+        }
+      ],
+      "start_date": null,
+      "job_type": "freelance"
+    }
+  ]
+}

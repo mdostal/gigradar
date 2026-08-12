@@ -1,0 +1,25 @@
+metrics:
+  enabled: true
+
+execution:
+  default_methodology: classic   # inferred: no test files yet (test_absence=true), no co-located test convention
+
+developer:
+  pr_style: single-commit        # inferred: fresh repo (single commit), no pattern to detect yet
+  commit_granularity: medium     # per-task; default, not yet confirmed by the developer
+  review_depth: standard
+  notes: >
+    Never hardcode the owner's personal fractional criteria/keywords into core
+    (src/lib) — it must stay generic and user-configured. Never commit secrets,
+    session/browser-profile state, or any user Config/settings to the OSS repo —
+    those belong to the local install (see project-profile.yaml -> north_star.avoid
+    and decisions_open for the still-open local-config/backup design).
+
+planning:
+  collaborative_review: true
+
+meta_team:
+  github_forwarding: false
+
+task_tracking:
+  adapter: null   # not yet configured — no Linear/GitHub Issues wiring detected for this repo

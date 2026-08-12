@@ -1,0 +1,121 @@
+id: dashboard-results-view
+epic: dashboard-config-ui
+title: Dashboard results view — gigs list, filter/sort/search, status actions
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [app-foundation]
+
+description: |
+  The first real, user-visible payoff of this epic: see real gigs through
+  a UI instead of querying SQLite directly.
+
+  Build the dashboard (`src/app/page.tsx` or `src/app/dashboard/page.tsx`,
+  a Server Component) reading `listGigs()` from `src/lib/store`:
+  - Tier filter: single-select tabs (All / Green / Yellow / Red).
+  - Status filter: multi-select checkboxes (New / Applied / Interview /
+    Archived / Ignored).
+  - The two filters combine as AND.
+  - Default sort: `firstSeen DESC` (matches the store's own default
+    order).
+  - A company/title text search box (client-side filter over the
+    server-fetched set — no pagination exists in `listGigs()`, and this
+    scale doesn't need it yet).
+  - Each row shows: source, title, company, tier (color-coded), status,
+    rate, weekly hours, seen date (firstSeen), with action
+    buttons/select to change status, calling a Server Action wrapping
+    `setStatus()`.
+  - `Gig.raw` (typed `unknown`) is NEVER rendered via
+    `dangerouslySetInnerHTML` — plain text/JSON rendering only, relying on
+    React's default escaping.
+
+  **Establish the shared Server Action convention this epic's OTHER
+  Server Action (config-save, next story) will reuse**: return a typed
+  `{ ok: true, data } | { ok: false, error: string }` shape rather than
+  letting exceptions cross the client/server boundary uncaught, and call
+  `revalidatePath()` after every mutation. This is not optional polish —
+  without an explicit `revalidatePath()` call, Next's App Router can
+  statically cache this route (Full Route Cache), and a status change
+  could appear to persist under `next dev`'s looser caching while
+  silently failing to show after reload in a production build
+  (`next build && next start`). Verify this explicitly under BOTH modes,
+  not just dev.
+
+acceptance_criteria:
+  - "Given the store is populated with real gigs, when the dashboard loads, then all gigs render with correct field values (source, title, company, tier, status, rate, hours, seen date)."
+  - "Given the tier tabs and status checkboxes are both set, when both are active, then only gigs matching BOTH (AND) are shown."
+  - "Given a company/title search term is entered, when typed, then the visible set narrows to matching gigs client-side."
+  - "Given a status-change action is triggered (e.g. mark Applied), when the Server Action completes, then setStatus() is called with the correct key/status AND the change is visible after a page reload — verified under BOTH `next dev` and `next build && next start`, not just dev mode."
+  - "Given setStatus() throws (unknown key), when the Server Action catches it, then it returns the typed {ok:false, error} shape — never an unhandled 500."
+  - "No test, rendered output, or error message anywhere contains Gig.raw content rendered via dangerouslySetInnerHTML."
+
+steps:
+  - id: research
+    description: Read src/lib/store/index.ts's listGigs/setStatus/GigFilter/StoredGig shapes in full, and app-foundation's Server Component store-call pattern to follow. Confirm Next 15's revalidatePath API shape.
+    agent: researcher
+  - id: implement
+    description: Build the dashboard page, filter/sort/search UI, and the status-change Server Action (establishing the shared {ok,error}+revalidatePath convention) per the description above.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write automated tests for the Server Action (including the unknown-key-throws case) against a temp DB. Manually verify the full acceptance criteria in a real browser under both dev and build+start modes.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation for correctness, confirm the revalidatePath call is present and actually necessary (test it by removing it and confirming the reload-persistence test fails), and confirm no Gig.raw content is unsafely rendered.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/dashboard-config-ui.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    framework: next.js 15 (app router, server actions)
+    styling: tailwind css
+  key_files:
+    - path: src/lib/store/index.ts
+      purpose: "listGigs()/setStatus() — the data this view reads/mutates."
+    - path: src/app/layout.tsx
+      purpose: "Built by app-foundation — this story's page lives under it."
+
+design_decisions:
+  - decision: Client-side filtering/search over the full fetched set, no server-side pagination
+    rationale: listGigs() has no pagination today; at current/expected data volumes (up to a few hundred gigs) this is acceptable. Revisit if it becomes a real problem (design-discussion §4).
+  - decision: Establish the shared Server Action convention here, first
+    rationale: Team review (architect) — nothing otherwise forces this epic's two Server Actions (this one, and config-save in the next story) toward consistency; establishing it here gives the next story a real precedent to follow.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md to describe the dashboard view and the Server Action convention (typed {ok,error} + revalidatePath) for future UI stories to follow."
+
+metric:
+  applies: true
+  name: gigradar.dashboard_status_change_persists_after_build
+  direction: up
+  unit: bool
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manually change a gig's status via the dashboard under `next build && next start`, reload, confirm the change is still visible"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: high
+    description: Missing revalidatePath() could make status changes appear to work in dev but silently fail to persist visibly in production — a real, confirmed Next.js App Router gotcha, not a hypothetical.
+    mitigation: Acceptance criteria explicitly require testing under next build && next start, not just next dev, and the review step explicitly verifies revalidatePath's necessity by testing its removal.
+
+references:
+  - path: .pHive/epics/dashboard-config-ui/docs/vertical-plan.md
+    relevant_excerpt: |
+      Without an explicit revalidatePath() call after setStatus(), this
+      could pass under dev's looser caching and silently fail in a
+      production build — exactly the dev/build divergence Checkpoint 0
+      already takes seriously for the SQLite question, extended here to a
+      more common Next.js gotcha.

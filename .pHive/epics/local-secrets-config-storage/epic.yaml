@@ -1,0 +1,31 @@
+name: local-secrets-config-storage
+title: Local secrets and settings storage (.env + config.json, outside the repo tree)
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture, security]
+  roster: [researcher, technical-writer, tpm, architect, security-reviewer]
+  per_tag_reasoning:
+    architecture: "Introduces a new module (src/lib/config/) with a new resolution/loading pattern reused across two files (config.json, .env) — a structural addition to the core."
+    security: "Epic is entirely about secrets/credential handling: never committing secrets, env-var reference resolution, file permissions — direct match."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+    security: included
+
+stories:
+  - id: config-json-loader
+    title: Local config.json loader with zod validation, outside the repo tree
+    complexity: low
+    depends_on: []
+  - id: env-secrets-and-templates
+    title: .env secrets loading, env: reference resolution, gitignore verification, and example templates
+    complexity: low
+    depends_on: [config-json-loader]

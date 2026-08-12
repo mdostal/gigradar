@@ -1,0 +1,260 @@
+project_name: "gigradar"
+type: brownfield
+discovered: "2026-08-10"
+source: "README.md + docs/ARCHITECTURE.md + codebase scan + legacy-tool inspection (the legacy tool's private codebase)"
+
+project_type: consumer-app
+has_ui: true
+
+ship_target:
+  kind: github-release
+
+# No CLAUDE.md exists yet in this repo. Conventions below are drawn from
+# README.md / docs/ARCHITECTURE.md, which currently serve that role.
+claude_md_summary: |
+  No CLAUDE.md present. Governing rules currently live in docs/ARCHITECTURE.md:
+  - Strict core/user-layer separation: src/lib + src/app (core) knows nothing about
+    any specific user; profile/needs/sources/credentials live in the user's own
+    storage (.local/, env, private repo), never in the OSS repo.
+  - Adding a source, changing rate rules, or wiring a private scraper must require
+    zero edits to core code — config + a plugin only.
+  - Data-integrity rules (non-negotiable): real per-listing URLs only (never a
+    search page); no silent-zero on auth/fetch failure (must throw/report, never
+    return empty as if "no matches"); every gate rejection carries a reason;
+    applications are staged for human approval, never auto-submitted (today) —
+    see north_star.success for the planned gated-auto-apply evolution; no
+    fabricated data — unknown fields stay unknown.
+  - Sources declare auth: "none" | "api-key" | "browser-session"; secrets are
+    referenced (env/keychain/session-profile), never stored raw in Config.
+
+tech_stack:
+  languages: [typescript]
+  frameworks: [next.js, react, zod]
+  build_tools: [tsc, vitest, tsx]
+  package_managers: [npm]
+  versions:
+    next: "^15.0.0"
+    react: "^19.0.0"
+    typescript: "^5.6.0"
+    zod: "^3.23.0"
+    vitest: "^2.1.0"
+  notes: >
+    No lockfile is committed yet, so the package manager is assumed (npm) rather
+    than confirmed. src/app/ (the Next.js UI) does not exist yet — only src/lib/
+    (core contracts, gate, apply runner, source plugin scaffold) is scaffolded.
+
+structure:
+  modules:
+    - name: core
+      purpose: >
+        Generic OSS core — plugin framework, explainable gate/match engine,
+        find→interact pipeline. Single module today, no monorepo split.
+      source: src/lib/
+      tests: (none yet)
+  entry_points:
+    - src/lib/apply/runner.ts   # `npm run radar` — tsx-run CLI entry
+  key_files:
+    - path: src/lib/types.ts
+      purpose: Source of truth for domain types — Profile, Needs, Source, Gig, MatchResult, Config
+    - path: src/lib/matching/gate.ts
+      purpose: Pure, deterministic, explainable GO/NO-GO gate (ported from legacy gate.mjs)
+    - path: src/lib/sources/source.ts
+      purpose: Source plugin contract + registerSource()
+    - path: src/lib/sources/example-source.ts
+      purpose: Reference/demo Source implementation
+    - path: src/lib/apply/runner.ts
+      purpose: CLI runner scaffold for the find pipeline (assisted-apply layer not yet built)
+
+architecture:
+  pattern: plugin-core (generic core + user-layer config/plugins, no MVC/MVVM framing)
+  di_framework: manual (registerSource() registry, no DI container)
+  state_management: not yet applicable (no UI implemented)
+  navigation: not yet applicable (Next.js app dir not scaffolded)
+  data_layer: >
+    Not yet implemented in the new core. Legacy tool (see legacy_source below) used
+    a flat JSON file (data/gigs.json) with manual timestamped .bak copies as its
+    only persistence — a primary source of the "flaky/inconsistent" pain the
+    rewrite is meant to fix. New core needs a real persistence decision (still open).
+
+conventions:
+  naming: >
+    camelCase for functions/vars, PascalCase for types/interfaces (types.ts is
+    the single source of truth all other files import from).
+  file_organization: src/lib/<domain>/<file>.ts (matching, sources, apply); one
+    concern per file; JSDoc-style comments on exported types explain the "why"
+    of each field (see types.ts).
+  branching: not yet established (single commit on main so far)
+  commit_messages: not yet established (one commit: "Scaffold gigradar: generic
+    OSS core for finding + interacting with engagements")
+
+test_infrastructure:
+  unit:
+    framework: vitest (configured in package.json, no test files written yet)
+    location: (none yet — no __tests__ or *.test.ts files exist)
+    count: 0 files, 0 test functions
+    coverage_tool: none
+  integration:
+    framework: none
+    location: n/a
+  e2e:
+    framework: none
+    location: n/a
+    count: 0
+  mocking: none
+  test_commands:
+    - "npm test"   # vitest run — currently a no-op, no test files exist
+
+ci_cd:
+  platform: none
+  workflows: []
+  gating: none — no CI configured yet
+
+documentation_found:
+  - path: README.md
+    content_summary: Project pitch, core/user-layer separation principle, source-plugin example, status (v0.1.0 scaffold)
+  - path: docs/ARCHITECTURE.md
+    content_summary: Design contract — layer boundaries, FIND/INTERACT split, contracts, auth handling, data-integrity rules, build-out roadmap, owner's private-overlay note
+  - path: LICENSE
+    content_summary: MIT, © 2026 Mathew Dostal
+
+existing_knowledge:
+  mcp_servers: []          # none declared in .claude/ for this repo (no .claude/ dir exists yet)
+  existing_skills: []
+  existing_hooks: []
+
+integrations:
+  cli_tools:
+    codex: detected          # available on this machine; not yet wired into any Hive team
+    linearis: missing
+    frame0: missing
+    maestro: missing
+  mcp_servers:
+    playwright: detected     # directly relevant: legacy tool's entire scrape/apply layer is playwright-driven
+    posthog: detected
+    firecrawl: missing
+    context7: missing
+    firebase: missing
+    mobile-mcp: missing
+  vaults:
+    obsidian: not_checked
+
+code_quality:
+  linters: []
+  formatters: []
+  pre_commit:
+    framework: null
+    hooks: []
+  code_snippets:
+    - path: src/lib/matching/gate.ts
+      pattern: pure-explainable-gate
+      annotation: >
+        Deterministic GO/NO-GO with a fail()/ok() reason accumulator per rule —
+        every rejection is human-readable, never a silent boolean.
+      lines: "15-60"
+    - path: src/lib/types.ts
+      pattern: domain-contract-file
+      annotation: >
+        Single-file source of truth for all cross-module types; every field has
+        an inline JSDoc explaining intent, not just shape.
+      lines: "1-71"
+  test_first_signals:
+    co_located_tests: false
+    test_before_source: inconclusive
+    test_runner_in_precommit: false
+    bdd_keywords: false
+    test_absence: true
+project_maturity: not_detected
+
+north_star:
+  goal: >
+    Track fractional/contract engagement listings across enabled sources end to
+    end — through applied → interview → outcome state, not just discovery —
+    gather throughput/pipeline metrics, and surface a weekly overview + deep
+    dive + suggestions to help the user improve their search. Ships first as its
+    own standalone app + local dashboard (download-and-run, not hosted); a
+    Pantheon-plugin-framework version is an explicit later port, not v1 scope.
+    Each install is single-user: the owner configures their own profile,
+    criteria, and sources (not hardcoded to any one person's fractional search).
+    Built-in suggested templates for common role types (fractional COO/CFO/etc.,
+    full-time by title) plus free-form custom source/criteria configuration
+    (Monster, Dice, or anything else the user wants to point it at).
+  audience: >
+    Primary near-term user is the owner (fractional tech-leadership job search),
+    but designed generically for OSS distribution — any single user downloads
+    and runs their own local instance, configuring their own profile/needs/
+    sources. Not fractional-specific by design.
+  expected_scale: >
+    Single-user, single-machine local install (download-and-run on your own
+    computer). No concurrent/shared/multi-tenant usage in v1. A hosted
+    wrapper-with-accounts is a possible future path if there's a clear case for
+    it, explicitly not current scope.
+  pain_points: >
+    The owner's current private tool (legacy_source below) is flaky and
+    inconsistent — a flat JSON file store patched by dozens of manually-named
+    .bak snapshots, no automated tests, per-site browser-automation scripts that
+    silently rot, and unreliable cron firing. The rewrite's bar is: fully
+    tested, working, and consistent, with dependable scheduled runs.
+  success: >
+    Fully capture the available jobs; sort and track full application state
+    (applied/interviewing/outcome); keep state accurate and up to date; ideally
+    reach gated automatic submission with human-approved drafts ready to fire;
+    plus a weekly metrics overview and deep-dive with suggestions, so any user
+    can see their throughput and improve toward finding their next role.
+  avoid: >
+    Don't hardcode the owner's personal fractional criteria/keywords into the
+    OSS core — it must stay generic and user-configured. Never commit or share
+    credentials/session state. User settings/config/criteria must never be
+    committed to the OSS repo — they belong to the local install, with an
+    optional user-chosen backup path for that local state (e.g. Google Drive),
+    not baked into core.
+
+# ---------------------------------------------------------------------------
+# Supplementary section (not part of the canonical kickoff-protocol schema,
+# kept here because it materially informs planning): the private predecessor
+# this core is replacing/porting logic from. Read this before scoping the
+# first planning epic.
+# ---------------------------------------------------------------------------
+legacy_source:
+  location: "a separate private machine the owner controls (details intentionally omitted from this OSS repo)"
+  repo: "private, not published"
+  runtime: >
+    Plain Node ESM scripts (.mjs), no framework, no Docker. Browser automation
+    via `playwright-cli` driving named persistent sessions (e.g. "mat" for
+    A.Team/LinkedIn, "gf" for GoFractional — GoFractional specifically requires
+    a headed, console-owned session or Cloudflare blocks it). Scheduled via a
+    launchd plist (com.mdostal.gigradar.plist, RunAtLoad+KeepAlive) wrapping
+    run-radar.sh/start-radar.sh; a local server.mjs serves a static
+    dashboard.html.
+  what_to_port:
+    - platforms.mjs: a ~15-entry platform registry (key, url, session, login
+      type, scrape boolean, tier) — the shape a new Source-plugin registry
+      should generalize.
+    - sources.mjs: per-platform discovery logic driving playwright sessions —
+      reference for how real (non-demo) Source.fetch() implementations behave,
+      including the "throw on auth failure, never silent-zero" rule already
+      captured in this repo's ARCHITECTURE.md.
+    - gate.mjs + config.mjs: the deterministic gate already ported to
+      src/lib/matching/gate.ts, plus a green/yellow/red role-area TIERING layer
+      (word-boundary keyword matching, title-first precedence) that has NOT
+      been ported yet.
+    - GATE.md's 4-check auto-apply gate (FIT, ECONOMICS, LIVE & NEW, FILLABLE)
+      plus per-channel "auto-fire capability" — the design for the north_star
+      success criterion of gated automatic submission. Today only GoFractional
+      has a working logged-in submit automation; everything else is
+      draft/surface for human review.
+    - store.mjs (data/gigs.json + status transitions) — the fragile part to
+      replace with a real persistence layer, not copy as-is.
+    - drafts/ + interviews/ + application-answer-keys.md — the per-gig
+      application-draft and interview-tracking pattern; feeds the "track state
+      end to end" and "approved drafts ready to submit" success criteria.
+    - dashboard.html / server.mjs — UI reference only (screenshot on file);
+      the new core should build its own Next.js dashboard, not reuse this.
+  explicitly_not_porting:
+    - Any hardcoded personal criteria, keywords, credentials, session files, or
+      the .bak-file backup habit — see north_star.avoid.
+
+decisions_open:
+  - "Persistence layer for the new core (legacy used a flat JSON file with manual .bak backups — explicitly called out as a reliability problem to fix, not replicate)."
+  - "Package manager confirmation (no lockfile committed yet; npm assumed)."
+  - "Local-install config/secrets storage + optional user-chosen backup mechanism (e.g. Google Drive) — referenced in north_star.avoid but not yet designed."
+  - "Shape of the future Pantheon-plugin port — explicitly deferred past v1, but core boundaries should not preclude it."

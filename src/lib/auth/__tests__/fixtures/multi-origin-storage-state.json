@@ -1,0 +1,82 @@
+{
+  "cookies": [
+    {
+      "name": "session",
+      "value": "target-session-value",
+      "domain": ".targetsource.example",
+      "path": "/",
+      "expires": 1999999999,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "auth_token",
+      "value": "target-auth-token-value",
+      "domain": "app.targetsource.example",
+      "path": "/",
+      "expires": 1999999999,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "SID",
+      "value": "google-sso-sid-value",
+      "domain": "accounts.google.com",
+      "path": "/",
+      "expires": 1999999999,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "HSID",
+      "value": "google-sso-hsid-value",
+      "domain": ".google.com",
+      "path": "/",
+      "expires": 1999999999,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "decoy_prefix_match",
+      "value": "decoy-value-should-not-match",
+      "domain": "evil-targetsource.example",
+      "path": "/",
+      "expires": 1999999999,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "decoy_suffix_match",
+      "value": "decoy2-value-should-not-match",
+      "domain": "targetsource.example.attacker.net",
+      "path": "/",
+      "expires": 1999999999,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://app.targetsource.example",
+      "localStorage": [{ "name": "token", "value": "target-local-storage-token" }]
+    },
+    {
+      "origin": "https://accounts.google.com",
+      "localStorage": [{ "name": "g_state", "value": "google-local-storage-state" }]
+    },
+    {
+      "origin": "https://evil-targetsource.example",
+      "localStorage": [{ "name": "decoy", "value": "decoy-local-storage-value" }]
+    },
+    {
+      "origin": "https://catalant.com",
+      "localStorage": [{ "name": "session", "value": "catalant-unrelated-value" }]
+    }
+  ]
+}

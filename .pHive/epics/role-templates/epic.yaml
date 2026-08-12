@@ -1,0 +1,25 @@
+name: role-templates
+title: Role/engagement templates — data + picker in the config UI
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [ui]
+  roster: [researcher, technical-writer, tpm, ui-designer]
+  per_tag_reasoning:
+    ui: "A new picker control in the config form — direct match. No new backend/API surface, no security-sensitive data, hence no architecture/security tag matches this time."
+  confidence: matched
+  gate_decisions:
+    ui: included
+
+stories:
+  - id: role-templates
+    title: Role/engagement templates — data + picker in the config UI
+    complexity: low
+    depends_on: []

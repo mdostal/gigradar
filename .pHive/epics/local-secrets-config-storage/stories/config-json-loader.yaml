@@ -1,0 +1,134 @@
+id: config-json-loader
+epic: local-secrets-config-storage
+title: Local config.json loader with zod validation, outside the repo tree
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Build the settings half of the local config/secrets loading layer: a
+  `config.json` file living OUTSIDE the repo tree (in the same XDG-style
+  user-data directory `src/lib/store/path.ts` already resolves for the
+  SQLite DB — reuse `getDefaultDataDir()` directly, do not duplicate the
+  resolution logic), validated against a new zod schema mirroring the
+  `Config` interface in `src/lib/types.ts`.
+
+  This story does NOT include `.env`/secrets handling — that's the next
+  story (env-secrets-and-templates), which depends on this one.
+
+  Build `src/lib/config/` (new directory):
+  - `schema.ts` — a zod schema for `Config` (`profile`, `needs`, `sources`,
+    `roleArea`, `schedule`). `roleArea` and `schedule` MUST be `.optional()`
+    — never `.default()`, never silently coerced. `Config`'s own doc
+    comments in types.ts specify omission as meaningful (e.g. omitted
+    `roleArea` means "everything tiers yellow," a valid default state, not
+    an error condition).
+  - `load.ts` — exports a SYNCHRONOUS `loadConfig(): Config`. Sync is a
+    deliberate decision (not deferred): it matches the primary caller
+    (`runner.ts`, invoked via `tsx`) and mirrors `path.ts`'s existing sync
+    style. Resolves the config file path via
+    `path.join(getDefaultDataDir(), "config.json")`, reads it, parses JSON,
+    validates against the zod schema from `schema.ts`, and returns a typed
+    `Config`. On a missing file or a zod validation failure, throw a
+    specific, actionable error (which field, what's wrong) — never a
+    generic "failed to load" message, and never a silently-empty/partial
+    Config.
+  - File creation with permissions: if `config.json` doesn't exist yet,
+    this story does NOT need to create it from a template (that's the next
+    story's `config.example.json` job) — but if `loadConfig()` itself ever
+    creates the file (e.g. first-run scaffolding), it must be created with
+    mode `0600` (owner-only). If the codebase decides NOT to auto-create in
+    this story, document that explicitly and skip the permissions
+    requirement for creation (still applies to reading — see acceptance
+    criteria).
+  - Permissions on read: if an existing `config.json` is found to be group-
+    or world-readable, `loadConfig()` warns loudly (console warning naming
+    the file and the issue) — this file can contain nothing secret by
+    itself today (secrets are `.env`, next story), but the warning
+    establishes the pattern the next story's `.env` loader also needs.
+
+acceptance_criteria:
+  - "Given a valid config.json at the resolved XDG path, when loadConfig() runs, then it returns a Config object matching the file's contents, validated against the zod schema."
+  - "Given config.json omits roleArea and schedule, when loadConfig() runs, then it validates successfully and returns a Config with those fields undefined (not defaulted, not an error)."
+  - "Given config.json is missing, when loadConfig() runs, then it throws a specific, actionable error naming the expected path — not a generic fs error."
+  - "Given config.json contains invalid JSON, when loadConfig() runs, then it throws a specific parse error."
+  - "Given config.json is valid JSON but fails zod validation (e.g. missing required Needs field), when loadConfig() runs, then it throws a specific, field-level zod error — not a generic 'invalid config' message."
+  - "Given loadConfig() resolves its path, when compared against src/lib/store's DB path resolution, then both use the same getDefaultDataDir() directory (proven by a test asserting the two resolved paths share the same parent directory)."
+  - "Given an existing config.json is group- or world-readable (mode e.g. 0644), when loadConfig() runs, then it emits a console warning naming the file and the permission issue (does not throw — a warning, not a hard failure, since config.json alone holds no secrets in this story's scope)."
+
+steps:
+  - id: research
+    description: Read src/lib/store/path.ts's getDefaultDataDir() export in full to confirm its exact signature and confirm it needs no changes to be reused here. Read src/lib/types.ts's Config/SourceConfig/RoleAreaConfig/Profile/Needs interfaces in full to build an accurate zod schema.
+    agent: researcher
+  - id: implement
+    description: Implement src/lib/config/schema.ts and src/lib/config/load.ts per the description above.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write unit tests covering every acceptance criterion above, using temp directories (never touching a real user's actual XDG data dir).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation and tests for correctness, confirm zod schema accurately mirrors Config (especially the optional fields), and confirm no secret-adjacent data is logged.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/local-secrets-config-storage.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    runtime: node
+    test_runner: vitest
+    validation: zod (already a dependency)
+  key_files:
+    - path: src/lib/store/path.ts
+      purpose: "Existing XDG-directory resolver (getDefaultDataDir()) to reuse, not duplicate."
+    - path: src/lib/types.ts
+      purpose: "Config/SourceConfig/RoleAreaConfig/Profile/Needs — the contract the zod schema must mirror exactly."
+
+design_decisions:
+  - decision: config.json lives outside the repo tree (shared XDG directory with the DB), not inside .local/
+    rationale: Grill adversarial review (round 1) found the original in-repo-tree draft contradicted the security precedent the merged find-pipeline-foundation epic already established for exactly this threat model (local secrets/state must not rely on gitignore alone). Confirmed by team review (architect, security-reviewer).
+  - decision: loadConfig() is synchronous
+    rationale: Team review (tpm) — this is a public API shape decision, not safe to defer. Matches the primary caller (runner.ts via tsx) and path.ts's existing sync style.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's auth/login-handling section to describe the new src/lib/config/ loader and resolve the pre-existing ambiguity between types.ts's 'never in the repo' Config comment and ARCHITECTURE.md's own '.local/' example — state explicitly that config now lives in the XDG data directory, outside the repo entirely."
+
+metric:
+  applies: true
+  name: gigradar.config_loader_exists
+  direction: up
+  unit: bool
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "run `npm test` for src/lib/config/'s test suite; confirm all loadConfig() tests pass including the optional-fields and permission-warning cases"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: A zod schema that's too strict (e.g. accidentally required roleArea) would break the documented "omitted roleArea = valid yellow-default" contract silently until someone hits it.
+    mitigation: Acceptance criteria explicitly test the omitted-fields case, not just the fully-populated happy path.
+
+references:
+  - path: .pHive/epics/local-secrets-config-storage/docs/design-discussion.md
+    relevant_excerpt: |
+      Location: outside the repo tree, matching the persistence epic's
+      precedent — not `.local/` inside it... Both the settings file and the
+      `.env` secrets file live in the SAME XDG-style user-data directory
+      src/lib/store/path.ts already resolves for the DB.
+  - path: .pHive/epics/local-secrets-config-storage/docs/grill-record.md
+    relevant_excerpt: |
+      C1 — Storing local state inside the repo tree (relying on gitignore
+      alone) contradicts the precedent this same codebase just set for
+      exactly this threat model.

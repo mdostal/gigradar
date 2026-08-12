@@ -1,0 +1,100 @@
+id: origin-registry-extraction
+epic: session-capture-ui
+title: Extract shared per-source origin allowlist registry
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Extract the origin allowlists currently hardcoded inline in
+  src/lib/sources/gofractional.ts and ateam.ts into a shared registry,
+  so the session-capture mechanism (next story) and the future capture UI
+  (final story) don't duplicate or drift from what the adapters
+  themselves actually use.
+
+  Build src/lib/sources/origins.ts (new):
+  - Export `SOURCE_ORIGINS: Record<string, readonly string[]>`, e.g.
+    `{ gofractional: ["gofractional.com"], ateam: ["a.team",
+    "platform.a.team"] }`. Keys match each source's registered
+    `Source.id`.
+  - Modify gofractional.ts and ateam.ts to import their allowlist from
+    this registry instead of an inline constant. This is a pure
+    extraction — the actual allowlist VALUES must not change (byte-identical
+    to what's there today).
+
+  This story touches two already-shipped, already-tested production
+  files. Treat the regression risk on working code as a first-class
+  concern, not an afterthought of "small extraction."
+
+acceptance_criteria:
+  - "Given src/lib/sources/origins.ts exports SOURCE_ORIGINS, when gofractional.ts and ateam.ts are checked, then each imports its allowlist from this registry, with no inline allowlist constant remaining in either file."
+  - "Given the extraction, when the allowlist VALUES are diffed against what existed inline before this story, then they are byte-identical — same domains, same order, same casing. No incidental correction or change."
+  - "Given gofractional.ts's and ateam.ts's EXISTING test suites (from browser-session-auth), when run after this extraction, then all previously-passing tests still pass unchanged — proving the extraction preserves runtime behavior, not just that new tests pass."
+  - "Given SOURCE_ORIGINS is imported by a new consumer (e.g. a future test), when read, then the values are readonly (TypeScript-enforced, `readonly string[]`) to prevent accidental mutation."
+
+steps:
+  - id: research
+    description: Read src/lib/sources/gofractional.ts and ateam.ts in full to find the exact current inline allowlist constants (values, variable names, TypeScript types) to extract without altering.
+    agent: researcher
+  - id: implement
+    description: Create src/lib/sources/origins.ts and update both adapter files to import from it, per the description above.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Run the existing gofractional.ts/ateam.ts test suites unchanged and confirm they still pass. Add a new test asserting SOURCE_ORIGINS' values match a hardcoded expected snapshot (the pre-extraction values), and confirm readonly enforcement at the type level.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review the extraction for byte-identical values (diff against git blame/history of the original inline constants) and confirm both adapters' existing test suites are genuinely unchanged, not modified to accommodate the extraction.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/session-capture-ui.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+  key_files:
+    - path: src/lib/sources/gofractional.ts
+      purpose: "Current inline origin allowlist to extract; must import from the new registry, values unchanged."
+    - path: src/lib/sources/ateam.ts
+      purpose: "Same — the second adapter with an inline allowlist to extract."
+
+design_decisions:
+  - decision: Pure extraction, no value changes
+    rationale: This story exists solely to create a shared source of truth for the next two stories; conflating it with any allowlist correction would make the regression-risk story impossible to review cleanly.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md to note the shared origin registry at src/lib/sources/origins.ts and that adapters + the session-capture mechanism both read from it."
+
+metric:
+  applies: true
+  name: gigradar.origin_registry_extraction_regression_free
+  direction: up
+  unit: bool
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "run gofractional.ts/ateam.ts's existing test suites post-extraction; confirm 100% unchanged pass rate"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: A subtle typo or reordering during extraction could silently narrow or broaden a working adapter's origin scope.
+    mitigation: Explicit acceptance criterion requiring byte-identical values, verified by an automated snapshot test, not just visual review.
+
+references:
+  - path: .pHive/epics/session-capture-ui/docs/design-discussion.md
+    relevant_excerpt: |
+      Shared origin-allowlist registry (src/lib/sources/origins.ts — new,
+      small)... Both gofractional.ts/ateam.ts (existing, modified to
+      import from here instead of an inline constant) AND this epic's
+      capture code import from the same source of truth.

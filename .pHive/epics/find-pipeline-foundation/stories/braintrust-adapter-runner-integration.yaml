@@ -1,0 +1,120 @@
+id: braintrust-adapter-runner-integration
+epic: find-pipeline-foundation
+title: Real Braintrust Source adapter, wired through persistence end-to-end
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [persistence-layer-sqlite]
+
+description: |
+  This is Slice 1b of the epic's vertical plan: the first real, live Source
+  adapter (Braintrust — a public board, auth:"none" per legacy
+  platforms.mjs, no session/credential handling needed), plus wiring the
+  persistence-layer-sqlite store into src/lib/apply/runner.ts's runRadar(),
+  replacing its current in-memory-only `seen` Set dedup.
+
+  Build src/lib/sources/braintrust.ts implementing the existing Source
+  contract (src/lib/sources/source.ts): fetch + normalize real listings to
+  Gig objects with real per-listing URLs (never a search page — existing
+  data-integrity rule, unchanged). Throw on fetch failure, never return an
+  empty array as if "no matches" — runRadar()'s existing per-source
+  try/catch already handles this correctly; the adapter must honor it, not
+  work around it.
+
+  Modify runner.ts to call into the persistence-layer-sqlite store's upsert
+  function instead of the in-memory Set, while preserving every existing
+  correctness property (per-source isolation, throw-surfacing, in-order
+  gate application — do not regress src/lib/apply/runner.ts's current
+  correct behavior).
+
+  Include one documented, one-time manual live run as part of this story's
+  implement step (not a separate human-only gate): the developer runs the
+  adapter against the real Braintrust board once, confirms real Gig objects
+  with real per-listing URLs came back, and records the confirmation in
+  this story's completion notes. This is what backs the "live results"
+  claim — the automated fixture-based test suite alone does not.
+
+acceptance_criteria:
+  - "Given the Braintrust adapter is enabled, when runRadar() executes, then it returns real Gig objects with real per-listing URLs (not search-page URLs)."
+  - "Given the Braintrust adapter throws on fetch failure, when runRadar() executes, then the error is surfaced in the errors[] array and the run does not silently report zero results."
+  - "Given a gig is seen in run 1, when the radar runs again (run 2) with no change to that gig, then it is not re-flagged as new and its status is preserved (exercises persistence-layer-sqlite's upsert via the real runner path, not just its own unit tests)."
+  - "Given a gig disappears from Braintrust between run 1 and run 2 while Braintrust still returns other results, then it is flagged unavailableSince (exercises the delisting algorithm via the real runner path)."
+  - "Unit tests for the adapter's normalize/parse logic run against recorded, PII-scrubbed fixture responses — zero live network calls in `npm test`."
+  - "A one-time manual live run has been performed and its confirmation (gig count, one sample real URL) is recorded in this story's completion notes before the review step."
+
+steps:
+  - id: research
+    description: Inspect legacy the legacy tool's codebase/sources.mjs and platforms.mjs's braintrust entry for the discovery approach reference (public board, no session). Confirm Braintrust's current public-board URL/structure for a real (not fixture) fetch implementation.
+    agent: researcher
+  - id: implement
+    description: Implement src/lib/sources/braintrust.ts (fetch + normalize, real URLs, throw-on-failure) and modify src/lib/apply/runner.ts to call persistence-layer-sqlite's upsert instead of the in-memory Set. Perform the one-time manual live run and record its confirmation.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Capture and PII-scrub real Braintrust response fixtures (strip names/emails/phone numbers from job-description/contact-block content), write adapter unit tests against them, and write a runner-integration test proving the two-run status-preservation and delisting behavior end-to-end.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation and tests for correctness, confirm the manual live-run confirmation is recorded, and verify no PII survived into committed fixtures.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/find-pipeline-foundation.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    runtime: node
+    test_runner: vitest
+  key_files:
+    - path: src/lib/apply/runner.ts
+      purpose: Existing discover→gate→dedup pipeline (runRadar()) — modify its dedup step to call the new store; do not regress its per-source try/catch isolation or throw-surfacing.
+    - path: src/lib/sources/example-source.ts
+      purpose: Reference for the Source contract shape (fetch signature, auth field) — this story replaces relying on the fixture with a real second-registered source, not a removal of the fixture.
+    - path: src/lib/sources/source.ts
+      purpose: The Source contract + registerSource()/getSource() registry this adapter registers into.
+
+design_decisions:
+  - decision: Braintrust (not A.Team or GoFractional) as the first real adapter
+    rationale: auth:"none" public board per legacy platforms.mjs — no session/credential handling needed, keeping this story's scope to fetch/normalize logic only. A.Team needs a google-oauth session (collides with the still-open secrets-storage design decision) and GoFractional needs a fragile headed-Cloudflare-workaround session — both explicitly deferred past this epic.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's build-out roadmap checklist item 'Real Source adapters: fractional-jobs, go-fractional, braintrust, wellfound, a.team, gun.io' to mark Braintrust as shipped, and note the persistence layer is now wired into runRadar() (currently the roadmap still lists persistence as unbuilt)."
+
+metric:
+  applies: true
+  name: gigradar.live_source_adapters_count
+  direction: up
+  unit: count
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "count Source registrations in src/lib/sources/ with auth != fixture-only and a real (non-hardcoded) fetch() implementation"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: high
+    description: "The manual live-network verification step and the two-run status/delisting demonstration are both non-deterministic, network-dependent steps with no automated fallback — flagged by tpm during H/V review as the likeliest place an execution agent stalls (no live network access, or the live site's layout changed since research)."
+    mitigation: The manual run is scoped to the implement step with an explicit, concrete confirmation artifact (gig count + one sample URL) required before review — not left as an implicit, unverified claim.
+  - severity: medium
+    description: Cross-process SQLite contention (this story's integration test plus any concurrently running dev server) could surface a WAL/busy_timeout misconfiguration that persistence-layer-sqlite's own concurrent-writer unit test didn't catch in isolation.
+    mitigation: The runner-integration test in this story is a second, real-path exercise of the same concurrency behavior, not just a repeat of the prior story's unit test.
+
+references:
+  - path: .pHive/epics/find-pipeline-foundation/docs/vertical-plan.md
+    relevant_excerpt: |
+      Slice 1b — Braintrust adapter + runner integration (end-to-end proof)...
+      Verified-by: npm test (Braintrust adapter unit tests against sanitized
+      recorded fixtures) + the one-time manual live run... + a manual two-run
+      demonstration of status preservation and delisting behavior.
+  - path: src/lib/apply/runner.ts
+    relevant_excerpt: |
+      Per-source try/catch: a source that throws is reported per-source
+      (errors.push), loop continues — never a silent empty result.

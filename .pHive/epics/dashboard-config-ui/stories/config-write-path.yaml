@@ -1,0 +1,119 @@
+id: config-write-path
+epic: dashboard-config-ui
+title: Secret-safe config write path (src/lib/config/save.ts)
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [app-foundation]
+
+description: |
+  The epic's single highest-stakes correctness requirement, built and
+  tested in complete isolation from any UI. This story does NOT touch
+  src/app/ at all — it's pure Node library code, reviewed and proven
+  before any config-editing UI depends on it.
+
+  Build `src/lib/config/save.ts`:
+  - **Decided mechanism (do not deviate)**: the write path ALWAYS
+    re-reads the raw `config.json` file directly from disk via a fresh
+    `fs.readFileSync` + `JSON.parse` — it NEVER derives from, imports, or
+    accepts `loadConfig()`'s output (from `src/lib/config/load.ts`,
+    unmodified by this story). `loadConfig()` resolves `env:` references
+    to real secret values for `runRadar()`'s use; that resolved object
+    must never enter this write path, full stop. This is the mechanism
+    that prevents a resolved secret from ever being written back to
+    plaintext `config.json`.
+  - Full-document replace-on-save: read the raw JSON, apply the caller's
+    edits (as a raw JSON object, with `env:`-prefixed strings passed
+    through as literal strings — never resolved), validate the RESULT via
+    `ConfigSchema.safeParse` (from `src/lib/config/schema.ts`, reused,
+    unmodified) before writing, write the whole document back.
+  - **First-run / ENOENT-tolerant**: if `config.json` doesn't exist yet,
+    treat the "current" raw document as an empty/template shape (do not
+    throw — this path exists specifically so the config UI, next story,
+    can be used for INITIAL setup, not just editing an already-valid
+    file).
+  - Sets file permissions explicitly on write (mode 0600), consistent
+    with the read-side permission-warning pattern already established in
+    `load.ts`.
+  - Uses `getConfigPath()` (reused from `load.ts`) for the target path —
+    never a different path.
+  - On a `ConfigSchema.safeParse` failure, return/throw a specific,
+    field-level error — never write a document that fails its own schema.
+
+acceptance_criteria:
+  - "Given a valid config.json exists, when save() is called with an edited document, then the file is overwritten with the new content, validated against ConfigSchema first."
+  - "Given a SourceConfig.settings value is an env: reference string, when save() writes the document, then the literal env: string is written verbatim — NEVER the value process.env would resolve it to. This is the single most important test in this epic: prove by writing, then independently re-reading the raw file bytes/JSON (not via loadConfig()) and asserting no resolved secret value appears anywhere in the file content."
+  - "Given no config.json exists yet (first run), when save() is called, then it creates the file successfully rather than throwing ENOENT."
+  - "Given an edited document fails ConfigSchema validation, when save() is called, then it returns/throws a specific field-level error and does NOT write anything to disk (the existing file, if any, is left untouched)."
+  - "Given save() writes a new config.json, when the file's mode is checked, then it is 0600 (owner-only)."
+  - "No test, log line, or error message in this module's code ever contains a resolved secret value — only env var names, file paths, and fixed diagnostic strings."
+
+steps:
+  - id: research
+    description: Read src/lib/config/load.ts and schema.ts in full (the exact ConfigSchema shape, getConfigPath(), the existing permission-warning pattern to mirror on write) and src/lib/store/path.ts's XDG resolution pattern for consistency reference.
+    agent: researcher
+  - id: implement
+    description: Implement src/lib/config/save.ts per the description above. Do not import or call loadConfig() anywhere in this file.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write unit tests covering every acceptance criterion, especially the secret-preservation round-trip test (write with an env: reference present in process.env, re-read the RAW file bytes independently, assert the resolved value never appears) and the ENOENT/first-run test. Use temp directories only.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: This is the epic's highest-stakes review. Confirm save.ts genuinely never imports/calls loadConfig() or resolveSourceEnvReferences() (grep the file), confirm the secret-preservation test actually proves what it claims (reads raw bytes, not through any resolving function), and confirm file permissions are set correctly.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/dashboard-config-ui.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    validation: zod (ConfigSchema, reused)
+  key_files:
+    - path: src/lib/config/load.ts
+      purpose: "MUST NOT be imported/called by save.ts — the whole point of this story's design is keeping resolved secrets out of the write path entirely."
+    - path: src/lib/config/schema.ts
+      purpose: "ConfigSchema — reused as-is for validating the edited document before write."
+
+design_decisions:
+  - decision: Write path never touches loadConfig()'s resolved output — always a fresh raw read
+    rationale: Grill (round 1, finding H1) flagged an earlier draft left this mechanism undecided despite calling it the epic's highest-stakes item. This is the decided, non-negotiable mechanism.
+  - decision: ENOENT-tolerant, not a hard error
+    rationale: Team review (architect) — loadConfig() deliberately throws hard on a missing file, which would make the config UI (next story) unusable for initial setup, directly contradicting the epic's "without hand-editing JSON" done-bar.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's Config loading section to describe the write path and its explicit never-touch-resolved-secrets guarantee, alongside the existing load-side documentation."
+
+metric:
+  applies: true
+  name: gigradar.config_write_path_exists
+  direction: up
+  unit: bool
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "run `npm test` for src/lib/config/save.ts's test suite; confirm the secret-preservation round-trip test and ENOENT test both pass"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: high
+    description: A save.ts that accidentally imports or derives from loadConfig()'s resolved output would silently write real secrets to disk in plaintext — the single worst possible outcome for this epic, and one that would "work" (no crash, no visible error) while quietly leaking credentials.
+    mitigation: The review step explicitly greps for any loadConfig()/resolveSourceEnvReferences() import in save.ts, and the secret-preservation test independently re-reads raw file bytes (not through any resolving function) to prove the guarantee holds, not just that the code "ran."
+
+references:
+  - path: .pHive/epics/dashboard-config-ui/docs/design-discussion.md
+    relevant_excerpt: |
+      Decision: the write path always re-reads the raw config.json file
+      directly from disk — it never derives from or accepts loadConfig()'s
+      resolved output... the resolved, secret-bearing Config object from
+      loadConfig() is used ONLY by runRadar() and never enters the write
+      path at all.

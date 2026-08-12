@@ -1,0 +1,125 @@
+id: persistence-layer-sqlite
+epic: find-pipeline-foundation
+title: SQLite-backed persistence layer with upsert/delisting logic
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Build the real persistence layer that replaces runRadar()'s current
+  in-memory-only dedup (a plain `Set` scoped to a single process run — see
+  src/lib/apply/runner.ts). This is Slice 1a of the epic's vertical plan:
+  a standalone, fully unit-tested module with no adapter or runner wiring
+  yet — that lands in the next story (braintrust-adapter-runner-integration).
+
+  Build a new module at src/lib/store/ backed by SQLite (better-sqlite3 or
+  node:sqlite, decide in research step) that:
+  - Upserts scanned Gig records, preserving user-set fields (status,
+    firstSeen) across re-scans — port the LOGIC (not the code) of legacy
+    the legacy tool's codebase/store.mjs's upsertScan() function.
+  - Implements the delisting-detection algorithm correctly: track which
+    sources returned >=1 result this run (an "active sources" set); only
+    flag a stored gig unavailableSince if its source IS in that active set
+    but the gig itself didn't reappear. A source returning 0 results (or
+    erroring) must NEVER cause its gigs to be flagged unavailable — that
+    is the bug class this algorithm exists to prevent.
+  - Uses WAL mode + a busy_timeout + a single shared connection module
+    (not `new Database()` per call site) — a Next.js dev server process
+    and a separate cron/CLI runner process will both open this file.
+  - Defaults the DB file path to a user-data directory outside the repo
+    tree (XDG-style, e.g. via `env-paths` or equivalent — decide in
+    research step), never `./data/`. Add a `*.db` / data-dir pattern to
+    .gitignore as belt-and-suspenders regardless of the default path.
+  - Exposes ALL access through this module's exported functions only —
+    no raw SQL from call sites outside src/lib/store/. This sets up the
+    read contract a future dashboard UI epic will need (has_ui: true is
+    already on the project profile, though building that UI is out of
+    this epic).
+
+acceptance_criteria:
+  - "Given a fresh store, when upsert is called with a new gig, then it is persisted with firstSeen set to the current run's timestamp and status 'new'."
+  - "Given a stored gig with status 'applied', when upsert is called again with fresh scan data for the same gig, then status remains 'applied' (not reset to 'new') and firstSeen is unchanged."
+  - "Given a stored gig from source X, when a scan runs and source X returns results but NOT this gig, then the gig is flagged unavailableSince with the current timestamp."
+  - "Given a stored gig from source Y, when a scan runs and source Y returns zero results (or errors), then no gig from source Y is flagged unavailable."
+  - "Given a gig previously flagged unavailableSince, when it reappears in a later scan, then unavailableSince is cleared and reappearedAt is set."
+  - "Given two concurrent connections to the store, when both attempt a write at the same time, then neither throws SQLITE_BUSY (WAL mode + busy_timeout verified by a concurrent-writer test)."
+  - "`npm test` passes for all new tests in this story with zero live network calls."
+
+steps:
+  - id: research
+    description: Decide the SQLite driver (better-sqlite3 vs node:sqlite), the XDG-style user-data-dir resolution approach, and confirm the exact schema fields needed (port the field list from legacy store.mjs's per-gig record shape, redesigning the split status enum into one coherent enum per research-brief.md §3's flagged inconsistency).
+    agent: researcher
+  - id: implement
+    description: Implement src/lib/store/ per the description above — schema, connection module (WAL + busy_timeout, single shared connection), upsert function, delisting-detection logic, status-preservation logic.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write unit tests covering every acceptance criterion above, including the concurrent-writer test, against a temp/in-memory SQLite instance. Zero live network or filesystem-outside-temp-dir dependencies.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation and tests for correctness, the module-boundary rule (no raw SQL outside src/lib/store/), and convention compliance (docs/ARCHITECTURE.md's core/user-layer boundary — no user-specific data hardcoded).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/find-pipeline-foundation.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    runtime: node
+    test_runner: vitest
+  key_files:
+    - path: src/lib/apply/runner.ts
+      purpose: Current in-memory-only dedup (the `seen` Set) that this story's store replaces as the durability layer; runner.ts itself is NOT modified in this story — that's the next story's job.
+    - path: src/lib/types.ts
+      purpose: Existing Gig/Config types this store's schema must round-trip without loss.
+
+design_decisions:
+  - decision: SQLite over another flat file, and over a server-based DB
+    rationale: Fits the project's north-star framing (single-user, local, download-and-run, no server process) while getting atomic writes and real querying for free — directly kills the two worst fragilities of the legacy flat-JSON-file store (no atomic writes, no locking). Confirmed by the user during the design-discussion review gate.
+  - decision: Split from a combined "persistence + first adapter" slice into a standalone persistence-only story
+    rationale: H/V team review (tpm) flagged that bundling persistence with the first adapter and runner integration put most of the epic's real engineering risk behind one late, unverified checkpoint. This story is independently verifiable by unit tests alone, with no adapter or live network dependency.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's data-layer description (currently states persistence is 'not yet implemented' with the legacy flat-file design 'the fragile part to replace') to describe the new src/lib/store/ module, its SQLite schema, and the module-boundary rule (all access through its exported functions)."
+
+metric:
+  applies: true
+  name: gigradar.persistence_layer_exists
+  direction: up
+  unit: bool
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "run `npm test` for src/lib/store/'s test suite; confirm upsert, status-preservation, delisting-detection, and concurrent-writer tests all pass"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: high
+    description: Getting the delisting-detection algorithm subtly wrong (e.g. flagging gigs unavailable when a source merely errored) reintroduces exactly the kind of silent-data-loss bug the legacy tool never caught.
+    mitigation: The acceptance criteria explicitly require a test for the "source returns zero results, nothing gets flagged" case, not just the "source returns results, missing gig gets flagged" case — both must be tested, not just the happy path.
+  - severity: medium
+    description: WAL mode / busy_timeout misconfiguration won't surface until a real concurrent-writer scenario (dev server + cron both running) — easy to skip if the concurrent-writer test is treated as optional.
+    mitigation: Concurrent-writer test is a named, non-optional acceptance criterion, not left to the developer's discretion.
+
+references:
+  - path: .pHive/epics/find-pipeline-foundation/docs/research-brief.md
+    relevant_excerpt: |
+      Delisting-detection algorithm (legacy store.mjs upsertScan, worth porting
+      the logic, not the code): track activeSources = Set(scanned sources this
+      run); only flag a stored gig unavailableSince if its source IS in
+      activeSources but the gig itself didn't reappear.
+  - path: .pHive/epics/find-pipeline-foundation/docs/vertical-plan.md
+    relevant_excerpt: |
+      Slice 1a — Persistence (standalone, unit-tested checkpoint)... Verified-by:
+      npm test only... WAL mode + busy_timeout + shared-connection-module
+      behavior verified by a concurrent-writer test.

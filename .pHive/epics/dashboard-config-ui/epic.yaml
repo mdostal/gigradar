@@ -1,0 +1,41 @@
+name: dashboard-config-ui
+title: Next.js dashboard + secret-safe config editing UI
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture, ui, security]
+  roster: [researcher, technical-writer, tpm, architect, ui-designer, security-reviewer]
+  per_tag_reasoning:
+    architecture: "First UI code in the codebase — new Next.js app-router module, new config write module — significant structural addition."
+    ui: "New screens, forms, layout, visual design — direct match. has_ui:true on the project profile, gate included."
+    security: "Config write path must never leak resolved secrets back to disk; localhost-only binding decision; direct match."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+    ui: included
+    security: included
+
+stories:
+  - id: app-foundation
+    title: Next.js app-router scaffold, Tailwind, NODE_OPTIONS interop proof, localhost-only binding
+    complexity: medium
+    depends_on: []
+  - id: dashboard-results-view
+    title: Dashboard results view — gigs list, filter/sort/search, status actions
+    complexity: medium
+    depends_on: [app-foundation]
+  - id: config-write-path
+    title: Secret-safe config write path (src/lib/config/save.ts)
+    complexity: medium
+    depends_on: [app-foundation]
+  - id: config-editing-ui
+    title: Config editing UI — Profile/Needs/Sources/RoleArea/schedule form
+    complexity: high
+    depends_on: [app-foundation, config-write-path]

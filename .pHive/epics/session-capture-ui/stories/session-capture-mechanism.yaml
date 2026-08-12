@@ -1,0 +1,138 @@
+id: session-capture-mechanism
+epic: session-capture-ui
+title: Stateful browser-session capture mechanism (start/finish/cancel)
+status: pending
+complexity: high
+methodology: classic
+depends_on: [origin-registry-extraction]
+
+description: |
+  The epic's single highest-novelty piece — a genuinely new pattern for
+  this codebase: holding a live Playwright Browser/BrowserContext handle
+  in server memory across separate Next.js Server Action invocations,
+  bridging an indeterminate human-paced login interval. This story is
+  fully isolated from the UI (next story) and gets undivided review
+  attention given its risk.
+
+  Build src/lib/auth/session-capture.ts:
+  - **`globalThis`-pinned state map, not a plain module-level variable**:
+    `const captures = (globalThis as any).__gigradarCaptures ??= new
+    Map<string, CaptureEntry>()`. This is non-negotiable — a plain
+    module-level Map is silently reset by Next.js dev's Hot Module
+    Reloading on any edit to this file or its import chain (a far more
+    common event during development than a full server restart), which
+    would orphan any in-flight capture without any error surfacing.
+  - `startCapture(sourceId: string, loginUrl: string): Promise<{captureId: string}>`:
+    checks `checkChromiumAvailable()` (reused from browser-session.ts),
+    launches a FRESH headed Chromium context (`headless: false`, no
+    storageState — this creates a session, doesn't consume one),
+    navigates to `loginUrl`, registers a `browser.on("disconnected", ...)`
+    listener that immediately marks/removes the capture entry if the user
+    closes the actual browser window directly, schedules a 10-minute idle
+    `setTimeout` that closes the browser and removes the entry if neither
+    `finishCapture()` nor `cancelCapture()` arrive first, stores the
+    handle+metadata keyed by `crypto.randomUUID()`, returns the id.
+  - `finishCapture(captureId: string): Promise<{path: string}>`: looks up
+    the entry (throws a specific error if not found — e.g. already
+    timed out, disconnected, or invalid id), calls
+    `context.storageState()` (no path arg, get the object back), applies
+    `filterStorageStateToAllowlist()` (reused from browser-session.ts)
+    using `SOURCE_ORIGINS[sourceId]` (from the prior story's registry).
+    **Sanity check**: if the filtered result has zero cookies for the
+    source's own origin, throw a specific "capture produced no usable
+    session — login may not have completed" error and do NOT write
+    anything. Otherwise, write the filtered result ATOMICALLY (temp file
+    in the same directory + rename, never a direct write) to
+    `<getDefaultDataDir()>/<sourceId>-session.json`, mode `0600`,
+    overwriting any prior capture for that source. Close the browser,
+    clear the timeout, remove the disconnect listener, remove the map
+    entry, return the written path.
+  - `cancelCapture(captureId: string): Promise<void>`: looks up the
+    entry, closes the browser, clears the timeout, removes the listener
+    and map entry — writes nothing.
+  - **No debug capture, ever**: the launched context has tracing, HAR
+    recording, video, and console/network event logging all explicitly
+    OFF — a hard constraint on this code path, not a default to
+    reconsider later, since any future debug aid here could persist
+    credential-bearing form data to disk.
+
+acceptance_criteria:
+  - "Given the Map is stored via the globalThis-pinning pattern, when a test simulates a module re-evaluation (re-importing the module fresh, as HMR would), then a capture started before the re-evaluation is still findable/completable after it — not lost."
+  - "Given startCapture() succeeds, when 10 minutes pass with neither finishCapture() nor cancelCapture() called, then the browser is closed and the map entry is removed — proven by asserting the mock browser's close() was called and a subsequent finishCapture() call for that id throws 'not found', not just that a timer was scheduled."
+  - "Given the mocked browser emits a 'disconnected' event, when this happens, then the capture entry is cleaned up promptly, not left until the 10-minute timeout."
+  - "Given finishCapture() is called and filterStorageStateToAllowlist() returns zero cookies for the source's own origin, when this happens, then it throws a specific error and NO file is written to the destination path."
+  - "Given finishCapture() encounters any error partway through (e.g. the mocked storageState() call throws), when this happens, then no partial or empty file exists at the destination path afterward — verified by checking the temp-file+rename pattern leaves no stray temp file either."
+  - "Given finishCapture() succeeds, when the written file's mode is checked, then it is 0600."
+  - "Given the launched browser context, when inspected, then no tracing/HAR/video/console-logging options are enabled anywhere in the launch/context-creation call."
+
+steps:
+  - id: research
+    description: Read src/lib/auth/browser-session.ts in full (filterStorageStateToAllowlist(), checkChromiumAvailable(), the StorageState type shapes) and src/lib/sources/origins.ts (from the prior story) for SOURCE_ORIGINS' exact shape. Confirm Playwright's context.storageState() no-arg return shape and Browser's "disconnected" event API.
+    agent: researcher
+  - id: implement
+    description: Implement src/lib/auth/session-capture.ts per the description above, including the globalThis-pinning, disconnect listener, idle timeout, sanity check, and atomic write.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write unit tests covering every acceptance criterion, mocking Playwright's chromium.launch/newContext/storageState. Use fake timers (vi.useFakeTimers or equivalent) to test the 10-minute idle timeout without a real 10-minute wait.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: This is the epic's highest-stakes review. Confirm the globalThis-pinning pattern is correctly implemented (not just present but actually surviving a simulated re-evaluation in the test), confirm the atomic-write pattern genuinely prevents partial files, and confirm no debug-capture options are enabled anywhere.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/session-capture-ui.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    browser_automation: playwright (already a dependency)
+  key_files:
+    - path: src/lib/auth/browser-session.ts
+      purpose: "filterStorageStateToAllowlist() and checkChromiumAvailable() reused as-is; this NEW module does not modify browser-session.ts."
+    - path: src/lib/sources/origins.ts
+      purpose: "Built by origin-registry-extraction — SOURCE_ORIGINS is this story's source of per-source allowlists."
+
+design_decisions:
+  - decision: globalThis-pinned Map, not a plain module-level variable
+    rationale: Team review (architect) — Next.js dev's HMR re-evaluates a module on any edit to it or its import chain, silently resetting a plain module-level Map and orphaning in-flight captures. This is the standard, documented workaround for exactly this class of bug in Next.js dev (the same pattern used for DB client singletons).
+  - decision: Sanity-check for zero cookies before writing, never write-then-hope
+    rationale: Team review (architect) — filterStorageStateToAllowlist() was only ever proven against already-known-good manually-captured files; a fresh OAuth/SSO login could store a needed token on an origin outside the allowlist, and silently writing a broken-but-non-empty file as "success" would be worse than an explicit, actionable failure.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md to describe the capture mechanism, its globalThis-pinning requirement, and the atomic-write/permissions/no-debug-capture guarantees."
+
+metric:
+  applies: true
+  name: gigradar.session_capture_mechanism_hmr_safe
+  direction: up
+  unit: bool
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "run the module-re-evaluation-survival test and the idle-timeout-fires test; confirm both pass"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: high
+    description: If the globalThis-pinning is implemented incorrectly (or omitted), every capture attempted during active development (where file edits are constantly triggering HMR) would silently fail in a confusing way — the single most likely real-world failure mode for this story.
+    mitigation: A dedicated acceptance criterion and test specifically simulates module re-evaluation, not just a happy-path capture — this is the review's highest-priority check.
+  - severity: medium
+    description: An abandoned capture leaks an OS-level Chromium process for up to 10 minutes; a user starting many captures in quick succession (e.g. testing) could accumulate several simultaneously.
+    mitigation: Accepted as a v1 limitation — the idle timeout bounds the leak's duration, and a full process-tracking/sweep system is real additional scope not required for this epic's done-bar.
+
+references:
+  - path: .pHive/epics/session-capture-ui/docs/design-discussion.md
+    relevant_excerpt: |
+      globalThis-pinned, not a plain module-level variable... next dev's
+      Hot Module Reloading re-evaluates a module on ANY edit to it or its
+      import chain — a far more common event during active development
+      than a full server restart.

@@ -1,0 +1,35 @@
+name: session-capture-ui
+title: Guided browser-session login/capture flow
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture, security]
+  roster: [researcher, technical-writer, tpm, architect, security-reviewer]
+  per_tag_reasoning:
+    architecture: "A genuinely new, stateful cross-request server pattern (live browser handles held across Next.js Server Action calls) — significant structural addition, first of its kind in this codebase."
+    security: "Directly about session/credential capture: file permissions, no-debug-capture guarantee, atomic writes, origin-scoping reuse — direct match."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+    security: included
+
+stories:
+  - id: origin-registry-extraction
+    title: Extract shared per-source origin allowlist registry
+    complexity: low
+    depends_on: []
+  - id: session-capture-mechanism
+    title: Stateful browser-session capture mechanism (start/finish/cancel)
+    complexity: high
+    depends_on: [origin-registry-extraction]
+  - id: session-capture-ui
+    title: Session capture UI — capture-login flow in the config editor
+    complexity: medium
+    depends_on: [origin-registry-extraction, session-capture-mechanism]

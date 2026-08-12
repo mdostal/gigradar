@@ -1,0 +1,409 @@
+{
+  "count": 5,
+  "next": "http://app.usebraintrust.com/api/jobs/?page=2&role=5",
+  "previous": null,
+  "results": [
+    {
+      "id": 17628,
+      "title": "Python Engineer (China or USA - Remote)",
+      "employer": {
+        "id": 5495,
+        "name": "SuperAnnotate AI, Inc",
+        "name_color": null,
+        "link": "/employers/5495/",
+        "full_link": "https://app.usebraintrust.com/employers/5495/",
+        "has_logo_set": false,
+        "logo_background_color": null,
+        "logo": null,
+        "logo_thumbnail": null
+      },
+      "budget_minimum_usd": "40.00",
+      "budget_maximum_usd": "60.00",
+      "payment_type": "hourly",
+      "main_skills": [
+        {
+          "id": 312,
+          "name": "Python",
+          "is_default": true,
+          "order": 19,
+          "matched": false
+        }
+      ],
+      "created": "2026-08-10T22:43:25.387044Z",
+      "contract_type": "short",
+      "deadline": null,
+      "timezones": [],
+      "expected_hours_per_week": 20,
+      "role": {
+        "id": 5,
+        "name": "Engineering",
+        "is_default": true,
+        "order": 0,
+        "name_plural": "Engineers",
+        "is_featured": true,
+        "color": "green"
+      },
+      "openings_left": 25,
+      "job_skills": [
+        121258
+      ],
+      "locations": [
+        {
+          "location": "United States",
+          "place_id": "ChIJCzYy5IS16lQRQrfeQ5K5Oxw",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "US",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "China",
+          "place_id": "ChIJwULG5WSOUDERbzafNHyqHZU",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "CN",
+          "state": null,
+          "city": null
+        }
+      ],
+      "start_date": null,
+      "job_type": "freelance"
+    },
+    {
+      "id": 17602,
+      "title": "IT Manufacturing Engineer Infrastructure - Hybridin Glendale, AZ",
+      "employer": {
+        "id": 3441,
+        "name": "Mark Anthony Group",
+        "name_color": "--dark-violet",
+        "link": "/employers/3441/",
+        "full_link": "https://app.usebraintrust.com/employers/3441/",
+        "logo": "https://d1m1s6un1a8qgj.cloudfront.net/media/employer_logo_image/Mark_Anthony_Group.png",
+        "logo_thumbnail": "https://d1m1s6un1a8qgj.cloudfront.net/media/cache/74/f7/74f76638c4a5d8f894fdec8914cc940b.png",
+        "has_logo_set": true,
+        "logo_background_color": "--medium-violet"
+      },
+      "budget_minimum_usd": "125000.00",
+      "budget_maximum_usd": "130000.00",
+      "payment_type": "annual",
+      "main_skills": [
+        {
+          "id": 11493,
+          "name": "IT Infrastructure",
+          "is_default": true,
+          "order": 4494,
+          "matched": false
+        },
+        {
+          "id": 11033,
+          "name": "Networking / Infrastructure Engineering",
+          "is_default": true,
+          "order": 4717,
+          "matched": false
+        },
+        {
+          "id": 2354,
+          "name": "Containerization",
+          "is_default": true,
+          "order": 711,
+          "matched": false
+        }
+      ],
+      "created": "2026-08-10T12:32:16.224860Z",
+      "contract_type": "long",
+      "deadline": null,
+      "timezones": [],
+      "expected_hours_per_week": 40,
+      "role": {
+        "id": 5,
+        "name": "Engineering",
+        "is_default": true,
+        "order": 0,
+        "name_plural": "Engineers",
+        "is_featured": true,
+        "color": "green"
+      },
+      "openings_left": 1,
+      "job_skills": [
+        121013,
+        121014,
+        121015,
+        121016,
+        121017,
+        121018,
+        121019,
+        121020,
+        121021,
+        121022,
+        121023,
+        121024,
+        121025,
+        121026,
+        121027,
+        121028,
+        121029,
+        121030,
+        121031,
+        121032,
+        121033,
+        121034,
+        121035,
+        121036,
+        121037,
+        121038
+      ],
+      "locations": [
+        {
+          "location": "Glendale, AZ, USA",
+          "place_id": "ChIJN51nLScjK4cRVDuNgwtDFJ8",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "US",
+          "state": "AZ",
+          "city": "Glendale"
+        }
+      ],
+      "start_date": null,
+      "job_type": "direct_hire"
+    },
+    {
+      "id": 17661,
+      "title": "Python Backend Engineer, AI Agent Training & Evaluation",
+      "employer": {
+        "id": 8655,
+        "name": "Turing",
+        "name_color": null,
+        "link": "/employers/8655/",
+        "full_link": "https://app.usebraintrust.com/employers/8655/",
+        "has_logo_set": false,
+        "logo_background_color": null,
+        "logo": null,
+        "logo_thumbnail": null
+      },
+      "budget_minimum_usd": "300.00",
+      "budget_maximum_usd": "300.00",
+      "payment_type": "per_task",
+      "main_skills": [
+        {
+          "id": 312,
+          "name": "Python",
+          "is_default": true,
+          "order": 19,
+          "matched": false
+        }
+      ],
+      "created": "2026-08-03T21:09:32.000946Z",
+      "contract_type": "short",
+      "deadline": null,
+      "timezones": [],
+      "expected_hours_per_week": 20,
+      "role": {
+        "id": 5,
+        "name": "Engineering",
+        "is_default": true,
+        "order": 0,
+        "name_plural": "Engineers",
+        "is_featured": true,
+        "color": "green"
+      },
+      "openings_left": 5,
+      "job_skills": [
+        121519,
+        121520,
+        121521,
+        121522,
+        121523
+      ],
+      "locations": [
+        {
+          "location": "Canada",
+          "place_id": "ChIJ2WrMN9MDDUsRpY9Doiq3aJk",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "CA",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Argentina",
+          "place_id": "ChIJZ8b99fXKvJURqA_wKpl3Lz0",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "AR",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Bangladesh",
+          "place_id": "ChIJp4vhgO2qrTARa_zhxOAoLQ8",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "BD",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Brazil",
+          "place_id": "ChIJzyjM68dZnAARYz4p8gYVWik",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "BR",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Colombia",
+          "place_id": "ChIJo5QVrjqkFY4RQKPy7wSaDZo",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "CO",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Egypt",
+          "place_id": "ChIJ6TZcw3aJNhQRRMTEJQmgRSw",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "EG",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Ghana",
+          "place_id": "ChIJx9baqM1a1w8RNtKT0DDy11Q",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "GH",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "India",
+          "place_id": "ChIJkbeSa_BfYzARphNChaFPjNc",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "IN",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Indonesia",
+          "place_id": "ChIJtwRkSdcHTCwRhfStG-dNe-M",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "ID",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Mexico",
+          "place_id": "ChIJU1NoiDs6BIQREZgJa760ZO0",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "MX",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Nigeria",
+          "place_id": "ChIJDY2kfa8LThARyAvFaEH-qJk",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "NG",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Pakistan",
+          "place_id": "ChIJH3X9-NJS2zgRXJIU5veht0Y",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "PK",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "T\u00fcrkiye",
+          "place_id": "ChIJcSZPllwVsBQRKl9iKtTb2UA",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "TR",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "United Kingdom",
+          "place_id": "ChIJqZHHQhE7WgIReiWIMkOg-MQ",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "GB",
+          "state": null,
+          "city": null
+        },
+        {
+          "location": "Vietnam",
+          "place_id": "ChIJXx5qc016FTERvmL-4smwO7A",
+          "custom_location": null,
+          "location_type": "google",
+          "country": "VN",
+          "state": null,
+          "city": null
+        }
+      ],
+      "start_date": null,
+      "job_type": "freelance"
+    },
+    {
+      "id": 17629,
+      "title": "Website Design",
+      "employer": {
+        "id": 8815,
+        "name": "Link Studio",
+        "name_color": null,
+        "link": "/employers/8815/",
+        "full_link": "https://app.usebraintrust.com/employers/8815/",
+        "has_logo_set": false,
+        "logo_background_color": null,
+        "logo": null,
+        "logo_thumbnail": null
+      },
+      "budget_minimum_usd": "50.00",
+      "budget_maximum_usd": "50.00",
+      "payment_type": "hourly",
+      "main_skills": [
+        {
+          "id": 2888,
+          "name": "Website Building",
+          "is_default": true,
+          "order": 2517,
+          "matched": false
+        }
+      ],
+      "created": "2026-07-28T20:36:44.559838Z",
+      "contract_type": "short",
+      "deadline": "2026-08-03",
+      "timezones": [],
+      "expected_hours_per_week": 8,
+      "role": {
+        "id": 5,
+        "name": "Engineering",
+        "is_default": true,
+        "order": 0,
+        "name_plural": "Engineers",
+        "is_featured": true,
+        "color": "green"
+      },
+      "openings_left": 1,
+      "job_skills": [
+        121259,
+        121261,
+        121260
+      ],
+      "locations": [],
+      "start_date": "2026-07-28",
+      "job_type": "freelance"
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+id: profile-ingestion-module
+epic: profile-overview-ingestion
+title: "Resume/link extraction module + .env API-key writer (Claude API, mocked in tests)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Build the two new backend modules this epic's UI story depends on, in
+  isolation, proven by their own tests first (same isolate-the-foundation
+  sequencing as `vault-module` in the `encrypted-local-storage` epic).
+
+  1. **`src/lib/config/env-store.ts`** — `setEnvVar(name: string, value:
+     string): ActionResult<void>` and a read-side helper that resolves a
+     single named var fresh from `.env` (decrypt-if-needed via
+     `src/lib/security/vault.ts`, `dotenv.parse()`, no `process.env`
+     mutation). Per the design doc's collaborative-review resolution: this
+     DUPLICATES `load.ts`'s atomic-write-then-encrypt helper (following
+     `save.ts`'s own established precedent — see `save.ts`'s header
+     comment for why it never imports load.ts internals), and calls
+     `getOrCreateKey(hasAnyEncryptedFile)` before `encrypt()`. Never logs
+     the value being set or read. Add `@anthropic-ai/sdk` as a new
+     dependency (`package.json`).
+  2. **`src/lib/profile-ingestion/extract.ts`** — `extractProfile(input:
+     { resumeFile?: {data: Buffer, mediaType: string}, resumeText?: string,
+     links?: string[] }, apiKey: string): Promise<{roles: string[], skills:
+     string[], warnings: string[]}>`.
+     - For each link: `fetch()` it, and if the response looks like a known
+       login-wall (LinkedIn's specific redirect/authwall pattern, or a 3xx
+       to a `/login`/`/signin` path — NOT a generic short-body heuristic,
+       per grill finding H2), add a `warnings` entry and skip it rather
+       than failing the whole call.
+     - For a fetched page that isn't a known login-wall: strip `<script>`
+       and `<style>` ELEMENTS ENTIRELY (tag + content) before general
+       tag-stripping to visible text (per grill finding H1 — a naive
+       tag-only strip leaks JS/CSS source into the extracted text).
+     - Build one Claude Messages API call: the resume as a native PDF
+       document content block (or plain text), plus each link's extracted
+       text, with a prompt requesting structured output
+       (`{roles: string[], skills: string[]}`) via tool-use/structured
+       output, not free-text parsing.
+     - The Anthropic client and `apiKey` are passed in / constructed
+       per-call, never held at module scope (so this module has no
+       import-time dependency on any secret being present).
+
+acceptance_criteria:
+  - "Given a plain-text resume and no links, when extractProfile() is called, then it returns a {roles, skills, warnings:[]} structure derived from a mocked Anthropic client's structured response."
+  - "Given a PDF resume (as a Buffer + mediaType), when extractProfile() is called, then the Anthropic API request is constructed with a native PDF document content block, not text extraction performed locally."
+  - "Given a link whose fetched HTML contains real <script> and <style> blocks with realistic JS/CSS content, when the link is processed, then neither the script nor style text appears in what's sent to the LLM call."
+  - "Given a link that returns a known LinkedIn-style login-wall/redirect, when it's processed, then it produces a specific 'may require login' warnings entry and does NOT abort the overall call — other links/the resume still contribute to the result."
+  - "Given a link that returns a normal, short-but-legitimate page (e.g. a minimal portfolio site), when it's processed, then it is NOT flagged as a login-wall (regression test for grill H2 — proves the detection is signature-based, not length-based)."
+  - "Given setEnvVar('ANTHROPIC_API_KEY', '<value>') is called against a fresh XDG_CONFIG_HOME/XDG_DATA_HOME (no .env yet), when the read-side helper is then called for that same var, then it returns the exact value written, and the .env file on disk is an encrypted envelope, never plaintext."
+  - "Given setEnvVar() is called against an existing LEGACY PLAINTEXT .env with other vars already in it, when it completes, then the other vars are preserved (not dropped) and the file is now encrypted."
+  - "Given any of env-store.ts's or extract.ts's exported functions, when code-reviewed, then no API key, resume content, or extracted personal data ever appears in a log statement or thrown error message."
+
+steps:
+  - id: implement
+    description: Build env-store.ts and extract.ts per the description above, including the login-wall signature detection and script/style stripping.
+    agent: developer
+  - id: test
+    description: Write unit tests covering every acceptance criterion, with a MOCKED Anthropic client (zero real API calls in the automated suite, matching this project's existing convention) and realistic HTML/login-wall fixtures.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the login-wall detection is genuinely signature-based (not a disguised length heuristic), the script/style stripping is complete, the API key is never captured at module scope, and no secret/personal data is ever logged.
+    agent: security-reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/profile-overview-ingestion.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    dependency: "@anthropic-ai/sdk (new)"
+  key_files:
+    - path: src/lib/config/load.ts
+      purpose: "Reference for the .env decrypt/parse pattern env-store.ts's read-side helper must be consistent with."
+    - path: src/lib/config/save.ts
+      purpose: "The duplicate-not-import precedent env-store.ts follows for its atomic-write-then-encrypt helper."
+    - path: src/lib/security/vault.ts
+      purpose: "encrypt()/decrypt()/isEncryptedEnvelope()/getOrCreateKey() this story wires into env-store.ts."
+
+design_decisions:
+  - decision: Login-wall detection uses known signatures (LinkedIn's redirect/authwall pattern), not a generic short-body length heuristic
+    rationale: Grill H2 — a length heuristic risks false-positiving on legitimate short pages, which are exactly the kind of link this epic is meant to support (personal portfolios, minimal landing pages).
+  - decision: API key resolved fresh per-call inside the ingestion module's caller, never held at module scope or read via process.env
+    rationale: Collaborative review confirmed the Next.js app's request path never populates process.env from .env (only the CLI/cron path does) — a module-scope client would permanently capture undefined.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.profile_ingestion_module_coverage
+  direction: up
+  unit: percent
+  baseline: 0
+  target: 100
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "vitest coverage for extract.ts and env-store.ts; confirm all acceptance criteria have a corresponding passing test via npm test"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: An incomplete script/style-stripping implementation could leak JS/CSS source into LLM calls, degrading extraction quality on real sites without an obvious symptom (silent quality loss, not a crash).
+    mitigation: Dedicated acceptance criterion and test with realistic script/style-bearing HTML fixtures.
+
+references:
+  - .pHive/epics/profile-overview-ingestion/docs/design-discussion.md
+  - .pHive/epics/profile-overview-ingestion/docs/grill-record.md

@@ -1,0 +1,29 @@
+name: adapter-batch-public-boards
+title: Four new source adapters ported from the owner's real pipeline (FractionalJobs, Fractionus, FractionalFinders, Wellfound)
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture]
+  roster: [researcher, technical-writer, tpm, architect]
+  per_tag_reasoning:
+    architecture: "Four new Source adapters extending the existing plugin registry — structural addition, no new subsystem."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+
+stories:
+  - id: public-fetch-adapters
+    title: "FractionalJobs, Fractionus, FractionalFinders adapters + real local config activation"
+    complexity: medium
+    depends_on: []
+  - id: wellfound-adapter
+    title: "Wellfound adapter (browser-session, __NEXT_DATA__ extraction)"
+    complexity: medium
+    depends_on: []

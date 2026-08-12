@@ -1,0 +1,105 @@
+id: role-templates
+epic: role-templates
+title: Role/engagement templates — data + picker in the config UI
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Build `src/lib/config/role-templates.ts` (new): five templates —
+  Fractional CTO, COO, CFO, CMO, CPO — each `{id: string, label: string,
+  config: RoleAreaConfig}`. Content must respect `src/lib/matching/tiering.ts`'s
+  precedence semantics (coreTitles-in-title wins GREEN even over a
+  redKeywords hit; keywords is the broader title+description signal;
+  redKeywords are genuine same-shape-different-domain traps, e.g. CTO's
+  redKeywords should include something like "Chief Talent Officer" — a
+  real confusable title, not filler). Generic content only — no
+  owner-specific criteria.
+
+  Extend `src/app/config/config-client.tsx`'s existing roleArea section
+  with a "Start from a template" labeled dropdown/select, positioned
+  immediately above the coreTitles/keywords/redKeywords fields, listing
+  the five templates. An "Apply" action sets `draft.roleArea` to the
+  selected template's config (and `enabled: true`) — client-side state
+  only, no new Server Action. Applying OVERWRITES the current draft (no
+  confirmation dialog for v1 — decided, not left ambiguous; trivially
+  re-editable before Save).
+
+acceptance_criteria:
+  - "Given src/lib/config/role-templates.ts, when each template's config is validated against RoleAreaConfigSchema, then it passes (schema-drift guard, same pattern as config.example.json)."
+  - "Given a template's coreTitles/keywords, when checked against its own redKeywords, then there is no overlap — a self-contradictory template would silently misclassify via tiering.ts's precedence rules."
+  - "Given the config form's roleArea section, when it renders, then a labeled 'Start from a template' picker appears immediately above the three text-array fields, listing all five templates by label."
+  - "Given a template is selected and Applied, when the fields are inspected, then coreTitles/keywords/redKeywords are populated with that template's exact content and roleArea.enabled becomes true."
+  - "Given a template is applied over existing hand-edited content, when this happens, then the prior content is overwritten with no confirmation prompt (decided v1 behavior, not a bug)."
+  - "Given a template is applied, when the form is then saved, then the resulting config.json contains the expected RoleAreaConfig — exercising the existing, unmodified save path."
+
+steps:
+  - id: research
+    description: Read src/lib/matching/tiering.ts's precedence rules in full and src/app/config/config-client.tsx's existing DraftRoleArea state + roleArea section markup to find the exact insertion point for the picker.
+    agent: researcher
+  - id: implement
+    description: Write the five templates and extend config-client.tsx with the picker per the description above.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write unit tests covering every acceptance criterion (schema validation, no coreTitles/keywords-vs-redKeywords overlap per template) and manually verify the picker in a real browser (renders, applies, overwrites, saves correctly).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review template content for realistic, genuine title/keyword accuracy (the epic's actual risk, per design discussion) and confirm the picker's placement/labeling matches the team-reviewed spec.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/role-templates.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    framework: next.js 15 (app router)
+  key_files:
+    - path: src/lib/matching/tiering.ts
+      purpose: "The precedence semantics (coreTitles-first, word-boundary) template content must respect."
+    - path: src/app/config/config-client.tsx
+      purpose: "Existing DraftRoleArea state + roleArea form section this story extends, not replaces."
+    - path: src/lib/config/schema.ts
+      purpose: "RoleAreaConfigSchema — each template's config must validate against this."
+
+design_decisions:
+  - decision: Five templates (CTO/COO/CFO/CMO/CPO), not a generic non-C-suite slot
+    rationale: Team review (ui-designer) — a generic "Full-time Engineering Leadership" fifth slot broke C-suite parallelism and missed CPO, a common fractional/startup role at least as relevant as CMO.
+  - decision: No confirmation dialog on template-apply overwrite, for v1
+    rationale: Grill (H1) — an earlier draft left this ambiguous (suggested in risks, not committed in the approach); decided explicitly: trivially re-editable before Save, not worth the added complexity for v1.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md to describe the template picker and note the five v1 templates, with a pointer for how to add more."
+
+metric:
+  applies: true
+  name: gigradar.role_templates_available
+  direction: up
+  unit: count
+  baseline: 0
+  target: 5
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "count entries in src/lib/config/role-templates.ts; confirm all validate against RoleAreaConfigSchema via npm test"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: low
+    description: Template keyword content could be too narrow (misses real title variations) or too broad (false-positive GREEN matches) — a content-quality risk, not a technical one.
+    mitigation: Review step explicitly checks content realism, not just that code compiles/tests pass.
+
+references:
+  - path: .pHive/epics/role-templates/docs/design-discussion.md
+    relevant_excerpt: |
+      A real same-shape-different-domain trap for CTO is "Chief Talent
+      Officer" — shares the "Chief ___ Officer" shape and could surface
+      in a loose title-keyword match, but is a completely different role.

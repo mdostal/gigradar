@@ -1,0 +1,113 @@
+id: app-foundation
+epic: dashboard-config-ui
+title: Next.js app-router scaffold, Tailwind, NODE_OPTIONS interop proof, localhost-only binding
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Stand up the first UI code in this repo — a genuine blank slate (no
+  src/app/, no styling framework, no next.config.js exist). This story is
+  an explicit infra CHECKPOINT, not a user-visible vertical slice — it has
+  zero visible payoff on its own; the dashboard (next story) is the first
+  real payoff. Do not treat "done" here as "feature complete," only as
+  "foundation proven."
+
+  1. Scaffold `src/app/layout.tsx` + a minimal `src/app/page.tsx`
+     (placeholder content is fine — this story does not build the
+     dashboard).
+  2. Add Tailwind CSS (Next 15's de facto default, user-confirmed).
+     `tailwind.config.*`, `postcss.config.*`, base CSS import in the root
+     layout.
+  3. Add `next.config.js` (minimal — only what's needed to run cleanly).
+  4. **Critical proof requirement**: confirm `NODE_OPTIONS=--experimental-sqlite`
+     (already in `package.json`'s `dev`/`build`/`start` scripts) actually
+     threads through NEXT'S OWN dev/build process, not just `tsx`/`vitest`
+     as it does today. Add a trivial Server Component or Route Handler
+     that calls `listGigs()` from `src/lib/store` and confirm it works
+     under BOTH `next dev` and `next build && next start` — do not assume
+     the existing script flag is sufficient; prove it.
+  5. **Localhost-only binding**: update `package.json`'s `dev`/`start`
+     scripts to bind explicitly to `127.0.0.1` (`next dev -H 127.0.0.1` /
+     `next start -H 127.0.0.1`). This is a deliberate default, not an
+     oversight — Next's default `0.0.0.0` binding combined with this
+     epic's lack of any auth layer would let anyone on the same LAN read
+     pipeline data and edit config.
+
+acceptance_criteria:
+  - "Given `npm run dev` is started, when a browser opens localhost, then a placeholder page renders with Tailwind styles applied (proving the styling pipeline works)."
+  - "Given a Server Component/Route Handler calls `listGigs()` from `src/lib/store`, when running under `next dev`, then it returns without a node:sqlite/experimental-flag error."
+  - "Given the same store call, when running under `next build && next start`, then it ALSO returns without error — proving dev/build parity, not just dev-mode success."
+  - "Given `npm run dev` or `npm run start` is running, when checked (e.g. via `lsof`/`curl` against 0.0.0.0 vs 127.0.0.1), then the server is confirmed bound to 127.0.0.1 only."
+  - "npm run typecheck passes with the new src/app/ files included."
+
+steps:
+  - id: research
+    description: Confirm current Next.js 15 app-router conventions (layout.tsx/page.tsx minimal shape) and Tailwind's current Next-15-compatible setup steps (Tailwind v4's setup differs from v3 — confirm which applies to the installed Next/React versions).
+    agent: researcher
+  - id: implement
+    description: Scaffold the app directory, Tailwind, next.config.js, the store-call proof, and the localhost-binding script changes per the description above.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Verify the acceptance criteria manually (dev mode, build+start mode, binding check) and add any automated coverage possible (e.g. a test asserting the Route Handler/Server Component's store call succeeds against a temp DB).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review the scaffold for correctness and confirm the dev/build parity proof and localhost binding are both genuinely verified, not assumed.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/dashboard-config-ui.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    framework: next.js 15 (app router)
+    styling: tailwind css
+    runtime: node
+  key_files:
+    - path: package.json
+      purpose: "Existing NODE_OPTIONS=--experimental-sqlite threading through dev/build/start scripts — must be updated to add -H 127.0.0.1, and its sufficiency for Next's own process model must be proven, not assumed."
+    - path: src/lib/store/index.ts
+      purpose: "The listGigs() call used to prove the SQLite interop works under Next's process model."
+
+design_decisions:
+  - decision: Localhost-only binding by default
+    rationale: Team review (security-reviewer) — Next's default 0.0.0.0 binding plus zero auth layer would expose pipeline/config data to anyone on the same LAN. A user who wants LAN access can override the host flag themselves; that's their explicit choice, not this epic's default.
+  - decision: This story is a checkpoint, not a vertical slice
+    rationale: Team review (tpm) — has zero user-visible value on its own; must be tracked/estimated honestly, not as if it were a shippable increment.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's roadmap to mark app-router/UI foundation as in-progress, and note the localhost-only binding default in a new 'Running the dashboard' section."
+
+metric:
+  applies: true
+  name: gigradar.nextjs_sqlite_interop_proven
+  direction: up
+  unit: bool
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "confirm the store-call proof passes under both `next dev` and `next build && next start`"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: If NODE_OPTIONS doesn't thread through Next's dev/build process the way it does for tsx/vitest, every later story in this epic is blocked.
+    mitigation: This is exactly why this story exists first and proves it explicitly under both dev and build modes, rather than assuming.
+
+references:
+  - path: .pHive/epics/dashboard-config-ui/docs/vertical-plan.md
+    relevant_excerpt: |
+      Checkpoint 0 — App foundation (not a vertical slice — explicit infra
+      checkpoint)... NO user-visible dashboard content yet — a
+      blank/placeholder page is acceptable.

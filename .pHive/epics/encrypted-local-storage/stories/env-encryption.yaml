@@ -1,0 +1,103 @@
+id: env-encryption
+epic: encrypted-local-storage
+title: "Encrypt .env at rest (dotenv.parse()-based, migrate-on-read)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [vault-module]
+
+description: |
+  Wire vault-module's primitives into `.env` handling, per the design doc's
+  §3 step 3. This is the genuinely trickier of the file-format migrations
+  (per research-brief risk assessment): `dotenv.config({path})` reads its
+  own file off disk and cannot accept already-decrypted in-memory content,
+  so this story bypasses it.
+
+  In `src/lib/config/load.ts`'s `loadDotEnvFile()`: read the raw `.env`
+  file content directly via `fs.readFileSync` (not `dotenv.config()`).
+  Call `isEncryptedEnvelope()`. If true, `decrypt()` to get the real
+  `KEY=VALUE` text. If false (legacy plaintext), use the content as-is AND
+  immediately re-write it `encrypt()`-wrapped (same migrate-on-read
+  discipline as config.json — `.env` reads only ever happen as part of
+  `loadConfig()`, itself a standalone externally-facing entry point, so
+  there's no internal-vs-external distinction to make here, unlike
+  save.ts's config.json paths).
+
+  Feed the resulting plaintext `KEY=VALUE` string to `dotenv.parse()`
+  (not `.config()`), then apply the parsed key-value pairs to
+  `process.env` manually: `for (const [k, v] of Object.entries(parsed)) if (!(k in process.env)) process.env[k] = v`
+  — replicating the existing `override: false` semantics exactly. This
+  manual loop must preserve the file's "never log a secret" contract:
+  it must never log, include in an error message, or otherwise surface any
+  key or value from the parsed content.
+
+  Update `load.test.ts`'s `.env`-related fixtures/assertions for the new
+  format (may overlap with config-json-encryption's test updates to the
+  same file — coordinate/merge if executed in parallel).
+
+acceptance_criteria:
+  - "Given an existing plaintext .env fixture, when loadConfig() (which internally calls loadDotEnvFile()) reads it, then process.env is populated correctly AND the .env file on disk is now an encrypted envelope after the call."
+  - "Given an already-encrypted .env file, when loadDotEnvFile() reads it, then it decrypts, dotenv.parse()s, and applies to process.env correctly, with no further write."
+  - "Given a process.env variable already set (e.g. by the shell) before .env is loaded, when a decrypted .env also defines that same variable, then the pre-existing process.env value wins — override:false semantics preserved exactly, matching current dotenv.config() behavior."
+  - "Given no .env file exists at all, when loadDotEnvFile() runs, then it is a silent no-op (unchanged from current behavior) — a missing .env is not an error and does not attempt any encryption operation."
+  - "Given a corrupted/tampered .env file, when loadDotEnvFile() attempts to read it, then it throws the vault module's specific tamper error, surfaced with an actionable, .env-specific message."
+  - "Given the manual process.env-apply loop, when code-reviewed, then no key name or value from .env ever appears in a log statement or thrown error message anywhere in the changed code."
+
+steps:
+  - id: implement
+    description: Rewrite loadDotEnvFile() per the description above, bypassing dotenv.config() in favor of raw read + decrypt-if-needed + dotenv.parse() + manual override:false apply.
+    agent: developer
+  - id: test
+    description: Update load.test.ts's .env-related fixtures/assertions for the new format and add tests for every acceptance criterion above, especially the override:false regression test.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the never-log-a-secret contract is upheld in the new manual apply loop, and that override:false semantics exactly match dotenv.config()'s prior behavior (no accidental override:true regression).
+    agent: security-reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/encrypted-local-storage.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    dependency: "dotenv ^17.4.2 — .parse() export used instead of .config()"
+  key_files:
+    - path: src/lib/config/load.ts
+      purpose: "loadDotEnvFile() — the function this story rewrites."
+    - path: src/lib/security/vault.ts
+      purpose: "encrypt()/decrypt()/isEncryptedEnvelope() from vault-module."
+
+design_decisions:
+  - decision: Use dotenv.parse() on in-memory decrypted content instead of dotenv.config() reading the file itself
+    rationale: dotenv.config() cannot accept already-decrypted content — it insists on reading its own file path. parse() is the documented, non-hand-rolled way to parse an in-memory KEY=VALUE string with the existing dependency.
+  - decision: No internal-vs-external raw-read distinction needed for .env (unlike config.json's save.ts paths)
+    rationale: .env is only ever read as part of loadConfig(), a single standalone externally-facing entry point — there's no equivalent to save.ts's internal-merge-read use case.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.env_encrypted_at_rest
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manual smoke test: write a plaintext .env fixture, run loadConfig(), confirm the file is encrypted on disk afterward and referenced env vars resolve correctly"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: A subtle override:false regression (e.g. accidentally overwriting a shell-exported var) would be a real behavior change invisible without a dedicated test.
+    mitigation: Dedicated acceptance criterion and test specifically for the override:false precedence case.
+
+references:
+  - .pHive/epics/encrypted-local-storage/docs/design-discussion.md
+  - .pHive/epics/encrypted-local-storage/docs/research-brief.md

@@ -1,0 +1,109 @@
+id: config-json-encryption
+epic: encrypted-local-storage
+title: "Encrypt config.json at rest (load.ts + save.ts, migrate-on-read)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [vault-module]
+
+description: |
+  Wire vault-module's primitives into every place config.json is read or
+  written, per the design doc's §3 step 2 (as revised during collaborative
+  review).
+
+  `src/lib/config/load.ts`'s `loadConfig()`: after reading raw file content,
+  call `isEncryptedEnvelope()`. If true, `decrypt()` before `JSON.parse()`.
+  If false (legacy plaintext), `JSON.parse()` directly AND — since this is a
+  standalone, externally-facing read entry point — immediately re-write the
+  file `encrypt()`-wrapped (atomic temp-file+rename, 0600, same discipline
+  as every existing write in this codebase). Update this file's header
+  comment, which currently states "loadConfig() only ever reads" as a
+  deliberate invariant — that statement becomes false; replace it with an
+  accurate description of the one-time encrypt-migration write.
+
+  `src/lib/config/save.ts`: `readRawConfigDocument()` (used internally by
+  `saveConfig()` as the merge base) needs decrypt-if-needed handling but
+  must NOT independently trigger a migrate-write — `saveConfig()`'s own
+  subsequent validate-then-write already re-encrypts the whole document,
+  and a validation failure must still leave the original file byte-for-byte
+  untouched (existing test invariant in save.test.ts). `readRawConfig()`
+  (the public wrapper, consumed by `src/app/config/page.tsx`) IS a
+  standalone externally-facing read — it DOES auto-migrate on read, same as
+  `loadConfig()`. Its returned meaning is unchanged: decrypted (if the file
+  was encrypted) but still not env-resolved — never the literal envelope
+  bytes. `saveConfig()`'s own write path passes the validated document
+  through `encrypt()` before `fs.writeFileSync`.
+
+  Update `load.test.ts` and `save.test.ts`'s existing fixture/assertion call
+  sites (currently plaintext-JSON-based) for the new format, and add
+  `XDG_CONFIG_HOME` test isolation alongside their existing `XDG_DATA_HOME`
+  isolation.
+
+acceptance_criteria:
+  - "Given an existing plaintext config.json fixture, when loadConfig() reads it, then it parses correctly AND the file on disk is now an encrypted envelope after the call returns."
+  - "Given an already-encrypted config.json, when loadConfig() reads it, then it decrypts, parses, and validates correctly, with no further write."
+  - "Given a plaintext config.json and edits that FAIL ConfigSchema validation, when saveConfig() is called, then the file on disk is left completely byte-for-byte untouched (still plaintext, unchanged) — the internal raw-read must not migrate-write ahead of the failed validation."
+  - "Given a plaintext config.json, when readRawConfig() (the standalone external entry point) is called directly, then it returns the parsed document AND the file on disk is now encrypted after the call."
+  - "Given saveConfig() succeeds, when the resulting config.json is read back off disk directly, then its raw bytes are an encrypted envelope, never plaintext JSON."
+  - "Given a corrupted/tampered config.json (a flipped byte within its ciphertext), when loadConfig() attempts to read it, then it throws the vault module's specific tamper error, surfaced with an actionable, config.json-specific message."
+  - "Given load.ts's file header comment, when read after this story, then it accurately describes the migrate-on-read behavior — it no longer claims loadConfig() only ever reads."
+
+steps:
+  - id: implement
+    description: Wire vault.ts into load.ts and save.ts per the description above, including the internal-vs-external raw-read distinction in save.ts.
+    agent: developer
+  - id: test
+    description: Rewrite load.test.ts and save.test.ts's plaintext-based fixtures/assertions for the new format, add XDG_CONFIG_HOME isolation, and add the new acceptance-criteria tests above (especially the validation-failure-leaves-file-untouched regression test against a legacy plaintext input).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review that the internal-raw-read-vs-standalone-read distinction in save.ts is correctly implemented (no premature migrate-write), and that no secret value or key material is ever logged anywhere in the changed code.
+    agent: security-reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/encrypted-local-storage.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+  key_files:
+    - path: src/lib/config/load.ts
+      purpose: "loadConfig() — the externally-facing entry point that auto-migrates on read."
+    - path: src/lib/config/save.ts
+      purpose: "readRawConfigDocument() (internal, no migrate-write) vs readRawConfig() (external, migrates) vs saveConfig() (always writes encrypted)."
+    - path: src/lib/security/vault.ts
+      purpose: "encrypt()/decrypt()/isEncryptedEnvelope()/getOrCreateKey() from vault-module — the primitives this story wires in."
+
+design_decisions:
+  - decision: readRawConfigDocument() (internal) decrypts but never migrate-writes; readRawConfig() (external) and loadConfig() (external) both migrate-write
+    rationale: Collaborative review caught that migrate-writing on every raw read, including the one saveConfig() uses internally as a merge base, would silently violate save.test.ts's existing "no write on validation failure" invariant.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's config-storage section to describe encryption-at-rest and the migrate-on-read behavior."
+
+metric:
+  applies: true
+  name: gigradar.config_json_encrypted_at_rest
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manual smoke test: write a plaintext config.json fixture, run loadConfig(), confirm the file is encrypted on disk afterward"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: Getting the internal-vs-external raw-read distinction wrong could either silently break the validation-failure-leaves-file-untouched invariant, or leave the config UI's pre-populate path (readRawConfig()) failing to migrate legacy files.
+    mitigation: Dedicated acceptance criteria and a specific regression test for the validation-failure case against a legacy plaintext fixture.
+
+references:
+  - .pHive/epics/encrypted-local-storage/docs/design-discussion.md
+  - .pHive/epics/encrypted-local-storage/docs/grill-record.md

@@ -1,0 +1,102 @@
+id: builtin-adapter
+epic: find-pipeline-foundation
+title: Real BuiltIn Source adapter (generalization proof)
+status: pending
+complexity: low
+methodology: classic
+depends_on: [braintrust-adapter-runner-integration]
+
+description: |
+  This is Slice 3 of the epic's vertical plan: a second real, live Source
+  adapter (BuiltIn — a public board, auth:"none" per legacy platforms.mjs,
+  same low-friction profile as Braintrust), proving the persistence and
+  runner integration built in prior stories generalizes beyond the first
+  adapter it was built against, not just coincidentally works for one.
+
+  Build src/lib/sources/builtin.ts implementing the existing Source
+  contract, same requirements as the Braintrust adapter: real fetch +
+  normalize to Gig objects with real per-listing URLs, throw-on-failure
+  (never silent-zero), unit tests against sanitized recorded fixtures, and
+  one documented one-time manual live run recorded in this story's
+  completion notes.
+
+  Tiering (from tiering-role-area-classifier) applies to BuiltIn's results
+  automatically — it runs per-Gig in runRadar(), source-agnostic. No
+  BuiltIn-specific tiering work is needed or expected in this story.
+
+acceptance_criteria:
+  - "Given the BuiltIn adapter is enabled, when runRadar() executes, then it returns real Gig objects with real per-listing URLs (not search-page URLs)."
+  - "Given the BuiltIn adapter throws on fetch failure, when runRadar() executes, then the error is surfaced in errors[] and the run does not silently report zero results."
+  - "Given both Braintrust and BuiltIn are enabled, when runRadar() executes, then results from both sources persist correctly with no id collisions (dedup keyed by sourceId:externalId remains correct across two real sources, not just one)."
+  - "Given a BuiltIn gig is gated and tiered, when the run persists, then its stored record carries a tier — with zero BuiltIn-specific code added to tiering.ts."
+  - "Unit tests for the adapter's normalize/parse logic run against recorded, PII-scrubbed fixture responses — zero live network calls in `npm test`."
+  - "A one-time manual live run has been performed and its confirmation (gig count, one sample real URL) is recorded in this story's completion notes before the review step."
+
+steps:
+  - id: research
+    description: Inspect legacy the legacy tool's codebase/platforms.mjs's builtin entry (public board, session "mat" was used there for convenience, not required — confirm whether BuiltIn's public board is reachable without any session in the new implementation) and confirm BuiltIn's current board URL/structure.
+    agent: researcher
+  - id: implement
+    description: Implement src/lib/sources/builtin.ts (fetch + normalize, real URLs, throw-on-failure) and register it alongside the Braintrust adapter. Perform the one-time manual live run and record its confirmation.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Capture and PII-scrub real BuiltIn response fixtures, write adapter unit tests against them, and write a two-source integration test confirming both Braintrust and BuiltIn results coexist correctly in the store with no id collisions.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation and tests for correctness, confirm the manual live-run confirmation is recorded, and verify no PII survived into committed fixtures.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/find-pipeline-foundation.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    runtime: node
+    test_runner: vitest
+  key_files:
+    - path: src/lib/sources/braintrust.ts
+      purpose: Reference implementation — the immediately prior adapter story establishes the fetch/normalize/fixture-testing pattern this story should follow, not reinvent.
+    - path: src/lib/apply/runner.ts
+      purpose: Already wired to persistence and tiering by prior stories; this story registers a second source into the existing pipeline, no runner changes expected.
+
+design_decisions:
+  - decision: BuiltIn as the second (not third) adapter; A.Team and GoFractional excluded from this epic entirely
+    rationale: Same auth:"none" public-board profile as Braintrust — proves generalization without introducing new auth complexity. A.Team (google-oauth) and GoFractional (headed-Cloudflare-workaround) are both explicitly deferred to a follow-on epic gated on the still-open secrets-storage design decision.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's build-out roadmap checklist to mark BuiltIn as shipped alongside Braintrust."
+
+metric:
+  applies: true
+  name: gigradar.live_source_adapters_count
+  direction: up
+  unit: count
+  baseline: 1
+  target: 2
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "count Source registrations in src/lib/sources/ with auth != fixture-only and a real (non-hardcoded) fetch() implementation"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: low
+    description: By this point the store, runner integration, and fixture-testing pattern are all established from the prior two stories — this story is materially mechanical relative to persistence-layer-sqlite and braintrust-adapter-runner-integration (per the vertical plan's risk-by-slice assessment).
+    mitigation: No new mitigation needed beyond following the established Braintrust pattern; the two-source dedup/collision test is the one genuinely new piece of coverage this story adds.
+
+references:
+  - path: .pHive/epics/find-pipeline-foundation/docs/vertical-plan.md
+    relevant_excerpt: |
+      Slice 3 — BuiltIn adapter (generalization proof)... Does not depend on
+      Slice 2 (Tiering) functionally, though by this point tiering will
+      already be wired in from Slice 2 — architect team-review confirmed this
+      "for free" claim holds: tiering runs per-Gig in Runner integration,
+      source-agnostic.

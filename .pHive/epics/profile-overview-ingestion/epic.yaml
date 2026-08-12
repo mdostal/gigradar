@@ -1,0 +1,37 @@
+name: profile-overview-ingestion
+title: Unified overview nav + resume/link skills ingestion (LLM-based)
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [ui, architecture, security]
+  roster: [researcher, technical-writer, tpm, ui-designer, architect, security-reviewer]
+  per_tag_reasoning:
+    ui: "New nav header, dashboard status strip, and a resume-upload/link-extraction control in the config form — direct match."
+    architecture: "First external API dependency (@anthropic-ai/sdk) and first non-config.json local write path (.env, via a new env-store.ts) — structural additions."
+    security: "First outbound call carrying personal data (resume content) to a third-party API; API-key handling; in-memory-only resume processing decision."
+  confidence: matched
+  gate_decisions:
+    ui: included
+    architecture: included
+    security: included
+
+stories:
+  - id: overview-nav-status
+    title: "Shared nav + dashboard status strip (sources, profile completeness, last scan)"
+    complexity: low
+    depends_on: []
+  - id: profile-ingestion-module
+    title: "Resume/link extraction module + .env API-key writer (Claude API, mocked in tests)"
+    complexity: medium
+    depends_on: []
+  - id: resume-link-ui
+    title: "Extract-from-resume/link UI + Server Action wiring"
+    complexity: medium
+    depends_on: [profile-ingestion-module]

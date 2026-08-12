@@ -1,0 +1,302 @@
+// Tests for the two Server Actions the `resume-link-ui` story adds to
+// `../actions.ts`: `setAnthropicApiKeyAction` and
+// `extractProfileFromResumeAction`. `env-store.ts`'s `setEnvVar`/`readEnvVar`
+// run FOR REAL against isolated temp XDG dirs (same pattern as
+// `env-store.test.ts`/`actions.test.ts` — env-store.ts itself is already
+// thoroughly unit-tested, so exercising the real thing here proves these
+// actions are correctly wired to it, especially the "resolved fresh
+// per-request" contract). `extractProfile()` (the real Anthropic-calling
+// function) is mocked — this suite's job is these actions' own logic, not
+// re-testing extract.ts's LLM-calling internals (already covered by
+// extract.test.ts's own mocked-Anthropic-client suite).
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mockExtractProfile = vi.fn();
+vi.mock("@/lib/profile-ingestion/extract", () => ({
+  extractProfile: (...args: unknown[]) => mockExtractProfile(...args),
+}));
+
+import { getConfigPath, getEnvPath } from "@/lib/config/load";
+import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
+import { decrypt } from "@/lib/security/vault";
+import { extractProfileFromResumeAction, setAnthropicApiKeyAction } from "../actions";
+
+let tmpDir: string;
+let keyTmpDir: string;
+let originalXdgDataHome: string | undefined;
+let originalXdgConfigHome: string | undefined;
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-resume-link-action-test-"));
+  keyTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-resume-link-action-test-key-"));
+  originalXdgDataHome = process.env.XDG_DATA_HOME;
+  originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_DATA_HOME = tmpDir;
+  process.env.XDG_CONFIG_HOME = keyTmpDir;
+  mockExtractProfile.mockReset();
+});
+
+afterEach(() => {
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(keyTmpDir, { recursive: true, force: true });
+});
+
+// -- setAnthropicApiKeyAction -----------------------------------------------
+
+describe("setAnthropicApiKeyAction", () => {
+  it("writes ANTHROPIC_API_KEY to .env (encrypted at rest) and readEnvVar() resolves it back (AC1)", async () => {
+    const formData = new FormData();
+    formData.set("apiKey", "sk-ant-real-looking-test-key-123");
+
+    const result = await setAnthropicApiKeyAction(formData);
+
+    expect(result.ok).toBe(true);
+    expect(readEnvVar("ANTHROPIC_API_KEY")).toBe("sk-ant-real-looking-test-key-123");
+
+    const raw = fs.readFileSync(getEnvPath(), "utf8");
+    expect(raw).not.toContain("sk-ant-real-looking-test-key-123");
+  });
+
+  it("preserves other existing .env vars untouched (AC1)", async () => {
+    setEnvVar("BRAINTRUST_API_KEY", "existing-unrelated-value");
+
+    const formData = new FormData();
+    formData.set("apiKey", "sk-ant-new-key");
+    const result = await setAnthropicApiKeyAction(formData);
+
+    expect(result.ok).toBe(true);
+    expect(readEnvVar("BRAINTRUST_API_KEY")).toBe("existing-unrelated-value");
+    expect(readEnvVar("ANTHROPIC_API_KEY")).toBe("sk-ant-new-key");
+  });
+
+  it("trims surrounding whitespace before writing", async () => {
+    const formData = new FormData();
+    formData.set("apiKey", "  sk-ant-with-whitespace  \n");
+
+    await setAnthropicApiKeyAction(formData);
+
+    expect(readEnvVar("ANTHROPIC_API_KEY")).toBe("sk-ant-with-whitespace");
+  });
+
+  it("rejects a blank/missing apiKey field without writing to .env", async () => {
+    const formData = new FormData();
+    formData.set("apiKey", "   ");
+
+    const result = await setAnthropicApiKeyAction(formData);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error.toLowerCase()).toContain("anthropic api key");
+    expect(fs.existsSync(getEnvPath())).toBe(false);
+  });
+
+  it("rejects a completely missing apiKey field", async () => {
+    const result = await setAnthropicApiKeyAction(new FormData());
+
+    expect(result.ok).toBe(false);
+    expect(fs.existsSync(getEnvPath())).toBe(false);
+  });
+});
+
+// -- extractProfileFromResumeAction -----------------------------------------
+
+function fakeExtractResult(overrides: Partial<{ roles: string[]; skills: string[]; warnings: string[] }> = {}) {
+  return { roles: [], skills: [], warnings: [], ...overrides };
+}
+
+describe("extractProfileFromResumeAction: missing API key (AC2)", () => {
+  it("returns a specific error naming the 'Anthropic API key' field, not a generic auth failure, and never calls extractProfile()", async () => {
+    expect(readEnvVar("ANTHROPIC_API_KEY")).toBeUndefined();
+
+    const formData = new FormData();
+    formData.set("links", "https://github.com/someone");
+
+    const result = await extractProfileFromResumeAction(formData);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("Anthropic API key");
+    expect(mockExtractProfile).not.toHaveBeenCalled();
+  });
+});
+
+describe("extractProfileFromResumeAction: per-request API key resolution, not module scope (critical correctness fix)", () => {
+  it("resolves a freshly-set key on the very next call, proving it isn't cached/resolved once", async () => {
+    mockExtractProfile.mockResolvedValue(fakeExtractResult());
+
+    setEnvVar("ANTHROPIC_API_KEY", "key-one");
+    const first = await extractProfileFromResumeAction(new FormData());
+    expect(first.ok).toBe(true);
+    expect(mockExtractProfile).toHaveBeenNthCalledWith(1, expect.anything(), "key-one");
+
+    setEnvVar("ANTHROPIC_API_KEY", "key-two");
+    const second = await extractProfileFromResumeAction(new FormData());
+    expect(second.ok).toBe(true);
+    expect(mockExtractProfile).toHaveBeenNthCalledWith(2, expect.anything(), "key-two");
+  });
+
+  it("never resolves the key via process.env — a value set only in process.env (never written via setEnvVar/.env) is not used", async () => {
+    mockExtractProfile.mockResolvedValue(fakeExtractResult());
+    const original = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "process-env-value-should-be-ignored";
+    try {
+      const result = await extractProfileFromResumeAction(new FormData());
+      expect(result.ok).toBe(false); // no .env-backed key was ever set
+      expect(mockExtractProfile).not.toHaveBeenCalled();
+    } finally {
+      if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = original;
+    }
+  });
+});
+
+describe("extractProfileFromResumeAction: builds ExtractProfileInput from FormData", () => {
+  beforeEach(() => {
+    setEnvVar("ANTHROPIC_API_KEY", "test-key");
+  });
+
+  it("passes a PDF upload through as resumeFile with mediaType application/pdf", async () => {
+    mockExtractProfile.mockResolvedValue(fakeExtractResult({ roles: ["Engineer"] }));
+    const pdfBytes = Buffer.from("%PDF-1.4 fake pdf bytes");
+    const file = new File([pdfBytes], "resume.pdf", { type: "application/pdf" });
+
+    const formData = new FormData();
+    formData.set("resumeFile", file);
+
+    const result = await extractProfileFromResumeAction(formData);
+
+    expect(result.ok).toBe(true);
+    const [input] = mockExtractProfile.mock.calls[0] as [Record<string, unknown>];
+    expect((input as { resumeFile?: { mediaType: string; data: Buffer } }).resumeFile?.mediaType).toBe(
+      "application/pdf",
+    );
+    expect(
+      ((input as { resumeFile?: { mediaType: string; data: Buffer } }).resumeFile?.data as Buffer).equals(pdfBytes),
+    ).toBe(true);
+    expect((input as { resumeText?: string }).resumeText).toBeUndefined();
+  });
+
+  it("passes a plain-text upload through as resumeText, not resumeFile", async () => {
+    mockExtractProfile.mockResolvedValue(fakeExtractResult());
+    const file = new File(["Jane Doe — backend engineer."], "resume.txt", { type: "text/plain" });
+
+    const formData = new FormData();
+    formData.set("resumeFile", file);
+
+    await extractProfileFromResumeAction(formData);
+
+    const [input] = mockExtractProfile.mock.calls[0] as [{ resumeText?: string; resumeFile?: unknown }];
+    expect(input.resumeText).toContain("Jane Doe — backend engineer.");
+    expect(input.resumeFile).toBeUndefined();
+  });
+
+  it("parses the links textarea into a trimmed, blank-line-dropped array", async () => {
+    mockExtractProfile.mockResolvedValue(fakeExtractResult());
+    const formData = new FormData();
+    formData.set("links", "  https://github.com/jane  \n\n https://janedoe.dev\n   \n");
+
+    await extractProfileFromResumeAction(formData);
+
+    const [input] = mockExtractProfile.mock.calls[0] as [{ links?: string[] }];
+    expect(input.links).toEqual(["https://github.com/jane", "https://janedoe.dev"]);
+  });
+
+  it("omits links entirely when the textarea is blank/absent", async () => {
+    mockExtractProfile.mockResolvedValue(fakeExtractResult());
+
+    await extractProfileFromResumeAction(new FormData());
+
+    const [input] = mockExtractProfile.mock.calls[0] as [{ links?: string[] }];
+    expect(input.links).toBeUndefined();
+  });
+
+  it("accepts a realistic-sized PDF (several MB) without rejecting it for size — exercising the raised body-size limit's request-handling path (AC3)", async () => {
+    mockExtractProfile.mockResolvedValue(fakeExtractResult({ roles: ["Engineer"] }));
+    const largePdfBytes = Buffer.alloc(5 * 1024 * 1024, 1); // 5MB, comfortably above the old 1MB default
+    const file = new File([largePdfBytes], "big-resume.pdf", { type: "application/pdf" });
+    const formData = new FormData();
+    formData.set("resumeFile", file);
+
+    const result = await extractProfileFromResumeAction(formData);
+
+    expect(result.ok).toBe(true);
+    const [input] = mockExtractProfile.mock.calls[0] as [{ resumeFile?: { data: Buffer } }];
+    expect(input.resumeFile?.data.length).toBe(5 * 1024 * 1024);
+  });
+});
+
+describe("extractProfileFromResumeAction: mixed-link partial-failure case (AC5)", () => {
+  it("given extractProfile() resolves with 2-of-3 links' worth of data plus one warning, returns {ok:true} carrying both the results AND the warning — not a blank/failed state", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "test-key");
+    mockExtractProfile.mockResolvedValue({
+      roles: ["Fractional CTO"],
+      skills: ["TypeScript", "Leadership"],
+      warnings: ['Couldn\'t use "https://linkedin.com/in/someone" — it may require login.'],
+    });
+
+    const formData = new FormData();
+    formData.set("links", "https://github.com/jane\nhttps://linkedin.com/in/someone\nhttps://janedoe.dev");
+
+    const result = await extractProfileFromResumeAction(formData);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.data.roles).toEqual(["Fractional CTO"]);
+    expect(result.data.skills).toEqual(["TypeScript", "Leadership"]);
+    expect(result.data.warnings).toHaveLength(1);
+    expect(result.data.warnings[0]).toContain("linkedin.com/in/someone");
+  });
+});
+
+describe("extractProfileFromResumeAction: total failure surfaces extractProfile()'s specific error", () => {
+  it("returns {ok:false,error} with extractProfile()'s own message when it throws (e.g. Anthropic API error)", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "test-key");
+    mockExtractProfile.mockRejectedValue(new Error("gigradar profile ingestion: no usable input — some specific reason"));
+
+    const result = await extractProfileFromResumeAction(new FormData());
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("no usable input");
+  });
+});
+
+describe("extractProfileFromResumeAction: never persists anything (regression guard)", () => {
+  it("writes nothing to config.json, whether the call succeeds or fails", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "test-key");
+    mockExtractProfile.mockResolvedValue(
+      fakeExtractResult({ roles: ["Fractional CTO"], skills: ["TypeScript"], warnings: [] }),
+    );
+
+    const ok = await extractProfileFromResumeAction(new FormData());
+    expect(ok.ok).toBe(true);
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+
+    mockExtractProfile.mockRejectedValue(new Error("boom"));
+    const failed = await extractProfileFromResumeAction(new FormData());
+    expect(failed.ok).toBe(false);
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+  });
+});
+
+// Sanity check that decrypt() is reachable/used correctly by this suite's
+// setup (mirrors env-store.test.ts's own convention of proving the on-disk
+// bytes are genuinely encrypted, not just trusting setEnvVar()'s own tests).
+describe("setAnthropicApiKeyAction: on-disk .env is genuinely encrypted, not plaintext", () => {
+  it("the raw .env bytes decrypt to a KEY=VALUE line containing the saved key", async () => {
+    const formData = new FormData();
+    formData.set("apiKey", "sk-ant-decrypt-check");
+    await setAnthropicApiKeyAction(formData);
+
+    const raw = fs.readFileSync(getEnvPath(), "utf8");
+    const decrypted = decrypt(raw);
+    expect(decrypted).toContain("ANTHROPIC_API_KEY=sk-ant-decrypt-check");
+  });
+});

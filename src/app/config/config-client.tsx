@@ -1,0 +1,1100 @@
+"use client";
+
+import { type ChangeEvent, type FormEvent, useState, useTransition } from "react";
+import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
+import type { ConfigEdits } from "@/lib/config/save";
+import { mergeDedupe } from "@/lib/profile-ingestion/merge";
+import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
+import type { Config, RoleAreaConfig, SourceConfig } from "@/lib/types";
+import {
+  cancelCaptureAction,
+  extractProfileFromResumeAction,
+  finishCaptureAction,
+  saveConfigAction,
+  setAnthropicApiKeyAction,
+  startCaptureAction,
+} from "./actions";
+
+// ---------------------------------------------------------------------------
+// Draft (form) state — a UI-friendly shape distinct from `Config` itself:
+// number fields are strings (controlled <input type="number"> values), and
+// the optional `homeBase`/`roleArea`/`schedule` sections each carry their own
+// "enabled" flag so the form can represent the tri-state "never touched this
+// section" vs "explicitly configured, possibly with empty lists" distinction
+// `RoleAreaConfig`/`schedule` document (see src/lib/types.ts and this
+// story's acceptance criteria). `draftToEdits()` below is the only place
+// that converts back to the real `Config`-shaped `ConfigEdits`.
+// ---------------------------------------------------------------------------
+
+interface SettingPair {
+  key: string;
+  value: string;
+}
+
+interface DraftSource {
+  id: string;
+  enabled: boolean;
+  settings: SettingPair[];
+}
+
+interface DraftProfile {
+  name: string;
+  roles: string[];
+  skills: string[];
+  timezone: string;
+  homeBaseEnabled: boolean;
+  homeBaseCity: string;
+  homeBaseLat: string;
+  homeBaseLng: string;
+}
+
+interface DraftNeeds {
+  minRate: string;
+  highRate: string;
+  maxHours: string;
+  maxHoursAtHighRate: string;
+  allowContractToHire: boolean;
+  freshStageOnly: boolean;
+  remoteOnly: boolean;
+}
+
+interface DraftRoleArea {
+  enabled: boolean;
+  coreTitles: string[];
+  keywords: string[];
+  redKeywords: string[];
+}
+
+interface DraftConfig {
+  profile: DraftProfile;
+  needs: DraftNeeds;
+  sources: DraftSource[];
+  roleArea: DraftRoleArea;
+  schedule: string;
+}
+
+// -- Config -> Draft -----------------------------------------------------
+
+/**
+ * `settings` values are shown/edited as literal strings (the "PAIRS EDITOR"
+ * this story specifies) — a non-string value (rare; `settings` is opaque
+ * `Record<string, unknown>`) is stringified for display only. Crucially, a
+ * string value — including any `"env:VAR_NAME"` reference — passes through
+ * completely UNCHANGED: this function never inspects, resolves, or looks up
+ * `process.env` for anything.
+ */
+function settingsToPairs(settings: Record<string, unknown> | undefined): SettingPair[] {
+  if (!settings) return [];
+  return Object.entries(settings).map(([key, value]) => ({
+    key,
+    value: typeof value === "string" ? value : JSON.stringify(value),
+  }));
+}
+
+function sourceToDraft(source: SourceConfig): DraftSource {
+  return { id: source.id, enabled: source.enabled, settings: settingsToPairs(source.settings) };
+}
+
+function configToDraft(config: Config): DraftConfig {
+  return {
+    profile: {
+      name: config.profile.name,
+      roles: config.profile.roles,
+      skills: config.profile.skills,
+      timezone: config.profile.timezone,
+      homeBaseEnabled: config.profile.homeBase != null,
+      homeBaseCity: config.profile.homeBase?.city ?? "",
+      homeBaseLat: config.profile.homeBase ? String(config.profile.homeBase.lat) : "",
+      homeBaseLng: config.profile.homeBase ? String(config.profile.homeBase.lng) : "",
+    },
+    needs: {
+      minRate: String(config.needs.minRate),
+      highRate: String(config.needs.highRate),
+      maxHours: String(config.needs.maxHours),
+      maxHoursAtHighRate: String(config.needs.maxHoursAtHighRate),
+      allowContractToHire: config.needs.allowContractToHire,
+      freshStageOnly: config.needs.freshStageOnly,
+      remoteOnly: config.needs.remoteOnly,
+    },
+    sources: config.sources.map(sourceToDraft),
+    roleArea: {
+      enabled: config.roleArea != null,
+      coreTitles: config.roleArea?.coreTitles ?? [],
+      keywords: config.roleArea?.keywords ?? [],
+      redKeywords: config.roleArea?.redKeywords ?? [],
+    },
+    schedule: config.schedule ?? "",
+  };
+}
+
+// -- Draft -> ConfigEdits --------------------------------------------------
+
+/** Drops blank rows (an add-row the user never filled in) — never sent to the server as an empty string entry. */
+function nonBlank(values: string[]): string[] {
+  return values.filter((v) => v.trim() !== "");
+}
+
+/**
+ * Converts a numeric-field draft string to a real `number` for the edits
+ * payload — UNLESS it's blank or not a valid number, in which case the
+ * ORIGINAL STRING is passed through unchanged instead. This is deliberate,
+ * not an oversight: `Number("")` is `0` (a perfectly valid `ConfigSchema`
+ * value), so silently coercing a cleared required field to `0` would defeat
+ * this story's "a required Needs field cleared" validation-failure
+ * acceptance criterion — the save would just succeed with a wrong-but-valid
+ * `0`. Leaving a blank/invalid field as a string instead means
+ * `ConfigSchema`'s `z.number()` check on the server rejects it with a
+ * specific `needs.<field>: Expected number, received string` error, which
+ * `saveConfigAction` surfaces verbatim in the form.
+ */
+function draftNumber(value: string): number | string {
+  const n = Number(value);
+  return value.trim() !== "" && !Number.isNaN(n) ? n : value;
+}
+
+function pairsToSettings(pairs: SettingPair[]): Record<string, unknown> | undefined {
+  const nonBlankPairs = pairs.filter((p) => p.key.trim() !== "");
+  if (nonBlankPairs.length === 0) return undefined;
+  const settings: Record<string, unknown> = {};
+  for (const p of nonBlankPairs) settings[p.key] = p.value; // literal string — never resolved
+  return settings;
+}
+
+function draftToSource(draft: DraftSource): SourceConfig {
+  const settings = pairsToSettings(draft.settings);
+  return settings ? { id: draft.id, enabled: draft.enabled, settings } : { id: draft.id, enabled: draft.enabled };
+}
+
+/**
+ * Builds the `ConfigEdits` object the Server Action sends to `saveConfig()`.
+ * `profile`/`needs`/`sources` are always included (this form always submits
+ * the complete current state of those three sections). `roleArea`/
+ * `schedule` are included explicitly as `undefined` when their section is
+ * disabled/empty — `saveConfig()`'s shallow top-level merge
+ * (`{...currentRaw, ...edits}`) combined with `JSON.stringify` dropping
+ * `undefined`-valued keys means an explicit `undefined` here correctly
+ * un-sets a previously-saved section, while first-run (nothing on disk yet)
+ * simply stays absent — either way, the written document never gets a
+ * defaulted `roleArea: {}` or `schedule: ""` per this story's acceptance
+ * criteria.
+ */
+function draftToEdits(draft: DraftConfig): ConfigEdits {
+  // NOT typed as `Profile`/`Needs` here on purpose: draftNumber() can return
+  // the original (invalid) string for a blank/non-numeric field, which is
+  // exactly what should reach ConfigSchema.safeParse() server-side to
+  // produce a specific `needs.<field>: Expected number...` error — typing
+  // these as the strict domain interfaces would force a `number`-only shape
+  // and mask that deliberately-invalid passthrough at compile time.
+  const profile = {
+    name: draft.profile.name,
+    roles: nonBlank(draft.profile.roles),
+    skills: nonBlank(draft.profile.skills),
+    timezone: draft.profile.timezone,
+    ...(draft.profile.homeBaseEnabled
+      ? {
+          homeBase: {
+            city: draft.profile.homeBaseCity,
+            lat: draftNumber(draft.profile.homeBaseLat),
+            lng: draftNumber(draft.profile.homeBaseLng),
+          },
+        }
+      : {}),
+  };
+
+  const needs = {
+    minRate: draftNumber(draft.needs.minRate),
+    highRate: draftNumber(draft.needs.highRate),
+    maxHours: draftNumber(draft.needs.maxHours),
+    maxHoursAtHighRate: draftNumber(draft.needs.maxHoursAtHighRate),
+    allowContractToHire: draft.needs.allowContractToHire,
+    freshStageOnly: draft.needs.freshStageOnly,
+    remoteOnly: draft.needs.remoteOnly,
+  };
+
+  const sources: SourceConfig[] = draft.sources.map(draftToSource);
+
+  const edits: ConfigEdits = { profile, needs, sources };
+
+  if (draft.roleArea.enabled) {
+    const roleArea: RoleAreaConfig = {
+      coreTitles: nonBlank(draft.roleArea.coreTitles),
+      keywords: nonBlank(draft.roleArea.keywords),
+      redKeywords: nonBlank(draft.roleArea.redKeywords),
+    };
+    edits.roleArea = roleArea;
+  } else {
+    edits.roleArea = undefined;
+  }
+
+  const schedule = draft.schedule.trim();
+  edits.schedule = schedule === "" ? undefined : schedule;
+
+  return edits;
+}
+
+// ---------------------------------------------------------------------------
+// Session capture (`session-capture-ui` story) — a "Capture login" button
+// per `SourceConfig` row whose id is registered in `SOURCE_ORIGINS`
+// (`src/lib/sources/origins.ts`). Purely user-driven per the design's
+// decided no-polling approach: no `setInterval`/`setTimeout`/auto-refresh
+// anywhere in this file — the only state transitions are the three explicit
+// clicks below (Capture login / I'm done / Cancel), each firing exactly one
+// Server Action call.
+// ---------------------------------------------------------------------------
+
+/**
+ * One source row's capture UI state, keyed by row index in `captureState`
+ * below (same "rows have no identity beyond position" convention the rest
+ * of this file already uses for `draft.sources`). `waiting` is the state
+ * while the real headed Chromium window is open and the human is logging
+ * in at their own pace — `finishing`/`cancelling` are the same underlying
+ * "waiting" screen with its two buttons momentarily disabled mid-click, not
+ * a different screen, so a captureId is never lost between "I'm done" being
+ * clicked and its Server Action resolving.
+ */
+type CaptureUIState =
+  | { status: "idle" }
+  | { status: "starting" }
+  | { status: "waiting"; captureId: string; sourceId: string }
+  | { status: "finishing"; captureId: string; sourceId: string }
+  | { status: "cancelling"; captureId: string; sourceId: string }
+  | { status: "success"; path: string }
+  | { status: "error"; message: string };
+
+/**
+ * Adds/overwrites a single key in a `SettingPair[]` list, used to fold a
+ * just-captured `sessionStatePath` into a source row's Settings pairs
+ * editor immediately on success — see `handleFinishCapture()` below for why
+ * this needs to happen in `draft` too, not just on disk.
+ */
+function upsertSettingPair(pairs: SettingPair[], key: string, value: string): SettingPair[] {
+  const idx = pairs.findIndex((p) => p.key === key);
+  if (idx < 0) return [...pairs, { key, value }];
+  const next = [...pairs];
+  next[idx] = { key, value };
+  return next;
+}
+
+const captureButtonClass =
+  "rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50";
+
+/**
+ * Renders one source row's capture control: the "Capture login" button in
+ * its idle/success/error states, or the "browser window opened" waiting
+ * screen (with "I'm done" + Cancel) once a capture is in flight. `sourceId`
+ * is only used for the human-readable "log in to <source>" copy — never
+ * re-derived from `state`, since `state.status === "idle"` carries no id at
+ * all.
+ */
+function CaptureLoginControl({
+  sourceId,
+  state,
+  onStart,
+  onFinish,
+  onCancel,
+}: {
+  sourceId: string;
+  state: CaptureUIState;
+  onStart: () => void;
+  onFinish: () => void;
+  onCancel: () => void;
+}) {
+  if (state.status === "waiting" || state.status === "finishing" || state.status === "cancelling") {
+    const busy = state.status !== "waiting";
+    return (
+      <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <p>
+          A browser window opened — log in to {sourceId}, then click &ldquo;I&rsquo;m done&rdquo;.
+        </p>
+        <div className="mt-2 flex gap-2">
+          <button type="button" onClick={onFinish} disabled={busy} className={captureButtonClass}>
+            {state.status === "finishing" ? "Finishing…" : "I'm done"}
+          </button>
+          <button type="button" onClick={onCancel} disabled={busy} className={captureButtonClass}>
+            {state.status === "cancelling" ? "Cancelling…" : "Cancel"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={onStart}
+        disabled={state.status === "starting"}
+        className={captureButtonClass}
+      >
+        {state.status === "starting" ? "Opening browser…" : "Capture login"}
+      </button>
+      {state.status === "success" && (
+        <p role="status" className="mt-1 text-xs text-green-700">
+          Captured — saved to {state.path} and written to this source&rsquo;s settings.
+        </p>
+      )}
+      {state.status === "error" && (
+        <p role="alert" className="mt-1 text-xs text-red-700">
+          {state.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Resume/link ingestion (`resume-link-ui` story) — the "Anthropic API key"
+// field (writes to .env immediately, its own independent action) and the
+// "Extract from resume/link" control (populates DRAFT state only; nothing
+// persists until the form's own, separate, existing Save button). Both are
+// plain async handlers with hand-rolled status state, matching this file's
+// existing `CaptureUIState` convention above rather than `useTransition` —
+// consistent with every other non-Save action already in this file.
+// ---------------------------------------------------------------------------
+
+type ApiKeyUIState =
+  | { status: "idle" }
+  | { status: "saving" }
+  | { status: "success" }
+  | { status: "error"; message: string };
+
+type ExtractUIState =
+  | { status: "idle" }
+  | { status: "extracting" }
+  | { status: "success"; warnings: string[] }
+  | { status: "error"; message: string };
+
+// ---------------------------------------------------------------------------
+// Small reusable pieces
+// ---------------------------------------------------------------------------
+
+const inputClass =
+  "w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:outline-none";
+const labelClass = "block text-sm font-medium text-slate-700";
+const sectionClass = "rounded-lg border border-slate-200 bg-white p-4";
+
+function StringListEditor({
+  label,
+  values,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  values: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div>
+      <span className={labelClass}>{label}</span>
+      <div className="mt-1 flex flex-col gap-1.5">
+        {values.map((v, i) => (
+          // Index keys are acceptable here: rows have no identity of their
+          // own beyond position, and this list is small/rarely reordered.
+          // eslint-disable-next-line react/no-array-index-key
+          <div key={i} className="flex gap-2">
+            <input
+              type="text"
+              value={v}
+              placeholder={placeholder}
+              onChange={(e) => {
+                const next = [...values];
+                next[i] = e.target.value;
+                onChange(next);
+              }}
+              className={inputClass}
+            />
+            <button
+              type="button"
+              onClick={() => onChange(values.filter((_, idx) => idx !== i))}
+              className="shrink-0 text-xs text-red-600 hover:underline"
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => onChange([...values, ""])}
+          className="self-start text-xs font-medium text-slate-600 hover:underline"
+        >
+          + Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** SourceConfig.settings key/value PAIRS editor — deliberately not a raw JSON textarea (see this story's spec). */
+function SettingsEditor({
+  pairs,
+  onChange,
+}: {
+  pairs: SettingPair[];
+  onChange: (next: SettingPair[]) => void;
+}) {
+  return (
+    <div>
+      <span className={labelClass}>Settings</span>
+      <div className="mt-1 flex flex-col gap-1.5">
+        {pairs.map((pair, i) => (
+          // eslint-disable-next-line react/no-array-index-key
+          <div key={i} className="flex gap-2">
+            <input
+              type="text"
+              value={pair.key}
+              placeholder="key (e.g. apiKey)"
+              onChange={(e) => {
+                const key = e.target.value;
+                onChange(pairs.map((p, idx) => (idx === i ? { ...p, key } : p)));
+              }}
+              className={`${inputClass} max-w-[10rem]`}
+            />
+            <input
+              type="text"
+              value={pair.value}
+              placeholder="value — e.g. env:BRAINTRUST_API_KEY"
+              onChange={(e) => {
+                const value = e.target.value;
+                onChange(pairs.map((p, idx) => (idx === i ? { ...p, value } : p)));
+              }}
+              className={inputClass}
+            />
+            <button
+              type="button"
+              onClick={() => onChange(pairs.filter((_, idx) => idx !== i))}
+              className="shrink-0 text-xs text-red-600 hover:underline"
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => onChange([...pairs, { key: "", value: "" }])}
+          className="self-start text-xs font-medium text-slate-600 hover:underline"
+        >
+          + Add setting
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CheckboxField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-sm text-slate-700">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-4 w-4 rounded border-slate-300"
+      />
+      {label}
+    </label>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The form
+// ---------------------------------------------------------------------------
+
+/**
+ * The config-editing form (`config-editing-ui` story). Receives the already
+ * pre-populated (or blank, for first-run) `Config` from the Server Component
+ * parent (src/app/config/page.tsx) and owns all editing state client-side,
+ * submitting the whole document via `saveConfigAction` (src/app/config/actions.ts)
+ * on Save — the same `{ok,error}` Server Action convention
+ * `updateGigStatusAction` established (src/app/actions.ts).
+ */
+export function ConfigClient({ initial }: { initial: Config }) {
+  const [draft, setDraft] = useState<DraftConfig>(() => configToDraft(initial));
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  // "Start from a template" (role-templates story) — pure client-side draft
+  // state, no Server Action involved. Applying OVERWRITES whatever's
+  // currently in coreTitles/keywords/redKeywords with no confirmation
+  // dialog: decided v1 behavior (see ROLE_TEMPLATES's design discussion),
+  // trivially re-editable before Save.
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(ROLE_TEMPLATES[0]?.id ?? "");
+
+  function handleApplyTemplate() {
+    const template = ROLE_TEMPLATES.find((t) => t.id === selectedTemplateId);
+    if (!template) return;
+    setDraft((prev) => ({
+      ...prev,
+      roleArea: {
+        enabled: true,
+        coreTitles: [...template.config.coreTitles],
+        keywords: [...template.config.keywords],
+        redKeywords: [...template.config.redKeywords],
+      },
+    }));
+  }
+
+  // Session-capture state, keyed by source row index — deliberately separate
+  // from `draft`/`isPending` above: capture actions are independent,
+  // per-row, user-driven flows that don't submit the whole form. See the
+  // "Session capture" section above for `CaptureUIState`.
+  const [captureState, setCaptureState] = useState<Record<number, CaptureUIState>>({});
+
+  function setRowCapture(i: number, next: CaptureUIState) {
+    setCaptureState((prev) => ({ ...prev, [i]: next }));
+  }
+
+  async function handleStartCapture(i: number, sourceId: string) {
+    setRowCapture(i, { status: "starting" });
+    const result = await startCaptureAction(sourceId);
+    if (!result.ok) {
+      setRowCapture(i, { status: "error", message: result.error });
+      return;
+    }
+    setRowCapture(i, { status: "waiting", captureId: result.data.captureId, sourceId });
+  }
+
+  async function handleFinishCapture(i: number, captureId: string, sourceId: string) {
+    setRowCapture(i, { status: "finishing", captureId, sourceId });
+    const result = await finishCaptureAction(captureId, sourceId);
+    if (!result.ok) {
+      // Show the SPECIFIC error finishCaptureAction/finishCapture() returned
+      // (e.g. the zero-cookies sanity check message) — never a generic
+      // "capture failed" string.
+      setRowCapture(i, { status: "error", message: result.error });
+      return;
+    }
+    // Fold the captured path into this row's draft settings too, not just
+    // on disk — otherwise a later "Save config" click (which resubmits the
+    // WHOLE `sources` section) would silently overwrite the just-auto-written
+    // sessionStatePath with whatever the in-memory draft still had, undoing
+    // this action's own write.
+    setDraft((prev) => ({
+      ...prev,
+      sources: prev.sources.map((s, idx) =>
+        idx === i ? { ...s, settings: upsertSettingPair(s.settings, "sessionStatePath", result.data.path) } : s,
+      ),
+    }));
+    setRowCapture(i, { status: "success", path: result.data.path });
+  }
+
+  async function handleCancelCapture(i: number, captureId: string, sourceId: string) {
+    setRowCapture(i, { status: "cancelling", captureId, sourceId });
+    const result = await cancelCaptureAction(captureId);
+    if (!result.ok) {
+      setRowCapture(i, { status: "error", message: result.error });
+      return;
+    }
+    setRowCapture(i, { status: "idle" });
+  }
+
+  // -- Anthropic API key ("resume-link-ui" story) --------------------------
+  // Writes straight to .env via setAnthropicApiKeyAction, independent of
+  // draft/Save — see design_decisions in
+  // .pHive/epics/profile-overview-ingestion/stories/resume-link-ui.yaml.
+  const [apiKeyValue, setApiKeyValue] = useState("");
+  const [apiKeyState, setApiKeyState] = useState<ApiKeyUIState>({ status: "idle" });
+
+  async function handleSetApiKey() {
+    setApiKeyState({ status: "saving" });
+    const formData = new FormData();
+    formData.set("apiKey", apiKeyValue);
+    const result = await setAnthropicApiKeyAction(formData);
+    if (!result.ok) {
+      setApiKeyState({ status: "error", message: result.error });
+      return;
+    }
+    setApiKeyState({ status: "success" });
+  }
+
+  // -- Extract from resume/link ("resume-link-ui" story) -------------------
+  // Populates DRAFT profile.roles/skills only, MERGED (not replaced) via
+  // mergeDedupe() — never auto-applied, never persisted until the user's
+  // own Save click below.
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [linksText, setLinksText] = useState("");
+  const [extractState, setExtractState] = useState<ExtractUIState>({ status: "idle" });
+
+  function handleResumeFileChange(e: ChangeEvent<HTMLInputElement>) {
+    setResumeFile(e.target.files?.[0] ?? null);
+  }
+
+  async function handleExtract() {
+    setExtractState({ status: "extracting" });
+    const formData = new FormData();
+    if (resumeFile) formData.set("resumeFile", resumeFile);
+    formData.set("links", linksText);
+
+    const result = await extractProfileFromResumeAction(formData);
+    if (!result.ok) {
+      setExtractState({ status: "error", message: result.error });
+      return;
+    }
+
+    // Merge, never replace — extracted roles/skills are additive enrichment
+    // of whatever's already in the draft (which may itself hold unsaved
+    // hand-edits), deliberately unlike role-templates' overwrite-on-apply.
+    setDraft((prev) => ({
+      ...prev,
+      profile: {
+        ...prev.profile,
+        roles: mergeDedupe(prev.profile.roles, result.data.roles),
+        skills: mergeDedupe(prev.profile.skills, result.data.skills),
+      },
+    }));
+    setExtractState({ status: "success", warnings: result.data.warnings });
+  }
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSavedAt(null);
+    const edits = draftToEdits(draft);
+    startTransition(async () => {
+      const result = await saveConfigAction(edits);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      // Resync the form with the server's validated, written document —
+      // e.g. a source added with a blank id/settings row got dropped.
+      setDraft(configToDraft(result.data));
+      setSavedAt(Date.now());
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-6">
+      {error && (
+        <div
+          role="alert"
+          className="whitespace-pre-wrap rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800"
+        >
+          {error}
+        </div>
+      )}
+      {savedAt && !error && (
+        <div role="status" className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-800">
+          Saved.
+        </div>
+      )}
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold text-slate-900">Profile</h2>
+        <div className="mt-3 flex flex-col gap-3">
+          <label>
+            <span className={labelClass}>Name</span>
+            <input
+              type="text"
+              value={draft.profile.name}
+              onChange={(e) => setDraft({ ...draft, profile: { ...draft.profile, name: e.target.value } })}
+              className={inputClass}
+            />
+          </label>
+          <StringListEditor
+            label="Roles"
+            values={draft.profile.roles}
+            onChange={(roles) => setDraft({ ...draft, profile: { ...draft.profile, roles } })}
+            placeholder="e.g. Fractional CTO"
+          />
+          <StringListEditor
+            label="Skills"
+            values={draft.profile.skills}
+            onChange={(skills) => setDraft({ ...draft, profile: { ...draft.profile, skills } })}
+            placeholder="e.g. TypeScript"
+          />
+          <label>
+            <span className={labelClass}>Timezone</span>
+            <input
+              type="text"
+              value={draft.profile.timezone}
+              onChange={(e) => setDraft({ ...draft, profile: { ...draft.profile, timezone: e.target.value } })}
+              placeholder="e.g. America/Chicago"
+              className={inputClass}
+            />
+          </label>
+
+          <CheckboxField
+            label="Set a home base (optional)"
+            checked={draft.profile.homeBaseEnabled}
+            onChange={(homeBaseEnabled) => setDraft({ ...draft, profile: { ...draft.profile, homeBaseEnabled } })}
+          />
+          {draft.profile.homeBaseEnabled && (
+            <div className="grid grid-cols-3 gap-2 pl-5">
+              <label>
+                <span className={labelClass}>City</span>
+                <input
+                  type="text"
+                  value={draft.profile.homeBaseCity}
+                  onChange={(e) =>
+                    setDraft({ ...draft, profile: { ...draft.profile, homeBaseCity: e.target.value } })
+                  }
+                  className={inputClass}
+                />
+              </label>
+              <label>
+                <span className={labelClass}>Latitude</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={draft.profile.homeBaseLat}
+                  onChange={(e) =>
+                    setDraft({ ...draft, profile: { ...draft.profile, homeBaseLat: e.target.value } })
+                  }
+                  className={inputClass}
+                />
+              </label>
+              <label>
+                <span className={labelClass}>Longitude</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={draft.profile.homeBaseLng}
+                  onChange={(e) =>
+                    setDraft({ ...draft, profile: { ...draft.profile, homeBaseLng: e.target.value } })
+                  }
+                  className={inputClass}
+                />
+              </label>
+            </div>
+          )}
+
+          <div className="mt-2 border-t border-slate-200 pt-3">
+            <span className={labelClass}>Anthropic API key</span>
+            <p className="text-xs text-slate-500">
+              Writes directly to <code>.env</code> (encrypted at rest) — not <code>config.json</code> — and
+              saves immediately, separately from this form&rsquo;s Save button below.
+            </p>
+            <div className="mt-1 flex gap-2">
+              <input
+                type="password"
+                value={apiKeyValue}
+                onChange={(e) => setApiKeyValue(e.target.value)}
+                placeholder="sk-ant-..."
+                autoComplete="off"
+                className={inputClass}
+              />
+              <button
+                type="button"
+                onClick={handleSetApiKey}
+                disabled={apiKeyState.status === "saving" || apiKeyValue.trim() === ""}
+                className={`shrink-0 ${captureButtonClass}`}
+              >
+                {apiKeyState.status === "saving" ? "Saving…" : "Save key"}
+              </button>
+            </div>
+            {apiKeyState.status === "success" && (
+              <p role="status" className="mt-1 text-xs text-green-700">
+                Anthropic API key saved to .env.
+              </p>
+            )}
+            {apiKeyState.status === "error" && (
+              <p role="alert" className="mt-1 text-xs text-red-700">
+                {apiKeyState.message}
+              </p>
+            )}
+          </div>
+
+          <div className="border-t border-slate-200 pt-3">
+            <span className={labelClass}>Extract from resume/link</span>
+            <p className="text-xs text-slate-500">
+              Sends the resume and/or link content to Anthropic&rsquo;s API using the key above. Extracted
+              roles/skills are MERGED into the Roles/Skills fields above (existing entries are kept, never
+              overwritten) — review and edit as needed, nothing is saved until you click &ldquo;Save
+              config&rdquo; below. GitHub profiles and personal portfolio/blog links work well; LinkedIn
+              links are not reliably supported (bot-walled against unauthenticated fetches).
+            </p>
+            <div className="mt-2 flex flex-col gap-2">
+              <label>
+                <span className={labelClass}>Resume (PDF or plain text)</span>
+                <input
+                  type="file"
+                  accept=".pdf,application/pdf,.txt,text/plain"
+                  onChange={handleResumeFileChange}
+                  className={inputClass}
+                />
+              </label>
+              <label>
+                <span className={labelClass}>Links (one per line)</span>
+                <textarea
+                  value={linksText}
+                  onChange={(e) => setLinksText(e.target.value)}
+                  placeholder={"https://github.com/yourhandle\nhttps://yourportfolio.dev"}
+                  rows={3}
+                  className={inputClass}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={handleExtract}
+                disabled={extractState.status === "extracting" || (!resumeFile && linksText.trim() === "")}
+                className={`self-start ${captureButtonClass}`}
+              >
+                {extractState.status === "extracting" ? "Extracting…" : "Extract from resume/link"}
+              </button>
+            </div>
+            {extractState.status === "success" && (
+              <div className="mt-2">
+                <p role="status" className="text-xs text-green-700">
+                  Extracted roles/skills merged into the fields above — review, edit, then Save.
+                </p>
+                {extractState.warnings.length > 0 && (
+                  <ul className="mt-1 flex flex-col gap-0.5">
+                    {extractState.warnings.map((w, i) => (
+                      // Index keys are acceptable here: this is a fresh,
+                      // append-only list rendered once per successful
+                      // extraction, never reordered/edited in place.
+                      // eslint-disable-next-line react/no-array-index-key
+                      <li key={i} role="alert" className="text-xs text-amber-700">
+                        {w}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            {extractState.status === "error" && (
+              <p role="alert" className="mt-1 text-xs text-red-700">
+                {extractState.message}
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold text-slate-900">Needs</h2>
+        <p className="text-xs text-slate-500">All seven fields are required — this is the gate's hard constraint set.</p>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <label>
+            <span className={labelClass}>Minimum rate ($/hr)</span>
+            <input
+              type="number"
+              value={draft.needs.minRate}
+              onChange={(e) => setDraft({ ...draft, needs: { ...draft.needs, minRate: e.target.value } })}
+              className={inputClass}
+            />
+          </label>
+          <label>
+            <span className={labelClass}>High rate ($/hr)</span>
+            <input
+              type="number"
+              value={draft.needs.highRate}
+              onChange={(e) => setDraft({ ...draft, needs: { ...draft.needs, highRate: e.target.value } })}
+              className={inputClass}
+            />
+          </label>
+          <label>
+            <span className={labelClass}>Max weekly hours</span>
+            <input
+              type="number"
+              value={draft.needs.maxHours}
+              onChange={(e) => setDraft({ ...draft, needs: { ...draft.needs, maxHours: e.target.value } })}
+              className={inputClass}
+            />
+          </label>
+          <label>
+            <span className={labelClass}>Max weekly hours at high rate</span>
+            <input
+              type="number"
+              value={draft.needs.maxHoursAtHighRate}
+              onChange={(e) =>
+                setDraft({ ...draft, needs: { ...draft.needs, maxHoursAtHighRate: e.target.value } })
+              }
+              className={inputClass}
+            />
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-4">
+          <CheckboxField
+            label="Allow contract-to-hire"
+            checked={draft.needs.allowContractToHire}
+            onChange={(v) => setDraft({ ...draft, needs: { ...draft.needs, allowContractToHire: v } })}
+          />
+          <CheckboxField
+            label="Fresh-stage listings only"
+            checked={draft.needs.freshStageOnly}
+            onChange={(v) => setDraft({ ...draft, needs: { ...draft.needs, freshStageOnly: v } })}
+          />
+          <CheckboxField
+            label="Remote only"
+            checked={draft.needs.remoteOnly}
+            onChange={(v) => setDraft({ ...draft, needs: { ...draft.needs, remoteOnly: v } })}
+          />
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold text-slate-900">Sources</h2>
+        <div className="mt-3 flex flex-col gap-4">
+          {draft.sources.map((source, i) => (
+            // eslint-disable-next-line react/no-array-index-key
+            <div key={i} className="rounded-md border border-slate-200 p-3">
+              <div className="flex items-end gap-3">
+                <label className="flex-1">
+                  <span className={labelClass}>Source</span>
+                  <select
+                    value={source.id}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setDraft({
+                        ...draft,
+                        sources: draft.sources.map((s, idx) => (idx === i ? { ...s, id } : s)),
+                      });
+                    }}
+                    className={inputClass}
+                  >
+                    <option value="" disabled>
+                      Select a source…
+                    </option>
+                    {KNOWN_SOURCES.map((known) => (
+                      <option key={known.id} value={known.id}>
+                        {known.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <CheckboxField
+                  label="Enabled"
+                  checked={source.enabled}
+                  onChange={(enabled) => {
+                    setDraft({
+                      ...draft,
+                      sources: draft.sources.map((s, idx) => (idx === i ? { ...s, enabled } : s)),
+                    });
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setDraft({ ...draft, sources: draft.sources.filter((_, idx) => idx !== i) })}
+                  className="shrink-0 text-xs text-red-600 hover:underline"
+                >
+                  Remove source
+                </button>
+              </div>
+              <div className="mt-2">
+                <SettingsEditor
+                  pairs={source.settings}
+                  onChange={(settings) => {
+                    setDraft({
+                      ...draft,
+                      sources: draft.sources.map((s, idx) => (idx === i ? { ...s, settings } : s)),
+                    });
+                  }}
+                />
+              </div>
+              {source.id in SOURCE_ORIGINS && (
+                <CaptureLoginControl
+                  sourceId={source.id}
+                  state={captureState[i] ?? { status: "idle" }}
+                  onStart={() => handleStartCapture(i, source.id)}
+                  onFinish={() => {
+                    const rowState = captureState[i];
+                    if (rowState?.status === "waiting") handleFinishCapture(i, rowState.captureId, rowState.sourceId);
+                  }}
+                  onCancel={() => {
+                    const rowState = captureState[i];
+                    if (rowState?.status === "waiting") handleCancelCapture(i, rowState.captureId, rowState.sourceId);
+                  }}
+                />
+              )}
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() =>
+              setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, settings: [] }] })
+            }
+            className="self-start text-sm font-medium text-slate-600 hover:underline"
+          >
+            + Add source
+          </button>
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">Role area (optional)</h2>
+          <CheckboxField
+            label="Configure role-area filtering"
+            checked={draft.roleArea.enabled}
+            onChange={(enabled) => setDraft({ ...draft, roleArea: { ...draft.roleArea, enabled } })}
+          />
+        </div>
+        <p className="text-xs text-slate-500">
+          Left off, every gig tiers &quot;yellow&quot; — the do-nothing default, not an error.
+        </p>
+        <div className="mt-3 flex items-end gap-2">
+          <label className="flex-1">
+            <span className={labelClass}>Start from a template</span>
+            <select
+              value={selectedTemplateId}
+              onChange={(e) => setSelectedTemplateId(e.target.value)}
+              className={inputClass}
+            >
+              {ROLE_TEMPLATES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" onClick={handleApplyTemplate} className={captureButtonClass}>
+            Apply
+          </button>
+        </div>
+        {draft.roleArea.enabled && (
+          <div className="mt-3 flex flex-col gap-3">
+            <StringListEditor
+              label="Core titles (unambiguous title matches — always GREEN)"
+              values={draft.roleArea.coreTitles}
+              onChange={(coreTitles) => setDraft({ ...draft, roleArea: { ...draft.roleArea, coreTitles } })}
+            />
+            <StringListEditor
+              label="Keywords (broader green signals)"
+              values={draft.roleArea.keywords}
+              onChange={(keywords) => setDraft({ ...draft, roleArea: { ...draft.roleArea, keywords } })}
+            />
+            <StringListEditor
+              label="Red keywords (title-only hard stop, unless a core title also matches)"
+              values={draft.roleArea.redKeywords}
+              onChange={(redKeywords) => setDraft({ ...draft, roleArea: { ...draft.roleArea, redKeywords } })}
+            />
+          </div>
+        )}
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold text-slate-900">Schedule (optional)</h2>
+        <label>
+          <span className={labelClass}>Cron expression</span>
+          <input
+            type="text"
+            value={draft.schedule}
+            placeholder="e.g. 0 9 * * * (leave blank for no scheduled runs)"
+            onChange={(e) => setDraft({ ...draft, schedule: e.target.value })}
+            className={inputClass}
+          />
+        </label>
+      </section>
+
+      <div>
+        <button
+          type="submit"
+          disabled={isPending}
+          className="rounded-md border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50"
+        >
+          {isPending ? "Saving…" : "Save config"}
+        </button>
+      </div>
+    </form>
+  );
+}

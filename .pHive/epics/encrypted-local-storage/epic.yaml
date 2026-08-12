@@ -1,0 +1,39 @@
+name: encrypted-local-storage
+title: Encrypted-at-rest local storage (default AES-256-GCM) for config, secrets, and session files
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture, security]
+  roster: [researcher, technical-writer, tpm, architect, security-reviewer]
+  per_tag_reasoning:
+    architecture: "New src/lib/security/ module + a migrate-on-read pattern retrofitted across three already-shipped consumer modules — structural, not additive."
+    security: "Epic is entirely about encryption-at-rest for secrets/config/session files, key storage separation, and tamper detection — direct match."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+    security: included
+
+stories:
+  - id: vault-module
+    title: "Vault module: AES-256-GCM encrypt/decrypt, key storage, key-loss detection"
+    complexity: medium
+    depends_on: []
+  - id: config-json-encryption
+    title: "Encrypt config.json at rest (load.ts + save.ts, migrate-on-read)"
+    complexity: medium
+    depends_on: [vault-module]
+  - id: env-encryption
+    title: "Encrypt .env at rest (dotenv.parse()-based, migrate-on-read)"
+    complexity: medium
+    depends_on: [vault-module]
+  - id: session-file-encryption
+    title: "Encrypt captured session-state files at rest (session-capture.ts write, browser-session.ts migrate-on-read)"
+    complexity: medium
+    depends_on: [vault-module]

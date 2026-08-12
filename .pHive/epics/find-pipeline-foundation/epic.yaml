@@ -1,0 +1,41 @@
+name: find-pipeline-foundation
+title: Find-pipeline foundation — real persistence, tiering, and source adapters
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture, security, data]
+  roster: [researcher, technical-writer, tpm, architect, security-reviewer]
+  per_tag_reasoning:
+    architecture: "Epic introduces a new persistence layer and a new tiering module — significant structural additions to the core, matching the 'new module' / 'significant structural change' classification rule."
+    security: "Source adapters declare auth types (browser-session/api-key) and the epic explicitly deals with session/credential-storage boundaries and the never-commit-secrets constraint."
+    data: "Epic's core deliverable is a new persistence layer and data model (SQLite schema replacing the flaky flat-JSON-file approach) — direct match for 'storage decisions' / 'new data model'."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+    security: included
+    data: included
+
+stories:
+  - id: persistence-layer-sqlite
+    title: SQLite-backed persistence layer with upsert/delisting logic
+    complexity: medium
+    depends_on: []
+  - id: braintrust-adapter-runner-integration
+    title: Real Braintrust Source adapter, wired through persistence end-to-end
+    complexity: medium
+    depends_on: [persistence-layer-sqlite]
+  - id: tiering-role-area-classifier
+    title: Role-area tiering module (green/yellow/red) wired into the runner
+    complexity: medium
+    depends_on: [braintrust-adapter-runner-integration]
+  - id: builtin-adapter
+    title: Real BuiltIn Source adapter (generalization proof)
+    complexity: low
+    depends_on: [braintrust-adapter-runner-integration]

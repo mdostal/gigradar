@@ -1,0 +1,96 @@
+id: overview-nav-status
+epic: profile-overview-ingestion
+title: "Shared nav + dashboard status strip (sources, profile completeness, last scan)"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Close the "where's the unified view" gap confirmed by direct inspection:
+  `/` and `/config` have zero navigation between them today.
+
+  1. New `src/app/nav-header.tsx` — a small shared component, two links
+     (Dashboard `/`, Config `/config`), rendered from `src/app/layout.tsx`
+     above `{children}`. Minimal styling consistent with the existing
+     Tailwind classes in `page.tsx`/`config-client.tsx` — not a redesign.
+  2. Dashboard status strip in `src/app/page.tsx`: "N sources configured
+     (M need attention)", "Profile: complete / needs setup", "Last scan:
+     <relative time> / never run". Per the design doc's corrected
+     data-fetching note: "last scan" is `MAX(last_seen)` across
+     `listGigs()`'s existing result (already read on this page, genuinely
+     free); "sources configured" and "profile completeness" require ONE
+     new `readRawConfig()` call added to this page (the same
+     non-resolving, ENOENT-tolerant reader `config/page.tsx` already uses
+     — never `loadConfig()`). "Profile: complete" means `profile.name`,
+     `profile.roles`, and `profile.skills` are all non-empty; "needs
+     attention" for a source means it's `enabled: true` but has no
+     resolvable session/settings (best-effort check, not exhaustive
+     validation — this is a glance-level status, not a health check).
+
+acceptance_criteria:
+  - "Given any page under this app, when it renders, then the nav header appears with working links to / and /config."
+  - "Given zero sources configured, when the dashboard renders, then the status strip shows '0 sources configured' rather than crashing or showing nothing."
+  - "Given a config.json with an empty or missing profile.skills, when the dashboard renders, then it shows 'Profile: needs setup', not 'complete'."
+  - "Given a config.json with profile.name/roles/skills all populated, when the dashboard renders, then it shows 'Profile: complete'."
+  - "Given no gigs have ever been scanned, when the dashboard renders, then it shows 'Last scan: never run', not a crash or an invalid date."
+  - "Given gigs with varying last_seen timestamps, when the dashboard renders, then it shows the MOST RECENT one as the last scan time, in human-relative form (e.g. '2 hours ago')."
+  - "Given no config.json exists yet (first run), when the dashboard renders, then the status strip still renders (ENOENT-tolerant, matching readRawConfig()'s existing contract) rather than throwing."
+
+steps:
+  - id: implement
+    description: Build nav-header.tsx and extend page.tsx with the status strip per the description above.
+    agent: developer
+  - id: test
+    description: Write tests covering every acceptance criterion, including the zero-sources, no-config-yet, and never-scanned edge cases.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the status strip's config read uses readRawConfig() (never loadConfig()) consistent with the rest of the app's UI layer, and that all edge cases (missing config, zero gigs) render gracefully.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/profile-overview-ingestion.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    framework: next.js 15 (app router)
+  key_files:
+    - path: src/app/layout.tsx
+      purpose: "Bare root layout — the nav header mounts here."
+    - path: src/app/page.tsx
+      purpose: "Existing dashboard render — the status strip is added here, using its existing listGigs() call plus one new readRawConfig() call."
+    - path: src/app/config/page.tsx
+      purpose: "Reference for the readRawConfig() pattern this story reuses for the config-derived status fields."
+
+design_decisions:
+  - decision: Status strip uses readRawConfig(), never loadConfig()
+    rationale: Collaborative review confirmed the web app's request path never triggers .env/secret resolution today; the status strip only needs presence/shape checks, never resolved secret values, so the non-resolving reader is both correct and sufficient.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.dashboard_config_nav_present
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manual check: nav header renders and links work from both / and /config"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: low
+    description: The "needs attention" source-status heuristic could be inaccurate (false positive/negative) since it's a best-effort glance check, not a full health check.
+    mitigation: Explicitly scoped as best-effort in the description and acceptance criteria; not a blocker for this low-complexity story.
+
+references:
+  - .pHive/epics/profile-overview-ingestion/docs/design-discussion.md

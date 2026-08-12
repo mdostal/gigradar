@@ -1,0 +1,70 @@
+// Types for the SQLite-backed Gig store. One place; everything in
+// src/lib/store imports from here (mirrors the convention in ../types.ts).
+import type { Gig } from "../types.js";
+
+/**
+ * Where a gig sits in your pipeline. Store-managed — sources/gate never set
+ * this, only the user (via setStatus) or the store itself (new rows start
+ * "new").
+ */
+export type GigStatus = "new" | "applied" | "interview" | "archived" | "ignored";
+
+/**
+ * A Gig as persisted by the store: every field from `Gig` (../types.ts) plus
+ * the bookkeeping fields only the store knows about. Re-scans never reset
+ * `status` or `firstSeen` — see recordScan().
+ */
+export interface StoredGig extends Gig {
+  /** `${sourceId}:${externalId}` — the store's primary key (see gigKey()). */
+  key: string;
+  status: GigStatus;
+  /** ISO datetime of the first scan that ever saw this gig. Never moves once set. */
+  firstSeen: string;
+  /** ISO datetime of the most recent scan that saw this gig. */
+  lastSeen: string;
+  /**
+   * ISO datetime this gig was first noticed missing from a source scan that
+   * DID return other results — i.e. a real delisting signal, not a source
+   * outage. Null while the gig is believed available. See recordScan().
+   */
+  unavailableSince: string | null;
+  /**
+   * ISO datetime this gig most recently reappeared in a scan after having
+   * been unavailable. Kept as history — it is NOT cleared when the gig goes
+   * unavailable again, only ever overwritten by a later reappearance.
+   */
+  reappearedAt: string | null;
+}
+
+/** One source's results for a single scan pass, as fed to recordScan(). */
+export interface SourceScanBatch {
+  sourceId: string;
+  /**
+   * Every gig this source returned this scan. MUST be an empty array (not
+   * omitted) if the source ran fine but genuinely found nothing — that's
+   * how recordScan tells "ran, found zero" apart from "didn't run at all".
+   * Either way, a source with zero gigs never triggers delisting: only omit
+   * a source from `batches` entirely when its fetch threw (see the runner's
+   * `errors` list) — same rule, same non-effect on delisting.
+   */
+  gigs: Gig[];
+}
+
+/** Everything that happened in one recordScan() call — nothing silent. */
+export interface ScanSummary {
+  /** Every key upserted this scan, and whether it was a brand-new row. */
+  upserted: { key: string; inserted: boolean }[];
+  /** Keys that were unavailableSince before this scan and reappeared in it. */
+  reappeared: string[];
+  /** Keys newly flagged unavailableSince this scan (real delisting signal only). */
+  flaggedUnavailable: string[];
+  /** Source ids that returned >=1 gig this scan (the delisting-eligible set). */
+  sourcesWithResults: string[];
+}
+
+export interface GigFilter {
+  status?: GigStatus;
+  sourceId?: string;
+  /** true = only currently-unavailable gigs, false = only currently-available, omit = both. */
+  unavailable?: boolean;
+}
