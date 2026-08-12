@@ -14,21 +14,27 @@ import { KNOWN_SOURCES, SOURCE_LOGIN_URLS, SOURCE_ORIGINS } from "../origins.js"
 // Hardcoded snapshot of the exact values that were inline in
 // gofractional.ts's/ateam.ts's own `const ALLOWED_ORIGINS = [...]` before
 // this extraction — see this story's acceptance criteria. Do NOT "fix" this
-// snapshot to match origins.ts if they ever diverge; a divergence here means
-// the extraction (or a later edit) silently changed a working adapter's
-// origin scope, which is exactly the regression this test exists to catch.
+// snapshot to match origins.ts if gofractional's/ateam's OWN entries ever
+// diverge from it; a divergence there means a later edit silently changed a
+// working adapter's origin scope, which is exactly the regression this test
+// exists to catch. New keys for NEW sources (e.g. `wellfound`, added by the
+// adapter-batch-public-boards epic's wellfound-adapter story) are legitimate
+// registry growth, not a regression — asserted as a SUBSET below (same
+// `expect.arrayContaining`/subset pattern KNOWN_SOURCES already uses further
+// down this file), never a closed, exact-key-set snapshot that would have to
+// be hand-edited every time this project ships one more adapter.
 const PRE_EXTRACTION_SNAPSHOT: Record<string, readonly string[]> = {
   gofractional: ["gofractional.com"],
   ateam: ["a.team", "platform.a.team"],
 };
 
 describe("SOURCE_ORIGINS", () => {
-  it("matches the hardcoded pre-extraction snapshot exactly (byte-identical values, same order, same casing)", () => {
-    expect(SOURCE_ORIGINS).toEqual(PRE_EXTRACTION_SNAPSHOT);
+  it("still contains the hardcoded pre-extraction snapshot's values, byte-identical (same order, same casing) — new keys for other sources may coexist", () => {
+    expect(SOURCE_ORIGINS).toMatchObject(PRE_EXTRACTION_SNAPSHOT);
   });
 
-  it("has exactly the keys gofractional.ts and ateam.ts registered before this extraction — no silently added/removed source", () => {
-    expect(Object.keys(SOURCE_ORIGINS).sort()).toEqual(["ateam", "gofractional"]);
+  it("still has the keys gofractional.ts and ateam.ts registered before this extraction — no silent removal (additions are fine)", () => {
+    expect(Object.keys(SOURCE_ORIGINS)).toEqual(expect.arrayContaining(["ateam", "gofractional"]));
   });
 
   it("gofractional: is scoped to gofractional.com only", () => {
@@ -37,6 +43,10 @@ describe("SOURCE_ORIGINS", () => {
 
   it("ateam: is scoped to a.team and platform.a.team, in that order", () => {
     expect(SOURCE_ORIGINS["ateam"]).toEqual(["a.team", "platform.a.team"]);
+  });
+
+  it("wellfound: is scoped to wellfound.com only — adapter-batch-public-boards epic, wellfound-adapter story", () => {
+    expect(SOURCE_ORIGINS["wellfound"]).toEqual(["wellfound.com"]);
   });
 
   it("enforces readonly at the type level — a mutation call must fail to compile", () => {
@@ -79,6 +89,12 @@ describe("SOURCE_LOGIN_URLS", () => {
 
   it("ateam: the real, live-confirmed URL (Mission Control itself, which redirects to Sign In when unauthenticated) — not an unverified /login guess", () => {
     expect(SOURCE_LOGIN_URLS["ateam"]).toBe("https://platform.a.team/mission-control");
+  });
+
+  it("wellfound: Wellfound's own real, live-confirmed dedicated login route — a dedicated session, never gofractional's or ateam's URL", () => {
+    expect(SOURCE_LOGIN_URLS["wellfound"]).toBe("https://wellfound.com/login");
+    expect(SOURCE_LOGIN_URLS["wellfound"]).not.toBe(SOURCE_LOGIN_URLS["gofractional"]);
+    expect(SOURCE_LOGIN_URLS["wellfound"]).not.toBe(SOURCE_LOGIN_URLS["ateam"]);
   });
 
   it("every URL is a real https:// URL (sanity check against an accidental empty string/typo)", () => {

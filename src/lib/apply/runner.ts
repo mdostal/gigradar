@@ -132,6 +132,7 @@ async function main(): Promise<void> {
     import("../sources/fractionaljobs.js"),
     import("../sources/fractionus.js"),
     import("../sources/fractionalfinders.js"),
+    import("../sources/wellfound.js"),
   ]);
 
   const config = loadConfig();

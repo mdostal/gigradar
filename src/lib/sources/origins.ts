@@ -20,6 +20,11 @@
 export const SOURCE_ORIGINS: Record<string, readonly string[]> = {
   gofractional: ["gofractional.com"],
   ateam: ["a.team", "platform.a.team"],
+  // adapter-batch-public-boards epic, wellfound-adapter story: wellfound.com
+  // ONLY, never Google/Clerk SSO or any other origin a broader multi-site
+  // storageState file might also carry — see wellfound.ts's own
+  // ALLOWED_ORIGINS comment.
+  wellfound: ["wellfound.com"],
 };
 
 /**
@@ -57,6 +62,14 @@ export const SOURCE_ORIGINS: Record<string, readonly string[]> = {
 export const SOURCE_LOGIN_URLS: Record<string, string> = {
   gofractional: "https://www.gofractional.com/login",
   ateam: "https://platform.a.team/mission-control",
+  // `wellfound`: `https://wellfound.com/login` — Wellfound's own real,
+  // dedicated login route (LIVE-CONFIRMED while building wellfound.ts, not a
+  // guess: HTTP 200, page title exactly "Log In | Wellfound", body content
+  // includes "Continue with Google" plus an email/password form — a
+  // standard OAuth-provider-select page). See wellfound.ts's own
+  // isSignInPage() for the same live-observed title/body content reused as
+  // this adapter's auth-failure signal.
+  wellfound: "https://wellfound.com/login",
 };
 
 /**
@@ -84,9 +97,7 @@ export const KNOWN_SOURCES: readonly { id: string; label: string }[] = [
   { id: "fractionaljobs", label: "FractionalJobs" },
   { id: "fractionus", label: "Fractionus" },
   { id: "fractionalfinders", label: "FractionalFinders" },
-  // adapter-batch-public-boards epic's sibling story (wellfound-adapter):
-  // listed here now so the config UI's picker is complete for the whole
-  // epic, even though src/lib/sources/wellfound.ts itself doesn't exist yet
-  // from THIS story's perspective — auth:"browser-session" once it lands.
+  // adapter-batch-public-boards epic, wellfound-adapter story:
+  // src/lib/sources/wellfound.ts, auth:"browser-session".
   { id: "wellfound", label: "Wellfound" },
 ];
