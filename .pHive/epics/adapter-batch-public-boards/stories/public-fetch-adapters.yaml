@@ -1,0 +1,118 @@
+id: public-fetch-adapters
+epic: adapter-batch-public-boards
+title: "FractionalJobs, Fractionus, FractionalFinders adapters + real local config activation"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Three new `Source` adapters — `src/lib/sources/fractionaljobs.ts`,
+  `fractionus.ts`, `fractionalfinders.ts` — each mirroring `builtin.ts`'s
+  exact shape: `auth:"none"`, a bare `fetch()` with only
+  `{accept: "text/html"}` (NO User-Agent spoofing — live-verified during
+  planning that all three sites return identical results either way),
+  regex extraction of `/jobs/<slug>` links + surrounding card text (adapt
+  the legacy tool's slug-parsing/title-case logic — read from its private
+  codebase during planning, not verbatim-copied).
+
+  **Throw/return-`[]` split** (matches `builtin.ts`'s real, two-tier
+  behavior, not a single "throw on zero matches" rule): throw only on a
+  genuine page-shape failure (expected container/markup absent entirely,
+  or cards found but zero parsed into a valid shape); a page that loads
+  fine with legitimately zero current listings returns `[]`. `rate`/
+  `weeklyHours` left `undefined` — these boards don't reliably publish
+  them.
+
+  **No in-adapter relevance filtering** — return every real listing
+  found; `tiering.ts`'s already-configured `roleArea` is the one
+  classification pass, exactly like `braintrust.ts`/`builtin.ts`.
+
+  **`src/lib/sources/origins.ts`**: add all three new sources (plus
+  `wellfound`, for the sibling story) to `KNOWN_SOURCES` so they're
+  selectable in the config UI's picker without a typo risk.
+
+  **Real local config activation** — the owner's actual local
+  `config.json` (already prefilled with braintrust/builtin/gofractional/
+  ateam in a prior session epic) gets these three new sources ADDED,
+  enabled. This MUST read the current `sources` array first
+  (`readRawConfig()`) and write the COMPLETE merged array — `saveConfig()`'s
+  `sources` field is a full-section replace, not an append; writing just
+  the new entries would silently wipe the existing four.
+
+acceptance_criteria:
+  - "Given a captured real HTML fixture from each of the three boards (from this epic's live research), when each adapter's fetch() parses it offline, then it returns the correct Gig[] mapping (real per-listing URLs, never search-page URLs)."
+  - "Given a fixture with a genuine page-shape failure (expected container/markup absent), when the adapter parses it, then it throws a specific, actionable error naming the source."
+  - "Given a fixture that loads fine with zero current listings on an otherwise-valid page, when the adapter parses it, then it returns an empty array, NOT a thrown error."
+  - "Given a fixture with cards present but zero parsing into a valid shape, when the adapter parses it, then it throws (this is the 'the site broke' case, distinct from the zero-listings case above)."
+  - "Given KNOWN_SOURCES after this story, when inspected, then it includes fractionaljobs, fractionus, fractionalfinders, and wellfound (all four new sources from this epic)."
+  - "Given the owner's real local config.json (with its existing 4 sources) before this story's integrate step, when the integrate step completes, then all 4 original sources are STILL present AND the 3 new fetch-based sources are added, enabled — never a partial or wiped sources array."
+  - "Given a real, live run of npm run radar after this story lands, when it completes, then real listings from at least one of the three new sources appear in the store (live verification, not just fixture-based)."
+
+steps:
+  - id: implement
+    description: Build the three adapter files and the origins.ts/KNOWN_SOURCES additions per the description above.
+    agent: developer
+  - id: test
+    description: Capture real HTML fixtures from each of the three boards (or reuse ones captured during planning research), write fixture-based unit tests covering every acceptance criterion, and run one live verification per adapter.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the throw/return-[] split matches builtin.ts's real behavior exactly, no relevance pre-filtering was added, and the config-activation step correctly merges rather than replaces the sources array.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Directly enable these 3 sources in the owner's real local config.json (read-merge-write, never a partial replace), then commit and push to feat/adapter-batch-public-boards.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+  key_files:
+    - path: src/lib/sources/builtin.ts
+      purpose: "The exact pattern these three adapters mirror: auth:none, bare fetch(), regex-over-HTML, the real throw-vs-return-[] split."
+    - path: src/lib/sources/origins.ts
+      purpose: "KNOWN_SOURCES — add all four new sources here."
+    - path: src/lib/config/save.ts
+      purpose: "saveConfig()'s full-section-replace semantics for sources — the integrate step must read-merge-write, never a partial array."
+
+design_decisions:
+  - decision: No User-Agent spoofing
+    rationale: Grill H1 — builtin.ts sends zero special headers, and live re-verification during planning confirmed all three sites return identical results either way; spoofing would be an unjustified divergence from the proven pattern.
+  - decision: Throw only on page-shape failure, return [] on a genuinely quiet page
+    rationale: Collaborative review — the original "throw on zero matches" rule conflated a real break with a legitimately quiet day (FractionalFinders had only 16 live listings during planning), which would produce false-positive failures on smaller boards.
+  - decision: Integrate step reads current config.sources and writes the full merged array
+    rationale: Collaborative review caught a real clobber risk — saveConfig()'s sources field is a full-section replace; writing only the new entries would silently wipe the owner's already-prefilled braintrust/builtin/gofractional/ateam sources.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's source-adapter section to list the three new boards."
+
+metric:
+  applies: true
+  name: gigradar.public_fetch_adapters_live
+  direction: up
+  unit: count
+  baseline: 0
+  target: 3
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "live npm run radar run; confirm real listings from at least one new source in the store"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: HTML-scraping fragility — a markup change on any of these three sites breaks that adapter.
+    mitigation: Accepted, same posture as builtin.ts already ships with; throw loud on an unrecognized shape rather than silently degrading.
+  - severity: medium
+    description: A naive config-activation write could silently wipe the owner's existing 4 sources.
+    mitigation: Dedicated acceptance criterion and test for the read-merge-write requirement.
+
+references:
+  - .pHive/epics/adapter-batch-public-boards/docs/design-discussion.md
+  - .pHive/epics/adapter-batch-public-boards/docs/grill-record.md
+  - .pHive/epics/adapter-batch-public-boards/docs/research-brief.md
