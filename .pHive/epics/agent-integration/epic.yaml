@@ -1,0 +1,31 @@
+name: agent-integration
+title: Agent integration surface — MCP server + CLAUDE.md
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture, security]
+  roster: [researcher, technical-writer, tpm, architect, security-reviewer]
+  per_tag_reasoning:
+    architecture: "New src/mcp/ layer + a src/app -> src/lib relocation (status-strip.ts) — structural additions."
+    security: "MCP tools touch Config/secrets-adjacent code (run_scan calls loadConfig()); the never-leak-a-resolved-secret rule applies to a brand new external boundary."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+    security: included
+
+stories:
+  - id: mcp-server-core
+    title: "MCP server: 5 tools over stdio, source registration, error boundaries"
+    complexity: medium
+    depends_on: []
+  - id: claude-md-and-setup-docs
+    title: "CLAUDE.md + copy-pasteable MCP client config for Claude Desktop/Code"
+    complexity: low
+    depends_on: [mcp-server-core]

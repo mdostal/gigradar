@@ -1,0 +1,133 @@
+id: mcp-server-core
+epic: agent-integration
+title: "MCP server: 5 tools over stdio, source registration, error boundaries"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Build `src/mcp/server.ts` — a real MCP server (`@modelcontextprotocol/sdk`,
+  stdio transport) exposing 5 tools, each a thin wrapper around the exact
+  `src/lib` functions the dashboard/CLI already use.
+
+  **First sub-task (per collaborative review): pin the real SDK API.**
+  `@modelcontextprotocol/sdk` isn't installed yet and its exact `Server`
+  class / stdio transport / JSON-Schema tool-definition shape was not
+  verifiable during planning. Install it, read its actual TypeScript types/
+  README, and confirm the tool-registration and stdio-transport pattern
+  BEFORE building all 5 tools against assumed shapes.
+
+  **Relocate `src/app/status-strip.ts` → `src/lib/status/status-strip.ts`**
+  (confirmed safe during collaborative review: framework-free, one caller
+  — `src/app/page.tsx` — one test file). Update the import in `page.tsx`
+  and move the test file. This avoids an unexamined sideways
+  `src/mcp → src/app` dependency.
+
+  **The 5 tools:**
+  - `list_gigs({tier?, status?, search?})` → wraps `listGigs()`
+    (`src/lib/store/gigs.ts`).
+  - `get_gig({key})` → wraps `getGig()`. `key`'s JSON-schema description
+    states explicitly: "the opaque `key` field from `list_gigs`'s output"
+    — never implies an agent should construct `${sourceId}:${externalId}`.
+  - `update_gig_status({key, status})` → wraps `setStatus()`. The tool's
+    own input schema restricts `status` to the real `GigStatus` enum
+    values (`"new" | "applied" | "interview" | "archived" | "ignored"`),
+    rejecting anything else before `setStatus()` is ever called.
+  - `get_status_summary({})` → sources configured / profile complete /
+    last scan time, via the relocated `computeStatusStrip()` fed by
+    `readRawConfig()` (never `loadConfig()`) and `listGigs()`.
+  - `run_scan({})` → registers the 4 built-in source adapters ONCE at
+    server startup (the same `registerSource()` side-effect step
+    `runner.ts`'s CLI entrypoint added — see that file's comment on why
+    it's not a top-level import there; here it's fine at true module/
+    startup scope since there's no test-double collision risk in a
+    standalone server process), then wraps `runRadar(loadConfig())`. Its
+    result summary (passed count, per-source errors) never includes a
+    secret value.
+
+  **Error boundary**: every tool handler wraps its `src/lib` call in a
+  try/catch, returning a clean MCP tool error response on failure (missing
+  config, unknown gig key, network error) — never letting an uncaught
+  exception crash the stdio process.
+
+  **`npm run mcp`** script added to `package.json`.
+
+acceptance_criteria:
+  - "Given a temp config/DB (XDG_DATA_HOME/XDG_CONFIG_HOME test isolation), when list_gigs is called with a tier filter, then it returns exactly the gigs listGigs() itself would return for that filter."
+  - "Given get_status_summary is called against a config with an env:-referenced secret setting, when its output is inspected, then the resolved secret value never appears anywhere in the response — only presence/shape/count information."
+  - "Given update_gig_status is called with a status value NOT in the real GigStatus enum, when the tool processes it, then it's rejected at the tool's own input-schema validation, before setStatus() is ever called."
+  - "Given run_scan is called against a config with only auth:\"none\" sources, when it completes, then the real source adapters were registered and actually ran (not \"no such registered source\") — verified without a live network dependency in the automated suite."
+  - "Given loadConfig() throws (no config.json present) inside run_scan's handler, when the tool call completes, then the MCP client receives a clean tool-error response, and the server process is still alive and can handle a subsequent call."
+  - "Given get_gig is called with a key exactly matching one returned by a prior list_gigs call, when it resolves, then it returns that same gig."
+  - "Given src/app/page.tsx after the status-strip.ts relocation, when the app is built and its existing tests run, then nothing breaks — the import path is the only change needed there."
+
+steps:
+  - id: pin-sdk-api
+    description: Install @modelcontextprotocol/sdk, read its actual types/README, and confirm the Server/stdio-transport/tool-schema pattern before building the 5 tools.
+    agent: developer
+  - id: implement
+    description: Relocate status-strip.ts to src/lib/status/, then build src/mcp/server.ts's 5 tools, source registration, and error boundaries per the description above.
+    agent: developer
+    depends_on: [pin-sdk-api]
+  - id: test
+    description: Write tests covering every acceptance criterion, including the secret-leak regression test on get_status_summary and the enum-rejection test on update_gig_status.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm get_status_summary never resolves secrets, update_gig_status's enum enforcement happens at the schema boundary (not just application logic), and every tool handler has a real error boundary.
+    agent: security-reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/agent-integration.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    dependency: "@modelcontextprotocol/sdk (new)"
+  key_files:
+    - path: src/lib/store/gigs.ts
+      purpose: "listGigs()/getGig()/setStatus() — the functions the first 3 tools wrap directly."
+    - path: src/lib/apply/runner.ts
+      purpose: "runRadar() and its CLI entrypoint's source-registration pattern — run_scan's model."
+    - path: src/app/status-strip.ts
+      purpose: "The module being relocated to src/lib/status/ for get_status_summary."
+    - path: src/lib/config/load.ts
+      purpose: "loadConfig() (run_scan only) vs readRawConfig() (get_status_summary) — the secret-resolution boundary rule."
+
+design_decisions:
+  - decision: Source registration happens once at MCP server startup, not per-call
+    rationale: Collaborative review confirmed this gap exists; startup-once is correct here (unlike runner.ts's per-call CLI pattern) since the MCP server is a long-lived process with no test-double collision risk to avoid.
+  - decision: status-strip.ts relocates to src/lib/status/, not reused via a sideways src/mcp -> src/app import
+    rationale: Grill H2 — an unexamined sideways dependency between two "client of src/lib" layers; relocating to a neutral location is cleaner and was confirmed safe (framework-free, single caller/test file) during collaborative review.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.mcp_tools_available
+  direction: up
+  unit: count
+  baseline: 0
+  target: 5
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "npm test; confirm all 5 tools have passing acceptance-criteria tests"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: high
+    description: get_status_summary accidentally using loadConfig() instead of readRawConfig() would leak a resolved secret to whatever MCP client is connected.
+    mitigation: Dedicated acceptance criterion and regression test; security-reviewer step specifically checks this.
+  - severity: medium
+    description: The exact @modelcontextprotocol/sdk API could differ from what's assumed in this story, since it wasn't verifiable during planning.
+    mitigation: The pin-sdk-api step runs first, before the other 4 tools are built against assumed shapes.
+
+references:
+  - .pHive/epics/agent-integration/docs/design-discussion.md
+  - .pHive/epics/agent-integration/docs/grill-record.md
