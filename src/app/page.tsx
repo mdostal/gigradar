@@ -1,7 +1,7 @@
 import { readRawConfig } from "@/lib/config/save";
 import { listGigs } from "@/lib/store";
 import { DashboardClient } from "./dashboard-client";
-import { computeStatusStrip } from "./status-strip";
+import { computeStatusStrip } from "@/lib/status/status-strip";
 
 // The real dashboard (dashboard-results-view story). A Server Component that
 // reads the full gig set via listGigs() — no server-side filter/pagination:

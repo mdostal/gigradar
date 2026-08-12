@@ -11,10 +11,12 @@
     "start": "NODE_OPTIONS=--experimental-sqlite next start -H 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test": "NODE_OPTIONS=--experimental-sqlite vitest run",
-    "radar": "NODE_OPTIONS=--experimental-sqlite tsx src/lib/apply/runner.ts"
+    "radar": "NODE_OPTIONS=--experimental-sqlite tsx src/lib/apply/runner.ts",
+    "mcp": "NODE_OPTIONS=--experimental-sqlite tsx src/mcp/server.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "dotenv": "^17.4.2",
     "next": "^15.0.0",
     "playwright": "^1.62.1",
