@@ -9,7 +9,7 @@
 //      the type level (a mutation attempt must fail to compile), not just a
 //      naming convention.
 import { describe, expect, it } from "vitest";
-import { SOURCE_LOGIN_URLS, SOURCE_ORIGINS } from "../origins.js";
+import { KNOWN_SOURCES, SOURCE_LOGIN_URLS, SOURCE_ORIGINS } from "../origins.js";
 
 // Hardcoded snapshot of the exact values that were inline in
 // gofractional.ts's/ateam.ts's own `const ALLOWED_ORIGINS = [...]` before
@@ -85,5 +85,30 @@ describe("SOURCE_LOGIN_URLS", () => {
     for (const url of Object.values(SOURCE_LOGIN_URLS)) {
       expect(url).toMatch(/^https:\/\/.+/);
     }
+  });
+});
+
+// adapter-batch-public-boards epic, public-fetch-adapters story — this
+// story's own acceptance criterion: KNOWN_SOURCES must include all four new
+// sources from this epic (the three fetch-based adapters this story ships,
+// PLUS wellfound for its sibling story — see origins.ts's own comment on
+// why wellfound is listed here even though wellfound.ts doesn't exist yet
+// from this story's perspective).
+describe("KNOWN_SOURCES", () => {
+  it("includes fractionaljobs, fractionus, fractionalfinders, and wellfound (all four new sources from adapter-batch-public-boards)", () => {
+    const ids = KNOWN_SOURCES.map((s) => s.id);
+    expect(ids).toEqual(
+      expect.arrayContaining(["fractionaljobs", "fractionus", "fractionalfinders", "wellfound"]),
+    );
+  });
+
+  it("still includes every pre-existing source — no silent removal", () => {
+    const ids = KNOWN_SOURCES.map((s) => s.id);
+    expect(ids).toEqual(expect.arrayContaining(["braintrust", "builtin", "gofractional", "ateam"]));
+  });
+
+  it("has no duplicate ids", () => {
+    const ids = KNOWN_SOURCES.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

@@ -129,6 +129,9 @@ async function main(): Promise<void> {
     import("../sources/builtin.js"),
     import("../sources/gofractional.js"),
     import("../sources/ateam.js"),
+    import("../sources/fractionaljobs.js"),
+    import("../sources/fractionus.js"),
+    import("../sources/fractionalfinders.js"),
   ]);
 
   const config = loadConfig();

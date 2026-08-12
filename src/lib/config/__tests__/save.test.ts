@@ -440,3 +440,91 @@ describe("saveConfig: no resolved secret ever appears in an error message", () =
     expect(result.error).not.toContain("must-not-leak-into-error-messages");
   });
 });
+
+// adapter-batch-public-boards epic, public-fetch-adapters story's own
+// acceptance criterion / clobber-risk regression guard: `saveConfig()`'s
+// `sources` field is a full-section replace (see this file's header
+// comment), so the integrate step that activates the three new fetch-based
+// sources in the owner's real config.json MUST read the current `sources`
+// array first (readRawConfig()) and write the COMPLETE merged array —
+// existing entries untouched, new ones appended. This asserts that exact
+// read-merge-write pattern never silently drops an already-configured
+// source, using the SAME 4-source shape (braintrust/builtin/gofractional/
+// ateam) the real owner's config.json actually had going into this story.
+describe("saveConfig: read-merge-write sources (adapter-batch-public-boards activation pattern)", () => {
+  const preexistingConfig = {
+    ...validConfig,
+    sources: [
+      { id: "braintrust", enabled: true, settings: { apiKey: "env:FAKE_BRAINTRUST_KEY" } },
+      { id: "builtin", enabled: true },
+      { id: "gofractional", enabled: true, settings: { sessionStatePath: "env:FAKE_GF_SESSION_PATH" } },
+      { id: "ateam", enabled: true, settings: { sessionStatePath: "env:FAKE_ATEAM_SESSION_PATH" } },
+    ],
+  };
+
+  it("adding 3 new fetch-based sources via readRawConfig() + full merged array keeps all 4 original sources AND adds the 3 new ones, enabled", () => {
+    writeConfig(preexistingConfig);
+
+    // The exact pattern the integrate step must follow: read current
+    // sources first...
+    const current = readRawConfig() as typeof preexistingConfig;
+    expect(current.sources).toHaveLength(4);
+
+    // ...build the COMPLETE merged array (never just the new entries)...
+    const merged = [
+      ...current.sources,
+      { id: "fractionaljobs", enabled: true },
+      { id: "fractionus", enabled: true },
+      { id: "fractionalfinders", enabled: true },
+    ];
+
+    // ...and write that whole array as the edit.
+    const result = saveConfig({ sources: merged });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.data.sources).toHaveLength(7);
+
+    // All 4 original sources STILL present, byte-identical (including their
+    // unresolved "env:" settings — never touched by this edit).
+    expect(result.data.sources.find((s) => s.id === "braintrust")).toEqual(preexistingConfig.sources[0]);
+    expect(result.data.sources.find((s) => s.id === "builtin")).toEqual(preexistingConfig.sources[1]);
+    expect(result.data.sources.find((s) => s.id === "gofractional")).toEqual(preexistingConfig.sources[2]);
+    expect(result.data.sources.find((s) => s.id === "ateam")).toEqual(preexistingConfig.sources[3]);
+
+    // The 3 new fetch-based sources ADDED, enabled.
+    for (const id of ["fractionaljobs", "fractionus", "fractionalfinders"]) {
+      expect(result.data.sources.find((s) => s.id === id)).toEqual({ id, enabled: true });
+    }
+
+    // Confirmed on disk too, not just the in-memory return value.
+    const onDisk = readAndDecryptOnDisk() as typeof preexistingConfig;
+    expect(onDisk.sources).toHaveLength(7);
+    expect(onDisk.sources.map((s) => s.id).sort()).toEqual(
+      ["ateam", "braintrust", "builtin", "fractionaljobs", "fractionalfinders", "fractionus", "gofractional"].sort(),
+    );
+  });
+
+  it("regression guard: a NAIVE write of only the new entries (no read-merge) WOULD have wiped the existing 4 — demonstrating why the merge above is required", () => {
+    writeConfig(preexistingConfig);
+
+    // The clobber this story's design_decisions explicitly warns against:
+    // passing just the new sources, skipping the read-merge step.
+    const result = saveConfig({
+      sources: [
+        { id: "fractionaljobs", enabled: true },
+        { id: "fractionus", enabled: true },
+        { id: "fractionalfinders", enabled: true },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    // This IS the clobber — sources ends up with only the 3 new entries,
+    // the 4 original ones silently gone. Asserted here as a demonstration
+    // of the exact failure mode the read-merge-write pattern above avoids,
+    // not as desired behavior.
+    expect(result.data.sources).toHaveLength(3);
+    expect(result.data.sources.find((s) => s.id === "braintrust")).toBeUndefined();
+  });
+});

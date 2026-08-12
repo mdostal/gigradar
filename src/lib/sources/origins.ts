@@ -78,4 +78,15 @@ export const KNOWN_SOURCES: readonly { id: string; label: string }[] = [
   { id: "builtin", label: "BuiltIn" },
   { id: "gofractional", label: "GoFractional" },
   { id: "ateam", label: "A.Team" },
+  // adapter-batch-public-boards epic, public-fetch-adapters story: three
+  // new auth:"none" fetch-based boards (src/lib/sources/fractionaljobs.ts,
+  // fractionus.ts, fractionalfinders.ts).
+  { id: "fractionaljobs", label: "FractionalJobs" },
+  { id: "fractionus", label: "Fractionus" },
+  { id: "fractionalfinders", label: "FractionalFinders" },
+  // adapter-batch-public-boards epic's sibling story (wellfound-adapter):
+  // listed here now so the config UI's picker is complete for the whole
+  // epic, even though src/lib/sources/wellfound.ts itself doesn't exist yet
+  // from THIS story's perspective — auth:"browser-session" once it lands.
+  { id: "wellfound", label: "Wellfound" },
 ];
