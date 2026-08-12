@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-12
+
+### Added
+
+- **`electron-wrapper` epic.** An optional native-window runtime mode —
+  `npm run electron` builds and opens gigradar as a real desktop app,
+  alongside the existing (completely unchanged) `npm run dev`/`start`
+  browser mode. Server code never runs inside Electron's own bundled Node
+  runtime — the main process spawns the exact same `npm run start`
+  command as a genuine child process and displays it in a window, so
+  Electron's own runtime never needs to support `node:sqlite` directly.
+  Live-verified on a real machine, not just reasoned through: the window
+  opens with the real dashboard and real data, and shutdown cleanly kills
+  the full process tree (a naive single-process kill was tested and
+  found insufficient, since `next start` spawns a `next-server`
+  grandchild — the process-group-kill design was validated by that real
+  failure, not assumed).
+- 6 new tests (388 total, 3 opt-in real-browser tests).
+
+
 ## [0.10.0] - 2026-08-12
 
 ### Added
