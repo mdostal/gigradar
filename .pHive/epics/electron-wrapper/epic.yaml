@@ -1,0 +1,25 @@
+name: electron-wrapper
+title: Optional Electron runtime mode (browser or native window)
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture]
+  roster: [researcher, technical-writer, tpm, architect]
+  per_tag_reasoning:
+    architecture: "New electron/ entry point spawning the existing server as a child process — a new orchestration layer, no changes to src/lib or src/app."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+
+stories:
+  - id: electron-wrapper
+    title: "electron/main.ts: spawn next start, poll for readiness, open a native window"
+    complexity: low
+    depends_on: []

@@ -1,0 +1,115 @@
+id: electron-wrapper
+epic: electron-wrapper
+title: "electron/main.ts: spawn next start, poll for readiness, open a native window"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Add Electron as an optional runtime mode alongside the existing browser
+  mode, per the design doc's §3.
+
+  **`electron/main.ts`** (new top-level `electron/` directory):
+  - On launch: `child_process.spawn("npm", ["run", "start"], {env:
+    {...process.env, NODE_OPTIONS: "--experimental-sqlite"}})`. This is a
+    TERMINAL-launched command (inherits a normal shell's PATH) — not a
+    double-clickable packaged app; that constraint is documented, not
+    silently assumed.
+  - Poll `http://127.0.0.1:3000` (bounded retry loop, short interval, a
+    clear total-timeout ceiling) until it responds, THEN create the
+    `BrowserWindow` pointing at it — never load before the server is
+    actually ready.
+  - Port-conflict handling: if the port is already bound by something
+    else (e.g. a concurrent `npm run dev`), show a clear, actionable
+    native dialog rather than hanging indefinitely.
+  - Clean shutdown: kill the spawned child process on `window-all-closed`
+    AND `before-quit` (not just the happy-path close event) — no orphaned
+    `next start` process left squatting on the port for the next launch.
+
+  **`npm run electron` script**: `npm run build && electron
+  electron/main.ts` — ONE composed command, always freshly built (per the
+  design's grill-resolved decision — avoids the stale-code footgun from
+  this project's actual dev-iteration workflow).
+
+  **`electron` added as a devDependency.**
+
+  **First implementation step**: actually launch the real Electron app
+  and confirm the "server never runs inside Electron's own process"
+  architecture works end to end — `node:sqlite` loads correctly in the
+  spawned child, the real dashboard renders with real data. This is a
+  live-verification step, not assumed to work from reasoning alone.
+
+acceptance_criteria:
+  - "Given npm run build && npm run electron on the owner's real machine, when it completes, then a native window opens showing the real, working dashboard with real data — not a blank/error window."
+  - "Given the Electron window is closed, when checked afterward (ps/Activity Monitor), then the spawned next start child process is no longer running — no orphaned process left on the port."
+  - "Given port 3000 is already occupied by another process when npm run electron launches, when the spawn/poll step detects this, then a clear, actionable dialog is shown — not an indefinite hang or silent failure."
+  - "Given the Capture Login flow is used from within the Electron-opened dashboard, when a source's login button is clicked, then a real headed Playwright browser opens correctly (confirming environment inheritance works for this feature too, not just for npm/node resolution)."
+  - "Given the port-ready polling logic in isolation (a fake HTTP server standing in for the spawned child), when tested, then it correctly detects readiness and correctly times out/errors on a server that never responds — covered by an automated test, no real Electron process needed for this part."
+  - "Given npm run dev/start (browser mode), when run after this story lands, then they work exactly as before — zero behavior change to the existing browser mode."
+
+steps:
+  - id: implement
+    description: Build electron/main.ts and the npm run electron script per the description above, including the live-verification step confirming the spawned-child architecture actually works.
+    agent: developer
+  - id: test
+    description: Write an automated test for the port-ready polling/retry logic in isolation, and manually verify every acceptance criterion involving the real Electron app on the owner's real machine (window opens, real data renders, clean shutdown, port-conflict dialog, Capture Login works from within Electron).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the child process is killed on both window-all-closed and before-quit (not just the happy path), and that npm run dev/start remain completely unmodified.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/electron-wrapper.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    dependency: "electron (new devDependency)"
+  key_files:
+    - path: package.json
+      purpose: "The existing build/start scripts electron/main.ts spawns unmodified — never reimplemented."
+    - path: next.config.js
+      purpose: "Confirms Server Actions + node:sqlite — why this can't be a static Electron app, why a real spawned server process is required."
+
+design_decisions:
+  - decision: Server code never runs inside Electron's own main-process runtime — only in a spawned next start child process
+    rationale: Sidesteps an unverifiable question (does Electron's bundled Node honor --experimental-sqlite the same way a plain node invocation does) by construction, not by testing around it.
+  - decision: npm run electron composes the build into one command rather than requiring a separate manual build step first
+    rationale: Grill U1 — this project's actual, demonstrated development pattern all session has been iterative npm run dev; a separate required-but-easy-to-forget rebuild step would produce silent stale-code confusion when switching modes.
+  - decision: Explicitly scoped as a terminal-launched command, not a double-clickable packaged app
+    rationale: Grill H1 — GUI-launched apps often get a far more minimal PATH than a terminal session; stating this constraint now avoids silently breaking later if this ever gets packaged.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md and/or CLAUDE.md with a short note on the two runtime modes (browser vs Electron) and how to launch each."
+
+metric:
+  applies: true
+  name: gigradar.electron_mode_available
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manual launch on the owner's real machine: npm run build && npm run electron opens a working native window"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: The core architectural bet (server never runs inside Electron's own process) could fail in a way not anticipated during planning research (no GUI available to test live during planning).
+    mitigation: Explicitly the first implementation step, before building the rest of the feature around an unverified assumption.
+  - severity: low
+    description: Environment inheritance for the spawned child (PATH, Playwright's browser resolution) could behave differently than expected even for a terminal-launched command, depending on the owner's specific shell/Node setup.
+    mitigation: Dedicated acceptance criterion specifically testing Capture Login (which depends on Playwright) from within the Electron-opened app, not just confirming the dashboard itself loads.
+
+references:
+  - .pHive/epics/electron-wrapper/docs/design-discussion.md
+  - .pHive/epics/electron-wrapper/docs/grill-record.md
