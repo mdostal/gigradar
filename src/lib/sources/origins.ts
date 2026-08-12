@@ -20,6 +20,11 @@
 export const SOURCE_ORIGINS: Record<string, readonly string[]> = {
   gofractional: ["gofractional.com"],
   ateam: ["a.team", "platform.a.team"],
+  // adapter-batch-public-boards epic, wellfound-adapter story: wellfound.com
+  // ONLY, never Google/Clerk SSO or any other origin a broader multi-site
+  // storageState file might also carry — see wellfound.ts's own
+  // ALLOWED_ORIGINS comment.
+  wellfound: ["wellfound.com"],
 };
 
 /**
@@ -57,6 +62,14 @@ export const SOURCE_ORIGINS: Record<string, readonly string[]> = {
 export const SOURCE_LOGIN_URLS: Record<string, string> = {
   gofractional: "https://www.gofractional.com/login",
   ateam: "https://platform.a.team/mission-control",
+  // `wellfound`: `https://wellfound.com/login` — Wellfound's own real,
+  // dedicated login route (LIVE-CONFIRMED while building wellfound.ts, not a
+  // guess: HTTP 200, page title exactly "Log In | Wellfound", body content
+  // includes "Continue with Google" plus an email/password form — a
+  // standard OAuth-provider-select page). See wellfound.ts's own
+  // isSignInPage() for the same live-observed title/body content reused as
+  // this adapter's auth-failure signal.
+  wellfound: "https://wellfound.com/login",
 };
 
 /**
@@ -78,4 +91,13 @@ export const KNOWN_SOURCES: readonly { id: string; label: string }[] = [
   { id: "builtin", label: "BuiltIn" },
   { id: "gofractional", label: "GoFractional" },
   { id: "ateam", label: "A.Team" },
+  // adapter-batch-public-boards epic, public-fetch-adapters story: three
+  // new auth:"none" fetch-based boards (src/lib/sources/fractionaljobs.ts,
+  // fractionus.ts, fractionalfinders.ts).
+  { id: "fractionaljobs", label: "FractionalJobs" },
+  { id: "fractionus", label: "Fractionus" },
+  { id: "fractionalfinders", label: "FractionalFinders" },
+  // adapter-batch-public-boards epic, wellfound-adapter story:
+  // src/lib/sources/wellfound.ts, auth:"browser-session".
+  { id: "wellfound", label: "Wellfound" },
 ];

@@ -1,0 +1,110 @@
+id: wellfound-adapter
+epic: adapter-batch-public-boards
+title: "Wellfound adapter (browser-session, __NEXT_DATA__ extraction)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  A new `src/lib/sources/wellfound.ts` — `auth:"browser-session"`,
+  `withBrowserSession()` against both of the legacy tool's target URLs
+  (`/role/l/chief-technology-officer`, `/role/l/vp-of-engineering`),
+  extracting listings from the page's `__NEXT_DATA__` script tag.
+
+  This is NEW extraction logic, not a reuse of `gofractional.ts`'s DOM-eval
+  helper (confirmed during planning: `gofractional.ts` queries flat
+  card/anchor CSS selectors; Wellfound needs a recursive walk of an
+  arbitrary-depth JSON tree looking for `title`/`slug` keys — adapt the
+  legacy tool's walk logic, read from its private codebase during
+  planning, not verbatim-copied). Only `withBrowserSession()`'s session/
+  origin plumbing is reused from the existing pattern — the DOM/JSON
+  extraction itself is new.
+
+  `settings.sessionStatePath` required, same pattern as `gofractional.ts`/
+  `ateam.ts`. `src/lib/sources/origins.ts`: add `wellfound: ["wellfound.com"]`
+  to `SOURCE_ORIGINS`, and a login URL to `SOURCE_LOGIN_URLS` (Wellfound's
+  own `/login` route — a real, standard OAuth-provider-select page).
+
+  **Wellfound gets its own dedicated session file, never GoFractional's**
+  — the legacy tool reused GoFractional's Google-SSO session for
+  Wellfound, but this project's established convention is one dedicated
+  session per source (`<sourceId>-session.json`); reusing would be a
+  deliberate regression from that convention.
+
+  No relevance pre-filtering — return every real listing found, same rule
+  as the sibling `public-fetch-adapters` story; `tiering.ts` is the one
+  classification pass.
+
+acceptance_criteria:
+  - "Given a captured real __NEXT_DATA__ JSON fixture (from this epic's live research or freshly captured), when wellfound.ts's extraction logic parses it, then it returns the correct Gig[] mapping (real per-listing URLs, title, company where present)."
+  - "Given a fixture with no __NEXT_DATA__ script tag present at all (page-shape failure), when the adapter parses it, then it throws a specific, actionable error naming the source."
+  - "Given a session-state file that does NOT exist yet for wellfound (no Capture Login done), when fetch() is called, then it throws the same 'no storageState file found' class of error gofractional.ts/ateam.ts already throw — never a silent zero-result."
+  - "Given wellfound is added to SOURCE_ORIGINS and SOURCE_LOGIN_URLS, when the config UI's Capture Login button is checked for the wellfound source row, then it appears and points at Wellfound's real login URL."
+  - "Given a real Capture Login flow is completed for wellfound (manual verification), when npm run radar is then run, then real Wellfound listings appear in the store, using wellfound's OWN session file, never gofractional's or ateam's."
+  - "Given no relevance pre-filter exists in wellfound.ts, when its fetch() is code-reviewed, then it returns every real listing found, with zero title/keyword filtering logic inside the adapter itself."
+
+steps:
+  - id: implement
+    description: Build wellfound.ts's __NEXT_DATA__ extraction logic and the origins.ts additions per the description above.
+    agent: developer
+  - id: test
+    description: Capture a real __NEXT_DATA__ fixture (or reuse one from planning research), write fixture-based unit tests covering every acceptance criterion, including the missing-session-file error path (matching gofractional.ts's/ateam.ts's existing test patterns).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the extraction logic is genuinely new (not a broken attempt to reuse gofractional.ts's DOM-eval helper), the session file is dedicated (never shared with another source), and no relevance pre-filter was added.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/adapter-batch-public-boards. Do NOT add wellfound to the owner's real config.json sources yet (it needs a real Capture Login first, a manual owner action) -- leave it selectable in the picker but not pre-enabled.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    dependency: playwright (existing, unchanged)
+  key_files:
+    - path: src/lib/sources/gofractional.ts
+      purpose: "The browser-session pattern for session/origin plumbing (settings.sessionStatePath, withBrowserSession()) -- reused. Its DOM-eval helper itself is NOT reused (different extraction shape)."
+    - path: src/lib/sources/origins.ts
+      purpose: "SOURCE_ORIGINS/SOURCE_LOGIN_URLS -- add wellfound's entries here."
+    - path: src/lib/auth/browser-session.ts
+      purpose: "withBrowserSession() -- the shared session/origin-scoping mechanism this adapter uses unmodified."
+
+design_decisions:
+  - decision: __NEXT_DATA__ recursive JSON-tree walk is new logic, not a reuse of gofractional.ts's DOM-eval helper
+    rationale: Grill H2 -- confirmed by direct code read that gofractional.ts's extraction is a flat CSS-selector query, structurally different from Wellfound's recursive JSON walk; the story should be estimated as new parsing logic, not a quick adaptation.
+  - decision: Wellfound gets its own dedicated session file, never reusing GoFractional's
+    rationale: The legacy tool's session-reuse was a shortcut specific to its own session-naming scheme; this project's established one-session-per-source convention is deliberately upheld here rather than regressed.
+  - decision: Wellfound is NOT pre-enabled in the owner's real config.json during this story's integrate step
+    rationale: Unlike the three auth:none adapters (public-fetch-adapters story), Wellfound requires a real Capture Login the owner hasn't done yet -- enabling it without a valid session would just produce an immediate, confusing error on every scan.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's source-adapter section to list Wellfound alongside the other browser-session sources."
+
+metric:
+  applies: true
+  name: gigradar.wellfound_adapter_live
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "fixture-based tests pass; live verification deferred to the owner's own Capture Login + a subsequent npm run radar run"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: low
+    description: Wellfound's __NEXT_DATA__ shape is an undocumented internal API surface that could change without notice.
+    mitigation: Accepted, same risk class this project already carries for Braintrust's JSON API and BuiltIn's HTML shape -- throw loud on an unrecognized shape.
+
+references:
+  - .pHive/epics/adapter-batch-public-boards/docs/design-discussion.md
+  - .pHive/epics/adapter-batch-public-boards/docs/grill-record.md
