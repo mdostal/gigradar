@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-12
+
+### Added
+
+- **`agent-integration` epic.** A real MCP server (`src/mcp/server.ts`,
+  `@modelcontextprotocol/sdk`, stdio transport, `npm run mcp`) exposing 5
+  tools — `list_gigs`, `get_gig`, `update_gig_status`, `get_status_summary`,
+  `run_scan` — so any MCP client (Claude Desktop, Claude Code, or another)
+  can work with a running gigradar instance directly: list/filter tracked
+  gigs, change a gig's status, check setup status, or trigger a real scan.
+  Every tool is a thin wrapper around the exact `src/lib` functions the
+  dashboard and CLI already use — no parallel logic. `update_gig_status`
+  enforces the real status enum at the tool's own schema boundary, before
+  the handler ever runs. `get_status_summary` only ever reads the
+  non-resolving config reader — a resolved secret can never cross this
+  boundary.
+- **`CLAUDE.md`** — this repo's first, a short pointer to
+  `docs/ARCHITECTURE.md` plus the core/user-layer boundary and
+  secret-handling rules stated plainly.
+- **`docs/mcp-setup.md`** — copy-pasteable MCP client config for both
+  Claude Desktop and Claude Code, written against the real shipped tool
+  names.
+- `src/app/status-strip.ts` relocated to `src/lib/status/` so both the
+  dashboard and the new MCP server import the same logic from one neutral
+  location, rather than the MCP layer reaching sideways into `src/app`.
+- 15 new tests (382 total, 3 opt-in real-browser tests).
+
 ## [0.9.1] - 2026-08-12
 
 ### Fixed

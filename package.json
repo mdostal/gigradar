@@ -1,6 +1,6 @@
 {
   "name": "gigradar",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "private": false,
   "license": "MIT",
   "description": "Open-source gig radar: define your accounts, needs, and role — it tracks and finds matching fractional/contract roles across the sources you enable, runs on a schedule, and assists the apply.",
@@ -11,10 +11,12 @@
     "start": "NODE_OPTIONS=--experimental-sqlite next start -H 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test": "NODE_OPTIONS=--experimental-sqlite vitest run",
-    "radar": "NODE_OPTIONS=--experimental-sqlite tsx src/lib/apply/runner.ts"
+    "radar": "NODE_OPTIONS=--experimental-sqlite tsx src/lib/apply/runner.ts",
+    "mcp": "NODE_OPTIONS=--experimental-sqlite tsx src/mcp/server.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "dotenv": "^17.4.2",
     "next": "^15.0.0",
     "playwright": "^1.62.1",

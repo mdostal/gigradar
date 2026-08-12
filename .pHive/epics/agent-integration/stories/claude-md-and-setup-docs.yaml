@@ -1,0 +1,64 @@
+id: claude-md-and-setup-docs
+epic: agent-integration
+title: "CLAUDE.md + copy-pasteable MCP client config for Claude Desktop/Code"
+status: pending
+complexity: low
+methodology: classic
+depends_on: [mcp-server-core]
+
+description: |
+  A `CLAUDE.md` at repo root — a short pointer document, not a duplicate of
+  `docs/ARCHITECTURE.md`: project one-liner, "read docs/ARCHITECTURE.md
+  before touching core," the core/user-layer boundary rule stated plainly,
+  the secret-handling rule (never log/return a resolved secret), and
+  `npm test`/`npm run typecheck` as the standard verification commands.
+
+  A "Using gigradar as an MCP tool" section (in `CLAUDE.md` or a small
+  `docs/mcp-setup.md` it links to) with the EXACT, copy-pasteable JSON
+  snippet for both Claude Desktop's `claude_desktop_config.json` and
+  Claude Code's `.mcp.json`, naming the real `npm run mcp` command and the
+  5 tool names `mcp-server-core` actually shipped — written against what
+  was actually built, not planned in the abstract.
+
+acceptance_criteria:
+  - "Given CLAUDE.md, when read top to bottom, then it is short (a pointer, not a duplicate of ARCHITECTURE.md's content) and states the core/user-layer boundary and secret-handling rules explicitly, not by reference alone."
+  - "Given the MCP client config snippets, when copy-pasted verbatim into a real claude_desktop_config.json or .mcp.json, then they reference the correct command (npm run mcp) and are valid JSON."
+  - "Given the 5 tool names documented in the setup section, when compared against src/mcp/server.ts's actual tool registrations, then they match exactly (no drift between what was built and what's documented)."
+
+steps:
+  - id: implement
+    description: Write CLAUDE.md and the MCP client setup section/doc per the description above, referencing the actual tool names and commands mcp-server-core shipped.
+    agent: technical-writer
+  - id: review
+    description: Verify the documented tool names/commands match the real shipped code exactly, and that CLAUDE.md stays a pointer, not a duplicate.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feat/agent-integration.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: docs/ARCHITECTURE.md
+      purpose: "The design contract CLAUDE.md points to, not duplicates."
+    - path: src/mcp/server.ts
+      purpose: "The real, shipped tool names/commands this story documents — written after, not before, mcp-server-core lands."
+
+design_decisions:
+  - decision: Ship a copy-pasteable client config as part of this epic's own "Done" bar, not left as an exercise
+    rationale: Grill U1 — the epic's north star was the owner actually connecting an agent, not just being theoretically able to.
+
+cross_cutting: []
+
+metric:
+  applies: false
+
+risks:
+  - severity: low
+    description: Documentation could drift from the real tool names/commands if written before mcp-server-core is finalized.
+    mitigation: This story explicitly depends on mcp-server-core and is written against the real shipped code, not the plan.
+
+references:
+  - .pHive/epics/agent-integration/docs/design-discussion.md

@@ -1,0 +1,16 @@
+{
+  "agent_id": "a61b17bf5e32406a7",
+  "session_id": "2096c7db-36b6-4ae7-a206-bb4fff054912",
+  "agent_type": "general-purpose",
+  "cwd": "/Users/mdostal/Documents/work/gigradar",
+  "agent_transcript_path": "/Users/mdostal/.claude/projects/-Users-mdostal-Documents-work-gigradar/2096c7db-36b6-4ae7-a206-bb4fff054912/subagents/agent-a61b17bf5e32406a7.jsonl",
+  "last_assistant_message": "Committed as `dcee609` on branch `feat/agent-integration` (not pushed, per instructions).\n\n## Summary\n\n**Wrote two files:**\n\n1. `/Users/mdostal/Documents/work/gigradar/CLAUDE.md` — short pointer doc: project one-liner, \"read `docs/ARCHITECTURE.md` before touching `src/lib/`/`src/app/`,\" the core/user-layer boundary stated plainly (not just referenced), the secret-handling rule stated plainly (never log/return/serialize a resolved secret, resolving vs. raw config reads), `npm test`/`npm run typecheck` as verification, and a short pointer into the MCP setup doc.\n\n2. `/Users/mdostal/Documents/work/gigradar/docs/mcp-setup.md` — the \"Using gigradar as an MCP tool\" content: the real `npm run mcp` command, all 5 tools with their real descriptions, and exact copy-pasteable JSON for both `claude_desktop_config.json` (uses `npm --prefix /absolute/path/to/gigradar run mcp` since Desktop isn't launched from the repo) and Claude Code's `.mcp.json` (bare `npm run mcp`, since it's project-scoped and runs from the repo root).\n\n**Verification of tool names:** grepped `src/mcp/server.ts` directly (`grep -A1 'server.registerTool(' src/mcp/server.ts`) and confirmed the 5 registered tool names are exactly `list_gigs`, `get_gig`, `update_gig_status`, `get_status_summary`, `run_scan` — matching what's documented in `docs/mcp-setup.md` verbatim. Also validated both JSON snippets parse with `json.loads`.\n\n**Test run:** `npm run typecheck` passed (no output = clean `tsc --noEmit`). `npm test` passed: 382 passed, 3 skipped, 30/31 test files (one integration file skipped by design, requires `GIGRADAR_TEST_REAL_BROWSER=1`). Docs-only change, nothing broke.\n\n**Commit:** `dcee609` — \"docs: add CLAUDE.md pointer doc + MCP client setup guide\" on `feat/agent-integration`. Not pushed, no PR opened, per instructions (next step in the story's `integrate` phase).",
+  "prompt_id": "4e886e3a-0053-4857-a289-412e8b28d7e9",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "verdict": "failure",
+  "verdict_source": "missing_marker",
+  "written_at": "2026-08-12T19:14:51Z"
+}
