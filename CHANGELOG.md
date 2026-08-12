@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-12
+
+### Fixed
+
+- **`npm run radar` never actually ran anything.** `runRadar()` was fully
+  built and tested since the very first epic, but the CLI entrypoint at
+  the bottom of `src/lib/apply/runner.ts` was left as an unimplemented
+  `TODO(build)` stub — the script exited 0 having done nothing. Found
+  while producing a real, populated dashboard screenshot for this
+  project's GitHub Pages site. Now loads the local config, runs one real
+  scan, and prints passers + any per-source errors. Source registration
+  (`registerSource()`) happens inside the CLI-only code path, not at
+  module scope, so `runner.test.ts`'s network-free test doubles (registered
+  under the same ids as the real adapters) don't collide with the real ones.
+
+### Added
+
+- A GitHub Pages site (`docs/index.html`) — the project's public landing
+  page, once the repo is public: features, a real dashboard screenshot,
+  a 4-step "how it works," and an OSS/license section.
+
 ## [0.9.0] - 2026-08-12
 
 ### Added

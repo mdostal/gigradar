@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>gigradar — find and track fractional/contract engagements, locally</title>
+<meta name="description" content="An open-source, local-first tool that tracks fractional and contract engagements across the sources you enable, gates them against your own criteria, and assists the apply — never auto-submitted." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%230b1220%22/><circle cx=%2250%22 cy=%2250%22 r=%2230%22 fill=%22none%22 stroke=%22%2334d399%22 stroke-width=%224%22/><circle cx=%2250%22 cy=%2250%22 r=%228%22 fill=%22%2334d399%22/></svg>" />
+<style>
+  :root {
+    --bg: #0b1220;
+    --bg-elevated: #111a2e;
+    --border: #1f2a44;
+    --text: #e6ebf5;
+    --text-dim: #93a2c2;
+    --green: #34d399;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --accent: #34d399;
+    --max-width: 1080px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: radial-gradient(ellipse 1200px 600px at 50% -10%, #142238 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    line-height: 1.55;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: var(--max-width); margin: 0 auto; padding: 0 24px; }
+
+  header.nav {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(10px);
+    background: rgba(11, 18, 32, 0.75);
+    border-bottom: 1px solid var(--border);
+  }
+  header.nav .wrap { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; padding-bottom: 14px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05rem; letter-spacing: -0.01em; }
+  .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px 2px rgba(52,211,153,0.6); }
+  nav.links { display: flex; gap: 24px; font-size: 0.92rem; }
+  nav.links a { color: var(--text-dim); text-decoration: none; }
+  nav.links a:hover { color: var(--text); }
+
+  .hero { padding: 88px 0 64px; text-align: center; position: relative; overflow: hidden; }
+  .radar-sweep {
+    position: absolute; top: -180px; left: 50%; transform: translateX(-50%);
+    width: 900px; height: 900px; pointer-events: none; opacity: 0.5;
+  }
+  .radar-sweep svg { width: 100%; height: 100%; }
+  .hero h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); margin: 0 0 18px; letter-spacing: -0.02em; position: relative; }
+  .hero h1 .hl { color: var(--green); }
+  .hero p.sub { max-width: 620px; margin: 0 auto 34px; color: var(--text-dim); font-size: 1.12rem; position: relative; }
+  .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; position: relative; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 22px; border-radius: 8px; font-weight: 600; font-size: 0.95rem;
+    text-decoration: none; border: 1px solid transparent; transition: transform 0.15s ease, background 0.15s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn.primary { background: var(--green); color: #05221a; }
+  .btn.primary:hover { background: #4ee0ab; }
+  .btn.ghost { border-color: var(--border); color: var(--text); background: var(--bg-elevated); }
+  .btn.ghost:hover { border-color: #33456e; }
+
+  .shot-frame {
+    margin: 56px auto 0; max-width: 960px;
+    border-radius: 14px; overflow: hidden;
+    border: 1px solid var(--border);
+    box-shadow: 0 30px 80px -30px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.02);
+  }
+  .shot-frame img { display: block; width: 100%; height: auto; }
+
+  section { padding: 72px 0; }
+  section h2 { font-size: 1.7rem; margin: 0 0 8px; letter-spacing: -0.01em; }
+  section p.lead { color: var(--text-dim); max-width: 640px; margin: 0 0 40px; }
+  .eyebrow { color: var(--accent); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 10px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+  .card {
+    background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 22px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 1.02rem; display: flex; align-items: center; gap: 8px; }
+  .card p { margin: 0; color: var(--text-dim); font-size: 0.92rem; }
+  .tier-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+  .tier-chip.g { background: rgba(52,211,153,0.15); color: var(--green); }
+  .tier-chip.y { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .tier-chip.r { background: rgba(248,113,113,0.15); color: var(--red); }
+
+  .steps { counter-reset: step; display: grid; gap: 18px; max-width: 700px; }
+  .step { display: flex; gap: 18px; align-items: flex-start; }
+  .step .num {
+    flex: none; width: 34px; height: 34px; border-radius: 8px;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; color: var(--green); font-size: 0.9rem;
+  }
+  .step code { background: var(--bg-elevated); border: 1px solid var(--border); padding: 2px 6px; border-radius: 5px; font-size: 0.85em; }
+  .step p { margin: 4px 0 0; color: var(--text-dim); font-size: 0.94rem; }
+  .step h4 { margin: 0; font-size: 0.98rem; }
+
+  .oss {
+    border: 1px solid var(--border); border-radius: 14px; padding: 36px;
+    background: linear-gradient(160deg, rgba(52,211,153,0.06), transparent 60%), var(--bg-elevated);
+    display: flex; flex-wrap: wrap; gap: 24px; align-items: center; justify-content: space-between;
+  }
+  .oss div.copy { max-width: 520px; }
+  .oss h3 { margin: 0 0 8px; }
+  .oss p { color: var(--text-dim); margin: 0; }
+  .badge-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .pill { font-size: 0.78rem; color: var(--text-dim); border: 1px solid var(--border); padding: 4px 10px; border-radius: 999px; }
+
+  footer { border-top: 1px solid var(--border); padding: 36px 0; color: var(--text-dim); font-size: 0.86rem; text-align: center; }
+  footer a { color: var(--text-dim); }
+
+  @media (max-width: 600px) {
+    .oss { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span> gigradar</div>
+    <nav class="links">
+      <a href="#features">Features</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#open-source">Open source</a>
+      <a href="https://github.com/mdostal/gigradar">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="radar-sweep" aria-hidden="true">
+    <svg viewBox="0 0 400 400">
+      <defs>
+        <radialGradient id="sweepFade" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#34d399" stop-opacity="0.35"/>
+          <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <circle cx="200" cy="200" r="180" fill="none" stroke="#1f2a44" stroke-width="1"/>
+      <circle cx="200" cy="200" r="130" fill="none" stroke="#1f2a44" stroke-width="1"/>
+      <circle cx="200" cy="200" r="80" fill="none" stroke="#1f2a44" stroke-width="1"/>
+      <circle cx="200" cy="200" r="30" fill="none" stroke="#1f2a44" stroke-width="1"/>
+      <circle cx="245" cy="150" r="4" fill="#34d399"/>
+      <circle cx="130" cy="240" r="3" fill="#fbbf24"/>
+      <circle cx="270" cy="260" r="3" fill="#34d399"/>
+    </svg>
+  </div>
+  <div class="wrap">
+    <h1>Track fractional &amp; contract work<br/>like it's <span class="hl">radar</span>, not a chore.</h1>
+    <p class="sub">
+      An open-source, local-first tool that scans the sources you enable, gates every
+      listing against your own criteria — explainably, never a black box — and keeps
+      the apply step human-approved. Nothing hosted, nothing auto-submitted.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/mdostal/gigradar">View on GitHub</a>
+      <a class="btn ghost" href="#how-it-works">How it works</a>
+    </div>
+    <div class="shot-frame">
+      <img src="assets/dashboard.png" alt="gigradar dashboard showing tracked gigs with green/yellow tier badges, source, company, rate, and status columns" loading="lazy" />
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="eyebrow">Features</div>
+    <h2>Yours, on your machine.</h2>
+    <p class="lead">Every install is single-user and local — your profile, criteria, and
+      credentials never leave your machine unless you explicitly send them somewhere
+      (like an LLM call you triggered yourself).</p>
+    <div class="grid">
+      <div class="card">
+        <h3>🔌 Plugin source adapters</h3>
+        <p>Add a board with config and a plugin — zero edits to the core. Public
+          boards need no login; others use a guided, real-browser login capture.</p>
+      </div>
+      <div class="card">
+        <h3><span class="tier-chip g">GREEN</span> Explainable gate + tiering</h3>
+        <p>A deterministic pass/fail with a human-readable reason per rule, plus
+          <span class="tier-chip g">green</span>/<span class="tier-chip y">yellow</span>/<span class="tier-chip r">red</span>
+          role-area tiering so "unknown, worth a look" never gets silently dropped.</p>
+      </div>
+      <div class="card">
+        <h3>🔒 Encrypted at rest by default</h3>
+        <p>Config, secrets, and captured session files are AES-256-GCM encrypted
+          automatically — the key never lives next to the data it protects.</p>
+      </div>
+      <div class="card">
+        <h3>🖱️ Guided browser login</h3>
+        <p>Click "Capture login," a real browser opens, you log in normally
+          (including Google/GitHub SSO) — no manual CLI dance, no pasted cookies.</p>
+      </div>
+      <div class="card">
+        <h3>✍️ Assisted, never automatic</h3>
+        <p>Applications are staged for human approval — nothing submits itself.
+          Your resume/links can seed your profile via an LLM call you explicitly trigger.</p>
+      </div>
+      <div class="card">
+        <h3>📊 A dashboard, not a spreadsheet</h3>
+        <p>Filter by tier and status, search, and track a listing from "new" through
+          "applied" → "interview" → "archived" in one place.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how-it-works">
+  <div class="wrap">
+    <div class="eyebrow">How it works</div>
+    <h2>Four steps, no hand-edited JSON.</h2>
+    <p class="lead">The whole point is that you never have to hand-write a config file
+      or run a CLI script to get set up.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <div>
+          <h4>Clone and run</h4>
+          <p><code>npm install &amp;&amp; npm run dev</code> — a local dashboard comes up at
+            <code>127.0.0.1:3000</code>, never exposed beyond your machine.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <div>
+          <h4>Set your profile</h4>
+          <p>Pick a role template or type your own — skills, rate floor, hours, and
+            role-area keywords. Upload a resume and gigradar can suggest the rest.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <div>
+          <h4>Turn on sources</h4>
+          <p>Public boards work immediately. Anything needing a login gets one click
+            on "Capture login" — a real browser, your real credentials, never gigradar's.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">4</div>
+        <div>
+          <h4>Run the radar</h4>
+          <p><code>npm run radar</code> (or a schedule) scans every enabled source,
+            gates and tiers each result, and the dashboard shows you what's worth a look.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="open-source">
+  <div class="wrap">
+    <div class="oss">
+      <div class="copy">
+        <h3>MIT licensed. Fork it, extend it, point it anywhere.</h3>
+        <p>gigradar's core knows nothing about any one person's job search — every
+          source, criterion, and credential is your own local config. Add a source
+          plugin without touching core code.</p>
+        <div class="badge-row">
+          <span class="pill">TypeScript</span>
+          <span class="pill">Next.js</span>
+          <span class="pill">Zero telemetry</span>
+          <span class="pill">Local-first</span>
+        </div>
+      </div>
+      <a class="btn primary" href="https://github.com/mdostal/gigradar">Star on GitHub →</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    gigradar is open source under the MIT license. ·
+    <a href="https://github.com/mdostal/gigradar">github.com/mdostal/gigradar</a>
+  </div>
+</footer>
+
+</body>
+</html>

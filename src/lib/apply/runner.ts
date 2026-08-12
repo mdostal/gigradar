@@ -4,6 +4,7 @@ import { gate } from "../matching/gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
 import { gigKey, recordScan } from "../store/index.js";
 import type { RecordScanOptions, SourceScanBatch } from "../store/index.js";
+import { loadConfig } from "../config/load.js";
 
 /**
  * One radar run: for every enabled source, fetch -> gate -> tier -> collect,
@@ -106,5 +107,49 @@ export async function stageApplication(_r: MatchResult): Promise<ApplicationDraf
   throw new Error("not implemented — assisted-apply drafting goes here (human approves before submit)");
 }
 
-// CLI entrypoint: `npm run radar` (loads the user's local config, prints the shortlist).
-// TODO(build): load Config from .local/config.json (gitignored), print passers + rejection reasons.
+// CLI entrypoint: `npm run radar` — loads the user's local config, runs one
+// scan, prints the shortlist (passers) and any per-source errors. This was
+// previously an unimplemented stub (runRadar() existed and was fully tested,
+// but nothing ever actually called it from the CLI) — found and fixed while
+// producing a real, populated screenshot of the dashboard for the project's
+// GitHub Pages site; `npm run radar` had silently done nothing since the
+// project's first epic.
+async function main(): Promise<void> {
+  // Registering every built-in source's side-effecting registerSource() call
+  // — runRadar() only ever looks sources up by id (getSource()), so without
+  // this the registry is empty and every configured source would report "no
+  // such registered source" no matter what's in config.json. Deliberately
+  // done here (inside main(), the CLI-only path), NOT as a top-level import
+  // of this module: runner.test.ts imports runRadar() directly and registers
+  // its own network-free test doubles under the SAME ids (e.g. "braintrust")
+  // — a top-level import here would load the real adapters into that same
+  // test process and crash on "duplicate source id".
+  await Promise.all([
+    import("../sources/braintrust.js"),
+    import("../sources/builtin.js"),
+    import("../sources/gofractional.js"),
+    import("../sources/ateam.js"),
+  ]);
+
+  const config = loadConfig();
+  const { passed, errors } = await runRadar(config);
+
+  if (errors.length > 0) {
+    console.error(`gigradar: ${errors.length} source(s) errored:`);
+    for (const e of errors) console.error(`  - ${e.sourceId}: ${e.message}`);
+  }
+
+  console.log(`gigradar: ${passed.length} gig(s) passed the gate.`);
+  for (const r of passed) {
+    console.log(`  [${r.tier ?? "yellow"}] ${r.gig.title} — ${r.gig.company ?? "?"} (${r.gig.sourceId})`);
+  }
+}
+
+// Only run when invoked directly (`npm run radar`), not when imported by
+// tests or other modules that just need runRadar()/stageApplication().
+if (process.argv[1] && process.argv[1].endsWith("runner.ts")) {
+  main().catch((e) => {
+    console.error("gigradar: fatal error running radar:", e instanceof Error ? e.message : e);
+    process.exitCode = 1;
+  });
+}
