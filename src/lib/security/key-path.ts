@@ -10,6 +10,13 @@ import os from "node:os";
 import path from "node:path";
 
 const APP_DIR_NAME = "gigradar";
+// Windows has no first-class config/data split the way XDG does on POSIX,
+// so the fallback (no XDG_CONFIG_HOME set) uses a distinct directory NAME
+// under %LOCALAPPDATA% instead — "gigradar-config" vs. getDefaultDataDir()'s
+// "gigradar" — so the key never lands in the same directory as the data it
+// protects. See .pHive/epics/security-hardening/docs/design-discussion.md
+// §3 step 1.
+const WINDOWS_FALLBACK_DIR_NAME = "gigradar-config";
 const KEY_FILE_NAME = "key";
 
 /**
@@ -17,10 +24,10 @@ const KEY_FILE_NAME = "key";
  *  1. `XDG_CONFIG_HOME` (the XDG Base Directory spec — respected on any OS
  *     if set).
  *  2. Platform fallback: `~/.config/gigradar` on macOS/Linux/other POSIX,
- *     `%LOCALAPPDATA%\gigradar` (or `~/AppData/Local/gigradar`) on Windows —
- *     same Windows convention as getDefaultDataDir(), since Windows has no
- *     first-class equivalent split between "config" and "data" the way XDG
- *     does on POSIX.
+ *     `%LOCALAPPDATA%\gigradar-config` (or `~/AppData/Local/gigradar-config`)
+ *     on Windows — a distinct sibling directory from getDefaultDataDir()'s
+ *     `%LOCALAPPDATA%\gigradar`, since Windows has no first-class equivalent
+ *     split between "config" and "data" the way XDG does on POSIX.
  */
 export function getKeyConfigDir(): string {
   const xdgConfigHome = process.env.XDG_CONFIG_HOME?.trim();
@@ -28,7 +35,7 @@ export function getKeyConfigDir(): string {
 
   if (process.platform === "win32") {
     const base = process.env.LOCALAPPDATA?.trim() || path.join(os.homedir(), "AppData", "Local");
-    return path.join(base, APP_DIR_NAME);
+    return path.join(base, WINDOWS_FALLBACK_DIR_NAME);
   }
 
   return path.join(os.homedir(), ".config", APP_DIR_NAME);
