@@ -628,6 +628,40 @@ describe("fetchAndExtractLink(): timeout and streaming size cap (AC6-AC7)", () =
       await server.close();
     }
   });
+
+  it(
+    "a slow-trickle server (responds immediately, then drips data forever, staying under the size cap) is still bounded by the timeout -- not left connected indefinitely",
+    async () => {
+      const server = await startTestServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        // Headers arrive immediately (fetch() resolves fast), then a tiny
+        // trickle of bytes forever -- well under the 5MB cap even after
+        // many seconds, so ONLY a timeout that covers the body-read phase
+        // (not just the initial fetch() call) can ever end this.
+        const interval = setInterval(() => {
+          res.write("x");
+        }, 200);
+        res.on("close", () => clearInterval(interval));
+      });
+      vi.stubGlobal("fetch", realFetch);
+
+      try {
+        const started = Date.now();
+        const result = await extractProfile({ resumeText: "resume content", links: [server.url] }, "fake-api-key");
+        const elapsedMs = Date.now() - started;
+
+        expect(result.warnings).toHaveLength(1);
+        expect(result.warnings[0]).toContain("couldn't fetch this link");
+        // Same ~10s bound as AC6 -- proves the timeout governs the WHOLE
+        // operation (headers + body streaming), not just fetch() resolving.
+        expect(elapsedMs).toBeGreaterThanOrEqual(9000);
+        expect(elapsedMs).toBeLessThan(14000);
+      } finally {
+        await server.close();
+      }
+    },
+    { timeout: 20000 },
+  );
 });
 
 describe("fetchAndExtractLink(): no raw error detail ever reaches the caller (AC8)", () => {

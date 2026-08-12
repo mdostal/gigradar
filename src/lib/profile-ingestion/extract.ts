@@ -273,52 +273,68 @@ async function fetchAndExtractLink(url: string): Promise<LinkFetchResult> {
     return { warning: blockedWarning };
   }
 
+  // ONE timeout governs the WHOLE operation — fetch() resolving (headers
+  // arriving) AND the subsequent body-streaming read — not just the
+  // initial fetch() call. A naive `clearTimeout` right after `fetch()`
+  // resolves leaves the body-read phase completely unbounded in time
+  // (only the MAX_RESPONSE_BYTES cap would apply), which a slow-trickle
+  // server could exploit to hold the connection open indefinitely while
+  // staying under the size cap — a real gap caught during this story's
+  // own review, fixed before merge, not left as a silent scope cut like
+  // the (separately, explicitly accepted) DNS-rebinding gap.
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-  let response: Response;
   try {
-    response = await fetch(url, { signal: controller.signal });
-  } catch (e) {
-    console.error(`fetchAndExtractLink: fetch failed for "${url}":`, e);
-    return { warning: `Couldn't fetch "${url}": couldn't fetch this link.` };
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: controller.signal });
+    } catch (e) {
+      console.error(`fetchAndExtractLink: fetch failed for "${url}":`, e);
+      return { warning: `Couldn't fetch "${url}": couldn't fetch this link.` };
+    }
+
+    const finalUrl = response.url || url;
+    if (
+      detectLoginWall({
+        requestedUrl: url,
+        finalUrl,
+        status: response.status,
+        redirected: response.redirected,
+      })
+    ) {
+      return { warning: `Couldn't use "${url}" — it may require login.` };
+    }
+
+    if (!response.ok) {
+      return { warning: `Couldn't fetch "${url}": server responded with HTTP ${response.status}.` };
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("html") && !contentType.includes("text")) {
+      return { warning: `Couldn't use "${url}": unsupported content type "${contentType || "unknown"}".` };
+    }
+
+    let html: string;
+    try {
+      html = await readBodyWithSizeCap(response, controller);
+    } catch (e) {
+      if (e instanceof ResponseTooLargeError) {
+        return { warning: `Couldn't use "${url}": the response was too large to process.` };
+      }
+      // A slow-trickle response that never finished streaming before the
+      // shared timeout fired aborts the reader, which surfaces here as a
+      // generic stream-read error — same fixed, generic warning as any
+      // other fetch failure, never distinguished in a way that leaks
+      // timing detail to the caller.
+      console.error(`fetchAndExtractLink: reading response body failed for "${url}":`, e);
+      return { warning: `Couldn't fetch "${url}": couldn't fetch this link.` };
+    }
+
+    return { text: htmlToText(html) };
   } finally {
     clearTimeout(timeoutId);
   }
-
-  const finalUrl = response.url || url;
-  if (
-    detectLoginWall({
-      requestedUrl: url,
-      finalUrl,
-      status: response.status,
-      redirected: response.redirected,
-    })
-  ) {
-    return { warning: `Couldn't use "${url}" — it may require login.` };
-  }
-
-  if (!response.ok) {
-    return { warning: `Couldn't fetch "${url}": server responded with HTTP ${response.status}.` };
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("html") && !contentType.includes("text")) {
-    return { warning: `Couldn't use "${url}": unsupported content type "${contentType || "unknown"}".` };
-  }
-
-  let html: string;
-  try {
-    html = await readBodyWithSizeCap(response, controller);
-  } catch (e) {
-    if (e instanceof ResponseTooLargeError) {
-      return { warning: `Couldn't use "${url}": the response was too large to process.` };
-    }
-    console.error(`fetchAndExtractLink: reading response body failed for "${url}":`, e);
-    return { warning: `Couldn't fetch "${url}": couldn't fetch this link.` };
-  }
-
-  return { text: htmlToText(html) };
 }
 
 /**
