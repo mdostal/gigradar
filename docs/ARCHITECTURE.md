@@ -486,6 +486,7 @@ test exists at all.
   above.
 - [x] Guided session-capture UI — a "Capture login" button per browser-session-auth source in `/config`, driving `startCapture`/`finishCapture`/`cancelCapture` via three Server Actions and auto-writing the captured path into that source's `settings.sessionStatePath` — `session-capture-ui` epic, `session-capture-ui` story. See "The config editor" below (its "Session capture" subsection) for the full flow. Real-headed-browser-verified end to end using a local, non-real-site login target (see that subsection for exactly what was and wasn't verified this way). The pre-existing manual `playwright-cli`/scripted-Playwright bootstrap path (see "Session-capture mechanism" above, "Bootstrapping a storageState file") remains documented as a fallback — not removed, not deprecated, just no longer the only path.
 - [x] AES-256-GCM vault primitives (`src/lib/security/vault.ts`, `src/lib/security/key-path.ts`) and encryption-at-rest, with transparent migrate-on-read for legacy plaintext files, across all three local secret/state file locations — `config.json`, `.env`, and every captured `<sourceId>-session.json` — `encrypted-local-storage` epic, `vault-module` + `config-json-encryption` + `env-encryption` + `session-file-encryption` stories (the epic's full scope, now complete). See "Config loading", "Writing config.json", "`browser-session` mechanism", and "Session-capture mechanism" above. The vault key lives in a directory tree deliberately separate from the data it protects (`XDG_CONFIG_HOME`/`~/.config/gigradar/key`, never alongside `XDG_DATA_HOME`); losing it is real, accepted, non-silent data loss — `getOrCreateKey()`'s `hasAnyEncryptedFileFn` (`hasAnyEncryptedFile()` in `load.ts`) checks `config.json` OR `.env` OR any file in the session-state directory before ever minting a fresh key, throwing `VaultKeyLostError` rather than silently orphaning already-encrypted data.
+- [x] Electron desktop runtime mode (`electron/main.ts`, `npm run electron`) — `electron-wrapper` epic, `electron-wrapper` story. Spawns the existing `npm run start` as a child process, polls for readiness, opens a `BrowserWindow`; server code never runs inside Electron's own process. See "Two runtime modes: browser vs. Electron" above. Live-verified end to end on the owner's real machine.
 
 ## Running the dashboard
 
@@ -512,6 +513,63 @@ opt-in choice, not this project's default.
 resolver doesn't map that by default, so `next.config.js` adds a
 `resolve.extensionAlias` entry (`{ ".js": [".ts", ".tsx", ".js"] }`) rather
 than changing the already-working `src/lib` import style.
+
+## Two runtime modes: browser vs. Electron (`electron-wrapper` epic)
+
+`npm run dev`/`npm run build && npm run start` (above) is the default,
+completely unmodified browser mode. As of the `electron-wrapper` epic,
+there's a second, optional way to run the exact same app as a native
+desktop window:
+
+```
+npm run electron
+```
+
+This is ONE composed command (`npm run build && electron electron/main.ts`)
+— always freshly built, no separate manual build step to forget and end up
+running stale code against. It's a developer/technical-setup runtime-mode
+choice ("run in browser or in Electron"), not a packaged installer for a
+non-technical end user — no `.dmg`/`.exe`, code signing, or auto-update,
+explicitly out of scope for this epic.
+
+**How it works (`electron/main.ts`):** the Electron main process never runs
+server code itself. It spawns the same `npm run start` script as a genuine
+child process (`NODE_OPTIONS=--experimental-sqlite` in its env, same as the
+`start` script always carries), polls `http://127.0.0.1:3000` on a bounded
+retry loop until it responds, and only then opens a `BrowserWindow` pointed
+at it — never loads before the server is actually ready. This sidesteps
+ever needing to know whether Electron's own bundled Node honors
+`--experimental-sqlite` the same way a plain `node` invocation does:
+Electron's own runtime never touches `node:sqlite` at all, only the spawned
+child (the system's own Node) does. `electron/server-ready.ts` holds the
+polling logic as a small, Electron-free module, unit-tested in isolation
+against a real `node:http` server standing in for the spawned child
+(`electron/__tests__/server-ready.test.ts`) — no real Electron process
+needed for that test.
+
+If port 3000 is already bound by something else (e.g. a concurrent
+`npm run dev`), a clear native dialog is shown ("port already in use...")
+instead of hanging indefinitely or failing silently. On window close/app
+quit (`window-all-closed` AND `before-quit`, not just the happy path), the
+spawned process is killed via its process group (`detached: true` + a
+negative-pid `SIGTERM`) — killing just the top-level `npm` process is not
+enough, since `npm run start` itself spawns a further `next-server` child
+that doesn't reliably receive a signal sent only to the `npm` pid, which
+would otherwise orphan a process still squatting on port 3000 for the next
+launch.
+
+**Terminal-launched, not double-clickable — a stated constraint, not a
+silent assumption.** `npm run electron` inherits a normal shell's `PATH`
+(same as `npm run dev`/`start` already require), which the spawned child
+needs to resolve `npm`/`node` and which Capture Login's Playwright browser
+launch also depends on. A future GUI-launched/packaged app would NOT get
+this for free and would need explicit environment-passing if ever built.
+
+Live-verified end to end on the owner's real machine: the real Electron
+window opens and renders the real dashboard with real data (the same
+`node:sqlite`-backed store `npm run start` serves), quitting the app
+leaves no orphaned `next-server` process on port 3000, and launching with
+port 3000 already occupied shows the conflict dialog instead of hanging.
 
 ## The dashboard (`src/app/page.tsx`)
 

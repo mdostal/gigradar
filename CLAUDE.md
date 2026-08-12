@@ -47,6 +47,14 @@ npm run typecheck
 Both must pass. `npm test` runs the vitest suite (no live network calls);
 `npm run typecheck` runs `tsc --noEmit`.
 
+## Runtime modes: browser vs. Electron
+
+`npm run dev` / `npm run build && npm run start` — the default, unchanged
+browser mode. `npm run electron` — same app in a native desktop window
+(spawns `npm run start` as a child process; server code never runs inside
+Electron's own process). See `docs/ARCHITECTURE.md`'s "Two runtime modes"
+section for the full mechanism.
+
 ## Using gigradar as an MCP tool
 
 gigradar ships an MCP server (`src/mcp/server.ts`, run via `npm run mcp`)
