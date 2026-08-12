@@ -23,7 +23,11 @@
 // — errors here describe what went wrong structurally (a missing tool_use
 // block, a fetch failure), never the content itself. If you touch this
 // file, keep auditing that invariant.
+import { lookup as dnsLookup } from "node:dns";
+import { promisify } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
+
+const dnsLookupAsync = promisify(dnsLookup);
 
 /** One input to extractProfile(): a resume (as a PDF file or plain text), and/or public links to fetch and include as additional context. */
 export interface ExtractProfileInput {
@@ -117,22 +121,169 @@ export function htmlToText(html: string): string {
 
 type LinkFetchResult = { text: string } | { warning: string };
 
+/** Wall-clock cap on the whole fetch() call — see design-discussion.md §3 step 3. */
+const FETCH_TIMEOUT_MS = 10_000;
+
+/** Hard cap on the response body, enforced by streaming (never trusting Content-Length alone — it can be missing or spoofed). */
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Unwraps an IPv4-mapped IPv6 address (e.g. `::ffff:127.0.0.1`) to its
+ * embedded IPv4 form. Returns the input unchanged if it isn't in that
+ * form. MUST run before range-checking — an address in this form hides a
+ * (possibly blocked) IPv4 address inside IPv6 syntax, a known SSRF
+ * bypass if IPv4/IPv6 are checked as unrelated cases (grill finding H1,
+ * design-discussion.md §3 step 3).
+ */
+function unwrapIpv4MappedIpv6(address: string): string {
+  const match = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
+  return match?.[1] ?? address;
+}
+
+/** loopback (127.0.0.0/8), link-local (169.254.0.0/16 — covers the cloud metadata IP 169.254.169.254), RFC1918 private. */
+function isIpv4InBlockedRange(address: string): boolean {
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = parts as [number, number, number, number];
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+/** loopback (::1), link-local (fe80::/10 — same range family that covers the cloud metadata IP on the IPv4 side). */
+function isIpv6InBlockedRange(address: string): boolean {
+  const normalized = address.toLowerCase();
+  if (normalized === "::1") return true;
+  if (/^fe[89ab][0-9a-f]:/.test(normalized)) return true;
+  return false;
+}
+
+const IPV4_PATTERN = /^\d+\.\d+\.\d+\.\d+$/;
+
+/**
+ * Pre-fetch validation, mirroring detectLoginWall()'s "reject early,
+ * specific warning" shape: rejects non-http(s) schemes outright (before
+ * any DNS resolution), then resolves the hostname via a REAL DNS lookup
+ * (not literal-string matching — a hostname could resolve to a blocked
+ * range even if its literal text doesn't look internal) and rejects if
+ * ANY resolved address is loopback, link-local, or RFC1918 private, after
+ * normalizing IPv4-mapped IPv6 addresses to their embedded IPv4 form.
+ * Returns a warning string when the target is blocked, or `undefined`
+ * when it's safe to fetch. NEVER throws — DNS resolution failure fails
+ * closed (treated as "can't fetch", not surfaced as an exception) and
+ * NEVER echoes the raw resolved IP or DNS error detail into the warning.
+ */
+async function findBlockedTargetWarning(url: string): Promise<string | undefined> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return `Couldn't fetch "${url}": invalid URL.`;
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return `Couldn't fetch "${url}": only http/https links are supported.`;
+  }
+
+  let resolved: { address: string }[];
+  try {
+    resolved = await dnsLookupAsync(parsed.hostname, { all: true });
+  } catch (e) {
+    console.error(`fetchAndExtractLink: DNS resolution failed for "${parsed.hostname}":`, e);
+    return `Couldn't fetch "${url}": couldn't resolve this link's address.`;
+  }
+
+  for (const { address: rawAddress } of resolved) {
+    const address = unwrapIpv4MappedIpv6(rawAddress);
+    const blocked = IPV4_PATTERN.test(address) ? isIpv4InBlockedRange(address) : isIpv6InBlockedRange(address);
+    if (blocked) {
+      return `Couldn't fetch "${url}": this link points to a private/internal address and can't be fetched.`;
+    }
+  }
+
+  return undefined;
+}
+
+/** Thrown internally by readBodyWithSizeCap() when the response body exceeds MAX_RESPONSE_BYTES; caught and turned into a warning, never propagated. */
+class ResponseTooLargeError extends Error {}
+
+/**
+ * Reads a fetch() Response body as text, enforcing MAX_RESPONSE_BYTES by
+ * streaming via response.body's reader — NOT by trusting Content-Length,
+ * which can be missing or spoofed. Aborts the underlying request (via the
+ * shared AbortController) the moment the cap is exceeded, so an
+ * oversized response never gets fully buffered into memory. Falls back
+ * to response.text() when a body stream isn't available (e.g. a fetch
+ * implementation without streaming support), preserving prior behavior
+ * for that case.
+ */
+async function readBodyWithSizeCap(response: Response, controller: AbortController): Promise<string> {
+  const body = response.body;
+  if (!body) {
+    return await response.text();
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_RESPONSE_BYTES) {
+        controller.abort();
+        await reader.cancel().catch(() => {});
+        throw new ResponseTooLargeError("response body exceeded the size cap");
+      }
+      chunks.push(value);
+    }
+  }
+
+  const combined = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8").decode(combined);
+}
+
 /**
  * Fetches one link and returns either its extracted visible text or a
  * warning describing why it couldn't be used. NEVER throws — a failed
  * link becomes a warnings entry, per this story's partial-failure
  * contract (the resume and every other link still contribute to the
  * result). A known login-wall gets the specific "may require login"
- * wording the acceptance criteria require; every other failure gets a
- * generic, still-specific message (never a resolved secret or personal
- * data — link failures never carry either).
+ * wording the acceptance criteria require; a blocked SSRF target or an
+ * oversized/timed-out response each get their own specific warning;
+ * every other failure gets a FIXED, generic message — the real error
+ * detail is logged server-side only (console.error) and NEVER appears in
+ * the returned warning string (never a resolved secret, personal data,
+ * raw resolved IP, or raw exception text — link failures never carry
+ * any of those).
  */
 async function fetchAndExtractLink(url: string): Promise<LinkFetchResult> {
+  const blockedWarning = await findBlockedTargetWarning(url);
+  if (blockedWarning) {
+    return { warning: blockedWarning };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
   let response: Response;
   try {
-    response = await fetch(url);
+    response = await fetch(url, { signal: controller.signal });
   } catch (e) {
-    return { warning: `Couldn't fetch "${url}": ${e instanceof Error ? e.message : String(e)}` };
+    console.error(`fetchAndExtractLink: fetch failed for "${url}":`, e);
+    return { warning: `Couldn't fetch "${url}": couldn't fetch this link.` };
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const finalUrl = response.url || url;
@@ -156,7 +307,17 @@ async function fetchAndExtractLink(url: string): Promise<LinkFetchResult> {
     return { warning: `Couldn't use "${url}": unsupported content type "${contentType || "unknown"}".` };
   }
 
-  const html = await response.text();
+  let html: string;
+  try {
+    html = await readBodyWithSizeCap(response, controller);
+  } catch (e) {
+    if (e instanceof ResponseTooLargeError) {
+      return { warning: `Couldn't use "${url}": the response was too large to process.` };
+    }
+    console.error(`fetchAndExtractLink: reading response body failed for "${url}":`, e);
+    return { warning: `Couldn't fetch "${url}": couldn't fetch this link.` };
+  }
+
   return { text: htmlToText(html) };
 }
 
