@@ -17,6 +17,10 @@ tsconfig.tsbuildinfo
 .local/
 run-logs/
 sessions/
+# belt-and-suspenders: session files default outside the repo tree
+# (<XDG data dir>/<sourceId>-session.json — see src/lib/auth/session-capture.ts),
+# but never let a stray one get committed either
+*-session.json
 # belt-and-suspenders: the gig store defaults outside the repo tree (see
 # src/lib/store/path.ts), but never let a stray local db get committed either
 *.db
