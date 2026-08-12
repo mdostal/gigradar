@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-12
+
+### Added
+
+- **`adapter-batch-public-boards` epic.** Four new source adapters, ported
+  from the owner's real legacy pipeline: **FractionalJobs**, **Fractionus**,
+  and **FractionalFinders** (all public boards, `auth:"none"`, zero login —
+  live-verified with 63/53/8 real listings respectively) follow the same
+  fetch()+regex pattern as the existing BuiltIn adapter, not the legacy
+  tool's heavier Playwright approach these sites don't actually need.
+  **Wellfound** (`auth:"browser-session"`) extracts listings from the
+  page's `__NEXT_DATA__` JSON via new recursive-walk logic, with its own
+  dedicated Capture Login session (never reusing GoFractional's, unlike
+  the legacy tool). The three public adapters are enabled in the owner's
+  real local config today; Wellfound is left unenabled pending a real
+  Capture Login and a URL-scheme fix (see below).
+- The owner's real local `config.json` now has 7 configured sources.
+- 49 new tests (431 total, 3 opt-in real-browser tests).
+
+### Known issue
+
+- **Wellfound's board URLs from the legacy tool are dead** — both
+  `/role/l/chief-technology-officer` and `/role/l/vp-of-engineering`
+  return HTTP 404 today (confirmed live; the site was restructured since
+  the legacy tool was built). The adapter's `__NEXT_DATA__`-extraction
+  logic is real and tested, but against a clearly-labeled SYNTHETIC
+  fixture, not real captured data — the real board URL still needs to be
+  found before this adapter can actually run. Standing follow-up, not
+  silently claimed as working.
+
+
 ## [0.11.0] - 2026-08-12
 
 ### Added
