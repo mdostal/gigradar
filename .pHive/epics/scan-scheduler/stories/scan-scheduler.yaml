@@ -1,0 +1,131 @@
+id: scan-scheduler
+epic: scan-scheduler
+title: "src/scheduler/index.ts + backoff.ts: real cron-driven scans with per-source resilience"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  `Config.schedule` has existed since the first epic but nothing has ever
+  read it. This story builds the real thing.
+
+  1. **Pin the real `croner` API first**: install it, read its actual
+     types/README, confirm the timezone-parameter and job-scheduling
+     pattern live before building against assumed shapes (matches
+     `mcp-server-core`'s own established "pin the real SDK API first"
+     discipline for a new dependency).
+  2. **`src/scheduler/index.ts`** (new): on startup, registers the 4
+     built-in source adapters ONCE (same dynamic-import-at-startup
+     pattern `runner.ts`'s CLI `main()` already uses), loads `Config` via
+     `loadConfig()`. If `Config.schedule` is unset: logs clearly and
+     IDLES, rechecking hourly whether it's since been set (never exits
+     immediately — avoids being misread as a crash by an
+     always-restart process supervisor). If set: schedules `runRadar()`
+     via `croner`, using `Profile.timezone` as the job's timezone. NEVER
+     calls `saveConfig()` or writes to `config.json` under any
+     circumstance — reads only, per-cycle filtering (step 3) is
+     in-memory only.
+  3. **`src/scheduler/backoff.ts`** (new): per-source exponential
+     backoff state, in-memory for the scheduler process's lifetime.
+     Starts at the schedule's own base interval, doubles on each
+     consecutive failure, capped at 24 hours, resets to the base
+     interval on the first success after a failure streak. Each cycle,
+     the scheduler builds an in-memory-only variant of `Config.sources`
+     (never persisted) with any source currently in its backoff window
+     excluded, before calling `runRadar()`.
+  4. **Top-level error boundary**: any uncaught exception outside a scan
+     cycle's own per-source try/catch (already in `runRadar()`) logs
+     fatally and exits non-zero. Each completed cycle logs a summary
+     (gigs found/passed, per-source errors, current backoff states) to
+     stdout.
+  5. **`npm run scheduler` script** added to `package.json`.
+  6. **A real, copy-pasteable macOS `launchd` template** — a starting
+     point for OS-level process supervision (keeping the scheduler alive
+     across a restart), the one concrete deliverable resolving this
+     epic's own grill U1 finding. Documented in `docs/ARCHITECTURE.md`
+     (or a small `docs/scheduler-launchd-template.plist` it links to),
+     structural pattern only — no real personal paths/values, generic
+     placeholders the reader fills in for their own machine.
+
+acceptance_criteria:
+  - "Given Config.schedule is unset, when npm run scheduler starts, then it logs clearly and stays running (idling), rechecking hourly -- it does not exit."
+  - "Given a valid Config.schedule cron expression and Profile.timezone, when the scheduler starts, then a scan fires at the scheduled time in that timezone (verified with a short test interval, not real scheduling delays, in the automated suite)."
+  - "Given a source that fails on 3 consecutive cycles, when checked, then its backoff interval has doubled each time, capped at 24 hours -- verified via injectable/mockable time, not real waiting."
+  - "Given a source in an active backoff window, when a scan cycle fires, then that source is excluded from the Config passed to runRadar() for that cycle -- and config.json on disk is byte-for-byte unchanged (never written to)."
+  - "Given a source succeeds after a failure streak, when the next cycle evaluates its backoff state, then it resets to the base interval, not staying at its prior elevated backoff."
+  - "Given the scheduler process, when code-reviewed, then it never calls saveConfig() anywhere -- grep-verifiable, not just tested behaviorally."
+  - "Given an uncaught exception outside runRadar()'s own per-source handling, when it occurs, then the process logs fatally and exits non-zero, rather than hanging silently."
+  - "Given docs/ARCHITECTURE.md (or its linked file) after this story, when read, then it contains a real, copy-pasteable launchd plist template with generic placeholders, not the owner's own real paths."
+
+steps:
+  - id: pin-croner-api
+    description: Install croner, read its real types/README, confirm the timezone-parameter and scheduling API before building against it.
+    agent: developer
+  - id: implement
+    description: Build src/scheduler/index.ts and backoff.ts per the description above, including the idle-not-exit behavior and the in-memory-only config guarantee.
+    agent: developer
+    depends_on: [pin-croner-api]
+  - id: test
+    description: Write tests covering every acceptance criterion, including the never-writes-to-config.json regression test and the exponential-backoff/reset logic with injectable time.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the scheduler genuinely never calls saveConfig(), the idle-recheck behavior works correctly, and the launchd template uses only generic placeholders.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/scan-scheduler.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    dependency: "croner (new)"
+  key_files:
+    - path: src/lib/apply/runner.ts
+      purpose: "runRadar() and its CLI entrypoint's source-registration pattern -- reused, not reinvented."
+    - path: src/lib/config/load.ts
+      purpose: "loadConfig() -- the ONLY config-reading function the scheduler ever calls; save.ts's saveConfig() must never be called from this module."
+    - path: src/mcp/server.ts
+      purpose: "The established standalone-long-running-process, own-npm-script convention the scheduler follows."
+
+design_decisions:
+  - decision: Idle-and-recheck-hourly instead of exit-0 when Config.schedule is unset
+    rationale: Grill H2 -- an immediate clean exit risks being misread as a crash by an always-restart process supervisor, producing restart-loop noise.
+  - decision: Backoff filtering is strictly in-memory, never written to config.json
+    rationale: Grill H1 -- this project has held a strict discipline against silently mutating the user's real config; a persisted backoff-driven disable would be exactly the class of silent, destructive bug that discipline exists to prevent.
+  - decision: Ship a real macOS launchd template, not just the scheduler mechanism
+    rationale: Grill U1 -- the epic's own "set up the loops" framing implied durable automation; mirrors agent-integration's own resolution to an analogous finding (ship the copy-pasteable artifact, not just the underlying capability).
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md with the scheduler's behavior and the launchd template."
+
+metric:
+  applies: true
+  name: gigradar.scheduler_available
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manual run: npm run scheduler with a short test cron expression against the owner's real config, confirm real scans fire on schedule"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: A bug in the backoff filtering could accidentally persist a source-disable state to the real config.json.
+    mitigation: Dedicated acceptance criterion and a grep-verifiable regression test asserting saveConfig() is never called anywhere in the scheduler module.
+  - severity: low
+    description: croner's exact API shape wasn't verified during planning (no live test at design time).
+    mitigation: The pin-croner-api step runs first, before the rest of the story is built against assumed shapes.
+
+references:
+  - .pHive/epics/scan-scheduler/docs/design-discussion.md
+  - .pHive/epics/scan-scheduler/docs/grill-record.md

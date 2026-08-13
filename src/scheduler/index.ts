@@ -1,0 +1,304 @@
+// gigradar's scheduler (scan-scheduler epic, scan-scheduler story): a
+// standalone, long-running `npm run scheduler` process that fires runRadar()
+// on the user's own `Config.schedule` cron cadence, in their own local
+// `Profile.timezone`, with per-source exponential backoff (src/scheduler/backoff.ts)
+// so a source that starts failing repeatedly backs off instead of getting
+// hammered every single cycle. Mirrors src/mcp/server.ts's established
+// "standalone long-running process, own npm script" convention — see that
+// file's own header comment for the shape this one follows.
+//
+// croner (new dependency this story) was installed and its shipped
+// `dist/croner.d.ts` + README read live before anything below was written
+// against it — confirmed API: `new Cron(pattern, { timezone, catch }, fn)`,
+// `job.nextRun()`/`job.nextRuns(n)`, `job.trigger()` (force an immediate run,
+// used by this story's own tests to avoid real scheduling delays — see
+// src/scheduler/__tests__/index.test.ts), `job.stop()`. `catch` accepts a
+// callback `(err, job) => void`, invoked when the scheduled function throws —
+// used below as a second, defense-in-depth layer under this file's own
+// try/catch (see runCycle()).
+//
+// NEVER calls saveConfig() or writes to config.json under any circumstance —
+// loadConfig() (src/lib/config/load.ts) is the ONLY config-reading function
+// this module ever calls, and the per-cycle backoff-filtered Config
+// (buildCycleConfig() below) is an in-memory-only variant, never written
+// back anywhere. This is stated explicitly, and defended by a grep-verifiable
+// regression test (src/scheduler/__tests__/no-save-config.test.ts), because
+// this project has held a strict, repeatedly-enforced discipline against
+// silently mutating the user's real config — see
+// .pHive/epics/scan-scheduler/docs/design-discussion.md §3 step 2.
+//
+// Idles rather than exits when Config.schedule is unset (rechecking on
+// `idleRecheckMs`, 1 hour by default) — an immediate clean exit risks being
+// misread as a crash by an always-restart process supervisor (systemd,
+// launchd's KeepAlive), producing restart-loop noise. See
+// docs/ARCHITECTURE.md's "Scheduler" section and
+// docs/scheduler-launchd-template.plist for a real, copy-pasteable macOS
+// launchd starting point for keeping this process alive across a restart —
+// that supervision choice itself is the user's own OS-level setup, not built
+// here (matches electron-wrapper's own "terminal-launched, not a packaged
+// installer/service" scope discipline).
+import { Cron } from "croner";
+import { runRadar } from "../lib/apply/runner.js";
+import { loadConfig } from "../lib/config/load.js";
+import type { Config, SourceConfig } from "../lib/types.js";
+import { BackoffTracker, DEFAULT_MAX_BACKOFF_MS } from "./backoff.js";
+
+/** Default recheck cadence while idling with `Config.schedule` unset. Exported so tests assert the real production default without needing to wait on it (they override it via `SchedulerOptions.idleRecheckMs`). */
+export const DEFAULT_IDLE_RECHECK_MS = 60 * 60 * 1000; // 1 hour
+
+export type TimeoutHandle = ReturnType<typeof setTimeout>;
+
+export interface SchedulerOptions {
+  /** Defaults to the real loadConfig(). Overridable so tests never touch a real config.json. */
+  loadConfigFn?: () => Config;
+  /** Defaults to the real runRadar(). Overridable so tests use fixture sources with no network/DB. */
+  runRadarFn?: typeof runRadar;
+  /** ms between idle rechecks when Config.schedule is unset. Defaults to DEFAULT_IDLE_RECHECK_MS (1 hour); tests override with a tiny value or a synchronous-firing setTimeoutFn to avoid real waiting. */
+  idleRecheckMs?: number;
+  /** Ceiling forwarded to each schedule-activation's BackoffTracker. Defaults to backoff.ts's own 24h default. */
+  maxBackoffMs?: number;
+  /** Injectable clock, forwarded to the BackoffTracker (see backoff.ts). Defaults to Date.now. */
+  now?: () => number;
+  /** Injectable timer used only for the idle-recheck loop. Defaults to the real global setTimeout. */
+  setTimeoutFn?: (fn: () => void, ms: number) => TimeoutHandle;
+  /** Injectable timer-cancel, paired with setTimeoutFn above. Defaults to the real global clearTimeout. */
+  clearTimeoutFn?: (handle: TimeoutHandle) => void;
+  /** Called once the fatal error boundary fires, in place of process.exit — defaults to process.exit itself. Overridable so tests observe a fatal exit without actually terminating the test process. */
+  exitFn?: (code: number) => void;
+  /** Test hook: called once per idle recheck (Config.schedule still unset), after the idle log line. No-op by default. */
+  onIdleTick?: () => void;
+  /** Test hook: called once a Cron job has been created for a now-set Config.schedule, before this function returns. No-op by default — lets a test .trigger() the job immediately instead of waiting for its real schedule. */
+  onScheduled?: (job: Cron) => void;
+}
+
+export interface SchedulerHandle {
+  /** Stops the scheduler: clears the idle-recheck timer (if idling) and stops the Cron job (if scheduled). Idempotent. */
+  stop: () => void;
+  /** The active Cron job, once Config.schedule has been set and activate() has run — undefined while idling. */
+  getJob: () => Cron | undefined;
+  /** The active BackoffTracker, once activate() has run — undefined while idling. */
+  getTracker: () => BackoffTracker | undefined;
+}
+
+/**
+ * Derives the schedule's own "base interval" (the cadence BackoffTracker
+ * backs a source off to on its first failure, and resets to on recovery) by
+ * asking croner for the gap between the pattern's next two real run times —
+ * rather than trying to hand-parse an arbitrary cron expression into a fixed
+ * interval ourselves. Works for both a real cadence (e.g. daily 9am -> 24h)
+ * and a short test pattern (e.g. every second -> 1000ms), so
+ * src/scheduler/__tests__/index.test.ts never has to wait on a real schedule
+ * to prove the backoff wiring. A pattern with fewer than two future runs
+ * (e.g. a one-off year-bound expression) falls back to the 24h cap itself as
+ * a sane base.
+ */
+export function deriveBaseIntervalMs(pattern: string, timezone: string): number {
+  const probe = new Cron(pattern, { timezone });
+  const [first, second] = probe.nextRuns(2);
+  if (!first || !second) return DEFAULT_MAX_BACKOFF_MS;
+  return second.getTime() - first.getTime();
+}
+
+/**
+ * Builds the in-memory-only, backoff-filtered `Config` variant for one
+ * cycle: `sources` is REPLACED with a filtered array (any source currently
+ * in an active backoff window excluded, per `tracker.filterSources()`) —
+ * every other field is passed through unchanged. Never written to disk,
+ * never mutates `config` itself (`{ ...config, sources }` — a shallow copy).
+ */
+export function buildCycleConfig(config: Config, tracker: BackoffTracker): Config {
+  return { ...config, sources: tracker.filterSources(config.sources) };
+}
+
+/** Prints the required per-cycle summary: gigs found/passed, per-source errors, sources skipped for backoff, and every tracked source's current backoff state. */
+function logCycleSummary(
+  result: { results: unknown[]; passed: unknown[]; errors: { sourceId: string; message: string }[] },
+  tracker: BackoffTracker,
+  skippedSourceIds: string[],
+): void {
+  console.log(
+    `gigradar scheduler: cycle complete — ${result.results.length} gig(s) found, ${result.passed.length} passed the gate.`,
+  );
+  if (result.errors.length > 0) {
+    console.error(`gigradar scheduler: ${result.errors.length} source(s) errored this cycle:`);
+    for (const e of result.errors) console.error(`  - ${e.sourceId}: ${e.message}`);
+  }
+  if (skippedSourceIds.length > 0) {
+    console.log(`gigradar scheduler: ${skippedSourceIds.length} source(s) skipped this cycle (in backoff): ${skippedSourceIds.join(", ")}.`);
+  }
+  const states = tracker.getAllStates();
+  if (states.size > 0) {
+    console.log("gigradar scheduler: current backoff states:");
+    for (const [sourceId, state] of states) {
+      const inBackoff = tracker.isInBackoff(sourceId);
+      console.log(
+        `  - ${sourceId}: consecutiveFailures=${state.consecutiveFailures} intervalMs=${state.intervalMs} inBackoff=${inBackoff}`,
+      );
+    }
+  }
+}
+
+/**
+ * Starts the scheduler: loads Config via `loadConfigFn` (real `loadConfig()`
+ * by default). If `Config.schedule` is unset, logs clearly and idles,
+ * rechecking every `idleRecheckMs` — never exits (see this file's header
+ * comment for why). Once `Config.schedule` IS set, schedules `runRadarFn`
+ * via croner using `Profile.timezone`, with per-source exponential backoff.
+ *
+ * Any error outside a scan cycle's own per-source handling (a malformed
+ * cron expression, loadConfigFn() throwing, a bug in this orchestration
+ * code, or runRadarFn itself throwing rather than returning its own
+ * `errors[]`) hits the fatal error boundary: logs fatally and calls
+ * `exitFn(1)` (real `process.exit(1)` by default) — never hangs silently.
+ *
+ * Returns a `SchedulerHandle` immediately (idling or scheduled) rather than
+ * blocking forever — the process itself stays alive because croner's and
+ * Node's own timers hold the event loop open, exactly like
+ * src/mcp/server.ts's stdio transport keeps that process alive.
+ */
+export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle {
+  const loadConfigFn = options.loadConfigFn ?? loadConfig;
+  const runRadarFn = options.runRadarFn ?? runRadar;
+  const idleRecheckMs = options.idleRecheckMs ?? DEFAULT_IDLE_RECHECK_MS;
+  const maxBackoffMs = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
+  const nowFn = options.now ?? Date.now;
+  const setTimeoutFn = options.setTimeoutFn ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimeoutFn = options.clearTimeoutFn ?? ((handle: TimeoutHandle) => clearTimeout(handle));
+  const exitFn = options.exitFn ?? ((code: number) => process.exit(code));
+
+  let stopped = false;
+  let idleTimer: TimeoutHandle | undefined;
+  let job: Cron | undefined;
+  let tracker: BackoffTracker | undefined;
+
+  function stop(): void {
+    stopped = true;
+    if (idleTimer !== undefined) clearTimeoutFn(idleTimer);
+    job?.stop();
+  }
+
+  /** The one fatal error boundary: logs, stops any active timer/job, and exits non-zero. Never called for a per-source scan error — those stay inside runRadar()'s own errors[] and this module's per-cycle summary log. */
+  function fatal(error: unknown): void {
+    console.error(`gigradar scheduler: fatal error — ${error instanceof Error ? error.message : String(error)}`);
+    stop();
+    exitFn(1);
+  }
+
+  async function runCycle(config: Config): Promise<void> {
+    if (!tracker) throw new Error("gigradar scheduler: internal error — runCycle invoked before a BackoffTracker was created");
+    try {
+      const cycleConfig = buildCycleConfig(config, tracker);
+      const skippedSourceIds = config.sources
+        .filter((s) => !cycleConfig.sources.some((c) => c.id === s.id))
+        .map((s) => s.id);
+
+      const result = await runRadarFn(cycleConfig);
+
+      const erroredIds = new Set(result.errors.map((e) => e.sourceId));
+      for (const source of cycleConfig.sources as SourceConfig[]) {
+        if (!source.enabled) continue;
+        if (erroredIds.has(source.id)) tracker.recordFailure(source.id);
+        else tracker.recordSuccess(source.id);
+      }
+
+      logCycleSummary(result, tracker, skippedSourceIds);
+    } catch (e) {
+      // Anything that reaches here is, by construction, OUTSIDE runRadar()'s
+      // own per-source try/catch (that function never throws for a single
+      // source's failure — see apply/runner.ts) — a genuine top-level fault.
+      fatal(e);
+    }
+  }
+
+  function activate(config: Config): void {
+    // Config.schedule/Profile.timezone are validated non-empty by ConfigSchema
+    // before loadConfig() ever returns them; the `!` below just narrows past
+    // `schedule`'s optional-field type after the `if (!config.schedule)` guard
+    // in idleTick() already confirmed it's set for this call.
+    const schedule = config.schedule as string;
+    const timezone = config.profile.timezone;
+
+    const baseIntervalMs = deriveBaseIntervalMs(schedule, timezone);
+    tracker = new BackoffTracker({ baseIntervalMs, maxIntervalMs: maxBackoffMs, now: nowFn });
+
+    job = new Cron(
+      schedule,
+      {
+        timezone,
+        catch: (err: unknown) => fatal(err), // defense-in-depth: runCycle() already catches everything itself, but a croner-internal fault would otherwise become a silent unhandled rejection.
+      },
+      () => runCycle(config),
+    );
+
+    console.log(
+      `gigradar scheduler: scheduled — cron "${schedule}" in timezone "${timezone}", next run ${job.nextRun()?.toISOString() ?? "unknown"}.`,
+    );
+    options.onScheduled?.(job);
+  }
+
+  function idleTick(): void {
+    if (stopped) return;
+    try {
+      const config = loadConfigFn();
+      if (!config.schedule) {
+        console.log(
+          `gigradar scheduler: Config.schedule is unset — idling, rechecking in ${idleRecheckMs}ms. Set a cron expression in /config to start scheduled scans.`,
+        );
+        options.onIdleTick?.();
+        idleTimer = setTimeoutFn(idleTick, idleRecheckMs);
+        return;
+      }
+      activate(config);
+    } catch (e) {
+      fatal(e);
+    }
+  }
+
+  idleTick();
+
+  return {
+    stop,
+    getJob: () => job,
+    getTracker: () => tracker,
+  };
+}
+
+// CLI entrypoint: `npm run scheduler`. Registers every built-in source's
+// side-effecting registerSource() call — runRadar() only ever looks sources
+// up by id (getSource()), so without this every configured source would
+// report "no such registered source" no matter what's in config.json. Same
+// dynamic-import-inside-main(), NOT top-level-of-module, pattern
+// src/lib/apply/runner.ts's own CLI main() uses, for the identical reason
+// documented there: this module's own tests import startScheduler()
+// directly and register their own network-free test-double sources under
+// the SAME ids — a top-level import here would collide with "duplicate
+// source id" in that same test process. (This registers all 8 of the
+// project's current adapters, not the 4 that existed when this story's own
+// spec text was first drafted — adapter-batch-public-boards shipped 4 more
+// since; matching runner.ts's real, current main() exactly is the actual
+// "reuse this exact pattern" bar, not the stale headcount.)
+async function main(): Promise<void> {
+  await Promise.all([
+    import("../lib/sources/braintrust.js"),
+    import("../lib/sources/builtin.js"),
+    import("../lib/sources/gofractional.js"),
+    import("../lib/sources/ateam.js"),
+    import("../lib/sources/fractionaljobs.js"),
+    import("../lib/sources/fractionus.js"),
+    import("../lib/sources/fractionalfinders.js"),
+    import("../lib/sources/wellfound.js"),
+  ]);
+
+  startScheduler();
+}
+
+// Only run when invoked directly (`npm run scheduler`), not when imported by
+// tests that just need startScheduler()/buildCycleConfig()/deriveBaseIntervalMs()
+// — mirrors src/lib/apply/runner.ts's and src/mcp/server.ts's identical
+// process.argv[1] guard around their own main().
+if (process.argv[1] && process.argv[1].endsWith("scheduler/index.ts")) {
+  main().catch((e) => {
+    console.error("gigradar scheduler: fatal error starting scheduler:", e instanceof Error ? e.message : e);
+    process.exitCode = 1;
+  });
+}

@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-12
+
+### Added
+
+- **`scan-scheduler` epic.** `Config.schedule` has existed since the
+  project's very first epic but nothing ever read it — `npm run
+  scheduler` is the real thing: a standalone, long-running process
+  (`croner`, zero dependencies, timezone-aware via `Profile.timezone`)
+  that fires real scans on your configured cadence. Per-source
+  exponential backoff (doubling per consecutive failure, capped at 24h,
+  resetting on the next success) means a source that starts erroring
+  gets skipped for a while instead of hammered every cycle — the
+  retry/backoff gap `adapter-batch-public-boards` explicitly deferred to
+  this epic, now closed. The scheduler never writes to `config.json`
+  under any circumstance (grep-verifiable, regression-tested) — backoff
+  filtering is strictly in-memory per cycle. If no schedule is
+  configured yet, it idles and rechecks hourly rather than exiting,
+  so it plays nicely with a process supervisor set up ahead of time.
+- A real, copy-pasteable macOS `launchd` template
+  (`docs/scheduler-launchd-template.plist`) for keeping the scheduler
+  alive across a machine restart — generic placeholders only, matching
+  the legacy tool's own real, proven precedent structurally.
+- 26 new tests (534 total, 3 opt-in real-browser tests).
+
+
 ## [0.13.0] - 2026-08-12
 
 ### Added

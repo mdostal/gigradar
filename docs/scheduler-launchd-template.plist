@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gigradar scheduler — macOS launchd template (scan-scheduler story).
+
+  A STARTING POINT for keeping `npm run scheduler` (src/scheduler/index.ts)
+  alive across a machine restart or an unexpected crash — OS-level process
+  supervision, which `npm run scheduler` itself deliberately does not
+  attempt (see docs/ARCHITECTURE.md's "Scheduler" section and
+  .pHive/epics/scan-scheduler/docs/design-discussion.md §4). Structural
+  pattern only: every path/value below is a GENERIC placeholder, never a
+  real machine's actual paths or username — replace every <<...>> before
+  using this.
+
+  Why this is safe to pair with the scheduler's own idle-and-recheck
+  behavior (never exits when Config.schedule is unset): `KeepAlive` below
+  means launchd restarts the process if it exits for ANY reason, including
+  the fatal top-level error boundary (src/scheduler/index.ts) exiting
+  non-zero on a genuine fault. Because the scheduler idles instead of
+  exiting cleanly when Config.schedule is unset, a supervisor configured
+  this way never sees the "keeps immediately re-exiting" restart-loop
+  pattern just because the user hasn't set a schedule yet.
+
+  ── Setup ──────────────────────────────────────────────────────────────
+  1. Copy this file to ~/Library/LaunchAgents/, renaming it to match the
+     Label below (e.g. com.<<yourname>>.gigradar-scheduler.plist).
+  2. Replace every <<PLACEHOLDER>> value (see the table in
+     docs/ARCHITECTURE.md's "Scheduler" section for what each one means).
+  3. Load it:      launchctl load ~/Library/LaunchAgents/com.<<yourname>>.gigradar-scheduler.plist
+     Unload it:     launchctl unload ~/Library/LaunchAgents/com.<<yourname>>.gigradar-scheduler.plist
+  4. Tail the logs at the StandardOutPath/StandardErrorPath below to
+     confirm it's actually running (`npm run scheduler`'s own per-cycle
+     summary lines land there).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Must be unique on the machine and match this file's own name. -->
+  <key>Label</key>
+  <string>com.&lt;&lt;YOUR_USERNAME&gt;&gt;.gigradar-scheduler</string>
+
+  <!--
+    Full path to your Node.js binary (`which node` in the same shell you
+    normally run `npm run scheduler` from — launchd does NOT source your
+    shell profile, so nvm/asdf-managed Node installs need the FULL
+    resolved path here, not just "node"), followed by the full path to
+    this repo's node_modules/.bin/tsx, then the scheduler's own entry
+    file. NODE_OPTIONS is required (matches this project's own npm
+    script — see package.json's "scheduler" script).
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>&lt;&lt;/full/path/to/node&gt;&gt;</string>
+    <string>&lt;&lt;/full/path/to/gigradar&gt;&gt;/node_modules/.bin/tsx</string>
+    <string>&lt;&lt;/full/path/to/gigradar&gt;&gt;/src/scheduler/index.ts</string>
+  </array>
+
+  <!-- The repo checkout's own root — where package.json/node_modules live. -->
+  <key>WorkingDirectory</key>
+  <string>&lt;&lt;/full/path/to/gigradar&gt;&gt;</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_OPTIONS</key>
+    <string>--experimental-sqlite</string>
+    <!--
+      Only needed if your config.json/.env/gigs.db live somewhere other
+      than the platform default (~/.local/share/gigradar) — see
+      src/lib/store/path.ts. Omit this key entirely to use the default.
+    -->
+    <!-- <key>XDG_DATA_HOME</key> -->
+    <!-- <string>&lt;&lt;/full/path/to/your/xdg/data/home&gt;&gt;</string> -->
+  </dict>
+
+  <!-- Start on load, and restart automatically if the process ever exits (including the fatal top-level error boundary's non-zero exit) — see this file's header comment on why that's safe. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Where stdout/stderr land — the scheduler's own idle/scheduled/per-cycle-summary log lines (src/scheduler/index.ts). Create the parent directory first; launchd will not create it for you. -->
+  <key>StandardOutPath</key>
+  <string>&lt;&lt;/full/path/to/logs&gt;&gt;/gigradar-scheduler.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>&lt;&lt;/full/path/to/logs&gt;&gt;/gigradar-scheduler.err.log</string>
+</dict>
+</plist>

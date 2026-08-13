@@ -479,7 +479,7 @@ test exists at all.
   - **Standing follow-up, owned by the project owner (mdostal), not tracked as a story:** re-verify Wellfound's CURRENT correct role/board URL(s) (the `/role/l/<slug>` scheme this story ported from the legacy tool is confirmed dead) live, update `wellfound.ts`'s `ROLE_URLS` accordingly, complete a real Capture Login for Wellfound's own dedicated session file, and re-verify the recursive walk against the real (not synthetic) `__NEXT_DATA__` job-listing shape once reachable. Not part of this story's completion gate (see its acceptance criteria — deferred to manual verification by design), same posture as A.Team's own standing follow-up above.
   - **`adapter-batch-public-boards` epic complete** — all four planned adapters (fractionaljobs, fractionus, fractionalfinders, wellfound) now exist.
 - [x] Next.js config UI: add sources, set needs, view the shortlist + rejection reasons (the dashboard the current scripts render statically) — `dashboard-config-ui` epic, **shipped**. App-router foundation (`app-foundation` story), the results dashboard (`dashboard-results-view` story), the secret-safe write path (`config-write-path` story, `src/lib/config/save.ts`), and the config-editing form itself (`config-editing-ui` story, `src/app/config/`) are all built — see "Running the dashboard" and "The config editor" below, and "How to configure gigradar" for the new-user pointer.
-- [ ] Cron runner + observable run-logs.
+- [x] Cron runner + observable run-logs: `npm run scheduler` (`src/scheduler/index.ts`), `croner`-driven, `Profile.timezone`-aware, with per-source exponential backoff (`src/scheduler/backoff.ts`) and a real macOS `launchd` template (`docs/scheduler-launchd-template.plist`) — `scan-scheduler` epic. See "Scheduler" below.
 - [x] Assisted-apply drafting foundation: `Config.applyProfile`, the `application_drafts` table, `apply/draft.ts`'s `generateDraft()`, and a real `stageApplication()` (`src/lib/apply/runner.ts`) — `assisted-apply-drafting` epic, `draft-generation-foundation` story. See "Assisted-apply drafting" below.
 - [x] Draft review/approve UI: a new `/drafts` page (full editable content, Approve/Reject, and — once approved — the real gig URL + a copy-ready draft + "Mark submitted"), plus a tier-gated "Generate draft" button on the dashboard — `assisted-apply-drafting` epic, `draft-review-ui` story (the epic's final story, now complete). See "The draft review/approve UI" below.
 - [x] Tests for the gate engine and the new persistence/tiering/adapter modules (43 tests, `npm test`) — golden fixtures per rule, fixture-based adapter tests, zero live-network calls in the automated suite.
@@ -1125,6 +1125,117 @@ never `process.env`. `src/app/__tests__/dashboard-draft.test.ts` covers
 end-to-end run against the live Anthropic API for a real tracked gig
 (explicitly a manual verification step, not part of the automated suite —
 see this story's `metric` block).
+
+## Scheduler (`src/scheduler/`, `scan-scheduler` epic)
+
+`Config.schedule` (a cron expression, e.g. `"0 9 * * *"`) has existed on
+`Config` since the very first epic, but nothing ever read it — you had to
+remember to run `npm run radar` by hand. `npm run scheduler`
+(`src/scheduler/index.ts`) is the real thing: a standalone, long-running
+process that fires `runRadar()` on that cadence, in the user's own local
+`Profile.timezone`, with per-source exponential backoff so a source that
+starts failing repeatedly backs off instead of getting hammered every single
+cycle. It follows the exact same "standalone long-running process, own npm
+script" convention `src/mcp/server.ts` already established.
+
+**New dependency: `croner`** (zero dependencies, native TypeScript types,
+explicit IANA-timezone support via its `timezone` option) — its real shipped
+`.d.ts`/README were read live before anything was built against it, per this
+project's "pin the real SDK API first" discipline (`mcp-server-core`'s own
+precedent for a new dependency).
+
+**Startup**: registers every built-in source adapter's side-effecting
+`registerSource()` call ONCE, via the identical dynamic-import-inside-`main()`
+pattern `src/lib/apply/runner.ts`'s own CLI entrypoint uses (and for the
+identical reason: this module's own tests import `startScheduler()` directly
+and register network-free test-double sources under the same ids — a
+top-level import would collide). Then loads `Config` via `loadConfig()` —
+the ONLY config-reading function this module ever calls.
+
+- **`Config.schedule` unset**: logs clearly and IDLES, rechecking hourly
+  (`DEFAULT_IDLE_RECHECK_MS`) whether it's since been set — it never exits.
+  An immediate clean exit right after startup risks being misread as a crash
+  by an always-restart process supervisor (systemd, launchd's `KeepAlive`,
+  see the launchd template below), producing restart-loop log noise; idling
+  avoids that entirely.
+- **`Config.schedule` set**: schedules `runRadar()` via `croner`
+  (`new Cron(schedule, { timezone: profile.timezone, catch }, fn)`), using
+  `Profile.timezone` as the job's own timezone.
+
+**Per-source exponential backoff (`src/scheduler/backoff.ts`)**: in-memory
+for the scheduler PROCESS's lifetime only (resets on a process restart —
+solving "don't hammer a failing source every cycle within one long-running
+process," a different, narrower problem than persisting backoff state across
+restarts, which this epic explicitly does not attempt). A source's backoff
+interval starts at the schedule's own base cadence (derived from the gap
+between the cron pattern's next two real run times, via croner's
+`nextRuns(2)` — works for any pattern, not just fixed intervals), doubles on
+each additional CONSECUTIVE failure, caps at 24 hours, and resets straight
+back to the base interval on the first success after a failure streak. Each
+cycle, `buildCycleConfig()` builds an IN-MEMORY-ONLY variant of
+`Config.sources` with any source currently inside its backoff window
+excluded, before calling `runRadar()` — `runRadar()` itself is never
+modified.
+
+**Never writes to `config.json`, under any circumstance.** This module only
+ever reads `Config` via `loadConfig()`; the per-cycle backoff-filtered
+`Config` variant above is constructed in memory and passed straight to
+`runRadar()`, never persisted anywhere. `saveConfig()` (`src/lib/config/save.ts`)
+is never imported or called from `src/scheduler/` — enforced by a
+grep-verifiable regression test
+(`src/scheduler/__tests__/no-save-config.test.ts`), not just behavioral
+coverage, because this project has held a strict, repeatedly-enforced
+discipline against silently mutating the user's real config
+(`config-write-path`'s entire reason for existing) — a scheduler that ever
+persisted a backoff-driven "disable this source" would silently and
+PERMANENTLY turn off a source the user never asked to turn off.
+
+**Top-level error boundary**: any exception outside a scan cycle's own
+per-source handling (`runRadar()`'s own try/catch around each source's
+`fetch()` — see "Persistence" above) — a malformed cron expression,
+`loadConfig()` throwing, or any other orchestration bug — logs fatally and
+exits non-zero, rather than hanging silently. Each completed cycle logs a
+summary to stdout: gigs found/passed, any per-source errors, sources skipped
+for being in an active backoff window, and every tracked source's current
+backoff state.
+
+**`npm run scheduler`** (`package.json`) runs `src/scheduler/index.ts` via
+`tsx`, with the same `NODE_OPTIONS=--experimental-sqlite` every other script
+that touches the store already carries.
+
+### Keeping it running: the macOS `launchd` template
+
+`npm run scheduler` itself deliberately does not attempt OS-level process
+supervision (keeping the process alive across a machine restart or an
+unexpected crash) — that's the user's own OS-level setup choice, matching
+`electron-wrapper`'s own established "terminal-launched, not a packaged
+installer/service" scope discipline. What IS shipped: a real, copy-pasteable
+starting point for exactly that, on macOS —
+[`docs/scheduler-launchd-template.plist`](./scheduler-launchd-template.plist).
+Every path/value in it is a GENERIC placeholder (`<<...>>`), never a real
+machine's actual paths or username; the file's own header comment walks
+through what each placeholder means and how to load/unload it via
+`launchctl`. Full cross-platform process-supervision tooling (systemd unit
+files, Windows Task Scheduler XML) is out of scope — one real, working
+example on the owner's own actual platform is this story's bar, not
+exhaustive coverage of every OS.
+
+### Verification
+
+`src/scheduler/__tests__/backoff.test.ts` covers the exponential-growth/24h-cap/
+reset-on-success logic with a fully injectable clock (no real waiting).
+`src/scheduler/__tests__/index.test.ts` covers: the idle-and-recheck-hourly
+behavior (an injectable idle-recheck timer proves the "hourly" wiring and
+that it never exits, without a real hour ever elapsing); a real short-interval
+(`*/1 * * * * *`) cron actually firing `runRadar()` end to end; the
+backoff-filtered `Config` a cycle receives (`job.trigger()` forces an
+immediate cycle deterministically, no real scheduling delay); the
+config.json-byte-for-byte-unchanged regression; and the fatal-exit boundary
+for both a malformed cron expression and a genuine top-level throw.
+`src/scheduler/__tests__/no-save-config.test.ts` is the grep-verifiable
+`saveConfig()`-is-never-called regression described above. No live network
+dependency in the automated suite, matching this project's established
+convention — same as `src/lib/apply/__tests__/runner.test.ts`.
 
 ## Owner's private overlay (Mathew)
 
