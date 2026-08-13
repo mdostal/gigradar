@@ -3,8 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Cron } from "croner";
-import type { Config, MatchResult } from "../../lib/types.js";
+import type { ApplicationDraft } from "../../lib/apply/runner.js";
+import { gigKey } from "../../lib/store/index.js";
+import type { Config, Gig, MatchResult, Tier } from "../../lib/types.js";
 import {
+  AUTO_DRAFT_CAP,
   DEFAULT_IDLE_RECHECK_MS,
   type SchedulerHandle,
   buildCycleConfig,
@@ -34,6 +37,14 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 
 function emptyResult(): RunRadarResult {
   return { results: [], passed: [], errors: [] };
+}
+
+function makeGig(externalId: string, sourceId = "braintrust"): Gig {
+  return { sourceId, externalId, title: `Gig ${externalId}`, url: `https://example.test/${sourceId}/${externalId}` };
+}
+
+function makeMatchResult(externalId: string, tier: Tier, sourceId = "braintrust"): MatchResult {
+  return { gig: makeGig(externalId, sourceId), pass: true, reasons: [], score: 1, tier };
 }
 
 let activeHandles: SchedulerHandle[] = [];
@@ -313,5 +324,176 @@ describe("startScheduler: top-level fatal error boundary", () => {
     start({ loadConfigFn, runRadarFn: async () => emptyResult(), exitFn });
 
     expect(exitFn).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
+  const REAL_APPLY_PROFILE = { email: "jane@example.com" };
+  const ORIGINAL_API_KEY = process.env.ANTHROPIC_API_KEY;
+
+  afterEach(() => {
+    if (ORIGINAL_API_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = ORIGINAL_API_KEY;
+  });
+
+  /** A stageApplicationFn stand-in that never makes a real Anthropic call — always resolves. Mirrors ApplicationDraft's real shape. */
+  function fakeStageApplicationFn() {
+    return vi.fn(async (r: MatchResult): Promise<ApplicationDraft> => ({
+      gig: r.gig,
+      content: { coverText: "Dear team...", answers: {} },
+      status: "draft",
+    }));
+  }
+
+  function autoDraftConfig(overrides: Partial<Config> = {}): Config {
+    return makeConfig({
+      schedule: "*/1 * * * * *",
+      autoDraftOnScan: true,
+      applyProfile: REAL_APPLY_PROFILE,
+      ...overrides,
+    });
+  }
+
+  it("Config.autoDraftOnScan unset or false: zero stageApplication() calls -- no behavior change from before this story", async () => {
+    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    const passed = [makeMatchResult("1", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+
+    for (const overrides of [{}, { autoDraftOnScan: false }] as const) {
+      const stageApplicationFn = fakeStageApplicationFn();
+      const config = makeConfig({ schedule: "*/1 * * * * *", applyProfile: REAL_APPLY_PROFILE, ...overrides });
+      const handle = start({ loadConfigFn: () => config, runRadarFn, stageApplicationFn, exitFn: vi.fn() });
+
+      await (handle.getJob() as Cron).trigger();
+
+      expect(stageApplicationFn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("autoDraftOnScan=true and ANTHROPIC_API_KEY unset: exactly ONE log line naming the missing key, and zero stageApplication() calls -- no per-gig repetition", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    // Three eligible green gigs -- proves the missing-key skip happens ONCE
+    // for the whole cycle, not once per eligible gig.
+    const passed = [makeMatchResult("1", "green"), makeMatchResult("2", "green"), makeMatchResult("3", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const stageApplicationFn = fakeStageApplicationFn();
+    const config = autoDraftConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, stageApplicationFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    const missingKeyLines = logSpy.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("ANTHROPIC_API_KEY"),
+    );
+    expect(missingKeyLines).toHaveLength(1);
+    expect(stageApplicationFn).not.toHaveBeenCalled();
+  });
+
+  it("autoDraftOnScan=true, ANTHROPIC_API_KEY set, and Config.applyProfile unset: exactly ONE log line naming the missing apply profile, and zero stageApplication() calls", async () => {
+    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const passed = [makeMatchResult("1", "green"), makeMatchResult("2", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const stageApplicationFn = fakeStageApplicationFn();
+    const config = autoDraftConfig({ applyProfile: undefined });
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, stageApplicationFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    const missingProfileLines = logSpy.mock.calls.filter(
+      (call) => typeof call[0] === "string" && /apply profile/i.test(call[0]),
+    );
+    expect(missingProfileLines).toHaveLength(1);
+    expect(stageApplicationFn).not.toHaveBeenCalled();
+  });
+
+  it("a gig that already has a draft (any status, e.g. 'rejected') is NOT re-drafted when found again as a green-tier match", async () => {
+    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    const passed = [makeMatchResult("already-drafted", "green"), makeMatchResult("new", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const stageApplicationFn = fakeStageApplicationFn();
+    const draftedKey = gigKey("braintrust", "already-drafted");
+    const getDraftFn = vi.fn((key: string) =>
+      key === draftedKey
+        ? {
+            gigKey: key,
+            content: { coverText: "", answers: {} },
+            status: "rejected" as const,
+            generatedAt: "2026-01-01T00:00:00.000Z",
+            approvedAt: null,
+            submittedAt: null,
+          }
+        : undefined,
+    );
+    const config = autoDraftConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, stageApplicationFn, getDraftFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(stageApplicationFn).toHaveBeenCalledTimes(1);
+    expect((stageApplicationFn.mock.calls[0]?.[0] as MatchResult).gig.externalId).toBe("new");
+  });
+
+  it("more than 5 eligible new green-tier gigs in one cycle: exactly 5 are drafted, not more", async () => {
+    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    expect(AUTO_DRAFT_CAP).toBe(5);
+    const passed = Array.from({ length: 8 }, (_, i) => makeMatchResult(`g${i}`, "green"));
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const stageApplicationFn = fakeStageApplicationFn();
+    const config = autoDraftConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, stageApplicationFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(stageApplicationFn).toHaveBeenCalledTimes(5);
+  });
+
+  it("a yellow-tier or red-tier match in result.passed is never passed to stageApplication() by the auto-draft path", async () => {
+    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    const passed = [makeMatchResult("yellow-gig", "yellow"), makeMatchResult("red-gig", "red"), makeMatchResult("green-gig", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const stageApplicationFn = fakeStageApplicationFn();
+    const config = autoDraftConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, stageApplicationFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(stageApplicationFn).toHaveBeenCalledTimes(1);
+    expect((stageApplicationFn.mock.calls[0]?.[0] as MatchResult).gig.externalId).toBe("green-gig");
+  });
+
+  it("one eligible gig's stageApplication() call fails (mocked): the OTHER eligible gigs in that same cycle still get drafted", async () => {
+    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const passed = [makeMatchResult("fails", "green"), makeMatchResult("ok-1", "green"), makeMatchResult("ok-2", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const stageApplicationFn = vi.fn(async (r: MatchResult): Promise<ApplicationDraft> => {
+      if (r.gig.externalId === "fails") throw new Error("simulated per-gig draft failure");
+      return { gig: r.gig, content: { coverText: "Dear team...", answers: {} }, status: "draft" };
+    });
+    const config = autoDraftConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, stageApplicationFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    // All 3 were attempted (the failure doesn't stop the loop)...
+    expect(stageApplicationFn).toHaveBeenCalledTimes(3);
+    const attemptedIds = stageApplicationFn.mock.calls.map((call) => (call[0] as MatchResult).gig.externalId);
+    expect(attemptedIds).toEqual(["fails", "ok-1", "ok-2"]);
+  });
+
+  it("a successful auto-draft cycle's log output includes a one-line summary of how many gigs were auto-drafted", async () => {
+    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const passed = [makeMatchResult("1", "green"), makeMatchResult("2", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const stageApplicationFn = fakeStageApplicationFn();
+    const config = autoDraftConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, stageApplicationFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/^gigradar scheduler: 2 gig\(s\) auto-drafted this cycle\.$/));
   });
 });

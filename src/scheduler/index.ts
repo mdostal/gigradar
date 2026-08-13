@@ -38,10 +38,19 @@
 // here (matches electron-wrapper's own "terminal-launched, not a packaged
 // installer/service" scope discipline).
 import { Cron } from "croner";
-import { runRadar } from "../lib/apply/runner.js";
+import { runRadar, stageApplication } from "../lib/apply/runner.js";
 import { loadConfig } from "../lib/config/load.js";
-import type { Config, SourceConfig } from "../lib/types.js";
+import { getDraft, gigKey } from "../lib/store/index.js";
+import type { Config, MatchResult, SourceConfig } from "../lib/types.js";
 import { BackoffTracker, DEFAULT_MAX_BACKOFF_MS } from "./backoff.js";
+
+/**
+ * Fixed, non-configurable per-cycle cap on how many gigs `runAutoDraft()`
+ * will stage a draft for in one cycle — bounds LLM cost on a large first
+ * scan without adding a new config field speculatively (see this story's
+ * design_decisions in .pHive/epics/auto-draft-on-scan/stories/auto-draft-on-scan.yaml).
+ */
+export const AUTO_DRAFT_CAP = 5;
 
 /** Default recheck cadence while idling with `Config.schedule` unset. Exported so tests assert the real production default without needing to wait on it (they override it via `SchedulerOptions.idleRecheckMs`). */
 export const DEFAULT_IDLE_RECHECK_MS = 60 * 60 * 1000; // 1 hour
@@ -53,6 +62,10 @@ export interface SchedulerOptions {
   loadConfigFn?: () => Config;
   /** Defaults to the real runRadar(). Overridable so tests use fixture sources with no network/DB. */
   runRadarFn?: typeof runRadar;
+  /** Defaults to the real stageApplication(). Overridable so tests observe/simulate auto-draft calls (success, failure, count) without a real Anthropic client or a live DB — mirrors runRadarFn's own injectable-options pattern. */
+  stageApplicationFn?: typeof stageApplication;
+  /** Defaults to the real getDraft(). Overridable so tests simulate an already-drafted gig without a live DB — mirrors runRadarFn's own injectable-options pattern. */
+  getDraftFn?: typeof getDraft;
   /** ms between idle rechecks when Config.schedule is unset. Defaults to DEFAULT_IDLE_RECHECK_MS (1 hour); tests override with a tiny value or a synchronous-firing setTimeoutFn to avoid real waiting. */
   idleRecheckMs?: number;
   /** Ceiling forwarded to each schedule-activation's BackoffTracker. Defaults to backoff.ts's own 24h default. */
@@ -139,6 +152,83 @@ function logCycleSummary(
 }
 
 /**
+ * `auto-draft-on-scan` epic/story: after a cycle's `runRadarFn()` returns its
+ * `passed` matches, auto-generates a real draft (`stageApplicationFn`,
+ * `stageApplication()` unmodified) for new green-tier matches — opt-in via
+ * `config.autoDraftOnScan`, capped at `AUTO_DRAFT_CAP` (5) per cycle. Never
+ * throws: a missing prerequisite or a per-gig failure is logged and this
+ * function returns normally either way, so it can never fail the cycle
+ * itself (matches this file's own per-source error-isolation discipline).
+ *
+ * Two prerequisites are checked ONCE per cycle, not discovered per-gig via
+ * `stageApplication()`'s own errors (a realistic misconfiguration — API key
+ * set, apply profile never filled in — would otherwise repeat the same error
+ * once per eligible gig, every cycle, forever): `process.env.ANTHROPIC_API_KEY`
+ * set (already populated by `loadConfigFn()`'s own resolution — same
+ * "process.env, CLI/cron path" mechanism `apply/runner.ts`'s CLI `main()`
+ * already uses, no new resolution mechanism here) AND `config.applyProfile`
+ * set. Either missing logs exactly ONE clear line naming which, and skips
+ * auto-drafting entirely for the cycle.
+ *
+ * Eligibility: `tier === "green"` AND `getDraftFn(gigKey(...)) === undefined`
+ * — ANY existing draft, regardless of its status (`draft`/`approved`/
+ * `rejected`/`submitted`), excludes a gig from future auto-drafting. Never
+ * silently overwrites a decision the user already made about a gig; the user
+ * can still manually re-request a draft via the existing dashboard button.
+ *
+ * Each eligible gig's `stageApplicationFn()` call is individually
+ * try/caught — one gig's failure is logged and does NOT stop the rest of
+ * that cycle's auto-drafting (`stageApplication()`'s own red-tier/missing-
+ * applyProfile guardrails are structurally unreachable here, since the two
+ * cycle-level checks above already excluded both cases before any gig is
+ * attempted — this per-gig catch is defense-in-depth, not the primary
+ * mechanism). Always ends with a one-line summary of how many gigs were
+ * auto-drafted.
+ */
+export async function runAutoDraft(
+  config: Config,
+  passed: MatchResult[],
+  stageApplicationFn: typeof stageApplication,
+  getDraftFn: typeof getDraft,
+): Promise<void> {
+  if (!config.autoDraftOnScan) return;
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    console.log(
+      "gigradar scheduler: autoDraftOnScan is enabled but ANTHROPIC_API_KEY is not set — skipping auto-draft this cycle.",
+    );
+    return;
+  }
+  if (!config.applyProfile) {
+    console.log(
+      "gigradar scheduler: autoDraftOnScan is enabled but no apply profile is configured (set one up in /config) — skipping auto-draft this cycle.",
+    );
+    return;
+  }
+
+  const eligible = passed
+    .filter((r) => r.tier === "green" && getDraftFn(gigKey(r.gig.sourceId, r.gig.externalId)) === undefined)
+    .slice(0, AUTO_DRAFT_CAP);
+
+  let draftedCount = 0;
+  for (const r of eligible) {
+    try {
+      await stageApplicationFn(r, config, apiKey);
+      draftedCount += 1;
+    } catch (e) {
+      console.error(
+        `gigradar scheduler: auto-draft failed for "${r.gig.title}" (${gigKey(r.gig.sourceId, r.gig.externalId)}) — ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  console.log(`gigradar scheduler: ${draftedCount} gig(s) auto-drafted this cycle.`);
+}
+
+/**
  * Starts the scheduler: loads Config via `loadConfigFn` (real `loadConfig()`
  * by default). If `Config.schedule` is unset, logs clearly and idles,
  * rechecking every `idleRecheckMs` — never exits (see this file's header
@@ -159,6 +249,8 @@ function logCycleSummary(
 export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle {
   const loadConfigFn = options.loadConfigFn ?? loadConfig;
   const runRadarFn = options.runRadarFn ?? runRadar;
+  const stageApplicationFn = options.stageApplicationFn ?? stageApplication;
+  const getDraftFn = options.getDraftFn ?? getDraft;
   const idleRecheckMs = options.idleRecheckMs ?? DEFAULT_IDLE_RECHECK_MS;
   const maxBackoffMs = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
   const nowFn = options.now ?? Date.now;
@@ -202,6 +294,11 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
       }
 
       logCycleSummary(result, tracker, skippedSourceIds);
+
+      // auto-draft-on-scan epic: opt-in, off by default (config.autoDraftOnScan
+      // unset/false is a no-op inside runAutoDraft() itself) — see that
+      // function's own doc comment above for the full behavior.
+      await runAutoDraft(config, result.passed, stageApplicationFn, getDraftFn);
     } catch (e) {
       // Anything that reaches here is, by construction, OUTSIDE runRadar()'s
       // own per-source try/catch (that function never throws for a single
