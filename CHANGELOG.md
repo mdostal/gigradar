@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-12
+
+### Added
+
+- **Dashboard table sorting + a Source filter.** All 8 data-backed columns
+  (Source, Title, Company, Tier, Status, Rate, Weekly hrs, Seen) are now
+  clickable sort headers — click once for ascending, click again to reverse,
+  click a different column to jump straight to ascending on it. Tier sorts
+  green→yellow→red (its actual meaning, not alphabetical); Status follows
+  its real lifecycle order (new→applied→interview→archived/ignored), not
+  alphabetical either. Missing values (no company, no rate, no tier) always
+  sort last, in both directions — never silently interleaved as if they
+  were zero. New `Source` filter dropdown (options built from the sources
+  actually present in your data, never a hardcoded list) combines with the
+  existing tier/status/search filters as AND. Live-verified against the
+  real running dashboard (228 real gigs): clicking Rate sorted ascending
+  ($15/hr → up), clicking again reversed it ($185,000/yr salary listings on
+  top).
+- 18 new tests (564 total, 3 opt-in real-browser tests) — `dashboard-sort.ts`
+  is a new pure, directly-unit-tested module mirroring
+  `dashboard-filter.ts`'s existing pattern.
+
 ## [0.15.0] - 2026-08-12
 
 ### Added
