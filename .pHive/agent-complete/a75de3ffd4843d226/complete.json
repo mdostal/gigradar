@@ -1,0 +1,16 @@
+{
+  "agent_id": "a75de3ffd4843d226",
+  "session_id": "2096c7db-36b6-4ae7-a206-bb4fff054912",
+  "agent_type": "general-purpose",
+  "cwd": "/Users/mdostal/Documents/work/gigradar",
+  "agent_transcript_path": "/Users/mdostal/.claude/projects/-Users-mdostal-Documents-work-gigradar/2096c7db-36b6-4ae7-a206-bb4fff054912/subagents/agent-a75de3ffd4843d226.jsonl",
+  "last_assistant_message": "Committed as `afe5bd6` on `feat/builtin-jd-capture`, not pushed.\n\n## Summary\n\n**Real fixture data confirmed**: I live-fetched multiple real BuiltIn.com job detail pages via curl (`https://builtin.com/job/staff-backend-software-engineer/10611593`, etc.), discovered the detail page embeds a `JobPosting` JSON-LD block (`<script type=\"application/ld+json\">`) containing the full description — a more robust extraction target than a hand-rolled HTML-div regex. I saved a trimmed, PII-checked real fixture (`src/lib/sources/__tests__/fixtures/builtin-job-detail.html`) for the exact same GM listing (job 10611593) already used in the existing list-page fixture, so tests can verify end-to-end that the snippet gets replaced by the real full text.\n\n**What was built** (`src/lib/sources/builtin.ts`):\n- `fetchDetailDescription(url)` — fetches a listing's detail page, extracts the description from its JobPosting JSON-LD via `extractDetailDescription`/`findJobPosting`, strips the description's own embedded HTML (`<br>`, `<strong>`, `<ul>/<li>`) to plain text. Returns `undefined` on any failure (network error, non-2xx, unrecognized shape) — never throws, with a comment explicitly mirroring the design doc's \"whole-source signal vs. one-listing best-effort\" reasoning, right next to `fetchCategoryHtml`'s throwing counterpart for contrast.\n- `fetchDetailDescriptions(items)` — fixed-size batches of 4 (`DETAIL_FETCH_BATCH_SIZE`), `Promise.all()` per batch, awaited before the next batch starts.\n- `toGig()` now takes `detailDescription` and uses `detailDescription ?? item.description`.\n\n**Tests** (`src/lib/sources/__tests__/builtin.test.ts`): 10 tests total (up from 5), all passing — full-description extraction from the real fixture (with markup-stripping assertion), fallback-to-snippet on network error, fallback-to-snippet on unrecognized shape (distinct from the still-passing list-fetch throw test), and a concurrency-cap test against 25 synthetic listings that tracks in-flight call count and asserts it hits but never exceeds 4.\n\n**Live verification**: ran the adapter against BuiltIn's real live site — 25/25 current listings in the default `dev-engineering` category got full detail-page descriptions (3.1K–9.6K chars each vs. the ~300–500 char snippets), confirming the story's 100% capture-rate metric.\n\n**Test/typecheck results**: `npm test` — 538 passed, 3 skipped (unrelated), 0 failed, across 45 files. `npm run typecheck` — clean (fixed one `TS2532` possibly-undefined on a regex capture group).\n\n**Commit**: `afe5bd6` on `feat/builtin-jd-capture` (not pushed, no PR opened, per instructions).",
+  "prompt_id": "92daa3a9-77ab-426d-a8db-1af85636d00a",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "verdict": "failure",
+  "verdict_source": "missing_marker",
+  "written_at": "2026-08-13T03:29:25Z"
+}

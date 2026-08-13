@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-08-12
+
+### Fixed
+
+- **`builtin-jd-capture` epic.** BuiltIn's adapter previously captured
+  only a short list-card snippet as each gig's `description` — now it
+  fetches each listing's own detail page (real, structured `JobPosting`
+  JSON-LD, more robust than a hand-rolled HTML regex) for the full job
+  posting text. Both role-area tiering and LLM-drafted applications
+  directly consume `gig.description`, so this measurably improves match
+  quality and draft quality — live-verified: 25/25 real current listings
+  went from ~300-500 character snippets to 3-10K character full
+  descriptions. Bounded to 4 concurrent detail-page requests at a time;
+  a single listing's detail fetch failing falls back to the snippet
+  rather than failing the whole scan.
+- 5 new tests (538 total, 3 opt-in real-browser tests).
+
+
 ## [0.14.0] - 2026-08-12
 
 ### Added
