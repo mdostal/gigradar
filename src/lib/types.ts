@@ -102,6 +102,19 @@ export interface Config {
    * `ApplyProfileConfig`'s own doc comment.
    */
   applyProfile?: ApplyProfileConfig;
+  /**
+   * Opt-in: when true, each scheduled scan cycle (src/scheduler/index.ts's
+   * runCycle()) auto-generates a real draft (stageApplication(), unmodified)
+   * for new green-tier matches — capped at 5/cycle, skipping any gig that
+   * already has a draft (any status), and skipping entirely for the cycle
+   * (with one clear log line, not per-gig spam) if ANTHROPIC_API_KEY or
+   * applyProfile isn't configured. Omitted/false => no behavior change from
+   * before this flag existed — same "omission is a meaningful, valid
+   * do-nothing default" pattern as roleArea/schedule/applyProfile above.
+   * Auto-DRAFTING only, never auto-SUBMITTING — see
+   * .pHive/epics/auto-draft-on-scan/docs/design-discussion.md.
+   */
+  autoDraftOnScan?: boolean;
 }
 
 /** A normalized gig, whatever source it came from. */
