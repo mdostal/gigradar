@@ -207,7 +207,7 @@ describe("loadConfig: encryption at rest (migrate-on-read)", () => {
 });
 
 describe("loadConfig: optional fields", () => {
-  it("validates successfully and returns roleArea/schedule as undefined when omitted (not defaulted, not an error)", () => {
+  it("validates successfully and returns roleArea/schedule/applyProfile as undefined when omitted (not defaulted, not an error)", () => {
     writePlaintextConfig(JSON.stringify(validConfig));
 
     const config = loadConfig();
@@ -217,7 +217,37 @@ describe("loadConfig: optional fields", () => {
     expect(config.sources).toEqual(validConfig.sources);
     expect(config.roleArea).toBeUndefined();
     expect(config.schedule).toBeUndefined();
+    expect(config.applyProfile).toBeUndefined();
     expect("roleArea" in config ? config.roleArea : undefined).toBeUndefined();
+    expect("applyProfile" in config ? config.applyProfile : undefined).toBeUndefined();
+  });
+
+  it("round-trips a populated Config.applyProfile (email required, the rest optional), same pattern as roleArea/schedule (draft-generation-foundation, AC1)", () => {
+    const full = {
+      ...validConfig,
+      applyProfile: {
+        email: "jane@example.com",
+        phone: "+1-555-0100",
+        linkedInUrl: "https://linkedin.com/in/jane",
+        headline: "Fractional CTO",
+        bio: "10 years building backend systems.",
+        rateAnchor: 225,
+      },
+    };
+    writePlaintextConfig(JSON.stringify(full));
+
+    const config = loadConfig();
+
+    expect(config.applyProfile).toEqual(full.applyProfile);
+  });
+
+  it("accepts Config.applyProfile with only the required `email` field set (every other field genuinely optional)", () => {
+    const full = { ...validConfig, applyProfile: { email: "jane@example.com" } };
+    writePlaintextConfig(JSON.stringify(full));
+
+    const config = loadConfig();
+
+    expect(config.applyProfile).toEqual({ email: "jane@example.com" });
   });
 });
 

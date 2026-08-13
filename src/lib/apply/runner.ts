@@ -1,10 +1,11 @@
-import type { Config, Gig, MatchResult } from "../types.js";
+import type { Config, DraftContent, Gig, MatchResult } from "../types.js";
 import { getSource } from "../sources/source.js";
 import { gate } from "../matching/gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
-import { gigKey, recordScan } from "../store/index.js";
-import type { RecordScanOptions, SourceScanBatch } from "../store/index.js";
+import { gigKey, recordScan, saveDraft } from "../store/index.js";
+import type { DbOption, RecordScanOptions, SourceScanBatch } from "../store/index.js";
 import { loadConfig } from "../config/load.js";
+import { generateDraft } from "./draft.js";
 
 /**
  * One radar run: for every enabled source, fetch -> gate -> tier -> collect,
@@ -92,19 +93,62 @@ export async function runRadar(
 /**
  * ASSISTED apply — the "runs the apps with them" layer. This intentionally
  * does NOT blast auto-submissions. It stages a per-gig application draft
- * (answers keyed to the user's profile) for review, mirroring the human-in-
- * the-loop model. Wiring an LLM/agent to draft the answers goes here; the
- * user always approves before anything is submitted.
- *
- * TODO(build): draft(gig, profile) -> ApplicationDraft; queue for review.
+ * (a real, LLM-generated cover message + any structured answers, grounded
+ * in the user's own `Profile`/`Config.applyProfile`) for review, mirroring
+ * the human-in-the-loop model — the user always approves before anything is
+ * submitted. `draft-generation-foundation` story, `assisted-apply-drafting`
+ * epic.
  */
 export interface ApplicationDraft {
   gig: Gig;
-  fields: Record<string, string>;
-  status: "draft" | "approved" | "submitted";
+  content: DraftContent;
+  status: "draft";
 }
-export async function stageApplication(_r: MatchResult): Promise<ApplicationDraft> {
-  throw new Error("not implemented — assisted-apply drafting goes here (human approves before submit)");
+
+/**
+ * Stages a real application draft for `r.gig` and persists it (status
+ * `"draft"`) via `saveDraft()`. Two guardrails fire BEFORE any LLM call is
+ * made, in this order:
+ *
+ * 1. `r.tier === "red"` — a minimal, common-sense guardrail (never spend a
+ *    real LLM call drafting for a gig the tiering system already flagged as
+ *    clearly off-target). Green and yellow are both draftable; this is
+ *    deliberately narrower than the full 4-check gate reserved for the
+ *    later auto-fire epic (see design_decisions in this story's YAML).
+ * 2. `config.applyProfile` unset — `generateDraft()` needs real contact/
+ *    apply fields to draft anything meaningful; rather than attempt a
+ *    degraded draft with garbled/missing fields, this throws a specific,
+ *    actionable error pointing at `/config` (this project's established
+ *    "throw loud, don't silently degrade" convention).
+ *
+ * `apiKey` is a REQUIRED parameter, resolved by the CALLER (matching
+ * `generateDraft()`'s own real shape — see draft.ts's header comment) —
+ * this function never reads `process.env` or holds a module-scope client
+ * itself; it only ever forwards `apiKey` straight through to
+ * `generateDraft()`.
+ */
+export async function stageApplication(
+  r: MatchResult,
+  config: Config,
+  apiKey: string,
+  storeOpts: DbOption = {},
+): Promise<ApplicationDraft> {
+  if (r.tier === "red") {
+    throw new Error(
+      `gigradar apply: cannot draft an application for "${r.gig.title}" — its role-area tier is "red" ` +
+        "(flagged clearly off-target); drafting is restricted to green/yellow-tier gigs.",
+    );
+  }
+  if (!config.applyProfile) {
+    throw new Error(
+      "gigradar apply: no apply profile configured. Set up your apply profile in /config before generating a draft.",
+    );
+  }
+
+  const content = await generateDraft(r.gig, config.profile, config.applyProfile, apiKey);
+  saveDraft(gigKey(r.gig.sourceId, r.gig.externalId), content, storeOpts);
+
+  return { gig: r.gig, content, status: "draft" };
 }
 
 // CLI entrypoint: `npm run radar` — loads the user's local config, runs one

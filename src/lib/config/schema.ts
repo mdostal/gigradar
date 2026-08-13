@@ -44,6 +44,21 @@ export const RoleAreaConfigSchema = z.object({
   redKeywords: z.array(z.string()),
 });
 
+/**
+ * Mirrors `ApplyProfileConfig` in src/lib/types.ts. Only `email` is
+ * required within this object — the object itself is `.optional()` on
+ * `Config` (see ConfigSchema below), same "omitted = not configured, not an
+ * error" pattern as `RoleAreaConfigSchema`/`schedule`.
+ */
+export const ApplyProfileConfigSchema = z.object({
+  email: z.string(),
+  phone: z.string().optional(),
+  linkedInUrl: z.string().optional(),
+  headline: z.string().optional(),
+  bio: z.string().optional(),
+  rateAnchor: z.number().optional(),
+});
+
 /** Mirrors `SourceConfig` in src/lib/types.ts. `settings` is intentionally opaque — never raw secrets. */
 export const SourceConfigSchema = z.object({
   id: z.string(),
@@ -52,9 +67,9 @@ export const SourceConfigSchema = z.object({
 });
 
 /**
- * Mirrors `Config` in src/lib/types.ts exactly. `roleArea` and `schedule`
- * MUST stay `.optional()` — see the file-level comment above and
- * types.ts's doc comments for why defaulting or requiring them would be
+ * Mirrors `Config` in src/lib/types.ts exactly. `roleArea`, `schedule`, and
+ * `applyProfile` MUST stay `.optional()` — see the file-level comment above
+ * and types.ts's doc comments for why defaulting or requiring them would be
  * wrong.
  */
 export const ConfigSchema = z.object({
@@ -63,4 +78,5 @@ export const ConfigSchema = z.object({
   sources: z.array(SourceConfigSchema),
   roleArea: RoleAreaConfigSchema.optional(),
   schedule: z.string().optional(),
+  applyProfile: ApplyProfileConfigSchema.optional(),
 });

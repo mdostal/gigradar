@@ -53,6 +53,26 @@ export interface RoleAreaConfig {
   redKeywords: string[];
 }
 
+/**
+ * Apply-specific fields a real application form needs that `Profile`
+ * doesn't hold today — email, phone, LinkedIn, a short headline/bio, and a
+ * single rate figure to anchor when a form asks for one. Optional on
+ * `Config` (see below): omitted means "not configured yet," the same valid,
+ * do-nothing default `roleArea`/`schedule` already establish — never an
+ * error. See `apply/draft.ts`'s `generateDraft()` and
+ * `apply/runner.ts`'s `stageApplication()`, which throws a specific error
+ * when this is unset rather than attempting a degraded draft.
+ */
+export interface ApplyProfileConfig {
+  email: string;
+  phone?: string;
+  linkedInUrl?: string;
+  headline?: string;
+  bio?: string;
+  /** The single number to anchor when a form asks for a rate. */
+  rateAnchor?: number;
+}
+
 /** A source the user has enabled (a job platform / board / feed). */
 export interface SourceConfig {
   id: string;                 // matches a registered Source.id
@@ -74,6 +94,14 @@ export interface Config {
   roleArea?: RoleAreaConfig;
   /** Cron cadence, e.g. "0 9 * * *" (daily 9am). */
   schedule?: string;
+  /**
+   * Optional apply-specific profile fields (email/phone/LinkedIn/headline/
+   * bio/rate anchor) `generateDraft()` needs to fill a real application.
+   * Omitted => `stageApplication()` throws, pointing the user at /config,
+   * rather than drafting with garbled/missing contact fields — see
+   * `ApplyProfileConfig`'s own doc comment.
+   */
+  applyProfile?: ApplyProfileConfig;
 }
 
 /** A normalized gig, whatever source it came from. */
@@ -100,6 +128,19 @@ export interface Gig {
    * one extra value alongside each Gig.
    */
   tier?: Tier;
+}
+
+/**
+ * One LLM-drafted application: a cover message plus any structured answers
+ * to application-specific questions the gig listing implies (keyed by
+ * question text; empty object if none apply). Produced by
+ * `apply/draft.ts`'s `generateDraft()`, grounded strictly in real
+ * `Profile`/`ApplyProfileConfig`/`Gig` data — never fabricated. Persisted
+ * JSON-stringified in `application_drafts.content` (`src/lib/store/`).
+ */
+export interface DraftContent {
+  coverText: string;
+  answers: Record<string, string>;
 }
 
 /** The gate's verdict on a single gig — always explainable. */
