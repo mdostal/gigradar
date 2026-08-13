@@ -86,18 +86,25 @@ export const SOURCE_LOGIN_URLS: Record<string, string> = {
  * instead of "gofractional") with no error and no "Capture login" button —
  * a silent, hard-to-diagnose mismatch. A picker makes that typo impossible.
  */
-export const KNOWN_SOURCES: readonly { id: string; label: string }[] = [
-  { id: "braintrust", label: "Braintrust" },
-  { id: "builtin", label: "BuiltIn" },
-  { id: "gofractional", label: "GoFractional" },
-  { id: "ateam", label: "A.Team" },
+// `auth` mirrors each adapter's own real `Source.auth` field byte-for-byte
+// (see the grep-verified list this constant was built from: braintrust.ts,
+// builtin.ts, gofractional.ts, ateam.ts, fractionaljobs.ts, fractionus.ts,
+// fractionalfinders.ts, wellfound.ts) so the config UI's Settings editor
+// can show a hint that matches what a source ACTUALLY needs, instead of a
+// one-size-fits-all API-key placeholder that's misleading for the
+// `"none"`-auth sources (see config-client.tsx's SettingsEditor).
+export const KNOWN_SOURCES: readonly { id: string; label: string; auth: "none" | "api-key" | "browser-session" }[] = [
+  { id: "braintrust", label: "Braintrust", auth: "none" },
+  { id: "builtin", label: "BuiltIn", auth: "none" },
+  { id: "gofractional", label: "GoFractional", auth: "browser-session" },
+  { id: "ateam", label: "A.Team", auth: "browser-session" },
   // adapter-batch-public-boards epic, public-fetch-adapters story: three
   // new auth:"none" fetch-based boards (src/lib/sources/fractionaljobs.ts,
   // fractionus.ts, fractionalfinders.ts).
-  { id: "fractionaljobs", label: "FractionalJobs" },
-  { id: "fractionus", label: "Fractionus" },
-  { id: "fractionalfinders", label: "FractionalFinders" },
+  { id: "fractionaljobs", label: "FractionalJobs", auth: "none" },
+  { id: "fractionus", label: "Fractionus", auth: "none" },
+  { id: "fractionalfinders", label: "FractionalFinders", auth: "none" },
   // adapter-batch-public-boards epic, wellfound-adapter story:
   // src/lib/sources/wellfound.ts, auth:"browser-session".
-  { id: "wellfound", label: "Wellfound" },
+  { id: "wellfound", label: "Wellfound", auth: "browser-session" },
 ];
