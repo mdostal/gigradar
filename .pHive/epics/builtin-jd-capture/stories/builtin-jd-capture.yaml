@@ -1,0 +1,104 @@
+id: builtin-jd-capture
+epic: builtin-jd-capture
+title: "builtin.ts: fetch full description from each listing's detail page, bounded concurrency"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  `src/lib/sources/builtin.ts`'s `description` field currently comes from
+  a short list-card snippet, not the real job posting body. Both
+  `tiering.ts` and `draft.ts` (assisted-apply-drafting) directly consume
+  `gig.description` — a fuller, real description measurably improves both.
+
+  1. **`fetchDetailDescription(url): Promise<string | undefined>`** (new)
+     — fetches one listing's `/job/{slug}/{id}` detail page (confirmed
+     live: robots.txt-compliant, no login needed, real content), extracts
+     the full description via a targeted regex against its own container.
+     On ANY failure (network error, unrecognized shape) returns
+     `undefined` — never throws. This is a DELIBERATE divergence from the
+     adapter's own list-fetch throw convention: a single listing's
+     detail-enrichment failing is a different-in-kind signal from the
+     whole source being broken, so it degrades gracefully rather than
+     failing the whole scan.
+  2. **Bounded-concurrency batching**: process listings in fixed-size
+     batches of 4 (`Promise.all()` per batch, awaited before the next
+     batch starts) — a concrete, directly testable mechanism, not just an
+     asserted cap.
+  3. **`toGig()` uses the detail-fetched description when available**,
+     falling back to the existing list-card snippet when the detail fetch
+     failed for that listing.
+  4. Deliberately NOT building cross-scan "already seen, skip
+     re-fetching" caching — would require a `Source.fetch()` interface
+     change affecting every adapter, disproportionate to this scope.
+
+acceptance_criteria:
+  - "Given a real captured detail-page HTML fixture (live-fetched during planning research), when fetchDetailDescription() parses it, then it returns the full description text, not the short list-card snippet."
+  - "Given a detail-page fetch that returns a network error, when fetchDetailDescription() is called, then it returns undefined -- the overall scan does NOT fail because of it."
+  - "Given a detail-page fetch that returns an unrecognized page shape (no description container found), when fetchDetailDescription() is called, then it returns undefined, not a thrown error -- distinct from the list-fetch's own throw-on-shape-failure behavior, which is unchanged."
+  - "Given a listing whose detail fetch failed, when toGig() builds its Gig, then description falls back to the original list-card snippet -- never left completely unset when SOME description was available."
+  - "Given 25 listings from a real or fixture list page, when the adapter processes their detail fetches, then no more than 4 are ever in flight simultaneously -- verified via a test fetch mock tracking concurrent call count."
+  - "Given a real live scan against BuiltIn's actual site, when it completes, then real, full descriptions are captured for real current listings (not fabricated, not just the snippet)."
+
+steps:
+  - id: implement
+    description: Build fetchDetailDescription(), the batched-concurrency processing, and toGig()'s fallback logic per the description above.
+    agent: developer
+  - id: test
+    description: Write tests covering every acceptance criterion using the real captured detail-page fixture from planning research, plus network-error and unrecognized-shape failure cases and the concurrency-cap test.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the throw-vs-degrade distinction between list-fetch and detail-fetch is correctly implemented and matches the design's stated reasoning, and that the concurrency batching genuinely caps at 4, not just asserts it.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/builtin-jd-capture.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+  key_files:
+    - path: src/lib/sources/builtin.ts
+      purpose: "The adapter being extended -- its existing list-fetch throw convention, regex-over-HTML style, and toGig() mapping."
+    - path: src/lib/matching/tiering.ts
+      purpose: "Confirms gig.description directly affects classification -- the value case for this enhancement."
+    - path: src/lib/apply/draft.ts
+      purpose: "Confirms gig.description directly affects drafted application quality -- the other value case."
+
+design_decisions:
+  - decision: Detail-fetch failures degrade to the snippet rather than throwing, unlike the list-fetch's throw-on-shape-failure rule
+    rationale: Grill H1 -- a different-in-kind signal; one listing's enrichment failing is not the same as the whole source being broken.
+  - decision: Fixed-size batches of 4 as the concurrency-bounding mechanism
+    rationale: Grill H2 -- a naive Promise.all() over all listings wouldn't respect any stated cap; batching is concrete and directly testable.
+  - decision: No cross-scan caching of already-detail-fetched listings
+    rationale: Would require a Source.fetch() interface change affecting every adapter -- disproportionate to this one adapter's scope; a reasonable later optimization if real-world volume ever proves it necessary.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.builtin_full_description_capture_rate
+  direction: up
+  unit: percent
+  baseline: 0
+  target: 100
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "live scan against real BuiltIn listings; confirm full descriptions captured, not just snippets"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: low
+    description: BuiltIn's detail-page markup could differ from the one sample listing this research observed.
+    mitigation: The fallback-to-snippet behavior means even a detail-page markup break degrades gracefully to today's existing behavior, not a scan failure.
+
+references:
+  - .pHive/epics/builtin-jd-capture/docs/design-discussion.md
+  - .pHive/epics/builtin-jd-capture/docs/grill-record.md
