@@ -190,7 +190,7 @@ function toPostedAt(postedText: string | undefined, now: Date): string | undefin
   return d.toISOString().slice(0, 10);
 }
 
-function toGig(item: BuiltinListItem, now: Date): Gig {
+function toGig(item: BuiltinListItem, now: Date, detailDescription: string | undefined): Gig {
   return {
     sourceId: "builtin",
     externalId: item.id,
@@ -204,9 +204,140 @@ function toGig(item: BuiltinListItem, now: Date): Gig {
     // concept at all — left unset (unknown) rather than guessed.
     remote: toRemote(item.workType),
     postedAt: toPostedAt(item.postedText, now),
-    description: item.description,
+    // Prefer the full detail-page description when that listing's detail
+    // fetch succeeded; fall back to the short list-card snippet when it
+    // failed (see fetchDetailDescription's comment) — never left completely
+    // unset when SOME description was successfully obtained.
+    description: detailDescription ?? item.description,
     raw: item,
   };
+}
+
+const LD_JSON_SCRIPT_RE = /<script type="application\/ld(?:\+|&#x2B;)json">([\s\S]*?)<\/script>/g;
+
+/**
+ * Strips the detail page's job-description markup (`<br>`, `<strong>`,
+ * `<ul>`/`<li>`, `<b>`, `<p>` observed live across real listings) down to
+ * plain text, decoding entities with the same decoder used for list-card
+ * text. Each employer authors this HTML themselves (it's their own posting
+ * body, not BuiltIn's page layout), so leaving it as raw markup would just
+ * be noise for tiering keyword-matching and LLM drafting, the two real
+ * consumers of `gig.description`.
+ */
+function stripDescriptionHtml(html: string): string {
+  return decodeEntities(
+    html
+      .replace(/<li[^>]*>/gi, "\n- ")
+      .replace(/<\/li>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<[^>]+>/g, ""),
+  )
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Recursively hunts a parsed JSON-LD document for a `{"@type": "JobPosting", ...}` node, whether it's the top-level object or nested inside an `@graph` array (BuiltIn uses the latter, confirmed live). */
+function findJobPosting(node: unknown): Record<string, unknown> | undefined {
+  if (!node || typeof node !== "object") return undefined;
+  const obj = node as Record<string, unknown>;
+  if (obj["@type"] === "JobPosting") return obj;
+  if (Array.isArray(obj["@graph"])) {
+    for (const entry of obj["@graph"]) {
+      const found = findJobPosting(entry);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Extracts a listing's full job-description text from its own detail page
+ * HTML, targeting the `JobPosting` JSON-LD block BuiltIn embeds in every
+ * detail page's `<head>` (a `<script type="application/ld+json">` containing
+ * `{"@graph": [{"@type": "JobPosting", "description": "...", ...}]}`) —
+ * confirmed live against multiple real listings while building this. This
+ * is the "targeted regex against its own container" this adapter's other
+ * parsing already relies on, just with the container being a JSON-LD script
+ * block instead of an HTML card `<div>`.
+ *
+ * Returns undefined (never throws) when no script matches, none parses as
+ * JSON, or none contains a JobPosting with a non-empty description — an
+ * unrecognized page shape, not a crash. See fetchDetailDescription's own
+ * comment for why that's a deliberate difference from this adapter's
+ * list-fetch throw convention.
+ */
+function extractDetailDescription(html: string): string | undefined {
+  LD_JSON_SCRIPT_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = LD_JSON_SCRIPT_RE.exec(html))) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse((m[1] ?? "").trim());
+    } catch {
+      continue; // not valid JSON -- try the next script block, if any
+    }
+    const jobPosting = findJobPosting(parsed);
+    const description = jobPosting?.["description"];
+    if (typeof description === "string" && description.trim().length > 0) {
+      return stripDescriptionHtml(description);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Fetches ONE listing's own detail page and extracts its full job
+ * description. On ANY failure (network error, non-2xx response, unrecognized
+ * page shape) returns undefined rather than throwing.
+ *
+ * DELIBERATE DIVERGENCE from this adapter's list-fetch throw convention (see
+ * `fetchCategoryHtml` above, which throws on the same categories of
+ * failure): the list fetch failing means the WHOLE SOURCE is broken — a
+ * scan-level health signal, correctly a hard failure that should stop the
+ * scan. This function failing means only ONE listing doesn't get the fuller
+ * description this scan — everything else about the scan (every other
+ * listing, the scan as a whole) is unaffected, so degrading gracefully is
+ * the right behavior here, not a violation of the adapter's own throw
+ * discipline. Callers fall back to the list-card snippet already captured
+ * for that listing (see `toGig` below) — a listing's description is never
+ * left completely unset just because its detail-page enrichment failed.
+ */
+async function fetchDetailDescription(url: string): Promise<string | undefined> {
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { accept: "text/html" } });
+  } catch {
+    return undefined; // network error -- degrade, don't fail the scan
+  }
+  if (!res.ok) return undefined;
+  let html: string;
+  try {
+    html = await res.text();
+  } catch {
+    return undefined;
+  }
+  return extractDetailDescription(html);
+}
+
+const DETAIL_FETCH_BATCH_SIZE = 4;
+
+/**
+ * Fetches every listing's detail-page description, bounded to
+ * `DETAIL_FETCH_BATCH_SIZE` concurrent requests at a time: fixed-size
+ * batches, `Promise.all()` per batch, each batch awaited before the next
+ * starts. A bare `Promise.all(items.map(fetchDetailDescription))` over the
+ * whole list would fire every request simultaneously and respect no cap at
+ * all -- this is the concrete mechanism that actually enforces one.
+ */
+async function fetchDetailDescriptions(items: BuiltinListItem[]): Promise<Map<string, string | undefined>> {
+  const results = new Map<string, string | undefined>();
+  for (let i = 0; i < items.length; i += DETAIL_FETCH_BATCH_SIZE) {
+    const batch = items.slice(i, i + DETAIL_FETCH_BATCH_SIZE);
+    const batchResults = await Promise.all(batch.map((item) => fetchDetailDescription(item.url)));
+    batch.forEach((item, idx) => results.set(item.id, batchResults[idx]));
+  }
+  return results;
 }
 
 function categoryFrom(cfg: SourceConfig): string {
@@ -259,8 +390,14 @@ export const builtinSource: Source = {
     // uses across its pages).
     const byId = new Map<string, BuiltinListItem>();
     for (const item of items) byId.set(item.id, item);
+    const uniqueItems = [...byId.values()];
 
-    return [...byId.values()].map((item) => toGig(item, now));
+    // Best-effort per-listing enrichment -- see fetchDetailDescription's
+    // comment for why a detail-fetch failure degrades to the list-card
+    // snippet rather than failing this whole scan.
+    const detailDescriptions = await fetchDetailDescriptions(uniqueItems);
+
+    return uniqueItems.map((item) => toGig(item, now, detailDescriptions.get(item.id)));
   },
 };
 
