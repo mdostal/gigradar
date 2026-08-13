@@ -27,11 +27,47 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { getKeyPath } from "./key-path.js";
+import { getDefaultDataDir } from "../store/path.js";
+import { getKeyConfigDir, getKeyPath } from "./key-path.js";
 
 const KEY_LENGTH_BYTES = 32; // AES-256
 const IV_LENGTH_BYTES = 12; // GCM's recommended/standard IV length
 const ENVELOPE_VERSION = 1;
+
+// Module-scoped (NOT the "no key cache" state the header comment rules
+// out — no key material lives here, just a flag) so the collision warning
+// below fires once per process, not on every getOrCreateKey() call. See
+// .pHive/epics/security-hardening/docs/design-discussion.md §3 step 2 /
+// grill finding H2: this is a non-blocking, best-effort notice, so a
+// simple in-memory flag (reset on process restart or, in tests, via
+// vi.resetModules()) is all it needs to be.
+let hasWarnedAboutKeyDataCollision = false;
+
+/**
+ * Warns (once per process, never throws) if the resolved key directory
+ * ({@link getKeyConfigDir}) and the resolved data directory
+ * (`getDefaultDataDir()`) are identical — for ANY reason, not just the
+ * Windows-fallback bug this story fixes. Covers the residual case where a
+ * user explicitly sets `XDG_CONFIG_HOME` and `XDG_DATA_HOME` to the same
+ * value themselves: that's their own configuration choice, not a code bug,
+ * so it's a warning rather than a hard failure — see design-discussion.md
+ * §3 step 2 (grill finding H2).
+ */
+function warnIfKeyAndDataDirsCollide(): void {
+  if (hasWarnedAboutKeyDataCollision) return;
+
+  const keyDir = getKeyConfigDir();
+  const dataDir = getDefaultDataDir();
+  if (keyDir !== dataDir) return;
+
+  hasWarnedAboutKeyDataCollision = true;
+  console.warn(
+    `gigradar: the vault key directory and data directory are the same ("${keyDir}"). ` +
+      "The encryption key should live in a directory separate from the data it protects. " +
+      "If you set XDG_CONFIG_HOME and XDG_DATA_HOME yourself, point them at different " +
+      "locations; this is a non-blocking warning, not an error.",
+  );
+}
 
 /** The on-disk/on-wire shape produced by encrypt() and consumed by decrypt(). */
 interface VaultEnvelope {
@@ -159,8 +195,15 @@ function writeKeyAtomically(keyPath: string, key: Buffer): void {
  *     returns it.
  *
  * Never logs the key, and never includes key bytes in any error message.
+ *
+ * Also checks (every call, but warns at most once per process) whether the
+ * resolved key directory and data directory are identical — see
+ * {@link warnIfKeyAndDataDirsCollide}. Purely a non-blocking `console.warn`;
+ * never affects this function's return value or throws on its own.
  */
 export function getOrCreateKey(hasAnyEncryptedFileFn: () => boolean): Buffer {
+  warnIfKeyAndDataDirsCollide();
+
   const keyPath = getKeyPath();
 
   if (fs.existsSync(keyPath)) {

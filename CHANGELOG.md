@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-08-12
+
+### Fixed
+
+- **`security-hardening` epic — two confirmed pre-launch findings from
+  the security audit.** (1) On Windows, the vault key and all encrypted
+  data resolved to the identical default directory, defeating the
+  encrypted-local-storage epic's core security property — the key's
+  Windows fallback now resolves to a genuinely separate directory, with
+  a new test asserting this can't silently regress, plus a non-blocking
+  warning if the two ever collide for any reason (including a user
+  setting both XDG override vars to the same value themselves). (2) The
+  resume/link ingestion feature's link-fetching had zero SSRF
+  protection — it now resolves every hostname via real DNS before
+  fetching and blocks loopback/link-local (including the cloud metadata
+  IP)/RFC1918 targets (with IPv4-mapped-IPv6 bypass addresses
+  normalized first), enforces a 10-second timeout and a 5MB streaming
+  response cap covering the ENTIRE fetch — including the body-streaming
+  phase, not just getting response headers (a real gap a slow-trickle
+  response could otherwise exploit, caught and fixed during this epic's
+  own review) — and never echoes raw fetch-error detail back to the
+  caller.
+- 22 new tests (453 total, 3 opt-in real-browser tests).
+
+
 ## [0.12.0] - 2026-08-12
 
 ### Added

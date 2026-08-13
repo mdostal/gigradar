@@ -1,0 +1,111 @@
+id: ssrf-hardening
+epic: security-hardening
+title: "SSRF hardening in fetchAndExtractLink() — IP validation, timeout, size cap"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  `src/lib/profile-ingestion/extract.ts`'s `fetchAndExtractLink()` currently
+  calls `fetch(url)` on fully user-supplied input with zero validation, no
+  timeout, no response-size cap, and returns raw fetch-error detail
+  (`e.message`) verbatim to the caller. Fix all four:
+
+  1. **Pre-fetch URL/IP validation**: reject any non-`http:`/`https:`
+     scheme outright. Resolve the hostname via `dns.lookup()` (real
+     resolution, not literal-string matching) and reject if any resolved
+     address falls in loopback (`127.0.0.0/8`, `::1`), link-local
+     (`169.254.0.0/16`, `fe80::/10` — covers the cloud metadata endpoint
+     `169.254.169.254`), or RFC1918 private ranges (`10.0.0.0/8`,
+     `172.16.0.0/12`, `192.168.0.0/16`). Normalize/unwrap IPv4-mapped
+     IPv6 addresses (e.g. `::ffff:127.0.0.1`) to their embedded IPv4 form
+     BEFORE range-checking — a known bypass if IPv4/IPv6 are checked as
+     unrelated cases. A blocked target returns the same `LinkFetchResult`
+     warning shape `detectLoginWall()` already uses (a specific, generic
+     message — never the raw resolved IP or DNS detail).
+  2. **`AbortController` timeout** — 10 seconds, wrapping the `fetch()`
+     call.
+  3. **Streaming response-size cap** — 5MB hard limit, enforced via
+     `response.body`'s reader (not trusting `Content-Length` alone, which
+     can be missing or spoofed) — exceeding it aborts and returns a
+     specific "response too large" warning.
+  4. **No raw error detail returned to the caller** — the catch block's
+     `e.message` is logged server-side only (`console.error`); the
+     returned warning becomes a fixed, generic "couldn't fetch this link"
+     message, never the raw exception text.
+
+  Explicitly OUT of scope: full DNS-rebinding (TOCTOU) protection —
+  re-validating the resolved IP at the exact moment of the actual fetch,
+  not just before it. Accepted residual risk (requires an attacker to
+  control DNS infrastructure and time a record change precisely — a
+  materially harder attack than today's zero-validation state this story
+  closes).
+
+acceptance_criteria:
+  - "Given a URL that resolves (via DNS) to 127.0.0.1, when fetchAndExtractLink() is called, then it returns a warning (never throws, per this module's existing never-throws contract) without ever making the actual fetch() call."
+  - "Given a URL that resolves to 169.254.169.254 (the real cloud metadata IP), when fetchAndExtractLink() is called, then it's blocked the same way — proving the check covers link-local, not just loopback/RFC1918."
+  - "Given a hostname that does NOT look internal in its literal text but DNS-resolves to a blocked range (mocked dns.lookup()), when fetchAndExtractLink() is called, then it's still blocked — proving the check is resolution-based, not literal-string-based."
+  - "Given an IPv4-mapped IPv6 address (e.g. ::ffff:127.0.0.1) as a resolved address, when the validation runs, then it's normalized and blocked the same as its embedded IPv4 form."
+  - "Given a non-http(s) scheme (e.g. file://, ftp://), when fetchAndExtractLink() is called, then it's rejected outright, before any DNS resolution is attempted."
+  - "Given a test server that never responds, when fetchAndExtractLink() is called, then it times out at approximately 10 seconds and returns a warning, not an indefinite hang."
+  - "Given a test server that streams a response larger than 5MB, when fetchAndExtractLink() reads it, then it aborts partway through and returns a 'response too large' warning, not an unbounded memory read."
+  - "Given a fetch that throws a real network error (e.g. connection refused), when fetchAndExtractLink() catches it, then the returned warning is a FIXED, generic message — the raw e.message text never appears in the returned warning string."
+  - "Given a normal, legitimate public URL (a real allowed target), when fetchAndExtractLink() is called, then it works exactly as before this story -- zero regression on the happy path."
+
+steps:
+  - id: implement
+    description: Build the pre-fetch IP validation (with IPv4-mapped-IPv6 normalization), timeout, streaming size cap, and generic-error-message fix per the description above.
+    agent: developer
+  - id: test
+    description: Write tests covering every acceptance criterion against a local test HTTP server (timeout/size-cap paths) and mocked dns.lookup() resolutions (IP-blocking paths, including the not-literally-internal-but-resolves-to-blocked-range case and the IPv4-mapped-IPv6 case) -- no real network dependency.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no raw error detail or resolved IP ever appears in a returned warning, the size cap is genuinely streaming (not trusting Content-Length alone), and the happy path for legitimate links is unaffected.
+    agent: security-reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/security-hardening.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    dependency: "node:dns (built-in, no new dependency)"
+  key_files:
+    - path: src/lib/profile-ingestion/extract.ts
+      purpose: "fetchAndExtractLink() -- the exact function being hardened."
+
+design_decisions:
+  - decision: DNS-resolution-based validation, not literal URL-string matching
+    rationale: A hostname could resolve to a blocked range (e.g. via a custom DNS entry) even if its literal text doesn't look internal -- resolution-based checking is the only way to actually close this.
+  - decision: Full DNS-rebinding (TOCTOU) protection explicitly out of scope
+    rationale: Grill U1 -- exploiting the gap requires attacker-controlled DNS infrastructure and precise timing, a materially harder attack than today's zero-validation state; closing the easy case is what "blocking for launch" means here.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.ssrf_hardening_coverage
+  direction: up
+  unit: percent
+  baseline: 0
+  target: 100
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "vitest coverage for the new validation/timeout/size-cap logic; confirm all acceptance criteria have a corresponding passing test"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: low
+    description: The 5MB/10s limits are reasonable defaults, not empirically tuned against real-world profile/portfolio pages.
+    mitigation: Matches the security audit's own suggested values; can be revisited if a real legitimate page ever turns out to exceed them.
+
+references:
+  - .pHive/epics/security-hardening/docs/design-discussion.md
+  - .pHive/epics/security-hardening/docs/grill-record.md

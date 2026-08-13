@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getKeyPath } from "../key-path.js";
 import { VaultKeyLostError, VaultTamperError, decrypt, encrypt, getOrCreateKey, isEncryptedEnvelope } from "../vault.js";
 
@@ -325,5 +325,67 @@ describe("isEncryptedEnvelope()", () => {
     expect(isEncryptedEnvelope(JSON.stringify("just a string"))).toBe(false);
     expect(isEncryptedEnvelope(JSON.stringify(42))).toBe(false);
     expect(isEncryptedEnvelope(JSON.stringify(null))).toBe(false);
+  });
+});
+
+// Story: windows-key-data-separation (.pHive/epics/security-hardening/
+// stories/windows-key-data-separation.yaml) / grill finding H2. The
+// fallback-path fix (key-path.test.ts) can't catch a user who explicitly
+// sets XDG_CONFIG_HOME and XDG_DATA_HOME to the SAME value themselves —
+// that's their own configuration choice, so getOrCreateKey() logs a
+// one-time, non-blocking warning instead of throwing. Each test here uses
+// vi.resetModules() + a fresh dynamic import of vault.ts so the
+// once-per-process warned flag (module-scoped state in vault.ts) starts
+// clean, regardless of what earlier tests in this file already triggered.
+describe("getOrCreateKey(): key/data directory collision warning", () => {
+  it("logs a one-time warning (never a thrown error) when XDG_CONFIG_HOME and XDG_DATA_HOME are both set to the SAME value", async () => {
+    process.env.XDG_DATA_HOME = tmpDir; // same value as XDG_CONFIG_HOME (set in the file-level beforeEach above)
+
+    vi.resetModules();
+    const freshVault = await import("../vault.js");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    let key: Buffer | undefined;
+    expect(() => {
+      key = freshVault.getOrCreateKey(() => false);
+    }).not.toThrow();
+
+    expect(key).toBeInstanceOf(Buffer); // the warning never blocks the actual key resolution
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0]?.[0])).toMatch(/key directory and data directory are the same/i);
+
+    warnSpy.mockRestore();
+    delete process.env.XDG_DATA_HOME;
+  });
+
+  it("warns only ONCE per process even across multiple getOrCreateKey() calls with the same colliding directories", async () => {
+    process.env.XDG_DATA_HOME = tmpDir;
+
+    vi.resetModules();
+    const freshVault = await import("../vault.js");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    freshVault.getOrCreateKey(() => false); // true-first-run branch: creates the key file
+    freshVault.getOrCreateKey(() => false); // existing-key branch, called twice more
+    freshVault.getOrCreateKey(() => false);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    warnSpy.mockRestore();
+    delete process.env.XDG_DATA_HOME;
+  });
+
+  it("does NOT warn when the key and data directories are genuinely different (the normal, correctly-separated case)", async () => {
+    delete process.env.XDG_DATA_HOME; // resolves to the platform default, distinct from XDG_CONFIG_HOME's tmpDir
+
+    vi.resetModules();
+    const freshVault = await import("../vault.js");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    freshVault.getOrCreateKey(() => false);
+
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
   });
 });
