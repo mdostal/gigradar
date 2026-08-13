@@ -1,0 +1,31 @@
+name: assisted-apply-drafting
+title: "Assisted apply: LLM drafting + review/approve workflow (the first real INTERACT implementation)"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture, security]
+  roster: [researcher, technical-writer, tpm, architect, security-reviewer]
+  per_tag_reasoning:
+    architecture: "First real implementation of INTERACT (config schema + store schema + LLM drafting + new UI, all at once) -- the most cross-cutting epic since dashboard-config-ui."
+    security: "New, more-personal Config fields (email/phone/LinkedIn), an LLM call fed untrusted scraped gig content (prompt-injection risk), and a status-sync operation that must be transaction-safe."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+    security: included
+
+stories:
+  - id: draft-generation-foundation
+    title: "Config.applyProfile + application_drafts table + generateDraft()/stageApplication()"
+    complexity: medium
+    depends_on: []
+  - id: draft-review-ui
+    title: "Draft review/approve UI + submitted-to-applied status sync"
+    complexity: medium
+    depends_on: [draft-generation-foundation]

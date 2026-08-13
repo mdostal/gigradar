@@ -1,0 +1,97 @@
+id: draft-review-ui
+epic: assisted-apply-drafting
+title: "Draft review/approve UI + submitted-to-applied status sync"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [draft-generation-foundation]
+
+description: |
+  Wires `draft-generation-foundation`'s store/generation functions into a
+  real UI, per the design doc's §3 step 5.
+
+  1. **A new `/drafts` page** (or dashboard section — implementation's
+     call) listing every draft from `listDrafts()`, grouped/filterable by
+     status (`draft`/`approved`/`rejected`/`submitted`).
+  2. **Per-draft review**: full editable text (a Server Action saving
+     edits back to the draft's `content`), Approve/Reject buttons
+     (`setDraftStatus()`).
+  3. **Once approved**: the real gig URL (opens in a new tab, per
+     `docs/ARCHITECTURE.md`'s data-integrity rule — always the real
+     per-listing page) + a copy-to-clipboard-ready draft. A "Mark
+     submitted" action calls `markDraftSubmitted()` — the ATOMIC
+     transaction from the foundation story (draft → `submitted` AND
+     linked gig → `applied`, one action, both consistent states).
+  4. **"Generate draft" entry point**: a button on the dashboard's
+     existing gig rows (green/yellow tier only — red-tier gigs don't
+     show the button at all, matching `stageApplication()`'s own
+     guardrail from the foundation story, so the UI doesn't even offer an
+     action the backend would reject) that calls `stageApplication()` via
+     a new Server Action, then navigates to the new drafts view.
+
+acceptance_criteria:
+  - "Given a real generated draft, when viewed on /drafts, then its full content is shown, editable, with Approve/Reject actions visible."
+  - "Given a draft is edited and saved, when the store is queried afterward, then application_drafts.content reflects the edit, not the original LLM output."
+  - "Given a draft is approved, when the UI updates, then the real gig URL and a copy-ready draft both appear, and a 'Mark submitted' action becomes available."
+  - "Given 'Mark submitted' is clicked, when the action completes, then BOTH the draft's status shows 'submitted' AND the gig's own status shows 'applied' in the main dashboard -- verified via the real markDraftSubmitted() atomic transaction, not two separate UI actions."
+  - "Given a gig with tier='red' on the dashboard, when its row is inspected, then no 'Generate draft' button is shown at all -- the UI doesn't offer an action the backend guardrail would reject."
+  - "Given a gig with tier='green' or 'yellow' and no draft yet, when 'Generate draft' is clicked, then stageApplication() runs and the user is navigated to the new draft for review."
+  - "Given Config.applyProfile is unset, when 'Generate draft' is clicked, then the specific, actionable error from stageApplication() (pointing at /config) is surfaced clearly in the UI, not a generic failure."
+
+steps:
+  - id: implement
+    description: Build the /drafts page, its Server Actions (edit/approve/reject/mark-submitted), and the dashboard's "Generate draft" entry point per the description above.
+    agent: developer
+  - id: test
+    description: Write tests covering every acceptance criterion, including the tier-gated button visibility and the atomic status-sync verification.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the real gig URL (never a search page) is used for the "review before submitting" link, the copy-ready draft doesn't accidentally include any raw LLM-internal formatting, and the missing-applyProfile error surfaces clearly rather than a generic Server Action failure.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/assisted-apply-drafting.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    framework: next.js 15 (app router, server actions)
+  key_files:
+    - path: src/lib/store/drafts.ts
+      purpose: "listDrafts()/setDraftStatus()/markDraftSubmitted() -- the foundation story's functions this UI wires in."
+    - path: src/lib/apply/runner.ts
+      purpose: "stageApplication() -- the foundation story's real implementation this UI's 'Generate draft' button calls via a new Server Action."
+    - path: src/app/dashboard-client.tsx
+      purpose: "The existing gig-status-transition UI pattern (dropdown, tier badges) this story's new UI elements should feel consistent with."
+
+design_decisions:
+  - decision: The dashboard doesn't show a "Generate draft" button for red-tier gigs at all
+    rationale: Matches stageApplication()'s own backend guardrail (foundation story) -- the UI shouldn't offer an action the backend would immediately reject; a disabled/hidden button is clearer than a click-then-error round trip.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.draft_review_workflow_available
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "manual end-to-end test: generate a real draft for one of the owner's own real tracked gigs, edit it, approve it, confirm the real gig link + copy-ready content, mark submitted, confirm both status updates land"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: low
+    description: A user could mark a draft "submitted" without having actually completed the real submission on the source's site (this epic doesn't automate that step).
+    mitigation: Accepted -- this is the epic's own stated, honest MVP scope (real per-source auto-fill is a separate, later epic); the UI's copy-ready draft + direct link are designed to make manual completion fast and low-friction, not to pretend the epic automates the actual send.
+
+references:
+  - .pHive/epics/assisted-apply-drafting/docs/design-discussion.md
