@@ -33,14 +33,16 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto max-w-6xl p-6">
-      <h1 className="text-2xl font-bold tracking-tight text-slate-900">gigradar</h1>
-      <p className="text-sm text-slate-500">
-        {gigs.length} gig{gigs.length === 1 ? "" : "s"} tracked.
-      </p>
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
-        <span>{status.sourcesLabel}</span>
-        <span>{status.profileLabel}</span>
-        <span>{status.lastScanLabel}</span>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Dashboard</h1>
+        <p className="text-sm text-slate-500">
+          {gigs.length} gig{gigs.length === 1 ? "" : "s"} tracked
+        </p>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2 text-sm text-slate-600">
+        <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{status.sourcesLabel}</span>
+        <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{status.profileLabel}</span>
+        <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{status.lastScanLabel}</span>
       </div>
       <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} />
     </main>

@@ -25,6 +25,16 @@ All notable changes to this project are documented in this file.
 - 18 new tests (564 total, 3 opt-in real-browser tests) — `dashboard-sort.ts`
   is a new pure, directly-unit-tested module mirroring
   `dashboard-filter.ts`'s existing pattern.
+- **General dashboard/nav styling pass.** Nav header: sticky at the top of
+  the page, a "gigradar" wordmark, and active-link highlighting
+  (`usePathname()`). Dashboard: filter controls grouped into one cohesive
+  card, status strip rendered as pills, table gets zebra-striped rows, a row
+  hover state, and a card-style border/shadow. Tried (and reverted) a sticky
+  table header: `position: sticky` on `<thead>`/per-`<th>` produced a real,
+  live-confirmed rendering glitch (a scrolled-past row bleeding through
+  above the header) that couldn't be cleanly resolved in this pass, so the
+  header stays in normal flow rather than shipping a visible bug — flagged
+  as a real follow-up, not silently dropped.
 
 ## [0.15.0] - 2026-08-12
 
