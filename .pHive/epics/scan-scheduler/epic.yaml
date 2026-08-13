@@ -1,0 +1,25 @@
+name: scan-scheduler
+title: Real recurring scan scheduler + per-source backoff resilience
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture]
+  roster: [researcher, technical-writer, tpm, architect]
+  per_tag_reasoning:
+    architecture: "A new standalone long-running process (mirroring the MCP server's own established shape) plus a new backoff module -- structural addition, no new subsystem."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+
+stories:
+  - id: scan-scheduler
+    title: "src/scheduler/index.ts + backoff.ts: real cron-driven scans with per-source resilience"
+    complexity: medium
+    depends_on: []
