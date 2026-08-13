@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-12
+
+### Added
+
+- **`assisted-apply-drafting` epic — the first real INTERACT
+  implementation.** `stageApplication()` has been a documented
+  `TODO(build)` stub since the project's very first epic; it's now real.
+  A new, optional `Config.applyProfile` section (email, phone, LinkedIn,
+  headline, bio, rate anchor — encrypted at rest like everything else in
+  `config.json`) feeds an LLM call (`@anthropic-ai/sdk`) that drafts a
+  real, per-gig application grounded strictly in your actual profile
+  data — never fabricating unstated experience, and treating the gig's
+  own scraped title/company/description as clearly-delimited untrusted
+  data, never instructions.
+- **A real review/approve workflow, not a black box.** Drafts land in a
+  new `/drafts` page: full editable text, Approve/Reject, and once
+  approved, the real gig listing link plus a copy-ready draft. "Mark
+  submitted" atomically updates both the draft's own status AND the
+  underlying gig's status to "applied" — one action, two consistent
+  states, never a desync. Matches this project's standing, confirmed
+  architecture principle: **assisted, not auto — nothing submits
+  itself.** A minimal guardrail (no red-tier drafting) prevents wasting
+  a real LLM call on a gig already flagged clearly off-target; a full
+  4-check auto-fire gate and real per-source submit automation are
+  explicitly named, deliberately separate, later epics — not silently
+  folded into this one.
+- A "Generate draft" button appears on green/yellow-tier dashboard rows
+  only — never offered for a red-tier gig the backend would reject
+  anyway.
+- 55 new tests (508 total, 3 opt-in real-browser tests).
+
+
 ## [0.12.1] - 2026-08-12
 
 ### Fixed
