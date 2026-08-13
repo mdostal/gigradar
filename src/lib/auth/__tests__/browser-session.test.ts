@@ -269,7 +269,7 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
     void context; // unused here, present for readability of the fake-chain shape
   });
 
-  it("launches headed Chromium only — headless: false, no other launch option added", async () => {
+  it("launches headed, preferring real Google Chrome — headless: false, channel: chrome", async () => {
     const storageStatePath = writeFixtureCopy();
     setUpFakeBrowserChain();
 
@@ -285,7 +285,50 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
     );
 
     expect(launchMock).toHaveBeenCalledTimes(1);
-    expect(launchMock).toHaveBeenCalledWith({ headless: false });
+    expect(launchMock).toHaveBeenCalledWith({ headless: false, channel: "chrome" });
+  });
+
+  it("falls back to bundled Chromium when real Chrome isn't installed", async () => {
+    const storageStatePath = writeFixtureCopy();
+    const { browser } = setUpFakeBrowserChain();
+    launchMock.mockReset();
+    launchMock.mockRejectedValueOnce(new Error("chrome channel not found"));
+    launchMock.mockResolvedValueOnce(browser);
+
+    await withBrowserSession(
+      {
+        sourceId: "test-source",
+        storageStatePathSetting: storageStatePath,
+        allowedOrigins: TARGET_ALLOWLIST,
+        url: "https://app.targetsource.example/jobs",
+        isAuthenticated: async () => true,
+      },
+      async () => "ok",
+    );
+
+    expect(launchMock).toHaveBeenCalledTimes(2);
+    expect(launchMock).toHaveBeenNthCalledWith(1, { headless: false, channel: "chrome" });
+    expect(launchMock).toHaveBeenNthCalledWith(2, { headless: false });
+  });
+
+  it("throws a source-scoped error when both real Chrome and bundled Chromium fail to launch", async () => {
+    const storageStatePath = writeFixtureCopy();
+    launchMock.mockReset();
+    launchMock.mockRejectedValueOnce(new Error("chrome channel not found"));
+    launchMock.mockRejectedValueOnce(new Error("bundled chromium also failed"));
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated: async () => true,
+        },
+        async () => "ok",
+      ),
+    ).rejects.toThrow(/failed to launch a browser for source "test-source"/);
   });
 });
 
