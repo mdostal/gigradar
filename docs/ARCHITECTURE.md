@@ -480,7 +480,8 @@ test exists at all.
   - **`adapter-batch-public-boards` epic complete** — all four planned adapters (fractionaljobs, fractionus, fractionalfinders, wellfound) now exist.
 - [x] Next.js config UI: add sources, set needs, view the shortlist + rejection reasons (the dashboard the current scripts render statically) — `dashboard-config-ui` epic, **shipped**. App-router foundation (`app-foundation` story), the results dashboard (`dashboard-results-view` story), the secret-safe write path (`config-write-path` story, `src/lib/config/save.ts`), and the config-editing form itself (`config-editing-ui` story, `src/app/config/`) are all built — see "Running the dashboard" and "The config editor" below, and "How to configure gigradar" for the new-user pointer.
 - [ ] Cron runner + observable run-logs.
-- [x] Assisted-apply drafting foundation: `Config.applyProfile`, the `application_drafts` table, `apply/draft.ts`'s `generateDraft()`, and a real `stageApplication()` (`src/lib/apply/runner.ts`) — `assisted-apply-drafting` epic, `draft-generation-foundation` story. See "Assisted-apply drafting" below. The review/approve UI that lets a user act on a staged draft is a dependent, later story in the same epic, built on this foundation.
+- [x] Assisted-apply drafting foundation: `Config.applyProfile`, the `application_drafts` table, `apply/draft.ts`'s `generateDraft()`, and a real `stageApplication()` (`src/lib/apply/runner.ts`) — `assisted-apply-drafting` epic, `draft-generation-foundation` story. See "Assisted-apply drafting" below.
+- [x] Draft review/approve UI: a new `/drafts` page (full editable content, Approve/Reject, and — once approved — the real gig URL + a copy-ready draft + "Mark submitted"), plus a tier-gated "Generate draft" button on the dashboard — `assisted-apply-drafting` epic, `draft-review-ui` story (the epic's final story, now complete). See "The draft review/approve UI" below.
 - [x] Tests for the gate engine and the new persistence/tiering/adapter modules (43 tests, `npm test`) — golden fixtures per rule, fixture-based adapter tests, zero live-network calls in the automated suite.
 - [x] Origin allowlist registry extracted to `src/lib/sources/origins.ts` (`SOURCE_ORIGINS`) — `session-capture-ui` epic, `origin-registry-extraction` story. Single source of truth shared by the adapters and the session-capture mechanism below.
 - [x] Session-capture mechanism (`src/lib/auth/session-capture.ts`, start/finish/cancel, `globalThis`-pinned in-flight state, atomic writes) — `session-capture-ui` epic, `session-capture-mechanism` story — see "Session-capture mechanism" above.
@@ -1025,9 +1026,105 @@ automated suite, matching this project's existing convention
 `store/drafts.ts` in isolation (save/get/list/status-transition
 correctness, the FK relationship genuinely enforced, and the
 `markDraftSubmitted()` atomic-transaction guarantee under a simulated
-failure). **Not yet built/verified**: the review/approve UI (a dependent,
-later story) and a real end-to-end run against the live Anthropic API for a
-real tracked gig — both explicitly out of this story's scope.
+failure).
+
+### The draft review/approve UI (`draft-review-ui` story)
+
+Wires the foundation above into a real UI — `/drafts` plus a "Generate
+draft" entry point on the dashboard.
+
+- **`src/app/drafts/page.tsx`** — a Server Component that reads every draft
+  via `listDrafts()` and, for each, its linked gig via `getGig(draft.gigKey)`
+  (a `StoredDraft` alone carries no title/company/URL, only its `gig_key`),
+  flattening both into one `DraftListItem` per row
+  (`src/app/drafts/drafts-filter.ts`). Status filtering (`all`/`draft`/
+  `approved`/`rejected`/`submitted`) happens client-side over that fetched
+  set — the same "fetch once, filter client-side" tradeoff the main
+  dashboard already accepts (see above), at the same scale.
+- **`src/app/drafts/drafts-client.tsx`** — one card per draft. Content is
+  editable (a `<textarea>` per `coverText` and per structured answer) ONLY
+  while `status === "draft"`, alongside Approve/Reject buttons; once
+  `approved` (or `submitted`, for reference), the content becomes read-only
+  and a distinct block appears: a link to the real gig URL (`gig.url`,
+  never a search page — target `_blank`), a copy-ready rendering of the
+  draft (`formatCopyReadyDraft()`, drafts-filter.ts — plain `coverText`
+  plus, if any, `Q:`/`A:` pairs; deliberately never `JSON.stringify()` or
+  any structure carrying raw LLM tool-call formatting) with a
+  clipboard-copy button, and — only while `status === "approved"` — a "Mark
+  submitted" button.
+- **`src/app/drafts/actions.ts`** — three Server Actions, the same
+  `ActionResult<T>` + `revalidatePath()` convention as every other Server
+  Action in this app (see above):
+  - `updateDraftContentAction(gigKey, content)` wraps `saveDraft()` to
+    persist an edit. Deliberately REFUSES to run unless the draft's current
+    status is still `"draft"` — `saveDraft()`'s insert-or-replace contract
+    always resets `status` back to `"draft"` and clears `approved_at`/
+    `submitted_at` (correct for a genuine regeneration, wrong for a plain
+    text edit on an already-approved/submitted draft, which would silently
+    un-approve/un-submit it as a side effect).
+  - `setDraftStatusAction(gigKey, "approved" | "rejected")` wraps
+    `setDraftStatus()` — narrower than the full `DraftStatus` union on
+    purpose, since `"submitted"` has its own dedicated action below and
+    `"draft"` is never a target a button transitions TO.
+  - `markSubmittedAction(gigKey)` wraps the real, atomic
+    `markDraftSubmitted()` and revalidates BOTH `/drafts` and `/` — omitting
+    `/` would let the main dashboard keep serving a stale pre-`"applied"`
+    gig status from the Full Route Cache after a production build, exactly
+    the desync this whole story exists to prevent.
+- **"Generate draft" (`src/app/dashboard-client.tsx` + `generateDraftAction`,
+  `src/app/actions.ts`)** — a button on each dashboard row, gated by
+  `src/app/dashboard-draft.ts`'s `canGenerateDraft(tier)`, which is `true`
+  for every tier except `"red"` — deliberately mirroring
+  `stageApplication()`'s own backend guardrail condition exactly (rather
+  than an allowlist of `"green"`/`"yellow"`), so an untiered gig isn't
+  wrongly hidden either. `generateDraftAction`:
+  1. Looks up the real `StoredGig` via `getGig(key)` and builds a minimal
+     `MatchResult` from it (`pass: true, reasons: [], score: 1, tier:
+     gig.tier`) — `stageApplication()` only ever reads `.gig`/`.tier` off
+     this, never `.pass`/`.reasons`/`.score`.
+  2. Resolves the Anthropic API key via `readEnvVar()` (`src/lib/config/
+     env-store.ts`) — fresh, per call, exactly like
+     `extractProfileFromResumeAction` (`src/app/config/actions.ts`) —
+     returning a specific "Anthropic API key" error, never a generic auth
+     failure, if unset.
+  3. Builds the `Config` `stageApplication()` needs via `readRawConfig()`
+     (`src/lib/config/save.ts`) validated through the same `ConfigSchema`
+     `saveConfig()` uses — deliberately NEVER `loadConfig()`
+     (`src/lib/config/load.ts`), which both mutates `process.env` as a side
+     effect (loading `.env`) and eagerly resolves every configured source's
+     `"env:VAR_NAME"` settings references, which could throw for a source
+     wholly unrelated to drafting. Neither `profile` nor `applyProfile`
+     ever holds an `"env:"` reference (only `SourceConfig.settings` does),
+     so skipping that resolution changes nothing `generateDraft()` reads.
+  4. Calls the REAL `stageApplication()` and returns its thrown error
+     VERBATIM via `actionErr()` on failure — this is exactly what surfaces
+     `stageApplication()`'s specific, actionable red-tier/missing-
+     `applyProfile` errors in the dashboard UI, never a generic Server
+     Action failure.
+  On success: `revalidatePath("/drafts")`, and the client navigates to
+  `/drafts` for review.
+- **`/drafts` added to `NavHeader`** (`src/app/nav-header.tsx`), between
+  Dashboard and Config — the natural workflow order.
+
+**Verification**: `src/app/drafts/__tests__/drafts-filter.test.ts` covers
+the pure status-filter and copy-ready-formatting logic (including that the
+copy-ready text never contains raw JSON/field-name artifacts).
+`src/app/drafts/__tests__/actions.test.ts` exercises all three Server
+Actions against a real temp-file store — including a dedicated test that
+`markSubmittedAction()` flips BOTH the draft's status to `"submitted"` AND
+the linked gig's status to `"applied"` via the real atomic
+`markDraftSubmitted()`, and that editing a non-`"draft"`-status draft is
+refused without touching its stored content.
+`src/app/__tests__/generate-draft-action.test.ts` exercises
+`generateDraftAction` against the REAL `stageApplication()` (only
+`generateDraft()`'s Anthropic call is mocked) — proving the red-tier and
+missing-`applyProfile` guardrail errors really do surface verbatim, not a
+generic failure, and that the API key is resolved fresh via `readEnvVar()`,
+never `process.env`. `src/app/__tests__/dashboard-draft.test.ts` covers
+`canGenerateDraft()`'s tier gate directly. **Not yet verified**: a real
+end-to-end run against the live Anthropic API for a real tracked gig
+(explicitly a manual verification step, not part of the automated suite —
+see this story's `metric` block).
 
 ## Owner's private overlay (Mathew)
 

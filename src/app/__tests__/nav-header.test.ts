@@ -4,14 +4,16 @@ import { NAV_LINKS } from "../nav-header";
 // nav-header.tsx itself renders a Server Component with no client-side
 // logic — this repo has no React Testing Library dependency (see
 // dashboard-filter.test.ts's convention: pull the assertable contract out
-// into plain data). NAV_LINKS is that contract: exactly the two links
-// (Dashboard -> /, Config -> /config) NavHeader() maps over to render
-// <Link>s, so asserting on it here is equivalent to asserting the rendered
-// links/hrefs without needing a DOM.
+// into plain data). NAV_LINKS is that contract: exactly the three links
+// (Dashboard -> /, Drafts -> /drafts, Config -> /config) NavHeader() maps
+// over to render <Link>s, so asserting on it here is equivalent to
+// asserting the rendered links/hrefs without needing a DOM. `/drafts` was
+// added by the `draft-review-ui` story (`assisted-apply-drafting` epic).
 describe("NAV_LINKS", () => {
-  it("has working links to / and /config, in that order", () => {
+  it("has working links to /, /drafts, and /config, in that order", () => {
     expect(NAV_LINKS).toEqual([
       { href: "/", label: "Dashboard" },
+      { href: "/drafts", label: "Drafts" },
       { href: "/config", label: "Config" },
     ]);
   });

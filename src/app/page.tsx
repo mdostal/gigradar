@@ -1,5 +1,5 @@
 import { readRawConfig } from "@/lib/config/save";
-import { listGigs } from "@/lib/store";
+import { listDrafts, listGigs } from "@/lib/store";
 import { DashboardClient } from "./dashboard-client";
 import { computeStatusStrip } from "@/lib/status/status-strip";
 
@@ -24,6 +24,12 @@ export default function HomePage() {
   const gigs = listGigs();
   const rawConfig = readRawConfig();
   const status = computeStatusStrip(gigs, rawConfig);
+  // `draft-review-ui` story: which gigs already have a draft (any status) —
+  // purely a "Generate draft" vs "Regenerate draft" button label choice on
+  // the row (dashboard-draft.ts's draftButtonLabel()), never a visibility
+  // gate (that's tier-only, canGenerateDraft()). Cheap: listDrafts() has no
+  // pagination either, same tradeoff listGigs() already accepts here.
+  const draftedGigKeys = new Set(listDrafts().map((d) => d.gigKey));
 
   return (
     <main className="mx-auto max-w-6xl p-6">
@@ -36,7 +42,7 @@ export default function HomePage() {
         <span>{status.profileLabel}</span>
         <span>{status.lastScanLabel}</span>
       </div>
-      <DashboardClient gigs={gigs} />
+      <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} />
     </main>
   );
 }
