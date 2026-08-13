@@ -1,0 +1,16 @@
+{
+  "agent_id": "a1f77bd3513e9541c",
+  "session_id": "2096c7db-36b6-4ae7-a206-bb4fff054912",
+  "agent_type": "",
+  "cwd": "/Users/mdostal/Documents/work/gigradar",
+  "agent_transcript_path": "/Users/mdostal/.claude/projects/-Users-mdostal-Documents-work-gigradar/2096c7db-36b6-4ae7-a206-bb4fff054912/subagents/agent-a1f77bd3513e9541c.jsonl",
+  "last_assistant_message": "Building gigradar into a full job-hunting automation tool; the scheduler and auto-drafting are live and running in the background. Next: you add your Anthropic API key and complete source logins in /config so real drafts start generating.",
+  "prompt_id": "91e14227-f1e1-4d1c-a80c-93f3f8cebb9f",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "verdict": "failure",
+  "verdict_source": "missing_marker",
+  "written_at": "2026-08-13T04:05:01Z"
+}
