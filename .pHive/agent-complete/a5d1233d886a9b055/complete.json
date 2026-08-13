@@ -1,0 +1,16 @@
+{
+  "agent_id": "a5d1233d886a9b055",
+  "session_id": "2096c7db-36b6-4ae7-a206-bb4fff054912",
+  "agent_type": "general-purpose",
+  "cwd": "/Users/mdostal/Documents/work/gigradar",
+  "agent_transcript_path": "/Users/mdostal/.claude/projects/-Users-mdostal-Documents-work-gigradar/2096c7db-36b6-4ae7-a206-bb4fff054912/subagents/agent-a5d1233d886a9b055.jsonl",
+  "last_assistant_message": "Committed on `feat/assisted-apply-drafting` (staying on branch, not pushed, no PR opened, per instructions).\n\n## Summary\n\nImplemented `draft-review-ui`, the final story of the `assisted-apply-drafting` epic, on top of the already-landed `draft-generation-foundation` (drafts.ts, draft.ts, runner.ts's `stageApplication()`).\n\n**Built:**\n- `src/app/drafts/page.tsx` + `drafts-client.tsx` — new `/drafts` review page: status-filterable list, full editable content (textareas for `coverText` + each structured answer) with Approve/Reject while a draft is in `'draft'` status; once approved, a read-only view with the real gig URL (`gig.url`, new tab), a copy-ready plain-text rendering (`formatCopyReadyDraft()` — never JSON-shaped), and \"Mark submitted\".\n- `src/app/drafts/actions.ts` — `updateDraftContentAction` (refuses to touch a draft that's no longer status `'draft'`, since `saveDraft()`'s insert-or-replace would silently reset status/clear timestamps), `setDraftStatusAction`, `markSubmittedAction` (wraps the real atomic `markDraftSubmitted()`, revalidates both `/drafts` and `/`).\n- `src/app/dashboard-draft.ts` — pure `canGenerateDraft(tier)` (false only for `'red'`, mirroring `stageApplication()`'s own guardrail exactly) and `draftButtonLabel()`.\n- \"Generate draft\" button wired into `src/app/dashboard-client.tsx`, backed by `generateDraftAction` in `src/app/actions.ts`: resolves the Anthropic key via `readEnvVar()`, builds `Config` via `readRawConfig()` + `ConfigSchema` (deliberately not `loadConfig()`, which would mutate `process.env` and eagerly resolve unrelated sources' `env:` refs), calls the real `stageApplication()`, and returns its red-tier/missing-`applyProfile` errors verbatim.\n- `/drafts` added to `NavHeader`.\n- `docs/ARCHITECTURE.md` updated with a new \"The draft review/approve UI\" section and changelog entries.\n\n**Tests:** 31 new tests (`dashboard-draft.test.ts`, `drafts/__tests__/drafts-filter.test.ts`, `drafts/__tests__/actions.test.ts` against a real temp SQLite store, `generate-draft-action.test.ts` against the real `stageApplication()` with only the Anthropic call mocked) — covering tier-gated button visibility, the atomic draft+gig status sync via the real `markDraftSubmitted()`, and the missing-`applyProfile`/red-tier errors surfacing verbatim rather than generically.\n\n**Results:** full suite 508 passed, 3 skipped (pre-existing, unrelated), 0 failed; `npm run typecheck` clean.\n\n**Commit:** `e8f8cc3` on `feat/assisted-apply-drafting` (not pushed, no PR — per instructions).",
+  "prompt_id": "617d133d-adda-4f0a-aaea-c4f9c6bfec9d",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "verdict": "failure",
+  "verdict_source": "missing_marker",
+  "written_at": "2026-08-13T01:52:54Z"
+}

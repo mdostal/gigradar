@@ -1,0 +1,145 @@
+id: draft-generation-foundation
+epic: assisted-apply-drafting
+title: "Config.applyProfile + application_drafts table + generateDraft()/stageApplication()"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  The foundation this epic's UI story builds on — landed and proven first,
+  same isolate-the-foundation sequencing as every prior multi-story epic
+  this session (vault-module, profile-ingestion-module).
+
+  1. **`Config.applyProfile`** (new, optional `Config` section):
+     `{email: string, phone?: string, linkedInUrl?: string, headline?:
+     string, bio?: string, rateAnchor?: number}`. Zod schema mirrors it
+     exactly (`src/lib/config/schema.ts`), same `.optional()` pattern as
+     `roleArea`/`schedule` — omitted is valid, not an error. Encrypted at
+     rest automatically via the existing `config.json` vault, no new
+     storage mechanism.
+  2. **Config UI extension**: `src/app/config/config-client.tsx`'s
+     `DraftConfig` gets a new `DraftApplyProfile` (mirroring
+     `DraftRoleArea`'s enabled-flag tri-state pattern exactly), with
+     `configToDraft()`/`draftToEdits()` extended to round-trip it, and a
+     new form section (email/phone/LinkedIn/headline/bio/rate-anchor
+     fields) added to the existing config page.
+  3. **`application_drafts` table** (new, `src/lib/store/schema.ts`'s
+     existing `IF NOT EXISTS` pattern): `gig_key TEXT PRIMARY KEY
+     REFERENCES gigs(key)`, `content TEXT NOT NULL` (JSON-stringified
+     draft content), `status TEXT NOT NULL DEFAULT 'draft' CHECK (status
+     IN ('draft','approved','rejected','submitted'))`, `generated_at`,
+     `approved_at`, `submitted_at`.
+  4. **`src/lib/store/drafts.ts`** (new, mirrors `gigs.ts`'s shape):
+     `saveDraft()`, `getDraft(gigKey)`, `listDrafts(filter)`,
+     `setDraftStatus(gigKey, status)`, and `markDraftSubmitted(gigKey)` —
+     the LATTER wraps BOTH the draft-status update (`'submitted'`) AND
+     the linked gig's own `status` update (`'applied'`) in ONE
+     `withTransaction()` call (the exact pattern `recordScan()` already
+     uses) — never two separate, non-atomic calls.
+  5. **`src/lib/apply/draft.ts`** (new): `generateDraft(gig, profile,
+     applyProfile, apiKey): Promise<DraftContent>` — one Anthropic
+     Messages API call, structured tool-use output (`{coverText: string,
+     answers: Record<string,string>}`). `apiKey` is a REQUIRED parameter
+     resolved by the CALLER (matching `extractProfile()`'s real shape —
+     `draft.ts` itself never resolves `process.env` or assumes a calling
+     context). The prompt is grounded strictly in the real
+     `Profile`/`applyProfile`/gig data passed in, with an explicit
+     instruction never to fabricate unstated experience/figures. Gig
+     `title`/`company`/`description` (untrusted, scraped, third-party
+     content) is clearly delimited/labeled as DATA in the prompt, never
+     treated as instructions — same untrusted-content framing already
+     established for `profile-overview-ingestion`'s link-fetching.
+  6. **`stageApplication(matchResult)` implemented for real** (replaces
+     the throwing stub in `src/lib/apply/runner.ts`): throws a specific,
+     actionable error if `Config.applyProfile` is unset ("Set up your
+     apply profile in /config before generating a draft"); throws a
+     specific error for `tier === "red"` (a minimal guardrail — never
+     spend a real LLM call on a gig already flagged clearly off-target;
+     green/yellow are both draftable). Otherwise calls `generateDraft()`
+     and persists via `saveDraft()` with status `"draft"`.
+
+acceptance_criteria:
+  - "Given a config.json with Config.applyProfile unset, when saved/loaded, then it's valid (optional, no error) -- matching roleArea/schedule's existing contract."
+  - "Given the config UI, when the apply-profile section is filled and saved, then config.json contains the new fields, encrypted at rest like every other config field."
+  - "Given stageApplication() is called for a gig with tier='red', when it runs, then it throws a specific error naming the tier restriction, before any LLM call is made."
+  - "Given stageApplication() is called with Config.applyProfile unset, when it runs, then it throws a specific error pointing at /config, before any LLM call is made."
+  - "Given a mocked Anthropic client, when generateDraft() is called with real Profile/applyProfile/gig data, then the request sent to the client includes ONLY that real data -- no placeholder or invented content -- and the gig's title/company/description appear clearly delimited as data, not as part of the instruction text."
+  - "Given generateDraft()'s apiKey parameter, when draft.ts is code-reviewed, then it never reads process.env directly and never holds a module-scope Anthropic client instance -- the key is always caller-supplied."
+  - "Given a successful stageApplication() call, when the store is queried afterward, then application_drafts has a new row for that gig_key with status='draft' and the real generated content."
+  - "Given markDraftSubmitted(gigKey) is called, when it completes, then BOTH the draft's status is 'submitted' AND the linked gig's status is 'applied' -- verified as a single atomic transaction (a simulated failure between the two updates, if forced in a test, must leave neither committed)."
+  - "Given a foreign-key gig_key that doesn't exist in the gigs table, when an insert into application_drafts is attempted, then it fails (PRAGMA foreign_keys=ON is already set project-wide, per store/db.ts) -- confirming the FK relationship is genuinely enforced, not just documented."
+
+steps:
+  - id: implement
+    description: Build the Config.applyProfile schema + config UI extension, the application_drafts table + store/drafts.ts, draft.ts's generateDraft(), and stageApplication()'s real implementation, per the description above.
+    agent: developer
+  - id: test
+    description: Write tests covering every acceptance criterion, including the atomic-transaction test for markDraftSubmitted() and the untrusted-gig-content delimiting test for generateDraft()'s prompt construction.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the tier/missing-applyProfile guardrails fire BEFORE any LLM call, the API key is genuinely caller-resolved (not module-scope), the transaction is genuinely atomic, and gig content is properly delimited in the prompt against injection.
+    agent: security-reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/assisted-apply-drafting.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+    dependency: "@anthropic-ai/sdk (existing dependency)"
+  key_files:
+    - path: src/lib/apply/runner.ts
+      purpose: "The existing ApplicationDraft stub and stageApplication() -- the real implementation target."
+    - path: src/lib/config/schema.ts
+      purpose: "roleArea/schedule's optional-section pattern -- Config.applyProfile mirrors it exactly."
+    - path: src/app/config/config-client.tsx
+      purpose: "DraftConfig/configToDraft()/draftToEdits() -- needs explicit extension for the new section, not just the schema."
+    - path: src/lib/profile-ingestion/extract.ts
+      purpose: "extractProfile()'s REAL api-key-as-parameter shape -- generateDraft() follows it exactly, not the design's original (corrected) overstated claim."
+    - path: src/lib/store/schema.ts
+      purpose: "The IF NOT EXISTS idempotent-migration pattern application_drafts follows."
+    - path: src/lib/store/gigs.ts
+      purpose: "recordScan()'s withTransaction() pattern -- markDraftSubmitted() follows it exactly for atomicity."
+
+design_decisions:
+  - decision: apiKey is a required parameter to generateDraft(), resolved by the caller, never internally
+    rationale: Collaborative review corrected an overstated design claim -- extract.ts's REAL pattern is caller-resolves-and-passes-in, not internal resolution; this keeps draft.ts agnostic to whether it's called from CLI/MCP (process.env populated) or a future Server Action (readEnvVar()).
+  - decision: markDraftSubmitted() wraps both status updates in one withTransaction() call
+    rationale: Collaborative review -- two separate, non-atomic calls could desync on a crash between them, exactly the inconsistency grill finding H1 was raised to prevent.
+  - decision: Minimal red-tier guardrail, not the full 4-check gate
+    rationale: Grill U1 -- a common-sense guardrail (don't draft for a gig already flagged off-target) belongs in this epic; the full gate's other checks (economics/live-new/fillable) stay scoped to the later, separate auto-fire epic.
+
+cross_cutting:
+  - concern: documentation
+    action: "Update docs/ARCHITECTURE.md's INTERACT section -- this is the first real implementation, replacing the long-standing TODO(build) note."
+
+metric:
+  applies: true
+  name: gigradar.assisted_apply_foundation_shipped
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "npm test; confirm stageApplication() produces a real, persisted draft for a mocked-LLM test case"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: LLM-drafted content could fabricate or distort real experience if the prompt grounding isn't strict enough.
+    mitigation: Explicit prompt instruction against fabrication, dedicated test asserting only real provided data appears in the request; the review/approve UI (sibling story) is the final human backstop regardless.
+  - severity: medium
+    description: Untrusted gig content (scraped, third-party) could attempt prompt injection against the drafting LLM call.
+    mitigation: Clear delimiting/labeling of gig content as data, never instructions, in the prompt -- dedicated test.
+
+references:
+  - .pHive/epics/assisted-apply-drafting/docs/design-discussion.md
+  - .pHive/epics/assisted-apply-drafting/docs/grill-record.md

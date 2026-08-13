@@ -35,4 +35,22 @@ CREATE TABLE IF NOT EXISTS gigs (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gigs_source_external ON gigs(source_id, external_id);
 CREATE INDEX IF NOT EXISTS idx_gigs_status ON gigs(status);
 CREATE INDEX IF NOT EXISTS idx_gigs_unavailable ON gigs(unavailable_since);
+
+-- LLM-drafted applications (assisted-apply-drafting epic,
+-- draft-generation-foundation story). One row per gig, keyed by the SAME
+-- gig_key gigs.key uses -- the FK is real, not just documented: PRAGMA
+-- foreign_keys=ON (see db.ts) rejects an insert whose gig_key doesn't exist
+-- in gigs. status is deliberately separate from gigs.status: a gig can have
+-- a draft long before, or without ever, being marked "applied" -- see
+-- store/drafts.ts's markDraftSubmitted() for the one transition (draft
+-- 'submitted' + gig 'applied') that keeps both in sync, atomically.
+CREATE TABLE IF NOT EXISTS application_drafts (
+  gig_key      TEXT PRIMARY KEY REFERENCES gigs(key),
+  content      TEXT NOT NULL,      -- JSON-stringified DraftContent ({coverText, answers})
+  status       TEXT NOT NULL DEFAULT 'draft'
+                 CHECK (status IN ('draft', 'approved', 'rejected', 'submitted')),
+  generated_at TEXT NOT NULL,      -- ISO datetime, set on every saveDraft() (including regeneration)
+  approved_at  TEXT,               -- ISO datetime, set when status -> 'approved'
+  submitted_at TEXT                -- ISO datetime, set when status -> 'submitted'
+) STRICT;
 `;

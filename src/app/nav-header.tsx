@@ -3,11 +3,16 @@
 // from src/app/layout.tsx, above `{children}`, so it appears on every page.
 // Minimal styling consistent with the existing Tailwind classes in
 // page.tsx/config-client.tsx — deliberately not a redesign.
+//
+// `/drafts` (`draft-review-ui` story, `assisted-apply-drafting` epic) added
+// between Dashboard and Config, matching the natural workflow order: find
+// gigs -> review/approve drafted applications -> configure.
 import Link from "next/link";
 
 /** Exported (not just inlined in JSX) so it's directly assertable in tests without rendering. */
 export const NAV_LINKS = [
   { href: "/", label: "Dashboard" },
+  { href: "/drafts", label: "Drafts" },
   { href: "/config", label: "Config" },
 ] as const;
 

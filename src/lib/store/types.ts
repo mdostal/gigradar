@@ -1,6 +1,6 @@
 // Types for the SQLite-backed Gig store. One place; everything in
 // src/lib/store imports from here (mirrors the convention in ../types.ts).
-import type { Gig } from "../types.js";
+import type { DraftContent, Gig } from "../types.js";
 
 /**
  * Where a gig sits in your pipeline. Store-managed — sources/gate never set
@@ -67,4 +67,31 @@ export interface GigFilter {
   sourceId?: string;
   /** true = only currently-unavailable gigs, false = only currently-available, omit = both. */
   unavailable?: boolean;
+}
+
+/**
+ * Where a draft sits in the review/approve workflow (store/drafts.ts).
+ * Separate from `GigStatus` on purpose — a gig can have a draft long
+ * before, or without ever, being marked "applied"; see markDraftSubmitted()
+ * for the one transition that keeps both statuses in sync.
+ */
+export type DraftStatus = "draft" | "approved" | "rejected" | "submitted";
+
+/** An `application_drafts` row as persisted by the store (store/drafts.ts). */
+export interface StoredDraft {
+  /** `${sourceId}:${externalId}` — same value as the linked gig's own key (gigKey()). */
+  gigKey: string;
+  /** Parsed from the row's JSON-stringified `content` column. */
+  content: DraftContent;
+  status: DraftStatus;
+  /** ISO datetime — set on every saveDraft() call, including a regeneration. */
+  generatedAt: string;
+  /** ISO datetime, null until status transitions to 'approved'. */
+  approvedAt: string | null;
+  /** ISO datetime, null until status transitions to 'submitted'. */
+  submittedAt: string | null;
+}
+
+export interface DraftFilter {
+  status?: DraftStatus;
 }

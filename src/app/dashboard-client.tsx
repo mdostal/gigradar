@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import type { GigStatus, StoredGig } from "@/lib/store";
-import { updateGigStatusAction } from "./actions";
+import { generateDraftAction, updateGigStatusAction } from "./actions";
+import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
 import { filterGigs, type TierFilter } from "./dashboard-filter";
 
 const TIER_TABS: TierFilter[] = ["all", "green", "yellow", "red"];
@@ -66,13 +68,29 @@ function tabClass(active: boolean): string {
  * src/app/page.tsx for the fetch). Status changes call updateGigStatusAction
  * (src/app/actions.ts), a Server Action that revalidates "/" on success so a
  * reload always reflects the latest state.
+ *
+ * `draftedGigKeys` (`draft-review-ui` story) — the set of gig keys that
+ * already have a draft (any status), from `listDrafts()` (see
+ * src/app/page.tsx) — only changes the "Generate draft"/"Regenerate draft"
+ * button LABEL (dashboard-draft.ts's `draftButtonLabel()`), never whether
+ * it's shown at all; that's tier-gated only (`canGenerateDraft()`).
  */
-export function DashboardClient({ gigs }: { gigs: StoredGig[] }) {
+export function DashboardClient({
+  gigs,
+  draftedGigKeys = new Set(),
+}: {
+  gigs: StoredGig[];
+  draftedGigKeys?: ReadonlySet<string>;
+}) {
+  const router = useRouter();
   const [tier, setTier] = useState<TierFilter>("all");
   const [statuses, setStatuses] = useState<ReadonlySet<GigStatus>>(new Set(ALL_STATUSES));
   const [search, setSearch] = useState("");
   const [isPending, startTransition] = useTransition();
   const [errorByKey, setErrorByKey] = useState<Record<string, string>>({});
+  const [, startDraftTransition] = useTransition();
+  const [generatingKeys, setGeneratingKeys] = useState<ReadonlySet<string>>(new Set());
+  const [draftErrorByKey, setDraftErrorByKey] = useState<Record<string, string>>({});
 
   const filtered = useMemo(
     () => filterGigs(gigs, { tier, statuses, search }),
@@ -102,6 +120,37 @@ export function DashboardClient({ gigs }: { gigs: StoredGig[] }) {
       if (!result.ok) {
         setErrorByKey((prev) => ({ ...prev, [key]: result.error }));
       }
+    });
+  }
+
+  /**
+   * "Generate draft" click handler. Clears any prior error for this row,
+   * marks it generating (disables just this row's button, not the whole
+   * table), calls the Server Action, and on success navigates to `/drafts`
+   * for review (per this story's acceptance criteria) — on failure, the
+   * Server Action's own message (including stageApplication()'s specific
+   * red-tier/missing-applyProfile errors) is shown inline under the button,
+   * never a generic failure.
+   */
+  function handleGenerateDraft(key: string) {
+    setDraftErrorByKey((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setGeneratingKeys((prev) => new Set(prev).add(key));
+    startDraftTransition(async () => {
+      const result = await generateDraftAction(key);
+      setGeneratingKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      if (!result.ok) {
+        setDraftErrorByKey((prev) => ({ ...prev, [key]: result.error }));
+        return;
+      }
+      router.push("/drafts");
     });
   }
 
@@ -162,6 +211,7 @@ export function DashboardClient({ gigs }: { gigs: StoredGig[] }) {
               <th className="px-3 py-2 text-left font-semibold text-slate-600">Weekly hrs</th>
               <th className="px-3 py-2 text-left font-semibold text-slate-600">Seen</th>
               <th className="px-3 py-2 text-left font-semibold text-slate-600">Change status</th>
+              <th className="px-3 py-2 text-left font-semibold text-slate-600">Draft</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
@@ -210,11 +260,28 @@ export function DashboardClient({ gigs }: { gigs: StoredGig[] }) {
                     <p className="mt-1 max-w-[16rem] text-xs text-red-600">{errorByKey[gig.key]}</p>
                   )}
                 </td>
+                <td className="px-3 py-2">
+                  {canGenerateDraft(gig.tier) && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={generatingKeys.has(gig.key)}
+                        onClick={() => handleGenerateDraft(gig.key)}
+                        className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        {generatingKeys.has(gig.key) ? "Generating…" : draftButtonLabel(draftedGigKeys.has(gig.key))}
+                      </button>
+                      {draftErrorByKey[gig.key] && (
+                        <p className="mt-1 max-w-[16rem] text-xs text-red-600">{draftErrorByKey[gig.key]}</p>
+                      )}
+                    </>
+                  )}
+                </td>
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-slate-400">
+                <td colSpan={10} className="px-3 py-6 text-center text-slate-400">
                   No gigs match the current filters.
                 </td>
               </tr>

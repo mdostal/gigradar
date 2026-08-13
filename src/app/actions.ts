@@ -1,9 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { setStatus } from "@/lib/store";
+import { getGig, setStatus } from "@/lib/store";
 import type { GigStatus } from "@/lib/store";
 import { actionErr, actionOk, type ActionResult } from "@/lib/actions/result";
+import { stageApplication } from "@/lib/apply/runner";
+import { readEnvVar } from "@/lib/config/env-store";
+import { readRawConfig } from "@/lib/config/save";
+import { ConfigSchema } from "@/lib/config/schema";
+import type { MatchResult } from "@/lib/types";
 
 /**
  * Server Action wrapping `setStatus()` — the status-change control on the
@@ -33,4 +38,88 @@ export async function updateGigStatusAction(
   }
   revalidatePath("/");
   return actionOk({ key, status });
+}
+
+// ---------------------------------------------------------------------------
+// "Generate draft" (`draft-review-ui` story, `assisted-apply-drafting`
+// epic) — the dashboard row action that calls the real `stageApplication()`
+// (src/lib/apply/runner.ts) for a green/yellow-tier gig. The button itself
+// is never rendered for a tier='red' row at all (dashboard-draft.ts's
+// canGenerateDraft(), used by dashboard-client.tsx) — this action is a
+// second, server-side line of defense, not the only guardrail: even a
+// direct call here for a red-tier gig still hits stageApplication()'s own
+// throw, surfaced verbatim below, never silently accepted.
+// ---------------------------------------------------------------------------
+
+/** The one, dedicated .env var this feature reads — same name/convention as src/app/config/actions.ts's resume-ingestion action. */
+const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
+
+/**
+ * Specific, actionable error when no Anthropic API key is set — mirrors
+ * `src/app/config/actions.ts`'s `MISSING_API_KEY_ERROR`, reworded for this
+ * action's own context (drafting, not resume extraction), never a generic
+ * Anthropic SDK authentication failure.
+ */
+const MISSING_API_KEY_ERROR =
+  'gigradar apply: no Anthropic API key is set. Enter one in the "Anthropic API key" field on /config, then try again.';
+
+/**
+ * Resolves the Anthropic API key via `readEnvVar()` — freshly, on every
+ * call, exactly like `extractProfileFromResumeAction`
+ * (src/app/config/actions.ts) — never `process.env` directly and never a
+ * module-scope constant. This Next.js Server Action request path never
+ * populates `process.env` from `.env` the way the CLI/cron path
+ * (`loadConfig()`) does; see draft.ts's/runner.ts's own header comments for
+ * why `generateDraft()`/`stageApplication()` take `apiKey` as a REQUIRED,
+ * caller-resolved parameter rather than resolving it themselves.
+ *
+ * The `Config` `stageApplication()` needs is built the same
+ * non-resolving way `/` and `/config` already read config.json
+ * (`readRawConfig()`, src/lib/config/save.ts) — NEVER `loadConfig()`,
+ * which both mutates `process.env` as a side effect (loading `.env`) and
+ * eagerly resolves every configured source's `"env:VAR_NAME"` settings
+ * references, which could throw for a source wholly unrelated to drafting.
+ * `readRawConfig()`'s raw document is validated against the same
+ * `ConfigSchema` `saveConfig()` uses, so `stageApplication()` still gets a
+ * genuinely well-typed `Config` — just without either side effect. Neither
+ * `profile` nor `applyProfile` fields ever hold an `"env:"` reference (only
+ * `SourceConfig.settings` does — see schema.ts), so skipping that
+ * resolution step changes nothing `generateDraft()` actually reads.
+ *
+ * `stageApplication()`'s own two guardrail errors (tier='red', missing
+ * `applyProfile`) are caught and returned VERBATIM via `actionErr()` — this
+ * is exactly what surfaces "the specific, actionable error from
+ * stageApplication() (pointing at /config)" in the dashboard UI, never a
+ * generic failure message.
+ */
+export async function generateDraftAction(key: string): Promise<ActionResult<{ gigKey: string }>> {
+  const gig = getGig(key);
+  if (!gig) {
+    return actionErr(new Error(`gigradar apply: no gig found for key "${key}".`));
+  }
+
+  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  if (!apiKey) {
+    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  }
+
+  const parsedConfig = ConfigSchema.safeParse(readRawConfig());
+  if (!parsedConfig.success) {
+    return actionErr(
+      new Error(
+        "gigradar config: your saved configuration is incomplete or invalid — check /config before generating a draft.",
+      ),
+    );
+  }
+
+  const matchResult: MatchResult = { gig, pass: true, reasons: [], score: 1, tier: gig.tier };
+
+  try {
+    await stageApplication(matchResult, parsedConfig.data, apiKey);
+  } catch (e) {
+    return actionErr(e);
+  }
+
+  revalidatePath("/drafts");
+  return actionOk({ gigKey: key });
 }

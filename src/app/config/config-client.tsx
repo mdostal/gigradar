@@ -65,12 +65,30 @@ interface DraftRoleArea {
   redKeywords: string[];
 }
 
+/**
+ * Mirrors `DraftRoleArea`'s enabled-flag tri-state pattern exactly
+ * (`draft-generation-foundation` story): `enabled` distinguishes "never
+ * configured" from "configured, possibly with blank optional fields" —
+ * `rateAnchor` is a controlled number-input string like `DraftNeeds`'
+ * numeric fields, converted via `draftNumber()` in `draftToEdits()` below.
+ */
+interface DraftApplyProfile {
+  enabled: boolean;
+  email: string;
+  phone: string;
+  linkedInUrl: string;
+  headline: string;
+  bio: string;
+  rateAnchor: string;
+}
+
 interface DraftConfig {
   profile: DraftProfile;
   needs: DraftNeeds;
   sources: DraftSource[];
   roleArea: DraftRoleArea;
   schedule: string;
+  applyProfile: DraftApplyProfile;
 }
 
 // -- Config -> Draft -----------------------------------------------------
@@ -124,6 +142,15 @@ function configToDraft(config: Config): DraftConfig {
       redKeywords: config.roleArea?.redKeywords ?? [],
     },
     schedule: config.schedule ?? "",
+    applyProfile: {
+      enabled: config.applyProfile != null,
+      email: config.applyProfile?.email ?? "",
+      phone: config.applyProfile?.phone ?? "",
+      linkedInUrl: config.applyProfile?.linkedInUrl ?? "",
+      headline: config.applyProfile?.headline ?? "",
+      bio: config.applyProfile?.bio ?? "",
+      rateAnchor: config.applyProfile?.rateAnchor !== undefined ? String(config.applyProfile.rateAnchor) : "",
+    },
   };
 }
 
@@ -228,6 +255,26 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
 
   const schedule = draft.schedule.trim();
   edits.schedule = schedule === "" ? undefined : schedule;
+
+  // NOT typed as `ApplyProfileConfig` here on purpose — same reasoning as
+  // `needs` above: `draftNumber(rateAnchor)` can return the original
+  // (invalid) string for a non-numeric value, which must reach
+  // `ConfigSchema.safeParse()` server-side to produce a specific
+  // `applyProfile.rateAnchor: Expected number...` error rather than being
+  // masked by a `number`-only type at compile time.
+  if (draft.applyProfile.enabled) {
+    const applyProfile: Record<string, unknown> = { email: draft.applyProfile.email };
+    if (draft.applyProfile.phone.trim() !== "") applyProfile.phone = draft.applyProfile.phone;
+    if (draft.applyProfile.linkedInUrl.trim() !== "") applyProfile.linkedInUrl = draft.applyProfile.linkedInUrl;
+    if (draft.applyProfile.headline.trim() !== "") applyProfile.headline = draft.applyProfile.headline;
+    if (draft.applyProfile.bio.trim() !== "") applyProfile.bio = draft.applyProfile.bio;
+    if (draft.applyProfile.rateAnchor.trim() !== "") {
+      applyProfile.rateAnchor = draftNumber(draft.applyProfile.rateAnchor);
+    }
+    edits.applyProfile = applyProfile;
+  } else {
+    edits.applyProfile = undefined;
+  }
 
   return edits;
 }
@@ -1084,6 +1131,93 @@ export function ConfigClient({ initial }: { initial: Config }) {
             className={inputClass}
           />
         </label>
+      </section>
+
+      <section className={sectionClass}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">Apply profile (optional)</h2>
+          <CheckboxField
+            label="Configure apply profile"
+            checked={draft.applyProfile.enabled}
+            onChange={(enabled) => setDraft({ ...draft, applyProfile: { ...draft.applyProfile, enabled } })}
+          />
+        </div>
+        <p className="text-xs text-slate-500">
+          The apply-specific fields a real application form needs (beyond Profile above) — email, phone,
+          LinkedIn, a short headline/bio, and a rate to anchor. Left off, drafting an application throws until
+          this is configured. Encrypted at rest like every other field in <code>config.json</code>.
+        </p>
+        {draft.applyProfile.enabled && (
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <label>
+              <span className={labelClass}>Email</span>
+              <input
+                type="email"
+                value={draft.applyProfile.email}
+                onChange={(e) =>
+                  setDraft({ ...draft, applyProfile: { ...draft.applyProfile, email: e.target.value } })
+                }
+                className={inputClass}
+              />
+            </label>
+            <label>
+              <span className={labelClass}>Phone</span>
+              <input
+                type="text"
+                value={draft.applyProfile.phone}
+                onChange={(e) =>
+                  setDraft({ ...draft, applyProfile: { ...draft.applyProfile, phone: e.target.value } })
+                }
+                className={inputClass}
+              />
+            </label>
+            <label>
+              <span className={labelClass}>LinkedIn URL</span>
+              <input
+                type="text"
+                value={draft.applyProfile.linkedInUrl}
+                onChange={(e) =>
+                  setDraft({ ...draft, applyProfile: { ...draft.applyProfile, linkedInUrl: e.target.value } })
+                }
+                placeholder="https://linkedin.com/in/..."
+                className={inputClass}
+              />
+            </label>
+            <label>
+              <span className={labelClass}>Rate anchor ($/hr)</span>
+              <input
+                type="number"
+                value={draft.applyProfile.rateAnchor}
+                onChange={(e) =>
+                  setDraft({ ...draft, applyProfile: { ...draft.applyProfile, rateAnchor: e.target.value } })
+                }
+                className={inputClass}
+              />
+            </label>
+            <label className="col-span-2">
+              <span className={labelClass}>Headline</span>
+              <input
+                type="text"
+                value={draft.applyProfile.headline}
+                onChange={(e) =>
+                  setDraft({ ...draft, applyProfile: { ...draft.applyProfile, headline: e.target.value } })
+                }
+                className={inputClass}
+              />
+            </label>
+            <label className="col-span-2">
+              <span className={labelClass}>Bio</span>
+              <textarea
+                value={draft.applyProfile.bio}
+                onChange={(e) =>
+                  setDraft({ ...draft, applyProfile: { ...draft.applyProfile, bio: e.target.value } })
+                }
+                rows={3}
+                className={inputClass}
+              />
+            </label>
+          </div>
+        )}
       </section>
 
       <div>
