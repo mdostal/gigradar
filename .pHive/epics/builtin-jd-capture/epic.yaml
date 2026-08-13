@@ -1,0 +1,25 @@
+name: builtin-jd-capture
+title: Capture BuiltIn's full job description via detail-page fetch
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: patch
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture]
+  roster: [researcher, technical-writer, tpm, architect]
+  per_tag_reasoning:
+    architecture: "A single-adapter enhancement (bounded-concurrency detail fetch) -- narrow, no new subsystem."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+
+stories:
+  - id: builtin-jd-capture
+    title: "builtin.ts: fetch full description from each listing's detail page, bounded concurrency"
+    complexity: low
+    depends_on: []

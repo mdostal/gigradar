@@ -24,6 +24,23 @@ import { builtinSource } from "../builtin.js";
 const fixturesDir = fileURLToPath(new URL("./fixtures", import.meta.url));
 const fixtureHtml = fs.readFileSync(path.join(fixturesDir, "builtin-jobs-dev-engineering.html"), "utf8");
 
+// A real BuiltIn job detail page (`/job/staff-backend-software-engineer/10611593`,
+// the same live listing as the "annualJob" / General Motors card in the list
+// fixture above), live-fetched while building this story. Trimmed right
+// after the `<script type="application/ld+json">` block in `<head>` that
+// this adapter's fetchDetailDescription() targets -- everything past that
+// point (footer, related-jobs widgets, etc.) was never needed since parsing
+// is regex-based, not a DOM parser. Checked for PII before saving: the only
+// contact info present was General Motors' own generic public accommodation
+// phone line, which has been redacted (1-800-XXX-XXXX) out of caution even
+// though it's a generic corporate line published on every GM posting, not a
+// person's. Zero network calls happen anywhere in this file.
+const detailFixtureHtml = fs.readFileSync(path.join(fixturesDir, "builtin-job-detail.html"), "utf8");
+const DETAIL_FIXTURE_URL = "https://builtin.com/job/staff-backend-software-engineer/10611593";
+// The short list-card snippet for this same listing, as captured by the list fixture.
+const LIST_SNIPPET_TEXT =
+  "Design, develop, and maintain large-scale backend systems and APIs. Lead technical design and implementation of distributed, service-oriented and event-driven architectures. Perform code reviews, ensure security and performance, troubleshoot complex production incidents, and lead root-cause analysis and remediation. Hybrid role with 3 days in-office and ~20% domestic travel.";
+
 function htmlResponse(body: string, ok = true, status = 200): Response {
   return {
     ok,
@@ -51,7 +68,16 @@ describe("builtinSource", () => {
   });
 
   it("normalizes real BuiltIn listings into Gig[] with real per-listing urls", async () => {
-    const fetchMock = vi.fn(async (_url: string | URL) => htmlResponse(fixtureHtml));
+    // Every listing's detail page also gets fetched now (for the fuller
+    // description) — respond with a page that has no recognizable
+    // JobPosting JSON-LD so every listing falls back to its list-card
+    // snippet, keeping this test's assertions about the snippet-derived
+    // fields below unaffected by the new detail-fetch behavior (which gets
+    // its own dedicated tests further down).
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url) === "https://builtin.com/jobs/dev-engineering") return htmlResponse(fixtureHtml);
+      return htmlResponse("<html><body>detail page, no ld+json here</body></html>");
+    });
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const gigs = await builtinSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
@@ -60,6 +86,9 @@ describe("builtinSource", () => {
     // Fetched the default category with no ?page= param (robots.txt
     // disallows `*?page=` for generic bots — see builtin.ts's doc comment).
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://builtin.com/jobs/dev-engineering");
+    // Every listing's own detail page got fetched too (1 category fetch + 10 detail fetches).
+    expect(fetchMock).toHaveBeenCalledTimes(11);
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toContain(DETAIL_FIXTURE_URL);
 
     const annualJob = gigs.find((g) => g.externalId === "10611593");
     expect(annualJob).toMatchObject({
@@ -162,5 +191,111 @@ describe("builtinSource", () => {
   it("is registered with auth: none", () => {
     expect(builtinSource.id).toBe("builtin");
     expect(builtinSource.auth).toBe("none");
+  });
+
+  describe("detail-page description capture", () => {
+    const CATEGORY_URL = "https://builtin.com/jobs/dev-engineering";
+    const UNRECOGNIZED_DETAIL_HTML = "<html><body>detail page, no ld+json here</body></html>";
+
+    it("uses the full detail-page description instead of the list-card snippet when the detail fetch succeeds", async () => {
+      const fetchMock = vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u === CATEGORY_URL) return htmlResponse(fixtureHtml);
+        if (u === DETAIL_FIXTURE_URL) return htmlResponse(detailFixtureHtml);
+        return htmlResponse(UNRECOGNIZED_DETAIL_HTML); // other listings: no fixture, not under test here
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const gigs = await builtinSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
+      const gig = gigs.find((g) => g.externalId === "10611593");
+
+      // The real, full description text from the detail page's JobPosting
+      // JSON-LD — present only in the detail page, never in the list-card snippet.
+      expect(gig?.description).toContain("Eight (8) years of experience as a Software Engineer");
+      expect(gig?.description).toContain("REQUIREMENTS");
+      // Not the short list-card snippet, and meaningfully longer than it.
+      expect(gig?.description).not.toBe(LIST_SNIPPET_TEXT);
+      expect(gig?.description?.length ?? 0).toBeGreaterThan(LIST_SNIPPET_TEXT.length * 5);
+      // HTML markup from the description's own source (<br>, <strong>, etc.)
+      // was stripped down to plain text, not left as raw markup.
+      expect(gig?.description).not.toMatch(/<[a-z]/i);
+    });
+
+    it("falls back to the list-card snippet when the detail-page fetch returns a network error", async () => {
+      const fetchMock = vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u === CATEGORY_URL) return htmlResponse(fixtureHtml);
+        if (u === DETAIL_FIXTURE_URL) throw new Error("getaddrinfo ENOTFOUND builtin.com");
+        return htmlResponse(UNRECOGNIZED_DETAIL_HTML);
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      // The overall scan does NOT fail because one listing's detail fetch errored.
+      const gigs = await builtinSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
+      expect(gigs).toHaveLength(10);
+
+      const gig = gigs.find((g) => g.externalId === "10611593");
+      // Falls back to the original list-card snippet — never left unset
+      // when SOME description (the snippet) was available.
+      expect(gig?.description).toBe(LIST_SNIPPET_TEXT);
+    });
+
+    it("falls back to the list-card snippet when the detail page has an unrecognized shape (no JobPosting JSON-LD found)", async () => {
+      const fetchMock = vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u === CATEGORY_URL) return htmlResponse(fixtureHtml);
+        // A real 200 response, but not a shape this adapter recognizes —
+        // distinct from a network error, and distinct from the list-fetch's
+        // own throw-on-shape-failure behavior (unchanged, tested above):
+        // this must return undefined, not throw.
+        if (u === DETAIL_FIXTURE_URL) return htmlResponse(UNRECOGNIZED_DETAIL_HTML);
+        return htmlResponse(UNRECOGNIZED_DETAIL_HTML);
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const gigs = await builtinSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
+      expect(gigs).toHaveLength(10);
+
+      const gig = gigs.find((g) => g.externalId === "10611593");
+      expect(gig?.description).toBe(LIST_SNIPPET_TEXT);
+    });
+
+    it("never has more than 4 detail-page requests in flight at once, across 25 listings", async () => {
+      const LISTING_COUNT = 25;
+      const cards = Array.from({ length: LISTING_COUNT }, (_, i) => {
+        const id = String(90000000 + i);
+        return `<div id="job-card-${id}"><a href="/job/synthetic-job-${i}/${id}" data-id="job-card-title">Synthetic Job ${i}</a></div>`;
+      }).join("\n");
+      const syntheticListHtml = `<div id="jobs-list">${cards}</div>`;
+
+      let concurrent = 0;
+      let maxConcurrent = 0;
+      const fetchMock = vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u === CATEGORY_URL) return htmlResponse(syntheticListHtml);
+        // A detail-page request: track how many are in flight at once. All
+        // requests within one Promise.all() batch invoke this mock
+        // synchronously before any of them resolves, so if the adapter ever
+        // batched more than DETAIL_FETCH_BATCH_SIZE (4) at a time, this
+        // counter would observe it.
+        concurrent++;
+        maxConcurrent = Math.max(maxConcurrent, concurrent);
+        await Promise.resolve();
+        await Promise.resolve();
+        concurrent--;
+        return htmlResponse(UNRECOGNIZED_DETAIL_HTML);
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const gigs = await builtinSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
+
+      expect(gigs).toHaveLength(LISTING_COUNT);
+      // 1 category fetch + 25 detail fetches.
+      expect(fetchMock).toHaveBeenCalledTimes(LISTING_COUNT + 1);
+      // Real batching happened (hit the cap)...
+      expect(maxConcurrent).toBe(4);
+      // ...and never exceeded it, even with 25 listings to process.
+      expect(maxConcurrent).toBeLessThanOrEqual(4);
+    });
   });
 });
