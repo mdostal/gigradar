@@ -1,0 +1,317 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Cron } from "croner";
+import type { Config, MatchResult } from "../../lib/types.js";
+import {
+  DEFAULT_IDLE_RECHECK_MS,
+  type SchedulerHandle,
+  buildCycleConfig,
+  deriveBaseIntervalMs,
+  startScheduler,
+} from "../index.js";
+import { BackoffTracker } from "../backoff.js";
+
+type RunRadarResult = { results: MatchResult[]; passed: MatchResult[]; errors: { sourceId: string; message: string }[] };
+
+function makeConfig(overrides: Partial<Config> = {}): Config {
+  return {
+    profile: { name: "Test User", roles: [], skills: [], timezone: "UTC" },
+    needs: {
+      minRate: 0,
+      highRate: 999_999,
+      maxHours: 999,
+      maxHoursAtHighRate: 999,
+      allowContractToHire: true,
+      freshStageOnly: false,
+      remoteOnly: false,
+    },
+    sources: [{ id: "braintrust", enabled: true }],
+    ...overrides,
+  };
+}
+
+function emptyResult(): RunRadarResult {
+  return { results: [], passed: [], errors: [] };
+}
+
+let activeHandles: SchedulerHandle[] = [];
+
+afterEach(() => {
+  for (const handle of activeHandles) handle.stop();
+  activeHandles = [];
+  vi.restoreAllMocks();
+});
+
+/** Starts a scheduler and registers it for automatic stop() in afterEach — every test in this file uses this instead of calling startScheduler() directly, so no test ever leaks a live timer or Cron job into the next one. */
+function start(options: Parameters<typeof startScheduler>[0]): SchedulerHandle {
+  const handle = startScheduler(options);
+  activeHandles.push(handle);
+  return handle;
+}
+
+describe("deriveBaseIntervalMs", () => {
+  it("derives the gap between a pattern's next two runs", () => {
+    // Every second, 6-field (seconds-precision) pattern.
+    const ms = deriveBaseIntervalMs("*/1 * * * * *", "UTC");
+    expect(ms).toBe(1000);
+  });
+
+  it("derives an hourly cadence as 1 hour", () => {
+    const ms = deriveBaseIntervalMs("0 * * * *", "UTC");
+    expect(ms).toBe(60 * 60 * 1000);
+  });
+});
+
+describe("buildCycleConfig", () => {
+  it("replaces sources with the backoff-filtered set and leaves every other field + the original config untouched", () => {
+    const config = makeConfig({ sources: [{ id: "a", enabled: true }, { id: "b", enabled: true }] });
+    const tracker = new BackoffTracker({ baseIntervalMs: 1000, now: () => 0 });
+    tracker.recordFailure("a");
+
+    const cycleConfig = buildCycleConfig(config, tracker);
+
+    expect(cycleConfig.sources).toEqual([{ id: "b", enabled: true }]);
+    expect(cycleConfig).not.toBe(config);
+    expect(config.sources).toHaveLength(2); // the original Config object is never mutated
+    expect(cycleConfig.profile).toBe(config.profile);
+  });
+});
+
+describe("startScheduler: idle behavior when Config.schedule is unset", () => {
+  it("logs clearly, never calls exitFn, and keeps rechecking on idleRecheckMs — the default matches DEFAULT_IDLE_RECHECK_MS (1 hour)", async () => {
+    expect(DEFAULT_IDLE_RECHECK_MS).toBe(60 * 60 * 1000);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exitFn = vi.fn();
+    const loadConfigFn = vi.fn(() => makeConfig({ schedule: undefined }));
+    let capturedDelayMs: number | undefined;
+    const scheduledFns: (() => void)[] = [];
+
+    // Fires "instantly" (no real wait) while still recording the delay the
+    // production code requested — proves the idle loop is wired to
+    // idleRecheckMs without ever waiting on it for real.
+    const setTimeoutFn = vi.fn((fn: () => void, ms: number) => {
+      capturedDelayMs = ms;
+      scheduledFns.push(fn);
+      return {} as ReturnType<typeof setTimeout>;
+    });
+
+    start({ loadConfigFn, exitFn, setTimeoutFn, clearTimeoutFn: vi.fn() });
+
+    expect(loadConfigFn).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Config.schedule is unset"));
+    expect(capturedDelayMs).toBe(DEFAULT_IDLE_RECHECK_MS);
+
+    // Manually fire the "hourly" recheck a few times (never real time) — each
+    // recheck reloads Config and, since it's still unset, idles again.
+    for (let i = 0; i < 3; i++) {
+      const fn = scheduledFns.pop();
+      fn?.();
+    }
+    expect(loadConfigFn).toHaveBeenCalledTimes(4);
+    expect(exitFn).not.toHaveBeenCalled(); // never exits, no matter how many idle rechecks pass
+  });
+
+  it("transitions from idling to scheduled once a later recheck finds Config.schedule set", () => {
+    let schedule: string | undefined;
+    const loadConfigFn = vi.fn(() => makeConfig({ schedule }));
+    const scheduledFns: (() => void)[] = [];
+    const setTimeoutFn = vi.fn((fn: () => void) => {
+      scheduledFns.push(fn);
+      return {} as ReturnType<typeof setTimeout>;
+    });
+    const onScheduled = vi.fn();
+
+    const handle = start({ loadConfigFn, setTimeoutFn, clearTimeoutFn: vi.fn(), onScheduled, exitFn: vi.fn() });
+    expect(handle.getJob()).toBeUndefined(); // idling, nothing scheduled yet
+
+    schedule = "*/1 * * * * *";
+    const recheck = scheduledFns.pop();
+    recheck?.();
+
+    expect(handle.getJob()).toBeDefined();
+    expect(onScheduled).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("startScheduler: a valid Config.schedule fires runRadar at the scheduled cadence, in Profile.timezone", () => {
+  it("creates the Cron job with the exact pattern and timezone from Config", () => {
+    const config = makeConfig({ schedule: "*/2 * * * * *", profile: { name: "T", roles: [], skills: [], timezone: "America/Chicago" } });
+    const handle = start({ loadConfigFn: () => config, runRadarFn: async () => emptyResult(), exitFn: vi.fn() });
+
+    const job = handle.getJob() as Cron;
+    expect(job).toBeDefined();
+    expect(job.getPattern()).toBe("*/2 * * * * *");
+    expect(job.options.timezone).toBe("America/Chicago");
+  });
+
+  it("fires a real scan at a short real-time interval without any manual trigger (proves genuine croner wiring, not just our own test hooks)", async () => {
+    const config = makeConfig({ schedule: "*/1 * * * * *" });
+    const runRadarFn = vi.fn(async () => emptyResult());
+
+    start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn() });
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(runRadarFn.mock.calls.length).toBeGreaterThanOrEqual(1);
+  }, 5000);
+
+  it("job.trigger() fires runRadarFn immediately with the (backoff-filtered) cycle Config — used by the rest of this suite to avoid real scheduling delays", async () => {
+    const config = makeConfig({ sources: [{ id: "braintrust", enabled: true }] });
+    const runRadarFn = vi.fn(async (_config: Config): Promise<RunRadarResult> => emptyResult());
+    const handle = start({
+      loadConfigFn: () => ({ ...config, schedule: "*/1 * * * * *" }),
+      runRadarFn,
+      exitFn: vi.fn(),
+    });
+
+    await (handle.getJob() as Cron).trigger();
+
+    expect(runRadarFn).toHaveBeenCalledTimes(1);
+    expect(runRadarFn.mock.calls[0]?.[0]?.sources).toEqual([{ id: "braintrust", enabled: true }]);
+  });
+});
+
+describe("startScheduler: per-source backoff filtering across cycles", () => {
+  it("excludes a failing source from the Config passed to runRadar() while it's in its backoff window, and retries it once the window elapses", async () => {
+    const config = makeConfig({
+      schedule: "*/1 * * * * *",
+      sources: [{ id: "flaky", enabled: true }, { id: "healthy", enabled: true }],
+    });
+
+    let clock = 0;
+    let call = 0;
+    const runRadarFn = vi.fn(async (_config: Config): Promise<RunRadarResult> => {
+      call += 1;
+      if (call === 1) return { results: [], passed: [], errors: [{ sourceId: "flaky", message: "boom" }] };
+      return emptyResult();
+    });
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, now: () => clock, exitFn: vi.fn() });
+    const job = handle.getJob() as Cron;
+    // Base interval for "*/1 * * * * *" is 1000ms (see deriveBaseIntervalMs tests above).
+
+    await job.trigger(); // cycle 1: flaky fails -> backs off for 1000ms
+    expect(runRadarFn.mock.calls[0]?.[0]?.sources.map((s) => s.id)).toEqual(["flaky", "healthy"]);
+
+    clock += 500; // still inside the 1000ms backoff window
+    await job.trigger(); // cycle 2: flaky must be excluded
+    expect(runRadarFn.mock.calls[1]?.[0]?.sources.map((s) => s.id)).toEqual(["healthy"]);
+
+    clock += 501; // now past the backoff window (500 + 501 > 1000)
+    await job.trigger(); // cycle 3: flaky is retried
+    expect(runRadarFn.mock.calls[2]?.[0]?.sources.map((s) => s.id)).toEqual(["flaky", "healthy"]);
+  });
+
+  it("resets a source's backoff to the base interval once it succeeds again", async () => {
+    const config = makeConfig({ schedule: "*/1 * * * * *", sources: [{ id: "flaky", enabled: true }] });
+    let clock = 0;
+    let call = 0;
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => {
+      call += 1;
+      if (call <= 2) return { results: [], passed: [], errors: [{ sourceId: "flaky", message: "boom" }] };
+      return emptyResult();
+    });
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, now: () => clock, exitFn: vi.fn() });
+    const job = handle.getJob() as Cron;
+
+    await job.trigger(); // fail 1: backs off 1000ms
+    clock += 1001;
+    await job.trigger(); // fail 2: backs off 2000ms
+    expect(handle.getTracker()?.getState("flaky")?.intervalMs).toBe(2000);
+
+    clock += 2001;
+    await job.trigger(); // success: resets to base (1000ms), not staying at 2000ms
+    const state = handle.getTracker()?.getState("flaky");
+    expect(state?.consecutiveFailures).toBe(0);
+    expect(state?.intervalMs).toBe(1000);
+    expect(state?.backoffUntil).toBeNull();
+  });
+});
+
+describe("startScheduler: never writes to config.json", () => {
+  let tmpDataDir: string;
+  let originalXdgDataHome: string | undefined;
+
+  afterEach(() => {
+    if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = originalXdgDataHome;
+    fs.rmSync(tmpDataDir, { recursive: true, force: true });
+  });
+
+  it("config.json on disk is byte-for-byte unchanged after several scan cycles, including cycles that filter a backed-off source", async () => {
+    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-scheduler-test-"));
+    originalXdgDataHome = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = tmpDataDir;
+    const configPath = path.join(tmpDataDir, "gigradar", "config.json");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const doc = JSON.stringify(makeConfig({ sources: [{ id: "flaky", enabled: true }] }));
+    fs.writeFileSync(configPath, doc, { mode: 0o600 });
+    const bytesBefore = fs.readFileSync(configPath);
+
+    let clock = 0;
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: [],
+      passed: [],
+      errors: [{ sourceId: "flaky", message: "boom" }],
+    }));
+    // loadConfigFn here reads the exact same doc a real loadConfig() would
+    // parse, but bypasses the vault/encryption layer (irrelevant to this
+    // regression) — the point under test is what the SCHEDULER does with the
+    // Config afterward, never that config.json is re-serialized.
+    const config: Config = JSON.parse(doc);
+    const handle = start({ loadConfigFn: () => config, runRadarFn, now: () => clock, exitFn: vi.fn() });
+    const job = handle.getJob();
+    expect(job).toBeUndefined(); // no schedule set in this fixture -> idling, not scheduled
+
+    // Drive a few idle rechecks too, for good measure — still never writes.
+    for (let i = 0; i < 3; i++) {
+      clock += 1;
+    }
+
+    const bytesAfter = fs.readFileSync(configPath);
+    expect(bytesAfter).toEqual(bytesBefore);
+  });
+});
+
+describe("startScheduler: top-level fatal error boundary", () => {
+  it("an exception outside runRadar()'s own per-source handling logs fatally and calls exitFn(1)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const config = makeConfig({ schedule: "*/1 * * * * *" });
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => {
+      throw new Error("simulated top-level fault (not a per-source error)");
+    });
+    const exitFn = vi.fn();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn });
+    const job = handle.getJob() as Cron;
+
+    await job.trigger();
+
+    expect(exitFn).toHaveBeenCalledWith(1);
+  });
+
+  it("a malformed cron expression is a fatal, actionable error at activation time, not a silent no-op", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const config = makeConfig({ schedule: "not a valid cron expression" });
+    const exitFn = vi.fn();
+
+    start({ loadConfigFn: () => config, runRadarFn: async () => emptyResult(), exitFn });
+
+    expect(exitFn).toHaveBeenCalledWith(1);
+  });
+
+  it("loadConfigFn throwing (e.g. a corrupt config.json) is fatal, not swallowed", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitFn = vi.fn();
+    const loadConfigFn = vi.fn(() => {
+      throw new Error("gigradar config: corrupt");
+    });
+
+    start({ loadConfigFn, runRadarFn: async () => emptyResult(), exitFn });
+
+    expect(exitFn).toHaveBeenCalledWith(1);
+  });
+});

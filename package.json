@@ -13,11 +13,13 @@
     "test": "NODE_OPTIONS=--experimental-sqlite vitest run",
     "radar": "NODE_OPTIONS=--experimental-sqlite tsx src/lib/apply/runner.ts",
     "mcp": "NODE_OPTIONS=--experimental-sqlite tsx src/mcp/server.ts",
+    "scheduler": "NODE_OPTIONS=--experimental-sqlite tsx src/scheduler/index.ts",
     "electron": "npm run build && electron electron/main.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "croner": "^10.0.1",
     "dotenv": "^17.4.2",
     "next": "^15.0.0",
     "playwright": "^1.62.1",
