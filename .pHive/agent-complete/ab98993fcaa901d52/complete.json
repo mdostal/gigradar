@@ -1,0 +1,16 @@
+{
+  "agent_id": "ab98993fcaa901d52",
+  "session_id": "2096c7db-36b6-4ae7-a206-bb4fff054912",
+  "agent_type": "general-purpose",
+  "cwd": "/Users/mdostal/Documents/work/gigradar",
+  "agent_transcript_path": "/Users/mdostal/.claude/projects/-Users-mdostal-Documents-work-gigradar/2096c7db-36b6-4ae7-a206-bb4fff054912/subagents/agent-ab98993fcaa901d52.jsonl",
+  "last_assistant_message": "Committed as `9cac7125d937c13ce2c9b444ef5a7ea8ba5f5f9e` on branch `feat/scan-scheduler`. Remaining unstaged changes are unrelated `.pHive` session/telemetry artifacts, not part of this story, so left untouched.\n\n## Summary\n\nBuilt the `scan-scheduler` story end to end:\n\n**`src/scheduler/backoff.ts`** — `BackoffTracker`: per-source in-memory exponential backoff, doubling per consecutive failure, capped at 24h (`DEFAULT_MAX_BACKOFF_MS`), resetting to the base interval on first success. Fully injectable clock (`now`), no real timers in the core logic.\n\n**`src/scheduler/index.ts`** — `startScheduler()`: registers all 8 built-in source adapters once at startup (same dynamic-import-inside-`main()` pattern as `runner.ts`, documented as a deliberate update from the story text's stale \"4\" figure), reads `Config` only via `loadConfig()`. Idles and rechecks hourly (`DEFAULT_IDLE_RECHECK_MS`) instead of exiting when `Config.schedule` is unset; otherwise schedules `runRadar()` via `croner` (`new Cron(pattern, { timezone, catch }, fn)` — API confirmed against the real installed package's `.d.ts`/README first). Each cycle builds an in-memory-only, backoff-filtered `Config` (`buildCycleConfig()`) before calling `runRadar()`. A top-level fatal boundary (`fatal()`) catches anything outside `runRadar()`'s own per-source handling and calls an injectable `exitFn` (real `process.exit(1)` in production). Logs a per-cycle summary (gigs found/passed, per-source errors, skipped-for-backoff sources, backoff states).\n\n**`package.json`** — added `\"scheduler\": \"NODE_OPTIONS=--experimental-sqlite tsx src/scheduler/index.ts\"`.\n\n**`docs/scheduler-launchd-template.plist`** + a new \"Scheduler\" section in `docs/ARCHITECTURE.md` — a real, copy-pasteable macOS launchd template with only generic `<<placeholder>>` values, plus the roadmap checkbox flipped to done.\n\n**Tests** (26 new, all passing): `backoff.test.ts` (doubling/cap/reset with a fake clock), `index.test.ts` (idle-not-exit with injectable timer, cron created with correct pattern/timezone, a real short-interval firing, `job.trigger()`-based backoff-filtering and reset-on-success across cycles, config.json byte-for-byte-unchanged regression, fatal-exit for a thrown error/malformed cron/`loadConfig` throw), and `no-save-config.test.ts` (grep-verifiable: no call/import of `saveConfig`, and the only `config/` import anywhere in `src/scheduler` is `loadConfig`).\n\n`npm test`: 534 passed, 3 pre-existing skipped (45 files, 1 pre-existing skipped file, unrelated). `npm run typecheck`: clean.\n\nCommit: `9cac7125d937c13ce2c9b444ef5a7ea8ba5f5f9e` on `feat/scan-scheduler` (not pushed, no PR opened, per instructions).",
+  "prompt_id": "4a3f358f-34a7-4eef-a0dc-3f36ea82fce4",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "verdict": "failure",
+  "verdict_source": "missing_marker",
+  "written_at": "2026-08-13T02:41:09Z"
+}
