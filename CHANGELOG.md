@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-12
+
+### Added
+
+- **`auto-draft-on-scan` epic.** A new, OPT-IN (`Config.autoDraftOnScan`,
+  off by default) integration between `scan-scheduler` and
+  `assisted-apply-drafting`: when enabled, each scheduled scan
+  auto-generates real drafts for up to 5 new green-tier matches per
+  cycle, so a scheduled overnight run leaves real, ready-to-review
+  drafts in `/drafts` instead of just a longer gig list. This is
+  auto-DRAFTING only — nothing about submission changes; the existing
+  manual review/approve/mark-submitted flow is untouched, matching this
+  project's confirmed "assisted, not auto" posture. A gig with ANY
+  existing draft (draft/approved/rejected/submitted) is never
+  auto-drafted again. Both prerequisites (an Anthropic API key, an apply
+  profile) are checked once per cycle, not rediscovered per-gig, so a
+  missing one logs one clear line instead of repeating per eligible gig
+  forever.
+- 8 new tests (546 total, 3 opt-in real-browser tests).
+
+
 ## [0.14.1] - 2026-08-12
 
 ### Fixed
