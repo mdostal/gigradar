@@ -1,0 +1,25 @@
+name: auto-draft-on-scan
+title: Opt-in auto-drafting for new green-tier matches during scheduled scans
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [architecture]
+  roster: [researcher, technical-writer, tpm, architect]
+  per_tag_reasoning:
+    architecture: "Integration glue wiring two already-shipped subsystems (scan-scheduler, assisted-apply-drafting) together -- no new capability design."
+  confidence: matched
+  gate_decisions:
+    architecture: included
+
+stories:
+  - id: auto-draft-on-scan
+    title: "Config.autoDraftOnScan + scheduler integration, capped at 5/cycle, green-tier only"
+    complexity: low
+    depends_on: []

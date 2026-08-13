@@ -1,0 +1,101 @@
+id: auto-draft-on-scan
+epic: auto-draft-on-scan
+title: "Config.autoDraftOnScan + scheduler integration, capped at 5/cycle, green-tier only"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Wires `assisted-apply-drafting`'s `stageApplication()` into
+  `scan-scheduler`'s `runCycle()`, per the design doc's §3.
+
+  1. **`Config.autoDraftOnScan?: boolean`** (new, optional, default off)
+     — matches `roleArea`/`schedule`'s established optional pattern.
+  2. **`runCycle()` integration**: after `runRadarFn()` returns `result`,
+     if `config.autoDraftOnScan` is true:
+     - Check ONCE per cycle (not per-gig): `process.env.ANTHROPIC_API_KEY`
+       set AND `config.applyProfile` set. If either is missing, log ONE
+       clear line naming which is missing and skip auto-drafting for
+       this cycle entirely.
+     - Filter `result.passed` to `tier === "green"` AND
+       `getDraft(gigKey(sourceId, externalId)) === undefined` (ANY
+       existing draft, any status, excludes the gig). Take the first 5.
+     - For each: `stageApplication(matchResult, config, apiKey)`,
+       catching and logging any per-gig error without stopping the rest
+       of the cycle's auto-drafting or the scan itself.
+     - Log a one-line summary: "N gigs auto-drafted this cycle."
+  3. **No changes to `stageApplication()`, `generateDraft()`, or the
+     review/approve UI** — this story only adds a new, gated caller.
+
+acceptance_criteria:
+  - "Given Config.autoDraftOnScan is unset or false, when a scan cycle completes, then zero stageApplication() calls are made -- no behavior change from before this story."
+  - "Given autoDraftOnScan=true and ANTHROPIC_API_KEY unset, when a cycle runs, then exactly ONE log line appears naming the missing key, and zero stageApplication() calls are made -- no per-gig repetition."
+  - "Given autoDraftOnScan=true, ANTHROPIC_API_KEY set, and Config.applyProfile unset, when a cycle runs, then exactly ONE log line appears naming the missing apply profile, and zero stageApplication() calls are made."
+  - "Given a gig that already has a draft with status 'rejected', when a cycle finds it again as a green-tier match, then it is NOT re-drafted -- getDraft() returning any status excludes the gig from auto-drafting."
+  - "Given more than 5 eligible new green-tier gigs in one cycle, when auto-drafting runs, then exactly 5 are drafted, not more."
+  - "Given a yellow-tier or red-tier match in result.passed, when a cycle runs, then it is never passed to stageApplication() by the auto-draft path."
+  - "Given one eligible gig's stageApplication() call fails (mocked), when the cycle continues, then the OTHER eligible gigs in that same cycle still get drafted -- one failure doesn't stop the rest."
+  - "Given a successful auto-draft cycle, when its log output is inspected, then it includes a one-line summary of how many gigs were auto-drafted."
+
+steps:
+  - id: implement
+    description: Add Config.autoDraftOnScan and wire the scheduler integration per the description above.
+    agent: developer
+  - id: test
+    description: Write tests covering every acceptance criterion, using a mocked Anthropic client throughout (no real API calls).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm both prerequisite checks (API key, apply profile) happen once per cycle not per-gig, the already-drafted check correctly excludes all statuses, and the cap is genuinely enforced.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feat/auto-draft-on-scan.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    language: typescript
+  key_files:
+    - path: src/scheduler/index.ts
+      purpose: "runCycle() -- the exact integration point, result.passed from runRadarFn()."
+    - path: src/lib/apply/runner.ts
+      purpose: "stageApplication(r, config, apiKey, storeOpts) -- reused unmodified."
+    - path: src/lib/store/drafts.ts
+      purpose: "getDraft(gigKey) -- the already-drafted check."
+
+design_decisions:
+  - decision: Both API-key and apply-profile prerequisites checked once per cycle, not discovered per-gig via stageApplication()'s own errors
+    rationale: Grill H1 -- a realistic misconfiguration (key set, profile not) would otherwise repeat the same error once per eligible gig, every cycle, forever.
+  - decision: ANY existing draft (any status) excludes a gig from future auto-drafting
+    rationale: Grill H2 -- never silently overwrite a decision the user already made about a gig, regardless of what that decision was; the user can still manually re-request a draft if they want to reconsider.
+  - decision: Fixed cap of 5 auto-drafts per cycle, not configurable
+    rationale: Bounds LLM cost on a large first scan without adding a new config field speculatively; can become configurable later if 5 proves wrong in practice.
+
+cross_cutting: []
+
+metric:
+  applies: true
+  name: gigradar.auto_draft_on_scan_available
+  direction: up
+  unit: boolean
+  baseline: 0
+  target: 1
+  window: "story integrate step"
+  source:
+    kind: manual
+    ref: "enable autoDraftOnScan in the owner's real config, run the scheduler for real, confirm real drafts appear in /drafts after a scan finds new green-tier matches"
+  verify_at: "story integrate step"
+  owner: developer
+
+risks:
+  - severity: medium
+    description: A large backlog of unseen green-tier matches on first enabling this could still spend real API cost across several cycles even with the per-cycle cap.
+    mitigation: Accepted -- the cap bounds PER-CYCLE spend; total backlog drain is bounded by the schedule's own cadence, which the owner controls.
+
+references:
+  - .pHive/epics/auto-draft-on-scan/docs/design-discussion.md
+  - .pHive/epics/auto-draft-on-scan/docs/grill-record.md
