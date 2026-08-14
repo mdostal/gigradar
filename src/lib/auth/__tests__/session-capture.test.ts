@@ -475,15 +475,15 @@ describe("cancelCapture", () => {
 });
 
 describe("no debug capture, ever: launch()/newContext() calls carry no tracing/HAR/video/console-logging options", () => {
-  it("chromium.launch() is called with exactly { headless: false } — no other keys", async () => {
+  it("chromium.launch() is called with exactly { headless: false, channel: 'chrome' } — headed, real Chrome preferred, no debug keys", async () => {
     setUpFakeBrowserChain(GOOD_STORAGE_STATE);
 
     await startCapture(SOURCE_ID, LOGIN_URL);
 
     expect(launchMock).toHaveBeenCalledTimes(1);
     const launchArgs = launchMock.mock.calls[0]?.[0];
-    expect(launchArgs).toEqual({ headless: false });
-    expect(Object.keys(launchArgs)).toEqual(["headless"]);
+    expect(launchArgs).toEqual({ headless: false, channel: "chrome" });
+    expect(Object.keys(launchArgs).sort()).toEqual(["channel", "headless"]);
   });
 
   it("browser.newContext() is called with no options at all — no recordHar/recordVideo/tracing-related keys", async () => {

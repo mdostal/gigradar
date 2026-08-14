@@ -8,6 +8,21 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- **Capture Login / browser-session Google OAuth rejection.** Both headed
+  browser launches (`session-capture.ts`'s guided login capture and
+  `browser-session.ts`'s per-run session use) were launching Playwright's
+  *bundled* Chromium build ("Chrome for Testing"), which Google's sign-in
+  flow actively fingerprints and rejects ("This browser or app may not be
+  secure"), independent of session validity. Fixed by launching the real,
+  locally-installed Google Chrome (`channel: "chrome"`) instead, via a new
+  shared `launchHeadedBrowser()` helper — confirmed live to launch, navigate
+  to `accounts.google.com`, and close cleanly using the real Chrome binary.
+  Falls back to bundled Chromium (with a one-time warning) on machines
+  without Chrome installed, so the module keeps working everywhere; only the
+  OAuth-rejection risk is unresolved in that fallback case.
+- 3 new tests covering the real-Chrome-preferred launch, the
+  bundled-Chromium fallback path, and the both-launches-fail error case
+  (551 total).
 - **Config UI's Settings editor showed a misleading API-key hint for
   sources that need no credentials at all.** Braintrust and BuiltIn are
   both `auth:"none"` — their optional `settings` (`roleIds`, `category`)

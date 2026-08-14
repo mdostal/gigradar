@@ -31,11 +31,14 @@
 // video, and console/network event logging all explicitly OFF — a hard
 // constraint on this code path (not a default to reconsider later), since
 // any future debug aid here could persist credential-bearing form data
-// (the user's actual login page) to disk. Concretely: chromium.launch()
-// and browser.newContext() below are called with no options beyond
-// `headless: false`/none at all — no `recordHar`, no `recordVideo`, no
-// `context.tracing.start()`, no `page.on("console"|"request"|"response",
-// ...)` anywhere in this file.
+// (the user's actual login page) to disk. Concretely: browser.newContext()
+// below is called with no options at all — no `recordHar`, no
+// `recordVideo`, no `context.tracing.start()`, no
+// `page.on("console"|"request"|"response", ...)` anywhere in this file.
+// chromium.launch() goes through browser-session.ts's launchHeadedBrowser()
+// (headed, preferring real Chrome over bundled Chromium for Google OAuth
+// compatibility — see that function's docstring); that helper carries the
+// same no-debug-option discipline.
 //
 // SANITY-CHECK BEFORE WRITE, NEVER WRITE-THEN-HOPE.
 // filterStorageStateToAllowlist() was only ever proven against
@@ -55,12 +58,17 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { chromium, type Browser, type BrowserContext } from "playwright";
+import type { Browser, BrowserContext } from "playwright";
 import { hasAnyEncryptedFile } from "../config/load.js";
 import { encrypt, getOrCreateKey } from "../security/vault.js";
 import { SOURCE_ORIGINS } from "../sources/origins.js";
 import { getDefaultDataDir } from "../store/path.js";
-import { checkChromiumAvailable, filterStorageStateToAllowlist, type StorageState } from "./browser-session.js";
+import {
+  checkChromiumAvailable,
+  filterStorageStateToAllowlist,
+  launchHeadedBrowser,
+  type StorageState,
+} from "./browser-session.js";
 
 const MODULE_PREFIX = "gigradar session-capture";
 
@@ -129,18 +137,7 @@ async function safeCloseBrowser(browser: Browser): Promise<void> {
 export async function startCapture(sourceId: string, loginUrl: string): Promise<{ captureId: string }> {
   checkChromiumAvailable();
 
-  let browser: Browser;
-  try {
-    // The ONLY option passed to launch(): headed. No tracing/HAR/video and
-    // no console/network event subscriptions anywhere on this path — see
-    // "NO DEBUG CAPTURE, EVER" in this file's header. Do not add options
-    // here without re-reading that constraint.
-    browser = await chromium.launch({ headless: false });
-  } catch (e) {
-    throw new Error(
-      `${MODULE_PREFIX}: failed to launch Chromium for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
+  const browser: Browser = await launchHeadedBrowser(`source "${sourceId}"`);
 
   let context: BrowserContext;
   try {
