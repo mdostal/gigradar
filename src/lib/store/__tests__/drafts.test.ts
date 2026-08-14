@@ -34,7 +34,9 @@ import {
   getDraft,
   listAutoFireDecisions,
   listDrafts,
+  markDraftFailed,
   markDraftSubmitted,
+  markDraftSubmitting,
   recordAutoFireDecision,
   saveDraft,
   setDraftStatus,
@@ -249,5 +251,43 @@ describe("recordAutoFireDecision / listAutoFireDecisions", () => {
   it("returns an empty list for a gig with no recorded decisions", () => {
     const gigKey = seedGig("src-a", "1");
     expect(listAutoFireDecisions(gigKey, { db })).toEqual([]);
+  });
+});
+
+describe("markDraftSubmitting / markDraftFailed (double-submit safety net)", () => {
+  it("markDraftSubmitting transitions an approved draft to 'submitting'", () => {
+    const gigKey = seedGig("src-a", "1");
+    saveDraft(gigKey, DRAFT_CONTENT, { db, now: "2026-01-01T00:00:00.000Z" });
+    setDraftStatus(gigKey, "approved", { db, now: "2026-01-01T00:00:00.000Z" });
+
+    markDraftSubmitting(gigKey, { db, now: "2026-01-02T00:00:00.000Z" });
+
+    expect(getDraft(gigKey, { db })?.status).toBe("submitting");
+  });
+
+  it("markDraftFailed reverses 'submitting' back to 'approved'", () => {
+    const gigKey = seedGig("src-a", "1");
+    saveDraft(gigKey, DRAFT_CONTENT, { db, now: "2026-01-01T00:00:00.000Z" });
+    setDraftStatus(gigKey, "approved", { db, now: "2026-01-01T00:00:00.000Z" });
+    markDraftSubmitting(gigKey, { db, now: "2026-01-02T00:00:00.000Z" });
+
+    markDraftFailed(gigKey, "Cloudflare interstitial blocked the form", { db, now: "2026-01-03T00:00:00.000Z" });
+
+    expect(getDraft(gigKey, { db })?.status).toBe("approved");
+  });
+
+  it("a draft found in 'submitting' is never silently treated as done -- it stays 'submitting' until markDraftSubmitted/markDraftFailed resolves it", () => {
+    const gigKey = seedGig("src-a", "1");
+    saveDraft(gigKey, DRAFT_CONTENT, { db, now: "2026-01-01T00:00:00.000Z" });
+    setDraftStatus(gigKey, "approved", { db, now: "2026-01-01T00:00:00.000Z" });
+    markDraftSubmitting(gigKey, { db, now: "2026-01-02T00:00:00.000Z" });
+
+    // No resolution called -- simulates a crash mid-flight.
+    expect(getDraft(gigKey, { db })?.status).toBe("submitting");
+  });
+
+  it("markDraftSubmitting throws for a gig with no draft at all", () => {
+    const gigKey = seedGig("src-a", "1");
+    expect(() => markDraftSubmitting(gigKey, { db })).toThrow(/no draft with gig_key/);
   });
 });

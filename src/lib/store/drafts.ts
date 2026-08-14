@@ -127,6 +127,37 @@ export function markDraftSubmitted(gigKey: string, opts: DbOption & { now?: stri
   });
 }
 
+/**
+ * The double-submit safety net (graduated-auto-fire-trust epic,
+ * design-discussion.md §4's critical risk): marks a draft `'submitting'`
+ * BEFORE the orchestration layer calls a real `SubmitAdapter.submit()`. A
+ * draft found in `'submitting'` on a later pass is an in-flight (or
+ * crashed-mid-flight) attempt, never something safe to re-fire — see
+ * `markDraftFailed()` below for the ONLY way back out of this state short
+ * of `markDraftSubmitted()`'s own success path. Only valid from `'approved'`
+ * (the caller is expected to have already checked that, same
+ * throw-on-missing-row discipline as `setDraftStatus()`).
+ */
+export function markDraftSubmitting(gigKey: string, opts: DbOption & { now?: string } = {}): void {
+  setDraftStatus(gigKey, "submitting", opts);
+}
+
+/**
+ * Reverses `markDraftSubmitting()` after a CONFIRMED submit failure —
+ * `'submitting'` -> back to `'approved'`, so the draft returns to the exact
+ * state it was in before the attempt (still eligible for a future
+ * evaluateAutoFire() pass, or a manual retry). `reason` is not persisted on
+ * the draft row itself (no column for it) — the caller is expected to log
+ * the real failure via its own autofire_decisions entry (evaluateAutoFire()
+ * already records fired:false decisions with real reasons); this is
+ * surfaced to stderr here too so a failure is never completely silent even
+ * if the caller's own logging path is somehow skipped.
+ */
+export function markDraftFailed(gigKey: string, reason: string, opts: DbOption & { now?: string } = {}): void {
+  console.error(`gigradar: auto-fire submit failed for "${gigKey}": ${reason}`);
+  setDraftStatus(gigKey, "approved", opts);
+}
+
 interface AutoFireDecisionRow {
   gig_key: string;
   decided_at: string;
