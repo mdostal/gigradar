@@ -1,0 +1,66 @@
+id: tauri-chromium-sidecar
+epic: tauri-installer
+title: "Bundle Playwright's Chromium so Capture Login + browser-session sources work fully packaged"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [tauri-bare-packaged-app]
+
+description: |
+  Vertical Plan Slice 2 -- closes the feature-parity gap the prior story
+  left open. Bundles Playwright's Chromium binary as a Tauri resource
+  (not an externalBin sidecar -- Playwright itself launches it, Tauri
+  just ships the bytes) and wires PLAYWRIGHT_BROWSERS_PATH so the
+  bundled server sidecar's Playwright calls find it without any network
+  fetch.
+
+  1. `scripts/prepare-tauri-sidecars.sh` extended: `npx playwright
+     install chromium` into a known local dir, copy into
+     `src-tauri/resources/playwright-browsers/`.
+  2. `src-tauri/src/main.rs`: the Node sidecar spawn call (from the
+     prior story) also sets `PLAYWRIGHT_BROWSERS_PATH` in the child's
+     environment, resolved via Tauri's path API to the bundled resource
+     location.
+  3. `src/lib/auth/browser-session.ts`: confirm LIVE whether
+     `checkChromiumAvailable()`/Playwright's own browser resolution
+     transparently respects `PLAYWRIGHT_BROWSERS_PATH` as set, or
+     whether an explicit `executablePath` needs threading through
+     `launchHeadedBrowser()`. This is the one core-code change (outside
+     src-tauri/) this whole epic makes, if needed at all -- do not
+     assume before checking.
+
+acceptance_criteria:
+  - "From the packaged app (built via npx tauri build), clicking Capture Login for a real browser-session source opens a real, bundled Chromium window -- no network fetch for a browser download observed."
+  - "A real login completes and a real session file is saved to the same on-disk location every other runtime mode already uses."
+  - "If browser-session.ts needed a code change to respect the bundled browser path, that change is scoped to ONLY the resolution logic -- no other behavior of that file changes."
+
+steps:
+  - id: research
+    description: Live-check whether PLAYWRIGHT_BROWSERS_PATH is transparently respected by the Playwright version this repo pins, or needs an explicit executablePath.
+    agent: researcher
+  - id: implement
+    description: Extend the sidecar-prep script + main.rs's env wiring; make the browser-session.ts change only if research confirms it's needed.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Manual verification -- a real Capture Login flow from the packaged app.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the core-code change (if any) is minimal and doesn't touch unrelated browser-session.ts logic.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/browser-session.ts
+      purpose: checkChromiumAvailable()/launchHeadedBrowser() -- the possible one-line-ish core change
+
+references:
+  - path: .pHive/epics/tauri-installer/docs/structured-outline.md
+    relevant_excerpt: "Part 1, Slice 2: Chromium sidecar."
