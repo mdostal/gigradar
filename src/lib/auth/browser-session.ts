@@ -282,6 +282,46 @@ export function checkChromiumAvailable(): void {
   }
 }
 
+let warnedNoRealChrome = false;
+
+/**
+ * Launches a headed browser for `logContext` (e.g. `source "gofractional"`),
+ * preferring the real, locally-installed Google Chrome (`channel: "chrome"`)
+ * over Playwright's bundled Chromium build ("Chrome for Testing"). Google's
+ * OAuth sign-in flow actively fingerprints and rejects the bundled build
+ * ("This browser or app may not be secure") independent of automation
+ * flags -- confirmed live during this fix. Launching the actual Chrome
+ * binary a user has installed passes the same flow.
+ *
+ * Falls back to bundled Chromium -- already confirmed present by the
+ * caller's own checkChromiumAvailable() call -- when real Chrome isn't
+ * installed on this machine, so this module keeps working everywhere; only
+ * the OAuth-rejection caveat is unresolved in that fallback case. The
+ * fallback warning is logged once per process (not once per launch) to
+ * avoid repeat-launch log spam.
+ */
+export async function launchHeadedBrowser(logContext: string): Promise<Browser> {
+  try {
+    return await chromium.launch({ headless: false, channel: "chrome" });
+  } catch {
+    if (!warnedNoRealChrome) {
+      warnedNoRealChrome = true;
+      console.warn(
+        `${MODULE_PREFIX}: real Google Chrome not found on this machine -- falling back to Playwright's ` +
+          "bundled Chromium. Google OAuth sign-in flows are likely to be rejected in this fallback mode " +
+          "(\"This browser or app may not be secure\"). Install Google Chrome for full compatibility.",
+      );
+    }
+    try {
+      return await chromium.launch({ headless: false });
+    } catch (e) {
+      throw new Error(
+        `${MODULE_PREFIX}: failed to launch a browser for ${logContext}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+}
+
 /**
  * Launches a headed, origin-scoped Chromium session for one source, hands
  * the caller a `Page` (already navigated to `options.url` and confirmed
@@ -320,17 +360,7 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
 
   checkChromiumAvailable();
 
-  let browser: Browser;
-  try {
-    browser = await chromium.launch({ headless: false });
-  } catch (e) {
-    // checkChromiumAvailable() above already ruled out "binary missing" —
-    // anything reaching here is some other launch failure. Still never
-    // surfaces page content (there is none yet at this point).
-    throw new Error(
-      `${MODULE_PREFIX}: failed to launch Chromium for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
+  const browser: Browser = await launchHeadedBrowser(`source "${sourceId}"`);
 
   try {
     const context = await browser.newContext({ storageState: scopedStorageState });
