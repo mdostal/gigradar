@@ -103,6 +103,7 @@ function openConnection(dbPath: string, busyTimeoutMs: number): DatabaseSyncType
   execWithBusyRetry(db, SCHEMA_SQL, busyTimeoutMs);
   ensureColumn(db, "gigs", "employment_type", "TEXT");
   ensureColumn(db, "gigs", "matched_profile_ids", "TEXT");
+  ensureDraftsSubmittingStatus(db);
   return db;
 }
 
@@ -120,6 +121,35 @@ function ensureColumn(db: DatabaseSyncType, table: string, column: string, sqlTy
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === column)) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${sqlType}`);
+}
+
+/**
+ * Adds `'submitting'` to `application_drafts.status`'s CHECK constraint on a
+ * pre-existing DB (graduated-auto-fire-trust epic). Unlike ensureColumn()'s
+ * plain `ALTER TABLE ... ADD COLUMN`, SQLite cannot ALTER a CHECK constraint
+ * in place — the only way to change one is the standard SQLite
+ * rebuild-via-temp-table dance: rename the old table out of the way, create
+ * a fresh one from SCHEMA_SQL's current (already-updated) definition, copy
+ * every row across, drop the renamed original. Wrapped in one transaction so
+ * a crash mid-migration never leaves the table half-renamed.
+ *
+ * Idempotent: checks the table's own stored SQL (sqlite_master.sql) for the
+ * literal 'submitting' value before doing anything — a fresh DB (whose
+ * application_drafts was just created from the up-to-date SCHEMA_SQL by the
+ * exec above) already has it and this is a no-op.
+ */
+function ensureDraftsSubmittingStatus(db: DatabaseSyncType): void {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'application_drafts'`)
+    .get() as { sql: string } | undefined;
+  if (!row || row.sql.includes("'submitting'")) return;
+
+  withTransaction(db, () => {
+    db.exec(`ALTER TABLE application_drafts RENAME TO application_drafts_pre_submitting`);
+    execWithBusyRetry(db, SCHEMA_SQL, DEFAULT_BUSY_TIMEOUT_MS);
+    db.exec(`INSERT INTO application_drafts SELECT * FROM application_drafts_pre_submitting`);
+    db.exec(`DROP TABLE application_drafts_pre_submitting`);
+  });
 }
 
 export interface GetDbOptions {

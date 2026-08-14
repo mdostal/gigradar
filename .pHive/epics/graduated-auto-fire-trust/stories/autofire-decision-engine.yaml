@@ -1,0 +1,97 @@
+id: autofire-decision-engine
+epic: graduated-auto-fire-trust
+title: "evaluateAutoFire() full decision tree + SubmitAdapter interface/registry (no adapters registered yet)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [autofire-trust-data-model]
+
+description: |
+  Vertical Plan Slice 2. Builds the complete decision engine
+  (design-discussion.md §3.3, steps 0-6) and the SubmitAdapter
+  registry/interface (mirrors src/lib/sources/source.ts's
+  registerSource()/getSource() shape exactly). Ships with ZERO adapters
+  registered — evaluateAutoFire() is fully correct and always stops at
+  step 4 ("no adapter registered"), which is the real, intentional
+  behavior at the end of this story, not a stub.
+
+  1. `src/lib/submit/adapter.ts` (new): `SubmitAdapter` interface (`id:
+     string`, `submit(gig: Gig, draft: DraftContent, applyProfile:
+     ApplyProfileConfig): Promise<SubmitResult>`), `registerSubmitAdapter()`
+     / `getSubmitAdapter(id)` — same registry pattern as source.ts, same
+     "duplicate id throws" guard.
+  2. `src/lib/apply/autofire.ts` extended: `evaluateAutoFire(gigKey,
+     config, opts): AutoFireDecision` implementing all 6 steps + the kill
+     switch (step 0) from design-discussion.md §3.3. Each of the 4
+     default checks (tier=green, content sanity, freshness/not-delisted,
+     daily cap) as its own small exported function, independently
+     testable (mirrors gate.ts's per-rule internal helper style).
+  3. Every decision (fire or not) gets persisted via the prior story's
+     `recordAutoFireDecision()` — this story is where that call site
+     actually gets exercised for real.
+
+acceptance_criteria:
+  - "config.autoFire.killSwitch: true stops evaluation before any per-pair rule is even loaded, for every (sourceId, tier) pair, unconditionally."
+  - "A pair with no matching AutoFireRuleConfig stops at step 1, decision recorded with a clear reason."
+  - "A graduated, enabled pair with no registered SubmitAdapter for its sourceId stops at step 4 — this is the ONLY reachable outcome in this story, since zero adapters exist yet."
+  - "Each of the 4 default checks independently fails the decision when violated, with a specific reason string per check (never a generic 'failed')."
+  - "Every evaluateAutoFire() call, whatever the outcome, writes exactly one autofire_decisions row."
+
+steps:
+  - id: research
+    description: Confirm Gig/DraftContent/ApplyProfileConfig's exact current shapes for the SubmitAdapter interface signature.
+    agent: researcher
+  - id: implement
+    description: Implement SubmitAdapter registry + evaluateAutoFire()'s full tree + the 4 check functions.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Independently test every stop point (kill-switch, no-rule, disabled, ungraduated, no-adapter, each of the 4 checks failing individually, all-pass-but-no-adapter).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for parity with source.ts's registry contract and gate.ts's explainable-rejection convention.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/sources/source.ts
+      purpose: the exact registry pattern (registerSource/getSource) this story's SubmitAdapter registry mirrors
+    - path: src/lib/matching/gate.ts
+      purpose: the explainable-rejection / per-rule-helper style this story's 4 checks follow
+    - path: src/lib/apply/autofire.ts
+      purpose: extended by this story (approvedCount/isGraduated already landed in the prior story)
+
+code_examples:
+  - title: Existing source registry pattern this story's SubmitAdapter registry mirrors
+    file: src/lib/sources/source.ts
+    snippet: |
+      const registry = new Map<string, Source>();
+      export function registerSource(source: Source): void {
+        if (registry.has(source.id)) throw new Error(`duplicate source id: ${source.id}`);
+        registry.set(source.id, source);
+      }
+      export function getSource(id: string): Source | undefined {
+        return registry.get(id);
+      }
+
+design_decisions:
+  - decision: Ship the decision engine and registry with zero real adapters, and treat "no adapter registered" as a correct terminal state, not a TODO.
+    rationale: Vertical-plan sequencing — proves the risky, generic decision logic works and is fully tested before any live-site automation exists, isolating that risk to a later, smaller story.
+
+risks:
+  - severity: low
+    description: A future SubmitAdapter author could bypass evaluateAutoFire() and call submit() directly, skipping the trust gate entirely.
+    mitigation: Document on SubmitAdapter's own interface comment that submit() must only ever be invoked via the orchestration layer (a later story) after a passing evaluateAutoFire() decision — same "never called directly" discipline this codebase already documents for other internal-only functions.
+
+references:
+  - path: .pHive/epics/graduated-auto-fire-trust/docs/design-discussion.md
+    relevant_excerpt: |
+      §3.3 The graduation + fire decision, end to end (steps 0-6).
+      §3.4 Proposed default checks (the "4-check gate").

@@ -93,6 +93,37 @@ export const SourceConfigSchema = z.object({
  * `.optional()` — see the file-level comment above and types.ts's doc
  * comments for why defaulting or requiring them would be wrong.
  */
+/** Mirrors `Tier` in src/lib/types.ts (matching/tiering.ts's own green/yellow/red). */
+const TierSchema = z.enum(["green", "yellow", "red"]);
+
+/**
+ * Mirrors `AutoFireRuleConfig` in src/lib/types.ts
+ * (graduated-auto-fire-trust epic). `minApprovals`/`dailyCap` floors of 1
+ * match that story's own design decision — a rule that could "graduate" at
+ * 0 approvals or fire unboundedly per day defeats the whole point of a
+ * trust threshold.
+ */
+export const AutoFireRuleConfigSchema = z.object({
+  sourceId: z.string().min(1),
+  tier: TierSchema,
+  enabled: z.boolean(),
+  minApprovals: z.number().int().min(1),
+  dailyCap: z.number().int().min(1),
+});
+
+/**
+ * Mirrors `Config["autoFire"]` in src/lib/types.ts. Like `applyProfile`/
+ * `autoDraftOnScan`/`notifyOnGreenMatch` above, `autoFire` itself MUST stay
+ * `.optional()` -- its omission means auto-fire never runs at all for
+ * anything, the correct do-nothing default (see types.ts's doc comment).
+ * `killSwitch` is independently `.optional()` inside it for the same
+ * reason: omitted/false are behaviorally identical (normal operation).
+ */
+export const AutoFireConfigSchema = z.object({
+  killSwitch: z.boolean().optional(),
+  rules: z.array(AutoFireRuleConfigSchema),
+});
+
 export const ConfigSchema = z.object({
   profile: ProfileSchema,
   needs: NeedsSchema,
@@ -102,4 +133,5 @@ export const ConfigSchema = z.object({
   applyProfile: ApplyProfileConfigSchema.optional(),
   autoDraftOnScan: z.boolean().optional(),
   notifyOnGreenMatch: z.boolean().optional(),
+  autoFire: AutoFireConfigSchema.optional(),
 });

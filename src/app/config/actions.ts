@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { actionErr, actionOk } from "@/lib/actions/result";
+import { approvedCount } from "@/lib/apply/autofire";
 import { cancelCapture, finishCapture, startCapture } from "@/lib/auth/session-capture";
 import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
@@ -9,7 +10,7 @@ import { extractProfile } from "@/lib/profile-ingestion/extract";
 import { SOURCE_LOGIN_URLS } from "@/lib/sources/origins";
 import type { ActionResult } from "@/lib/actions/result";
 import type { ExtractProfileInput } from "@/lib/profile-ingestion/extract";
-import type { Config } from "@/lib/types";
+import type { Config, Tier } from "@/lib/types";
 
 /**
  * Server Action wrapping `saveConfig()` (config-write-path) — the config
@@ -325,6 +326,26 @@ export async function extractProfileFromResumeAction(
     const input = await buildExtractInput(formData);
     const result = await extractProfile(input, apiKey);
     return actionOk(result);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Read-only trust-status lookup for one `(sourceId, tier)` auto-fire pair
+ * (graduated-auto-fire-trust epic) — the `/config` Auto-fire section's
+ * "Check status" button calls this. Wraps `approvedCount()`
+ * (`src/lib/apply/autofire.ts`) directly: a plain SQL read against the real
+ * approval history, never mutates anything, no `revalidatePath()` call (the
+ * pattern every OTHER action in this file follows after a write — this one
+ * is deliberately not a write). `minApprovals`/graduated-or-not is computed
+ * client-side against the CURRENT (possibly unsaved) draft form value, not
+ * here — this action only reports the one real number it can answer:
+ * how many approvals actually exist right now for this pair.
+ */
+export async function getAutoFireApprovedCountAction(sourceId: string, tier: Tier): Promise<ActionResult<number>> {
+  try {
+    return actionOk(approvedCount(sourceId, tier));
   } catch (e) {
     return actionErr(e);
   }

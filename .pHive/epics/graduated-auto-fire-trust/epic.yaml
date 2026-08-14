@@ -1,0 +1,28 @@
+name: graduated-auto-fire-trust
+title: Graduated auto-fire trust system + first real submit adapter (GoFractional)
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+
+stories:
+  - id: autofire-trust-data-model
+    title: "Config.autoFire schema + approvedCount()/isGraduated() trust math + autofire_decisions table"
+    complexity: medium
+    depends_on: []
+  - id: autofire-decision-engine
+    title: "evaluateAutoFire() full decision tree + SubmitAdapter interface/registry (no adapters registered yet)"
+    complexity: medium
+    depends_on: [autofire-trust-data-model]
+  - id: gofractional-submit-adapter
+    title: "Real GoFractional SubmitAdapter + double-submit safety net (live-verified)"
+    complexity: high
+    depends_on: [autofire-decision-engine]
+    status: paused # Cloudflare live-verification blocker, see this story's own pause_note
+  - id: autofire-scheduler-wiring
+    title: "Wire evaluateAutoFire() into the scheduler cycle"
+    complexity: low
+    depends_on: [autofire-decision-engine] # repointed off gofractional-submit-adapter (paused) -- "no adapter registered" is a safe, correct terminal state
+  - id: autofire-config-ui
+    title: "/config Auto-fire section: kill switch, rule editor, trust-status display"
+    complexity: medium
+    depends_on: [autofire-scheduler-wiring]

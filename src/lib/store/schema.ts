@@ -50,9 +50,32 @@ CREATE TABLE IF NOT EXISTS application_drafts (
   gig_key      TEXT PRIMARY KEY REFERENCES gigs(key),
   content      TEXT NOT NULL,      -- JSON-stringified DraftContent ({coverText, answers})
   status       TEXT NOT NULL DEFAULT 'draft'
-                 CHECK (status IN ('draft', 'approved', 'rejected', 'submitted')),
+                 -- 'submitting' (graduated-auto-fire-trust epic): the brief
+                 -- window between a SubmitAdapter call starting and either
+                 -- markDraftSubmitted()/markDraftFailed() resolving it -- see
+                 -- db.ts's ensureDraftsSubmittingStatus() for the CHECK-
+                 -- constraint rebuild this same value needs on a pre-existing
+                 -- DB (SQLite can't ALTER a CHECK constraint in place).
+                 CHECK (status IN ('draft', 'approved', 'rejected', 'submitted', 'submitting')),
   generated_at TEXT NOT NULL,      -- ISO datetime, set on every saveDraft() (including regeneration)
   approved_at  TEXT,               -- ISO datetime, set when status -> 'approved'
   submitted_at TEXT                -- ISO datetime, set when status -> 'submitted'
 ) STRICT;
+
+-- Append-only audit trail of every evaluateAutoFire() decision, fire or not
+-- (graduated-auto-fire-trust epic). One gig can accumulate many rows over
+-- time (re-evaluated each cycle until it fires or leaves rotation) -- no
+-- PRIMARY KEY on gig_key. rule_snapshot freezes the AutoFireRuleConfig
+-- values in effect AT DECISION TIME, so a later config edit can never
+-- retroactively change what an old audit row claims fired under -- see
+-- design-discussion.md's "config drift" risk in the epic's docs.
+CREATE TABLE IF NOT EXISTS autofire_decisions (
+  gig_key       TEXT NOT NULL REFERENCES gigs(key),
+  decided_at    TEXT NOT NULL,      -- ISO datetime
+  fired         INTEGER NOT NULL,   -- 0/1
+  reasons       TEXT NOT NULL,      -- JSON-stringified string[]
+  rule_snapshot TEXT                -- JSON-stringified AutoFireRuleConfig in effect at decision time, nullable (e.g. killSwitch-stopped decisions have no per-pair rule to snapshot)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_autofire_decisions_gig_key ON autofire_decisions(gig_key);
 `;

@@ -1,0 +1,114 @@
+id: autofire-trust-data-model
+epic: graduated-auto-fire-trust
+title: "Config.autoFire schema + approvedCount()/isGraduated() trust math + autofire_decisions table"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1 — the inert data/math foundation everything else
+  in this epic builds on. Nothing calls any of this yet; it ships fully
+  tested and correct in isolation, same precedent as gate.ts landing and
+  being fully tested before runner.ts ever called it.
+
+  1. `Config.autoFire` (new, optional): `{ killSwitch?: boolean, rules:
+     AutoFireRuleConfig[] }`, where `AutoFireRuleConfig = { sourceId:
+     string, tier: Tier, enabled: boolean, minApprovals: number,
+     dailyCap: number }`. Zod schema mirrors it in
+     src/lib/config/schema.ts, `.optional()` on the whole section —
+     omitted is valid (no auto-fire behavior at all), same pattern as
+     `roleArea`/`autoDraftOnScan`.
+  2. `application_drafts.status` CHECK constraint gains `'submitting'`
+     between `'approved'` and `'submitted'` (src/lib/store/schema.ts) —
+     the double-submit safety net design-discussion.md §4 requires.
+     Existing DBs need `db.ts`'s `ensureColumn()`-equivalent migration
+     path for a CHECK-constraint change (SQLite CHECK constraints can't
+     be ALTERed in place — follow the same rebuild-via-temp-table pattern
+     already used elsewhere in this file if one exists, or document why
+     a CHECK relaxation is safe to skip on existing rows).
+  3. New `autofire_decisions` table: `gig_key TEXT NOT NULL REFERENCES
+     gigs(key)`, `decided_at TEXT NOT NULL`, `fired INTEGER NOT NULL`
+     (0/1), `reasons TEXT NOT NULL` (JSON string[]), `rule_snapshot TEXT`
+     (JSON — the AutoFireRuleConfig values in effect at decision time, so
+     later config edits can never retroactively change what an old audit
+     row claims). No PRIMARY KEY on gig_key — this is append-only, one
+     gig can have many decisions over time (re-evaluated each cycle until
+     it fires or the gig leaves rotation).
+  4. `src/lib/apply/autofire.ts` (new): `approvedCount(sourceId, tier,
+     opts): number` — pure SQL read, `COUNT(*) FROM application_drafts
+     JOIN gigs ON gig_key = gigs.key WHERE gigs.source_id = :sourceId AND
+     gigs.tier = :tier AND application_drafts.status IN ('approved',
+     'submitted')`. `isGraduated(sourceId, tier, config): boolean` —
+     `approvedCount(...) >= (rule.minApprovals ?? 3)` for the matching
+     rule, `false` if no rule exists for the pair.
+  5. `src/lib/store/drafts.ts`: `recordAutoFireDecision(decision, opts)`
+     insert helper for the new table, mirroring `saveDraft()`'s shape.
+
+acceptance_criteria:
+  - "Given a config.json with no `autoFire` section, ConfigSchema parses successfully and `isGraduated()` returns false for every pair (no behavior change from before this section existed)."
+  - "Given 3 drafts with status 'approved' for the same (sourceId, tier) pair and a rule with minApprovals=3, isGraduated() returns true."
+  - "Given 2 approved + 1 rejected draft for a pair with minApprovals=3, isGraduated() returns false (rejected never counts)."
+  - "Given a draft with status 'submitted', approvedCount() counts it (submitted implies it was approved along the way in every path that exists today)."
+  - "recordAutoFireDecision() persists a full decision row including a JSON-serialized rule_snapshot, retrievable and correctly typed back out."
+
+steps:
+  - id: research
+    description: Confirm the exact SQLite CHECK-constraint-migration pattern already used elsewhere in schema.ts/db.ts (if any) before choosing the safest path for the status-value addition.
+    agent: researcher
+  - id: implement
+    description: Implement the schema/config/math changes per the description above.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Golden-fixture tests for approvedCount()/isGraduated() (mirror gate.test.ts's per-rule fixture style) and the new drafts.ts helper.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for schema-migration safety on existing DBs and config-schema backward compatibility.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/schema.ts
+      purpose: application_drafts CHECK constraint + new autofire_decisions table live here
+    - path: src/lib/store/db.ts
+      purpose: ensureColumn()-style migration pattern for existing DBs
+    - path: src/lib/store/drafts.ts
+      purpose: existing saveDraft()/markDraftSubmitted() shape this story's new helpers mirror
+    - path: src/lib/config/schema.ts
+      purpose: where Config.autoFire's zod schema is added, alongside roleArea/applyProfile
+    - path: src/lib/types.ts
+      purpose: Config.autoFire TypeScript interface
+
+code_examples:
+  - title: Existing ensureColumn() migration pattern for a schema addition on pre-existing DBs
+    file: src/lib/store/db.ts
+    snippet: |
+      function ensureColumn(db, table, column, type) {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+        if (!cols.some((c) => c.name === column)) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+        }
+      }
+
+design_decisions:
+  - decision: Trust graduation is a pure computation over application_drafts/gigs, never a separate stored counter.
+    rationale: Self-healing and audit-proof — always derived from real approval history, can never drift from the data it represents. See design-discussion.md §3.1.
+
+risks:
+  - severity: medium
+    description: SQLite CHECK constraints cannot be altered in place — adding 'submitting' to the status enum on an existing DB needs a rebuild-via-temp-table migration, which is more invasive than the existing additive-column ensureColumn() pattern.
+    mitigation: Research step confirms the safest path before implementing; if no existing precedent exists in this codebase, document the chosen approach clearly in the migration code's own comment.
+
+references:
+  - path: .pHive/epics/graduated-auto-fire-trust/docs/design-discussion.md
+    relevant_excerpt: |
+      §3.1 Trust state — computed, not stored redundantly.
+      §3.2 What DOES need new persisted state: verification-rule config.

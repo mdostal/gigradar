@@ -1,0 +1,132 @@
+id: gofractional-submit-adapter
+epic: graduated-auto-fire-trust
+title: "Real GoFractional SubmitAdapter + double-submit safety net (live-verified)"
+status: paused
+complexity: high
+methodology: classic
+depends_on: [autofire-decision-engine]
+
+pause_note: |
+  PAUSED 2026-08-14, live-verified with the owner directly (not assumed):
+  GoFractional's job-detail page (/job/{slug}) shows a Cloudflare
+  "Performing security verification" challenge that did NOT clear even
+  after the owner personally attempted to clear it live, in a real
+  headed Chrome window, using the real authenticated session. This
+  contradicts the initial assumption that consistent OAuth sign-in
+  reliably clears it -- for THIS specific listing/session at THIS time,
+  it did not. No longer blocking the rest of the epic: autofire-
+  scheduler-wiring's depends_on was repointed to autofire-decision-
+  engine directly (the decision engine already treats "no
+  SubmitAdapter registered" as a correct, safe terminal state -- see
+  that story). This story resumes once a viable path is found (a
+  different first submit target, or a resolved approach for GoFractional
+  specifically) -- see docs/ARCHITECTURE.md's future notifications epic
+  (task #58) for the general "flag it, don't fail permanently" pattern
+  this kind of thing should route through going forward.
+
+  LIKELY REAL FIX, found via structural reference from the legacy tool
+  (`~/Code/gig-radar/gf-driver.mjs` on the hive machine, read for structural
+  reference only per this project's standing discipline): the legacy tool's
+  own header comment documents this EXACT regression and its fix -- headless
+  Chromium gets Cloudflare-blocked "FOREVER"; the working fix was not just
+  `--headed`, but routing every command into ONE PERSISTENT browser instance
+  living on the real logged-in console/VNC display, reused across calls,
+  with storageState loaded once and refreshed -- never a fresh
+  browser+context spun up per call. gigradar's current
+  `src/lib/auth/browser-session.ts` does the opposite: `launchHeadedBrowser()`
+  + `browser.newContext({storageState})` fresh on EVERY call, closed after.
+  A freshly-launched automation context (even real Chrome channel) may
+  simply be more bot-detectable than a long-lived, occasionally
+  human-driven session. This is a real, structural lead for unblocking
+  GoFractional (and possibly ateam.ts/wellfound.ts too) -- but
+  re-architecting the shared session mechanism for persistence is its own
+  scoped piece of work, not something to bolt onto this story. Flag for a
+  future design discussion before attempting it.
+
+description: |
+  Vertical Plan Slice 3 — the one genuinely risky, live-verification-
+  required story in this epic. Builds the first real SubmitAdapter,
+  registered into the prior story's registry, so evaluateAutoFire() can
+  reach step 6 for gofractional pairs. Nothing calls this automatically
+  yet (that's the next story) — this story's own acceptance bar is a
+  manual, deliberate, real test fire against the owner's own real
+  session, same live-verification bar every fetch adapter in this repo
+  has already cleared (see gofractional.ts's own header comment on the
+  Cloudflare interstitial gofractional.com's job-detail pages show).
+
+  1. `src/lib/store/drafts.ts`: `markDraftSubmitting(gigKey)` (draft ->
+     'submitting', BEFORE any real submit attempt) and
+     `markDraftFailed(gigKey, reason)` (submitting -> back to 'approved'
+     on a confirmed failure) — the double-submit safety net
+     design-discussion.md §4 requires: a crash between a real submit
+     succeeding and markDraftSubmitted() committing must be detectable
+     (a draft stuck in 'submitting' is a loud, visible anomaly, not a
+     silent re-fire risk) rather than trusting the happy path never
+     crashes.
+  2. `src/lib/submit/gofractional.ts` (new): drives
+     `withBrowserSession()` (existing, browser-session.ts) to fill and
+     submit GoFractional's real apply form using `ApplyProfileConfig`
+     fields. Field-name/shape mapping is captured live (cannot be
+     front-loaded without observing the real form — see design-
+     discussion.md §2). Treats ONLY a real, observed post-submit
+     confirmation state as success — anything else (including the
+     Cloudflare "Performing security verification" interstitial) throws,
+     never infers success from "the click didn't throw."
+  3. Orchestration call order for a real fire: `markDraftSubmitting()` ->
+     adapter.submit() -> on success, `markDraftSubmitted()` (existing);
+     on failure, `markDraftFailed()`.
+
+acceptance_criteria:
+  - "Given a real, valid ApplyProfileConfig and a real GoFractional session, the adapter submits a real test application and returns success only after observing the real post-submit confirmation state."
+  - "Given the Cloudflare interstitial appears instead of the real form, the adapter throws a specific, actionable error — never returns a fake success."
+  - "markDraftSubmitting() is called before the adapter's submit(), and a draft found in 'submitting' status on a later evaluateAutoFire() pass is treated as ALREADY IN FLIGHT, never re-fired."
+  - "A submit failure transitions the draft back to 'approved' via markDraftFailed(), with the failure reason persisted to the autofire_decisions log."
+
+steps:
+  - id: research
+    description: Live-observe GoFractional's real apply-form field names/shape and its real post-submit confirmation state, against the owner's own real session (same methodology gofractional.ts's own fetch side already used).
+    agent: researcher
+  - id: implement
+    description: Implement the adapter + the submitting/failed draft-status transitions.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Fixture-based tests against the captured real form shape (mirrors every other adapter's fixture-test convention in this repo) plus the submitting-status re-fire-prevention test.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review specifically for "never infer success" discipline and the double-submit safety ordering.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch. Manual: owner performs one real, deliberate test fire before this story is considered done (see Verification Strategy in design-discussion.md §7).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/sources/gofractional.ts
+      purpose: existing browser-session mechanics + the Cloudflare-interstitial precedent this adapter must also tolerate
+    - path: src/lib/auth/browser-session.ts
+      purpose: withBrowserSession() — the shared headed-browser mechanism this adapter reuses
+    - path: src/lib/types.ts
+      purpose: ApplyProfileConfig fields this adapter maps into the real form
+
+design_decisions:
+  - decision: A crash mid-fire must be detectable, not just "unlikely." The submitting intermediate status exists specifically so a stuck draft is loud and visible rather than silently re-fireable.
+    rationale: design-discussion.md §4's critical risk — "a submit adapter silently double-submits" — is the single most dangerous failure mode in this whole epic (a real, duplicate application sent to a real employer).
+
+risks:
+  - severity: critical
+    description: A double-submit to a real employer is the worst-case outcome of this entire epic.
+    mitigation: The submitting-status check + this story's own dedicated test for it. This story does not ship without that test passing.
+  - severity: high
+    description: GoFractional's Cloudflare interstitial could appear intermittently rather than consistently, making "throws on interstitial" hard to test deterministically.
+    mitigation: Treat ANY non-confirmed-success page state as a throw, not just the specific interstitial text — a conservative default that fails safe.
+
+references:
+  - path: .pHive/epics/graduated-auto-fire-trust/docs/design-discussion.md
+    relevant_excerpt: |
+      §4 What Could Go Wrong — the double-submit and Cloudflare-interstitial risks this story exists to mitigate.
+      §7 Verification Strategy — the manual real-test-fire acceptance bar.

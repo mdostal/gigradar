@@ -176,6 +176,50 @@ export interface Config {
    * pattern as autoDraftOnScan above.
    */
   notifyOnGreenMatch?: boolean;
+  /**
+   * Opt-in, per-`(sourceId, tier)` real submission automation
+   * (graduated-auto-fire-trust epic) — see `src/lib/apply/autofire.ts`'s
+   * `evaluateAutoFire()`. Omitted => auto-fire never runs for anything, the
+   * correct do-nothing default, same pattern as `autoDraftOnScan`/
+   * `notifyOnGreenMatch` above. `killSwitch: true` stops EVERY pair
+   * unconditionally, checked before any per-pair rule is even loaded --
+   * the fast "turn it all off" path.
+   */
+  autoFire?: {
+    killSwitch?: boolean;
+    rules: AutoFireRuleConfig[];
+  };
+}
+
+/**
+ * One `(sourceId, tier)` pair's auto-fire trust configuration
+ * (graduated-auto-fire-trust epic). `minApprovals` is the graduation
+ * threshold -- see `approvedCount()`/`isGraduated()` in
+ * `src/lib/apply/autofire.ts`. `dailyCap` bounds how many auto-fires this
+ * pair can trigger per day even once graduated and enabled.
+ */
+export interface AutoFireRuleConfig {
+  sourceId: string;
+  tier: Tier;
+  enabled: boolean;
+  minApprovals: number;
+  dailyCap: number;
+}
+
+/**
+ * One row of `evaluateAutoFire()`'s append-only decision log
+ * (`autofire_decisions` table, graduated-auto-fire-trust epic) -- written
+ * for EVERY evaluation, fired or not, so a config-drift question ("why did
+ * this fire / why didn't it") is always answerable from real history, not
+ * current config state (which may have changed since).
+ */
+export interface AutoFireDecision {
+  gigKey: string;
+  decidedAt: string;
+  fired: boolean;
+  reasons: string[];
+  /** The AutoFireRuleConfig in effect at decision time, or undefined when no per-pair rule was ever loaded (e.g. the kill switch stopped evaluation first). */
+  ruleSnapshot?: AutoFireRuleConfig;
 }
 
 /** A normalized gig, whatever source it came from. */
