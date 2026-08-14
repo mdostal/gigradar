@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-08-14
+
+### Fixed
+
+- **Sticky dashboard table header, take two — found the real root cause.**
+  A prior attempt (0.16.0) was reverted after a live-confirmed rendering
+  glitch (a scrolled-past row bleeding through above the header). Root
+  cause, confirmed by direct DOM experimentation against the live page: the
+  table wrapper's `overflow-x-auto` (needed for horizontal scroll on narrow
+  viewports) implicitly computes `overflow-y: auto` too, per the CSS2.1
+  overflow computed-value rule — so it was already a scroll container, just
+  with no bounded height, which broke a page-relative sticky attempt (the
+  sticky cells' containing block was that div, not the viewport). Fixed by
+  bounding the wrapper (`max-h-[70vh] overflow-auto`) and adding
+  `isolation: isolate` to each sticky `<th>` — confirmed live to be the
+  actual missing ingredient for the bleed-through: `z-index` alone didn't
+  reliably force a new stacking context for a sticky table cell in testing.
+  Live-verified against the real running dashboard (296 real gigs) at both
+  a small and large scroll offset, and confirmed column sorting still works
+  correctly with the header stuck.
+
 ## [0.17.0] - 2026-08-13
 
 ### Added
