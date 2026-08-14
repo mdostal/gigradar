@@ -14,4 +14,10 @@ export default defineConfig({
       "@": path.resolve(dirname, "src"),
     },
   },
+  test: {
+    // Global safety net -- see vitest.setup.ts's own header comment: no
+    // test should ever be able to write to the owner's real gigradar
+    // database, even incidentally.
+    setupFiles: ["./vitest.setup.ts"],
+  },
 });
