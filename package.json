@@ -1,6 +1,6 @@
 {
   "name": "gigradar",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "private": false,
   "license": "MIT",
   "description": "Open-source gig radar: define your accounts, needs, and role — it tracks and finds matching fractional/contract roles across the sources you enable, runs on a schedule, and assists the apply.",

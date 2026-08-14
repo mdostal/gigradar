@@ -87,7 +87,7 @@ function SortableHeader({
 }) {
   const active = sort?.field === field;
   return (
-    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+    <th className="sticky top-0 z-[1] isolate bg-slate-50 px-3 py-2 text-left font-semibold text-slate-600">
       <button
         type="button"
         onClick={() => onSort(field)}
@@ -275,15 +275,39 @@ export function DashboardClient({
         {filtered.length} of {gigs.length} gig{gigs.length === 1 ? "" : "s"}
       </p>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 shadow-sm">
+      {/*
+        max-h-[70vh] + overflow-auto makes THIS div the sticky-positioning
+        containing block for the <th> cells below (top-0 relative to its OWN
+        scroll). Deliberately NOT the page's own scroll: this same div's
+        `overflow-x-auto` (needed for horizontal scroll on narrow viewports)
+        implicitly computes `overflow-y: auto` too per the CSS2.1 overflow
+        computed-value coupling rule (setting one axis non-visible forces the
+        other off "visible" as well) -- so it was ALREADY becoming a scroll
+        container even before this fix, just with no bounded height, which is
+        what broke a naive page-relative sticky attempt (confirmed live: the
+        sticky element's containing block was this div, not the viewport, so
+        it scrolled away with the page instead of pinning).
+        Sticky is applied to each individual <th>, not <thead> -- position:sticky
+        on thead/tr (display:table-header-group/table-row) is a known
+        cross-browser inconsistency. Each sticky <th> also has `isolation:
+        isolate` (Tailwind `isolate`) -- confirmed live to be the actual fix
+        for a real bleed-through glitch (a scrolled-past row's text visible
+        above the header): z-index alone did NOT reliably force a new
+        stacking context for a sticky table cell in testing, isolation does.
+      */}
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 shadow-sm">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
               {SORTABLE_COLUMNS.map(({ label, field }) => (
                 <SortableHeader key={field} label={label} field={field} sort={sort} onSort={handleSort} />
               ))}
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Change status</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Draft</th>
+              <th className="sticky top-0 z-[1] isolate bg-slate-50 px-3 py-2 text-left font-semibold text-slate-600">
+                Change status
+              </th>
+              <th className="sticky top-0 z-[1] isolate bg-slate-50 px-3 py-2 text-left font-semibold text-slate-600">
+                Draft
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
