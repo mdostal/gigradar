@@ -9,10 +9,17 @@ import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// raiseIssue() (notifications-epic) fires a real desktop notification --
+// mocked here so these tests never actually shell out to osascript/
+// notify-send, same reasoning as src/lib/notify/__tests__/issues.test.ts.
+vi.mock("../../lib/notify/desktop.js", () => ({ sendDesktopNotification: vi.fn(async () => undefined) }));
+
 import type { ApplicationDraft } from "../../lib/apply/runner.js";
 import { closeDb, getDb } from "../../lib/store/db.js";
 import { recordScan } from "../../lib/store/gigs.js";
 import { getDraft, saveDraft, setDraftStatus } from "../../lib/store/drafts.js";
+import { listIssues } from "../../lib/notify/issues.js";
 import { registerSubmitAdapter } from "../../lib/submit/adapter.js";
 import type { ApplyProfileConfig, Config, DraftContent, Gig, MatchResult } from "../../lib/types.js";
 import { runAutoDraft } from "../index.js";
@@ -103,6 +110,28 @@ describe("runAutoDraft: graduated-auto-fire-trust wiring", () => {
     expect(getDraft(key, { db })?.status).toBe("draft");
   });
 
+  it("a stageApplicationFn failure raises a severity=warning issue (notifications-epic)", async () => {
+    const sourceId = "src-draft-fails";
+    recordScan([{ sourceId, gigs: [makeGig(sourceId, "1", "green")] }], { db, now: "2026-01-02T00:00:00.000Z" });
+    const key = `${sourceId}:1`;
+    const gig = makeGig(sourceId, "1", "green");
+    const stageApplicationFn = vi.fn(async () => {
+      throw new Error("Anthropic API rate limited");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await runAutoDraft(makeConfig(), [matchResultFor(gig)], stageApplicationFn, (k) => getDraft(k, { db }));
+
+    const openIssues = listIssues({ open: true }, { db });
+    expect(openIssues).toHaveLength(1);
+    expect(openIssues[0]).toMatchObject({
+      severity: "warning",
+      source: `autoDraft:${key}`,
+      title: "Auto-draft failed",
+      message: expect.stringContaining("Anthropic API rate limited"),
+    });
+  });
+
   it("a graduated, enabled pair with a registered adapter and a passing draft: draft -> submitting -> submitted, gig -> applied", async () => {
     const sourceId = "src-fires";
     seedGraduatingHistory(sourceId, 3); // reaches minApprovals: 3
@@ -150,6 +179,16 @@ describe("runAutoDraft: graduated-auto-fire-trust wiring", () => {
     const storedGig = db.prepare("SELECT status FROM gigs WHERE key = ?").get(key) as { status: string };
     expect(storedGig.status).toBe("new"); // markDraftSubmitted() never ran
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Cloudflare interstitial blocked the form"));
+
+    // notifications-epic: a real submit failure raises a severity="error" issue.
+    const openIssues = listIssues({ open: true }, { db });
+    expect(openIssues).toHaveLength(1);
+    expect(openIssues[0]).toMatchObject({
+      severity: "error",
+      source: `autofire-submit:${key}`,
+      title: "Auto-fire submit failed",
+      message: expect.stringContaining("Cloudflare interstitial blocked the form"),
+    });
 
     consoleErrorSpy.mockRestore();
   });

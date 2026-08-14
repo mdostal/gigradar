@@ -1,0 +1,66 @@
+id: issues-dashboard-ui
+epic: notifications-epic
+title: "Nav badge (open-issue count/severity) + /issues page with Resolve"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [issues-real-call-sites]
+parallel_allowed: true
+parallel_rationale: bounded-slice
+files_to_modify:
+  - file: src/app/nav-header.tsx
+    change: add the open-issue count badge
+  - file: src/app/issues/page.tsx
+    change: new page, list + resolve
+  - file: src/app/issues/issues-client.tsx
+    change: new client component, resolve button per row
+  - file: src/app/issues/actions.ts
+    change: new resolveIssueAction Server Action
+
+description: |
+  1. `nav-header.tsx`: a new "Issues" nav link with a badge -- count of
+     open issues, red if any severity="error" is open, amber if only
+     "warning"s are open, badge hidden entirely at zero open (matches
+     this repo's existing "omission is the correct empty state"
+     convention).
+  2. New `/issues` page: server component reading `listIssues({open:
+     true})` (open first) then resolved (collapsed/secondary section),
+     severity badge (color-coded, matches drafts-client.tsx's
+     STATUS_BADGE_CLASS pattern), source, title, message, raised_at,
+     a "Resolve" button per open row (Server Action ->
+     `revalidatePath("/issues")` + `revalidatePath("/")` for the nav
+     badge, matching saveConfigAction's own established
+     revalidate-on-write convention).
+
+acceptance_criteria:
+  - "Zero open issues: no badge shown at all on the Issues nav link."
+  - "1+ open warning-severity issues, zero errors: amber badge with the count."
+  - "1+ open error-severity issues (regardless of warnings): red badge with the TOTAL open count."
+  - "Clicking Resolve on an open issue removes it from the open list and the nav badge count decrements, without a full page reload (revalidatePath)."
+
+steps:
+  - id: implement
+    description: Build the nav badge + /issues page + resolve action.
+    agent: developer
+  - id: test
+    description: Server Action test (mirrors config actions.test.ts style) for resolveIssueAction; badge-color-selection logic extracted as a pure function and unit tested (mirrors dashboard-filter.ts's pure-function convention).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review badge prominence/clarity -- this is the owner's primary "something needs me" surface.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/nav-header.tsx
+      purpose: NAV_LINKS array + badge insertion point
+    - path: src/app/drafts/drafts-client.tsx
+      purpose: STATUS_BADGE_CLASS color-coding pattern to mirror
+    - path: src/app/config/actions.ts
+      purpose: revalidatePath()-on-write Server Action convention to mirror

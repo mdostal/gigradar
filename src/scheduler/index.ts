@@ -42,6 +42,7 @@ import { evaluateAutoFire } from "../lib/apply/autofire.js";
 import { runRadar, stageApplication } from "../lib/apply/runner.js";
 import { loadConfig } from "../lib/config/load.js";
 import { sendDesktopNotification } from "../lib/notify/desktop.js";
+import { raiseIssue } from "../lib/notify/issues.js";
 import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting } from "../lib/store/index.js";
 import { getSubmitAdapter } from "../lib/submit/adapter.js";
 import type { ApplyProfileConfig, Config, MatchResult, SourceConfig } from "../lib/types.js";
@@ -215,7 +216,15 @@ async function attemptAutoFire(
   try {
     decision = evaluateAutoFireFn(key, config);
   } catch (e) {
-    console.error(`gigradar scheduler: auto-fire evaluation failed for "${key}" — ${e instanceof Error ? e.message : String(e)}`);
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`gigradar scheduler: auto-fire evaluation failed for "${key}" — ${message}`);
+    await raiseIssue({
+      severity: "warning",
+      source: `autofire-eval:${key}`,
+      title: "Auto-fire evaluation failed",
+      message,
+      context: { gigKey: key },
+    });
     return;
   }
   if (!decision.fired) return;
@@ -237,7 +246,18 @@ async function attemptAutoFire(
     markDraftSubmitted(key);
     console.log(`gigradar scheduler: auto-fired application for "${gig.title}" (${key}).`);
   } catch (e) {
-    markDraftFailed(key, e instanceof Error ? e.message : String(e));
+    const message = e instanceof Error ? e.message : String(e);
+    markDraftFailed(key, message);
+    // severity "error", not "warning" -- unlike an evaluation bug above,
+    // this is a real submission ATTEMPT that failed; a materially bigger
+    // deal (see design-discussion.md §3.3 in the notifications-epic docs).
+    await raiseIssue({
+      severity: "error",
+      source: `autofire-submit:${key}`,
+      title: "Auto-fire submit failed",
+      message,
+      context: { gigKey: key, sourceId: gig.sourceId },
+    });
   }
 }
 
@@ -277,7 +297,15 @@ export async function runAutoDraft(
       await stageApplicationFn(r, config, apiKey);
       draftedCount += 1;
     } catch (e) {
-      console.error(`gigradar scheduler: auto-draft failed for "${r.gig.title}" (${key}) — ${e instanceof Error ? e.message : String(e)}`);
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`gigradar scheduler: auto-draft failed for "${r.gig.title}" (${key}) — ${message}`);
+      await raiseIssue({
+        severity: "warning",
+        source: `autoDraft:${key}`,
+        title: "Auto-draft failed",
+        message,
+        context: { gigKey: key },
+      });
       continue;
     }
 
@@ -405,6 +433,21 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
       }
 
       logCycleSummary(result, tracker, skippedSourceIds);
+
+      // notifications-epic: a source erroring isn't catastrophic (backoff
+      // above already handles repeats), but the owner should be able to
+      // SEE it without tailing logs. Deduped by raiseIssue() itself on
+      // (source, title) -- a source failing every cycle raises exactly
+      // once until resolved, not once per cycle.
+      for (const e of result.errors) {
+        await raiseIssue({
+          severity: "warning",
+          source: `runRadar:${e.sourceId}`,
+          title: "Source fetch failed",
+          message: e.message,
+          context: { sourceId: e.sourceId },
+        });
+      }
 
       // auto-draft-on-scan epic: opt-in, off by default (config.autoDraftOnScan
       // unset/false is a no-op inside runAutoDraft() itself) — see that

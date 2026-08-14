@@ -78,4 +78,24 @@ CREATE TABLE IF NOT EXISTS autofire_decisions (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_autofire_decisions_gig_key ON autofire_decisions(gig_key);
+
+-- Durable, severity-tiered "needs attention" issues (notifications-epic) --
+-- see src/lib/notify/issues.ts's raiseIssue()/resolveIssue()/listIssues(),
+-- the only code that ever touches this table directly. Not tied to any
+-- other table by FK -- an issue can be about a source, a gig, a config
+-- problem, or anything else; the context column carries whatever
+-- structured detail the raiser wants to attach (e.g. gigKey, sourceId),
+-- never interpreted by this schema itself.
+CREATE TABLE IF NOT EXISTS issues (
+  id          TEXT PRIMARY KEY,
+  severity    TEXT NOT NULL CHECK (severity IN ('warning', 'error')),
+  source      TEXT NOT NULL,      -- e.g. "runRadar:gofractional", "autofire-submit:braintrust:123" -- raiseIssue()'s dedupe key is (source, title)
+  title       TEXT NOT NULL,
+  message     TEXT NOT NULL,
+  context     TEXT,               -- JSON-stringified Record<string, unknown>, nullable
+  raised_at   TEXT NOT NULL,      -- ISO datetime
+  resolved_at TEXT                -- ISO datetime, null while open
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_issues_open ON issues(resolved_at);
 `;

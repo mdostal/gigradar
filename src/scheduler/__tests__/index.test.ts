@@ -1,8 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Cron } from "croner";
+
+// raiseIssue() (notifications-epic) fires a real desktop notification --
+// mocked here so the new describe block below never actually shells out to
+// osascript/notify-send, same reasoning as issues.test.ts/auto-fire.test.ts.
+vi.mock("../../lib/notify/desktop.js", () => ({ sendDesktopNotification: vi.fn(async () => undefined) }));
 import type { ApplicationDraft } from "../../lib/apply/runner.js";
 import { gigKey } from "../../lib/store/index.js";
 import type { Config, Gig, MatchResult, Tier } from "../../lib/types.js";
@@ -636,5 +641,69 @@ describe("startScheduler: notify-on-green-match (Config.notifyOnGreenMatch)", ()
 
     expect(exitFn).not.toHaveBeenCalled(); // the cycle's fatal error boundary never fires
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("notify-on-green-match failed"));
+  });
+});
+
+describe("startScheduler: runCycle raises an issue per source error (notifications-epic)", () => {
+  // Own isolated db setup, unlike every other describe block above (which
+  // never touch the store) -- mirrors src/scheduler/__tests__/auto-fire.test.ts's
+  // own reasoning: raiseIssue() hits the real store via a bare getDb() call.
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-scheduler-issues-test-"));
+    vi.stubEnv("GIGRADAR_DB_PATH", path.join(tmpDir, "gigs.db"));
+    const { closeDb } = await import("../../lib/store/db.js");
+    closeDb(); // any earlier describe block's connection (if any) must not leak into this one's path
+  });
+
+  afterEach(async () => {
+    const { closeDb } = await import("../../lib/store/db.js");
+    closeDb();
+    vi.unstubAllEnvs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("a source fetch error raises exactly one open, severity=warning issue", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: [],
+      passed: [],
+      errors: [{ sourceId: "gofractional", message: "Cloudflare interstitial" }],
+      newlyInsertedKeys: [],
+    }));
+    const config = makeConfig({ schedule: "*/1 * * * * *" });
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    const { listIssues } = await import("../../lib/notify/issues.js");
+    const open = listIssues({ open: true });
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({
+      severity: "warning",
+      source: "runRadar:gofractional",
+      title: "Source fetch failed",
+      message: "Cloudflare interstitial",
+    });
+  });
+
+  it("the same source erroring across multiple cycles raises only ONE issue (deduped), not one per cycle", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: [],
+      passed: [],
+      errors: [{ sourceId: "gofractional", message: "Cloudflare interstitial" }],
+      newlyInsertedKeys: [],
+    }));
+    const config = makeConfig({ schedule: "*/1 * * * * *" });
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+    await (handle.getJob() as Cron).trigger();
+    await (handle.getJob() as Cron).trigger();
+
+    const { listIssues } = await import("../../lib/notify/issues.js");
+    expect(listIssues({ open: true })).toHaveLength(1);
   });
 });

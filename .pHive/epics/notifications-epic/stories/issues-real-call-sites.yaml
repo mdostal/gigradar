@@ -1,0 +1,54 @@
+id: issues-real-call-sites
+epic: notifications-epic
+title: "Wire raiseIssue() into runCycle's source errors + auto-draft/auto-fire failures"
+status: pending
+complexity: low
+methodology: classic
+depends_on: [issues-data-model]
+
+description: |
+  Three real, already-existing failure paths get a raiseIssue() call
+  alongside their existing console.error/console.warn (never replacing
+  it -- terminal logs stay as-is for anyone watching):
+  1. `src/scheduler/index.ts`'s `runCycle()`: each `runRadarFn()` error
+     (per-source fetch failure) -> severity "warning", source
+     `runRadar:${sourceId}`.
+  2. `runAutoDraft()`'s drafting-failure catch -> severity "warning",
+     source `autoDraft:${gigKey}`.
+  3. `attemptAutoFire()`'s two catches -> the evaluation-failure catch is
+     severity "warning" (source `autofire-eval:${gigKey}`), the
+     submit-failure catch (inside `markDraftFailed`'s caller) is
+     severity "error" (source `autofire-submit:${gigKey}`) -- a real
+     submission attempt failing is a materially bigger deal than an
+     evaluation bug.
+
+acceptance_criteria:
+  - "A source fetch failure during a real scheduler cycle results in exactly one open issue, severity warning."
+  - "An auto-draft failure results in exactly one open issue, severity warning."
+  - "An auto-fire evaluation failure results in one open issue, severity warning; a submit failure results in one open issue, severity error."
+  - "Every one of these three call sites' existing console.error/warn lines is unchanged -- this story only ADDS raiseIssue() calls."
+
+steps:
+  - id: implement
+    description: Add the three raiseIssue() call sites.
+    agent: developer
+  - id: test
+    description: Extend the existing scheduler integration tests (auto-fire.test.ts, index.test.ts) to assert the new issue rows.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no existing log line was removed/changed, only added to.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/scheduler/index.ts
+      purpose: all three call sites live here
+    - path: src/lib/notify/issues.ts
+      purpose: raiseIssue(), built by the prior story

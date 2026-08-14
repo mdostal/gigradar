@@ -1,0 +1,52 @@
+id: issues-data-model
+epic: notifications-epic
+title: "issues table + raiseIssue()/resolveIssue()/listIssues() + dedupe-on-open"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Foundation story. New `issues` table (schema.ts): id, severity
+  ('warning'|'error'), source, title, message, context (JSON, optional),
+  raised_at, resolved_at (null while open). `src/lib/notify/issues.ts`:
+  `raiseIssue({severity, source, title, message, context?}): string`
+  (returns the id) — if an OPEN issue already exists with the same
+  (source, title), returns its existing id and does nothing else (no new
+  row, no new notification) rather than re-raising; otherwise inserts a
+  new row and fires `sendDesktopNotification()` (existing,
+  src/lib/notify/desktop.ts, unmodified) best-effort. `resolveIssue(id)`
+  sets resolved_at. `listIssues({open?: boolean})` for the dashboard
+  story.
+
+acceptance_criteria:
+  - "raiseIssue() persists a real row and returns its id."
+  - "raiseIssue() with the same (source, title) as an already-OPEN issue does not insert a second row or fire a second notification -- returns the existing open issue's id."
+  - "raiseIssue() with the same (source, title) as a RESOLVED issue DOES raise a new one (the old one is closed, this is a fresh occurrence)."
+  - "resolveIssue() sets resolved_at and the issue no longer appears in listIssues({open: true})."
+  - "listIssues() with no filter returns everything, open and resolved."
+
+steps:
+  - id: implement
+    description: Implement the schema addition + issues.ts.
+    agent: developer
+  - id: test
+    description: Fixture-based tests for every acceptance criterion, mirrors autofire.test.ts's temp-db style.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review dedupe logic and severity CHECK constraint.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/schema.ts
+      purpose: new issues table
+    - path: src/lib/notify/desktop.ts
+      purpose: existing sendDesktopNotification(), reused unmodified
