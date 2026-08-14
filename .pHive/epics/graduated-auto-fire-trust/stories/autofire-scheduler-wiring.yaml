@@ -1,0 +1,71 @@
+id: autofire-scheduler-wiring
+epic: graduated-auto-fire-trust
+title: "Wire evaluateAutoFire() into the scheduler cycle, right after autoDraftOnScan stages a draft"
+status: pending
+complexity: low
+methodology: classic
+depends_on: [gofractional-submit-adapter]
+
+description: |
+  First half of Vertical Plan Slice 4 — the wiring that makes anything
+  fire automatically, deliberately kept separate from the config UI story
+  so this backend change can be reviewed/tested on its own before the UI
+  layer is added on top. Before this story lands, config.json's
+  `autoFire` section (if present) is inert — this story is what makes it
+  live.
+
+  In `src/scheduler/index.ts`, immediately after `runAutoDraft()`'s
+  existing per-gig `stageApplication()` call succeeds for a gig, call
+  `evaluateAutoFire(gigKey, config)`. If it says fire, call
+  `getSubmitAdapter(sourceId).submit(...)` following the exact
+  markDraftSubmitting -> submit -> markDraftSubmitted/markDraftFailed
+  order the prior story established. Every outcome (fired or not) is
+  already logged via `autofire_decisions` inside `evaluateAutoFire()`
+  itself — this story adds no separate logging, just the call site.
+
+acceptance_criteria:
+  - "Given config.autoFire is unset, this story's wiring is a complete no-op — behavior identical to before this epic existed."
+  - "Given a graduated, enabled pair with a registered adapter and a passing draft, one real cycle results in the draft transitioning draft -> submitting -> submitted, and the linked gig's status becomes 'applied' (existing markDraftSubmitted() behavior, unchanged)."
+  - "A SubmitAdapter throwing an error is caught at this call site, logged the same way an autoDraftOnScan per-gig failure is already logged (one line, not a cycle-ending crash), and the draft is left in a safe, non-'submitting' state via markDraftFailed()."
+
+steps:
+  - id: research
+    description: Confirm the exact existing per-gig error-handling/logging convention runAutoDraft() uses today, to match it exactly for auto-fire failures.
+    agent: researcher
+  - id: implement
+    description: Add the evaluateAutoFire() + conditional submit call site.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Scheduler-level integration test (mirrors the existing notify-on-green-match/auto-draft scheduler test style) covering the no-op case, the successful-fire case, and the adapter-throws case.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for consistency with the scheduler's existing per-gig failure-isolation convention (one bad gig must never abort the whole cycle).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/scheduler/index.ts
+      purpose: runAutoDraft()'s existing per-gig stageApplication() call site this story extends
+    - path: src/lib/apply/autofire.ts
+      purpose: evaluateAutoFire(), already fully built and tested by the prior two stories
+
+design_decisions:
+  - decision: Keep this wiring story separate from the config UI story.
+    rationale: The backend behavior change (something can now actually fire) is reviewable and testable independent of the UI that lets the owner configure it — smaller, more focused review surface for the highest-consequence change in the epic.
+
+risks:
+  - severity: medium
+    description: An adapter throwing mid-cycle could, if mishandled, abort the whole scheduler cycle (losing results for every other source that cycle).
+    mitigation: Wrap the auto-fire call site in the same per-gig try/catch isolation runAutoDraft() already uses for stageApplication() failures.
+
+references:
+  - path: .pHive/epics/graduated-auto-fire-trust/docs/vertical-plan.md
+    relevant_excerpt: "Slice 4 — Orchestration wiring + config UI (what the owner actually uses)."

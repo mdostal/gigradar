@@ -1,0 +1,86 @@
+id: autofire-config-ui
+epic: graduated-auto-fire-trust
+title: "/config Auto-fire section: global kill switch, per-pair rule editor, live trust-status display"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [autofire-scheduler-wiring]
+parallel_allowed: true
+parallel_rationale: bounded-slice
+files_to_modify:
+  - file: src/app/config/config-client.tsx
+    change: add the Auto-fire section (kill switch, rule list, trust-status display)
+  - file: src/app/config/page.tsx
+    change: extend blankConfig()'s defaults for the new section
+
+description: |
+  Second half of Vertical Plan Slice 4 — the UI the owner actually
+  interacts with day to day. Runs in parallel with nothing else in this
+  epic (it's the last story, depends_on the wiring story) but is declared
+  bounded-slice since its write surface is narrow and disjoint from every
+  other story's files.
+
+  New "Auto-fire" section in `/config`, mirroring the existing
+  Schedule/Role-area section patterns:
+  1. **Global kill switch** — one prominent toggle at the TOP of the
+     section (`Config.autoFire.killSwitch`), visually separated from the
+     per-pair rule list below it (design-discussion.md §6, resolved Open
+     Question 4).
+  2. **Per-`(sourceId, tier)` rule editor** — a repeatable list (same
+     `EngagementProfilesEditor`-style repeatable-list pattern already
+     used for `engagementProfiles`): enabled toggle, minApprovals number
+     field (default 3), dailyCap number field (default 3).
+  3. **Live trust-status display** — for each configured pair, a
+     read-only "N/minApprovals approved" indicator plus a graduated/not-
+     graduated badge, sourced via a new Server Action that calls
+     `approvedCount()`/`isGraduated()` (read-only, never mutates
+     anything) — so the owner can see "2/3 approved, not yet graduated"
+     before it ever fires.
+
+acceptance_criteria:
+  - "The kill switch is visually the most prominent control in the section — a user scanning the page for 'how do I turn this all off' finds it in under 2 seconds."
+  - "Adding a new per-pair rule via the UI round-trips correctly through saveConfig() (existing secure write path, unchanged) and is visible on next page load."
+  - "The trust-status display reflects the REAL current approvedCount() for each pair, live, not a cached/stale value from when the page first loaded config."
+  - "Given autoFire is entirely unset, the section renders an empty/onboarding state (an 'add your first rule' prompt), never a crash or blank section."
+
+steps:
+  - id: research
+    description: Confirm the exact EngagementProfilesEditor repeatable-list pattern to mirror for the new rule editor.
+    agent: researcher
+  - id: implement
+    description: Build the Auto-fire config section per the description above.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Component/action tests for the new Server Action and the round-trip save/load behavior, mirroring existing config-client test coverage.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for UI clarity of the kill switch (highest-consequence control in the whole epic) and for read-only correctness of the trust-status display (must never accidentally mutate approval state).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: EngagementProfilesEditor's existing repeatable-list pattern this story's rule editor mirrors
+    - path: src/lib/apply/autofire.ts
+      purpose: approvedCount()/isGraduated(), read by the new Server Action
+
+design_decisions:
+  - decision: The trust-status display is read-only and reachable via its own dedicated Server Action, never folded into the general config-save path.
+    rationale: Keeps the highest-consequence UI surface in this epic simple to reason about — displaying real state can never accidentally become a write path.
+
+risks:
+  - severity: low
+    description: A rule editor that's too permissive (e.g. no bounds on minApprovals/dailyCap) could let the owner configure something nonsensical (minApprovals=0).
+    mitigation: Client-side + zod-schema minimums (minApprovals >= 1, dailyCap >= 1) — same validation-at-the-boundary discipline the rest of this codebase's config schema already follows.
+
+references:
+  - path: .pHive/epics/graduated-auto-fire-trust/docs/design-discussion.md
+    relevant_excerpt: "Open Question 4 (resolved) — global kill switch, surfaced as one prominent toggle at the top of the /config auto-fire section, separate from the per-pair rule list below it."
