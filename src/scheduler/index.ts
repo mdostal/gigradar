@@ -38,11 +38,13 @@
 // here (matches electron-wrapper's own "terminal-launched, not a packaged
 // installer/service" scope discipline).
 import { Cron } from "croner";
+import { evaluateAutoFire } from "../lib/apply/autofire.js";
 import { runRadar, stageApplication } from "../lib/apply/runner.js";
 import { loadConfig } from "../lib/config/load.js";
 import { sendDesktopNotification } from "../lib/notify/desktop.js";
-import { getDraft, gigKey } from "../lib/store/index.js";
-import type { Config, MatchResult, SourceConfig } from "../lib/types.js";
+import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting } from "../lib/store/index.js";
+import { getSubmitAdapter } from "../lib/submit/adapter.js";
+import type { ApplyProfileConfig, Config, MatchResult, SourceConfig } from "../lib/types.js";
 import { BackoffTracker, DEFAULT_MAX_BACKOFF_MS } from "./backoff.js";
 
 /**
@@ -188,11 +190,64 @@ function logCycleSummary(
  * mechanism). Always ends with a one-line summary of how many gigs were
  * auto-drafted.
  */
+/**
+ * The auto-fire attempt for one just-staged gig (graduated-auto-fire-trust
+ * epic) — called right after `stageApplicationFn()` succeeds inside
+ * `runAutoDraft()`'s own per-gig loop below. Has its OWN internal
+ * try/catch, entirely separate from that loop's drafting-failure catch: the
+ * draft itself already succeeded by the time this runs, so a submit
+ * failure here is a DIFFERENT kind of failure and must never be logged or
+ * counted as an "auto-draft failed" line. Every outcome (evaluated, fired
+ * or not, or a submit failure) is already durably logged elsewhere
+ * (`evaluateAutoFireFn()`'s own `autofire_decisions` row, or
+ * `markDraftFailed()`'s own console.error) — this function adds one
+ * success line on a real fire and nothing else on every other path,
+ * matching `runAutoDraft()`'s own "one line, never a crash" discipline.
+ */
+async function attemptAutoFire(
+  key: string,
+  config: Config,
+  applyProfile: ApplyProfileConfig,
+  evaluateAutoFireFn: typeof evaluateAutoFire,
+  getSubmitAdapterFn: typeof getSubmitAdapter,
+): Promise<void> {
+  let decision: ReturnType<typeof evaluateAutoFire>;
+  try {
+    decision = evaluateAutoFireFn(key, config);
+  } catch (e) {
+    console.error(`gigradar scheduler: auto-fire evaluation failed for "${key}" — ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  if (!decision.fired) return;
+
+  const gig = getGig(key);
+  const draft = getDraft(key);
+  const adapter = gig ? getSubmitAdapterFn(gig.sourceId) : undefined;
+  if (!gig || !draft || !adapter) {
+    // Structurally shouldn't happen -- evaluateAutoFire() only returns
+    // fired:true after confirming a gig, a draft, and a registered adapter
+    // all exist. Defense-in-depth, not the primary mechanism.
+    console.error(`gigradar scheduler: auto-fire decision said fire for "${key}" but the gig/draft/adapter it needs is missing.`);
+    return;
+  }
+
+  markDraftSubmitting(key);
+  try {
+    await adapter.submit(gig, draft.content, applyProfile);
+    markDraftSubmitted(key);
+    console.log(`gigradar scheduler: auto-fired application for "${gig.title}" (${key}).`);
+  } catch (e) {
+    markDraftFailed(key, e instanceof Error ? e.message : String(e));
+  }
+}
+
 export async function runAutoDraft(
   config: Config,
   passed: MatchResult[],
   stageApplicationFn: typeof stageApplication,
   getDraftFn: typeof getDraft,
+  evaluateAutoFireFn: typeof evaluateAutoFire = evaluateAutoFire,
+  getSubmitAdapterFn: typeof getSubmitAdapter = getSubmitAdapter,
 ): Promise<void> {
   if (!config.autoDraftOnScan) return;
 
@@ -209,6 +264,7 @@ export async function runAutoDraft(
     );
     return;
   }
+  const applyProfile = config.applyProfile;
 
   const eligible = passed
     .filter((r) => r.tier === "green" && getDraftFn(gigKey(r.gig.sourceId, r.gig.externalId)) === undefined)
@@ -216,16 +272,21 @@ export async function runAutoDraft(
 
   let draftedCount = 0;
   for (const r of eligible) {
+    const key = gigKey(r.gig.sourceId, r.gig.externalId);
     try {
       await stageApplicationFn(r, config, apiKey);
       draftedCount += 1;
     } catch (e) {
-      console.error(
-        `gigradar scheduler: auto-draft failed for "${r.gig.title}" (${gigKey(r.gig.sourceId, r.gig.externalId)}) — ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
+      console.error(`gigradar scheduler: auto-draft failed for "${r.gig.title}" (${key}) — ${e instanceof Error ? e.message : String(e)}`);
+      continue;
     }
+
+    // graduated-auto-fire-trust epic: evaluated right after a successful
+    // draft, using the SAME per-gig isolation as the draft attempt above --
+    // its own try/catch (attemptAutoFire) so one gig's auto-fire outcome
+    // never affects another's, and never retroactively "fails" the
+    // drafting step that already succeeded.
+    await attemptAutoFire(key, config, applyProfile, evaluateAutoFireFn, getSubmitAdapterFn);
   }
 
   console.log(`gigradar scheduler: ${draftedCount} gig(s) auto-drafted this cycle.`);

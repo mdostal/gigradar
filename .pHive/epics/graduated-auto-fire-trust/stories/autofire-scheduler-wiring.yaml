@@ -4,7 +4,7 @@ title: "Wire evaluateAutoFire() into the scheduler cycle, right after autoDraftO
 status: pending
 complexity: low
 methodology: classic
-depends_on: [gofractional-submit-adapter]
+depends_on: [autofire-decision-engine] # repointed off gofractional-submit-adapter (paused, see that story's pause_note) -- "no adapter registered" is a safe, correct terminal state
 
 description: |
   First half of Vertical Plan Slice 4 — the wiring that makes anything
