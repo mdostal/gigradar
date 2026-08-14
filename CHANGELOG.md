@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-08-14
+
+### Added
+
+- **Graduated auto-fire trust system.** Real, per-`(sourceId, tier)`
+  submission automation — off by default, earned rather than flipped on.
+  `Config.autoFire` (a global `killSwitch` plus per-pair
+  `{enabled, minApprovals, dailyCap}` rules); `approvedCount()`/
+  `isGraduated()` (pure computation over real approval history, never a
+  separate driftable counter); `evaluateAutoFire()`'s full 6-step decision
+  tree (kill switch → rule exists → enabled → graduated → a `SubmitAdapter`
+  is registered → 4 default checks: tier=green, draft-content sanity,
+  freshness/not-delisted, daily fire cap); an append-only
+  `autofire_decisions` audit table logging every evaluation, fired or not;
+  a `SubmitAdapter` registry (mirrors `Source`'s own registration pattern)
+  with a double-submit safety net (`'submitting'` status +
+  `markDraftSubmitting()`/`markDraftFailed()`); scheduler wiring
+  (isolated per-gig, never crashes a cycle); and a `/config` Auto-fire
+  section (kill switch, rule editor, on-demand trust-status check).
+  **The first real `SubmitAdapter` (GoFractional) is paused, not
+  shipped** — live-verified that GoFractional's job-detail page still
+  shows a Cloudflare verification challenge even from a real,
+  authenticated, human-worked session. "No `SubmitAdapter` registered"
+  is the correct, safe, fully-tested state every pair reaches today; see
+  docs/ARCHITECTURE.md's roadmap entry for the live-verified finding and
+  a likely real fix flagged for a future story.
+- **Local dev-update helper** (`npm run update`, `scripts/update.sh`) —
+  pulls the configured channel branch (`dev` by default, `prod` = `main`),
+  rebuilds, and restarts the local web server + scheduler in place. A
+  same-day dogfooding convenience, not the real end-user auto-updater
+  (that's a separate, future 1-click-installer epic).
+
 ## [0.19.0] - 2026-08-14
 
 ### Added
