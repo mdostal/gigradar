@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-14
+
+### Added
+
+- **LinkedIn `Source` adapter (`src/lib/sources/linkedin.ts`, `auth: "none"`).**
+  Fetches LinkedIn's public, fully server-rendered guest job-search page
+  (`/jobs/search/?keywords=...&f_JT=...`) — live-verified (both a real headed
+  browser and a bare cookieless `fetch()`) to return real, current listings
+  with zero authentication required, no Playwright dependency. Extracts
+  id/title/company/location/an absolute posted date per card; strips
+  ephemeral tracking query params (`position`/`pageNum`/`refId`/`trackingId`)
+  from each `Gig.url`, keeping only the stable per-listing permalink.
+  `rate`/`weeklyHours` are left `undefined` — LinkedIn's guest cards show
+  neither, never guessed. Registered in the runner, scheduler, and MCP
+  server's source lists alongside every other adapter (fixing, in the same
+  pass, a pre-existing gap where the MCP server was only registering 4 of
+  the project's then-9 adapters).
+- **Deliberate, documented exception to this project's `robots.txt`
+  convention** for the LinkedIn adapter only — see
+  `docs/ARCHITECTURE.md`'s "Deliberate exception: `linkedin.ts` and
+  `robots.txt`" section for the full rationale (personal, local-only,
+  never-republished use is a materially different situation from operating
+  a public scraping service against a `Disallow: /` aimed at bulk/commercial
+  crawlers). Scoped to this one adapter; every other adapter's
+  `robots.txt`-respecting default is unchanged.
+
 ## [0.18.0] - 2026-08-14
 
 ### Added

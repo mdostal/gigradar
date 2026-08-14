@@ -107,4 +107,10 @@ export const KNOWN_SOURCES: readonly { id: string; label: string; auth: "none" |
   // adapter-batch-public-boards epic, wellfound-adapter story:
   // src/lib/sources/wellfound.ts, auth:"browser-session".
   { id: "wellfound", label: "Wellfound", auth: "browser-session" },
+  // linkedin-adapter story: src/lib/sources/linkedin.ts. Confirmed live
+  // (both via a real headed session AND a bare curl/fetch with zero cookies)
+  // that LinkedIn's public "guest" job search page is fully server-rendered
+  // and requires no authentication at all — auth:"none", same as
+  // builtin.ts/braintrust.ts.
+  { id: "linkedin", label: "LinkedIn", auth: "none" },
 ];
