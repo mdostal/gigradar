@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-14
+
+### Added
+
+- **Severity-tiered issue signaling.** A durable `issues` store
+  (`warning`/`error`), `raiseIssue()`/`resolveIssue()`/`listIssues()`
+  with dedupe-on-open (a repeatedly-failing source raises once, not once
+  per cycle), reusing the existing desktop-notification mechanism
+  best-effort. Wired into three real, already-existing failure paths:
+  per-source fetch errors, auto-draft failures (both `warning`), and
+  auto-fire evaluation/submit failures (`warning`/`error`). A new
+  `/issues` dashboard page (open issues, Resolve action, collapsed
+  resolved history) and a nav badge (hidden at zero open, amber for
+  warnings-only, red whenever any error is open).
+
+### Fixed
+
+- **Test isolation**: several pre-existing scheduler/backoff tests were
+  silently writing fixture rows to the real production database as an
+  unintended side effect of the new `raiseIssue()` wiring above. Added a
+  global vitest safety net (`vitest.setup.ts`) so no test can touch the
+  owner's real database again, even incidentally.
+
 ## [0.20.0] - 2026-08-14
 
 ### Added
