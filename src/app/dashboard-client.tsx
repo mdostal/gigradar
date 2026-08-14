@@ -363,7 +363,7 @@ export function DashboardClient({
                         type="button"
                         disabled={generatingKeys.has(gig.key)}
                         onClick={() => handleGenerateDraft(gig.key)}
-                        className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                       >
                         {generatingKeys.has(gig.key) ? "Generating…" : draftButtonLabel(draftedGigKeys.has(gig.key))}
                       </button>
