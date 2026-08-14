@@ -1,0 +1,16 @@
+{
+  "agent_id": "a53a77c1a116468fb",
+  "session_id": "2096c7db-36b6-4ae7-a206-bb4fff054912",
+  "agent_type": "",
+  "cwd": "/Users/mdostal/Documents/work/gigradar",
+  "agent_transcript_path": "/Users/mdostal/.claude/projects/-Users-mdostal-Documents-work-gigradar/2096c7db-36b6-4ae7-a206-bb4fff054912/subagents/agent-a53a77c1a116468fb.jsonl",
+  "last_assistant_message": "Building out gigradar's job-hunting automation: LinkedIn adapter and a dev-update helper are live, and the auto-fire-trust epic is fully planned and ready to execute. Next: waiting on you to say whether to start building it or tackle something else in the queue first.",
+  "prompt_id": "a8fc5692-ff6f-40dd-b56a-5d959d96ed1e",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "verdict": "failure",
+  "verdict_source": "missing_marker",
+  "written_at": "2026-08-14T17:05:30Z"
+}
