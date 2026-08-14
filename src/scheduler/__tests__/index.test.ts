@@ -16,7 +16,12 @@ import {
 } from "../index.js";
 import { BackoffTracker } from "../backoff.js";
 
-type RunRadarResult = { results: MatchResult[]; passed: MatchResult[]; errors: { sourceId: string; message: string }[] };
+type RunRadarResult = {
+  results: MatchResult[];
+  passed: MatchResult[];
+  errors: { sourceId: string; message: string }[];
+  newlyInsertedKeys: string[];
+};
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -51,7 +56,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 }
 
 function emptyResult(): RunRadarResult {
-  return { results: [], passed: [], errors: [] };
+  return { results: [], passed: [], errors: [], newlyInsertedKeys: [] };
 }
 
 function makeGig(externalId: string, sourceId = "braintrust"): Gig {
@@ -210,7 +215,7 @@ describe("startScheduler: per-source backoff filtering across cycles", () => {
     let call = 0;
     const runRadarFn = vi.fn(async (_config: Config): Promise<RunRadarResult> => {
       call += 1;
-      if (call === 1) return { results: [], passed: [], errors: [{ sourceId: "flaky", message: "boom" }] };
+      if (call === 1) return { results: [], passed: [], errors: [{ sourceId: "flaky", message: "boom" }], newlyInsertedKeys: [] };
       return emptyResult();
     });
 
@@ -236,7 +241,7 @@ describe("startScheduler: per-source backoff filtering across cycles", () => {
     let call = 0;
     const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => {
       call += 1;
-      if (call <= 2) return { results: [], passed: [], errors: [{ sourceId: "flaky", message: "boom" }] };
+      if (call <= 2) return { results: [], passed: [], errors: [{ sourceId: "flaky", message: "boom" }], newlyInsertedKeys: [] };
       return emptyResult();
     });
 
@@ -282,6 +287,7 @@ describe("startScheduler: never writes to config.json", () => {
       results: [],
       passed: [],
       errors: [{ sourceId: "flaky", message: "boom" }],
+      newlyInsertedKeys: [],
     }));
     // loadConfigFn here reads the exact same doc a real loadConfig() would
     // parse, but bypasses the vault/encryption layer (irrelevant to this
@@ -372,7 +378,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   it("Config.autoDraftOnScan unset or false: zero stageApplication() calls -- no behavior change from before this story", async () => {
     process.env.ANTHROPIC_API_KEY = "fake-api-key";
     const passed = [makeMatchResult("1", "green")];
-    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
 
     for (const overrides of [{}, { autoDraftOnScan: false }] as const) {
       const stageApplicationFn = fakeStageApplicationFn();
@@ -391,7 +397,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
     // Three eligible green gigs -- proves the missing-key skip happens ONCE
     // for the whole cycle, not once per eligible gig.
     const passed = [makeMatchResult("1", "green"), makeMatchResult("2", "green"), makeMatchResult("3", "green")];
-    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
     const stageApplicationFn = fakeStageApplicationFn();
     const config = autoDraftConfig();
 
@@ -409,7 +415,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
     process.env.ANTHROPIC_API_KEY = "fake-api-key";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const passed = [makeMatchResult("1", "green"), makeMatchResult("2", "green")];
-    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
     const stageApplicationFn = fakeStageApplicationFn();
     const config = autoDraftConfig({ applyProfile: undefined });
 
@@ -426,7 +432,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   it("a gig that already has a draft (any status, e.g. 'rejected') is NOT re-drafted when found again as a green-tier match", async () => {
     process.env.ANTHROPIC_API_KEY = "fake-api-key";
     const passed = [makeMatchResult("already-drafted", "green"), makeMatchResult("new", "green")];
-    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
     const stageApplicationFn = fakeStageApplicationFn();
     const draftedKey = gigKey("braintrust", "already-drafted");
     const getDraftFn = vi.fn((key: string) =>
@@ -454,7 +460,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
     process.env.ANTHROPIC_API_KEY = "fake-api-key";
     expect(AUTO_DRAFT_CAP).toBe(5);
     const passed = Array.from({ length: 8 }, (_, i) => makeMatchResult(`g${i}`, "green"));
-    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
     const stageApplicationFn = fakeStageApplicationFn();
     const config = autoDraftConfig();
 
@@ -467,7 +473,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   it("a yellow-tier or red-tier match in result.passed is never passed to stageApplication() by the auto-draft path", async () => {
     process.env.ANTHROPIC_API_KEY = "fake-api-key";
     const passed = [makeMatchResult("yellow-gig", "yellow"), makeMatchResult("red-gig", "red"), makeMatchResult("green-gig", "green")];
-    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
     const stageApplicationFn = fakeStageApplicationFn();
     const config = autoDraftConfig();
 
@@ -482,7 +488,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
     process.env.ANTHROPIC_API_KEY = "fake-api-key";
     vi.spyOn(console, "error").mockImplementation(() => {});
     const passed = [makeMatchResult("fails", "green"), makeMatchResult("ok-1", "green"), makeMatchResult("ok-2", "green")];
-    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
     const stageApplicationFn = vi.fn(async (r: MatchResult): Promise<ApplicationDraft> => {
       if (r.gig.externalId === "fails") throw new Error("simulated per-gig draft failure");
       return { gig: r.gig, content: { coverText: "Dear team...", answers: {} }, status: "draft" };
@@ -502,7 +508,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
     process.env.ANTHROPIC_API_KEY = "fake-api-key";
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const passed = [makeMatchResult("1", "green"), makeMatchResult("2", "green")];
-    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [] }));
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
     const stageApplicationFn = fakeStageApplicationFn();
     const config = autoDraftConfig();
 
@@ -510,5 +516,125 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
     await (handle.getJob() as Cron).trigger();
 
     expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/^gigradar scheduler: 2 gig\(s\) auto-drafted this cycle\.$/));
+  });
+});
+
+describe("startScheduler: notify-on-green-match (Config.notifyOnGreenMatch)", () => {
+  function notifyConfig(overrides: Partial<Config> = {}): Config {
+    return makeConfig({ schedule: "*/1 * * * * *", notifyOnGreenMatch: true, ...overrides });
+  }
+
+  function fakeNotifyFn() {
+    return vi.fn(async (_n: { title: string; body: string }) => undefined);
+  }
+
+  it("Config.notifyOnGreenMatch unset or false: zero notify calls -- no behavior change from before this story", async () => {
+    const passed = [makeMatchResult("1", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: passed,
+      passed,
+      errors: [],
+      newlyInsertedKeys: [gigKey("braintrust", "1")],
+    }));
+
+    for (const overrides of [{}, { notifyOnGreenMatch: false }] as const) {
+      const notifyFn = fakeNotifyFn();
+      const config = makeConfig({ schedule: "*/1 * * * * *", ...overrides });
+      const handle = start({ loadConfigFn: () => config, runRadarFn, notifyFn, exitFn: vi.fn() });
+
+      await (handle.getJob() as Cron).trigger();
+
+      expect(notifyFn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a brand-new green-tier match fires exactly one notification naming the gig", async () => {
+    const passed = [makeMatchResult("1", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: passed,
+      passed,
+      errors: [],
+      newlyInsertedKeys: [gigKey("braintrust", "1")],
+    }));
+    const notifyFn = fakeNotifyFn();
+    const config = notifyConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, notifyFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+    const [notification] = notifyFn.mock.calls[0] as [{ title: string; body: string }];
+    expect(notification.body).toContain("Gig 1");
+  });
+
+  it("a green-tier match that ALREADY existed (not in newlyInsertedKeys) does NOT fire a notification, even though it's green", async () => {
+    const passed = [makeMatchResult("1", "green")];
+    // Empty newlyInsertedKeys -- this gig was seen before, just re-matched this cycle.
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
+    const notifyFn = fakeNotifyFn();
+    const config = notifyConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, notifyFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(notifyFn).not.toHaveBeenCalled();
+  });
+
+  it("a brand-new yellow-tier or red-tier match never fires a notification, even though it's newly inserted", async () => {
+    const passed = [makeMatchResult("1", "yellow")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: passed,
+      passed,
+      errors: [],
+      newlyInsertedKeys: [gigKey("braintrust", "1")],
+    }));
+    const notifyFn = fakeNotifyFn();
+    const config = notifyConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, notifyFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(notifyFn).not.toHaveBeenCalled();
+  });
+
+  it("multiple new green-tier matches in one cycle fire exactly ONE summarizing notification, not one per gig", async () => {
+    const passed = [makeMatchResult("1", "green"), makeMatchResult("2", "green"), makeMatchResult("3", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: passed,
+      passed,
+      errors: [],
+      newlyInsertedKeys: [gigKey("braintrust", "1"), gigKey("braintrust", "2"), gigKey("braintrust", "3")],
+    }));
+    const notifyFn = fakeNotifyFn();
+    const config = notifyConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, notifyFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(notifyFn).toHaveBeenCalledTimes(1);
+    const [notification] = notifyFn.mock.calls[0] as [{ title: string; body: string }];
+    expect(notification.body).toContain("3 new matches");
+  });
+
+  it("a notifyFn rejection is logged and swallowed -- never fails the cycle", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const passed = [makeMatchResult("1", "green")];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: passed,
+      passed,
+      errors: [],
+      newlyInsertedKeys: [gigKey("braintrust", "1")],
+    }));
+    const notifyFn = vi.fn(async () => {
+      throw new Error("simulated notification failure");
+    });
+    const config = notifyConfig();
+    const exitFn = vi.fn();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, notifyFn, exitFn });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(exitFn).not.toHaveBeenCalled(); // the cycle's fatal error boundary never fires
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("notify-on-green-match failed"));
   });
 });

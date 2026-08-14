@@ -89,9 +89,9 @@ export const SourceConfigSchema = z.object({
 
 /**
  * Mirrors `Config` in src/lib/types.ts exactly. `roleArea`, `schedule`,
- * `applyProfile`, and `autoDraftOnScan` MUST stay `.optional()` — see the
- * file-level comment above and types.ts's doc comments for why defaulting or
- * requiring them would be wrong.
+ * `applyProfile`, `autoDraftOnScan`, and `notifyOnGreenMatch` MUST stay
+ * `.optional()` — see the file-level comment above and types.ts's doc
+ * comments for why defaulting or requiring them would be wrong.
  */
 export const ConfigSchema = z.object({
   profile: ProfileSchema,
@@ -101,4 +101,5 @@ export const ConfigSchema = z.object({
   schedule: z.string().optional(),
   applyProfile: ApplyProfileConfigSchema.optional(),
   autoDraftOnScan: z.boolean().optional(),
+  notifyOnGreenMatch: z.boolean().optional(),
 });

@@ -32,6 +32,14 @@ export async function runRadar(
   results: MatchResult[];
   passed: MatchResult[];
   errors: { sourceId: string; message: string }[];
+  /**
+   * Store keys (gigKey(sourceId, externalId)) that were BRAND NEW this run
+   * — recordScan()'s own `upserted[].inserted` signal, surfaced here so a
+   * caller (the scheduler's notify-on-green-match story) can tell "just
+   * discovered this cycle" apart from "already existed, re-seen." Empty
+   * when every enabled source errored (recordScan() never ran).
+   */
+  newlyInsertedKeys: string[];
 }> {
   const results: MatchResult[] = [];
   const errors: { sourceId: string; message: string }[] = [];
@@ -84,10 +92,11 @@ export async function runRadar(
 
   // Persist the scan + run delisting detection. Skipped when every enabled
   // source errored (nothing to record, no DB connection needs opening).
-  if (batches.length > 0) recordScan(batches, storeOpts);
+  const newlyInsertedKeys =
+    batches.length > 0 ? recordScan(batches, storeOpts).upserted.filter((u) => u.inserted).map((u) => u.key) : [];
 
   const passed = results.filter((r) => r.pass).sort((a, b) => b.score - a.score);
-  return { results, passed, errors };
+  return { results, passed, errors, newlyInsertedKeys };
 }
 
 /**
