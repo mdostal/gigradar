@@ -12,6 +12,11 @@ const STATUS_TAB_LABEL: Record<DraftStatusFilter, string> = {
   approved: "Approved",
   rejected: "Rejected",
   submitted: "Submitted",
+  // Not in DRAFT_STATUS_TABS (drafts-filter.ts) -- 'submitting' is a brief,
+  // internal-only in-flight state (graduated-auto-fire-trust epic), not a
+  // tab a user picks. Still required here for Record<DraftStatusFilter,
+  // string>'s exhaustiveness now that DraftStatus includes it.
+  submitting: "Submitting…",
 };
 
 const STATUS_BADGE_CLASS: Record<DraftStatus, string> = {
@@ -19,6 +24,7 @@ const STATUS_BADGE_CLASS: Record<DraftStatus, string> = {
   approved: "bg-blue-100 text-blue-800 ring-1 ring-inset ring-blue-300",
   rejected: "bg-red-100 text-red-800 ring-1 ring-inset ring-red-300",
   submitted: "bg-green-100 text-green-800 ring-1 ring-inset ring-green-300",
+  submitting: "bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-300",
 };
 
 function tabClass(active: boolean): string {

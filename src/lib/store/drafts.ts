@@ -3,11 +3,11 @@
 // typed layer over one table (`application_drafts`, schema.ts) — the only
 // place in the codebase that writes raw SQL against it. Nothing outside
 // src/lib/store should ever need to.
-import type { DraftContent } from "../types.js";
+import type { AutoFireRuleConfig, DraftContent } from "../types.js";
 import { getDb, withTransaction } from "./db.js";
 import type { DbOption } from "./gigs.js";
 import { setStatus } from "./gigs.js";
-import type { DraftFilter, DraftStatus, StoredDraft } from "./types.js";
+import type { DraftFilter, DraftStatus, StoredAutoFireDecision, StoredDraft } from "./types.js";
 
 interface DraftRow {
   gig_key: string;
@@ -125,4 +125,57 @@ export function markDraftSubmitted(gigKey: string, opts: DbOption & { now?: stri
     }
     setStatus(gigKey, "applied", { db });
   });
+}
+
+interface AutoFireDecisionRow {
+  gig_key: string;
+  decided_at: string;
+  fired: number;
+  reasons: string;
+  rule_snapshot: string | null;
+}
+
+function toStoredAutoFireDecision(row: AutoFireDecisionRow): StoredAutoFireDecision {
+  return {
+    gigKey: row.gig_key,
+    decidedAt: row.decided_at,
+    fired: row.fired === 1,
+    reasons: JSON.parse(row.reasons) as string[],
+    ruleSnapshot: row.rule_snapshot ? (JSON.parse(row.rule_snapshot) as AutoFireRuleConfig) : null,
+  };
+}
+
+/**
+ * Appends one row to `autofire_decisions` (graduated-auto-fire-trust epic)
+ * — the audit trail `evaluateAutoFire()` writes for EVERY decision, fired or
+ * not. Deliberately append-only (no upsert-by-gig_key, unlike saveDraft()):
+ * a gig can be re-evaluated many times across scan cycles before it either
+ * fires or leaves rotation, and every one of those evaluations is real
+ * history worth keeping, not just the latest.
+ */
+export function recordAutoFireDecision(
+  decision: { gigKey: string; fired: boolean; reasons: string[]; ruleSnapshot?: AutoFireRuleConfig },
+  opts: DbOption & { now?: string } = {},
+): void {
+  const db = opts.db ?? getDb();
+  const now = opts.now ?? new Date().toISOString();
+  db.prepare(
+    `INSERT INTO autofire_decisions (gig_key, decided_at, fired, reasons, rule_snapshot)
+     VALUES (:gig_key, :decided_at, :fired, :reasons, :rule_snapshot)`,
+  ).run({
+    gig_key: decision.gigKey,
+    decided_at: now,
+    fired: decision.fired ? 1 : 0,
+    reasons: JSON.stringify(decision.reasons),
+    rule_snapshot: decision.ruleSnapshot ? JSON.stringify(decision.ruleSnapshot) : null,
+  });
+}
+
+/** List every autofire_decisions row for one gig, newest-decided-first. */
+export function listAutoFireDecisions(gigKey: string, opts: DbOption = {}): StoredAutoFireDecision[] {
+  const db = opts.db ?? getDb();
+  const rows = db
+    .prepare(`SELECT * FROM autofire_decisions WHERE gig_key = ? ORDER BY decided_at DESC`)
+    .all(gigKey) as unknown as AutoFireDecisionRow[];
+  return rows.map(toStoredAutoFireDecision);
 }

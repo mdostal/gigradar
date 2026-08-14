@@ -30,7 +30,15 @@ vi.mock("../gigs.js", async (importOriginal) => {
 
 import { closeDb, getDb } from "../db.js";
 import { getGig, recordScan } from "../gigs.js";
-import { getDraft, listDrafts, markDraftSubmitted, saveDraft, setDraftStatus } from "../drafts.js";
+import {
+  getDraft,
+  listAutoFireDecisions,
+  listDrafts,
+  markDraftSubmitted,
+  recordAutoFireDecision,
+  saveDraft,
+  setDraftStatus,
+} from "../drafts.js";
 
 let tmpDir: string;
 let dbPath: string;
@@ -191,5 +199,55 @@ describe("markDraftSubmitted: atomic transaction (AC8)", () => {
     const gigKey = seedGig("src-a", "1");
     expect(() => markDraftSubmitted(gigKey, { db })).toThrow(/no draft with gig_key/);
     expect(getGig(gigKey, { db })?.status).toBe("new");
+  });
+});
+
+describe("recordAutoFireDecision / listAutoFireDecisions", () => {
+  const RULE = { sourceId: "src-a", tier: "green" as const, enabled: true, minApprovals: 3, dailyCap: 3 };
+
+  it("persists a fired decision with its full rule snapshot", () => {
+    const gigKey = seedGig("src-a", "1");
+
+    recordAutoFireDecision(
+      { gigKey, fired: true, reasons: ["graduated", "all checks passed"], ruleSnapshot: RULE },
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+
+    const decisions = listAutoFireDecisions(gigKey, { db });
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toEqual({
+      gigKey,
+      decidedAt: "2026-01-01T00:00:00.000Z",
+      fired: true,
+      reasons: ["graduated", "all checks passed"],
+      ruleSnapshot: RULE,
+    });
+  });
+
+  it("persists a not-fired decision with reasons and a null rule snapshot (e.g. kill-switch stop)", () => {
+    const gigKey = seedGig("src-a", "1");
+
+    recordAutoFireDecision({ gigKey, fired: false, reasons: ["kill switch enabled"] }, { db, now: "2026-01-01T00:00:00.000Z" });
+
+    const decisions = listAutoFireDecisions(gigKey, { db });
+    expect(decisions[0]?.fired).toBe(false);
+    expect(decisions[0]?.ruleSnapshot).toBeNull();
+  });
+
+  it("is append-only — multiple decisions for the same gig across cycles all survive, newest first", () => {
+    const gigKey = seedGig("src-a", "1");
+
+    recordAutoFireDecision({ gigKey, fired: false, reasons: ["not graduated yet"] }, { db, now: "2026-01-01T00:00:00.000Z" });
+    recordAutoFireDecision({ gigKey, fired: false, reasons: ["not graduated yet"] }, { db, now: "2026-01-02T00:00:00.000Z" });
+    recordAutoFireDecision({ gigKey, fired: true, reasons: ["graduated"], ruleSnapshot: RULE }, { db, now: "2026-01-03T00:00:00.000Z" });
+
+    const decisions = listAutoFireDecisions(gigKey, { db });
+    expect(decisions).toHaveLength(3);
+    expect(decisions.map((d) => d.decidedAt)).toEqual(["2026-01-03T00:00:00.000Z", "2026-01-02T00:00:00.000Z", "2026-01-01T00:00:00.000Z"]);
+  });
+
+  it("returns an empty list for a gig with no recorded decisions", () => {
+    const gigKey = seedGig("src-a", "1");
+    expect(listAutoFireDecisions(gigKey, { db })).toEqual([]);
   });
 });

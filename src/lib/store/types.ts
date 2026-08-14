@@ -1,6 +1,6 @@
 // Types for the SQLite-backed Gig store. One place; everything in
 // src/lib/store imports from here (mirrors the convention in ../types.ts).
-import type { DraftContent, Gig } from "../types.js";
+import type { AutoFireRuleConfig, DraftContent, Gig } from "../types.js";
 
 /**
  * Where a gig sits in your pipeline. Store-managed — sources/gate never set
@@ -75,7 +75,7 @@ export interface GigFilter {
  * before, or without ever, being marked "applied"; see markDraftSubmitted()
  * for the one transition that keeps both statuses in sync.
  */
-export type DraftStatus = "draft" | "approved" | "rejected" | "submitted";
+export type DraftStatus = "draft" | "approved" | "rejected" | "submitted" | "submitting";
 
 /** An `application_drafts` row as persisted by the store (store/drafts.ts). */
 export interface StoredDraft {
@@ -94,4 +94,14 @@ export interface StoredDraft {
 
 export interface DraftFilter {
   status?: DraftStatus;
+}
+
+/** An `autofire_decisions` row as persisted by the store (store/drafts.ts's recordAutoFireDecision()). */
+export interface StoredAutoFireDecision {
+  gigKey: string;
+  decidedAt: string;
+  fired: boolean;
+  reasons: string[];
+  /** null when no per-pair rule was ever loaded for this decision (e.g. the kill switch stopped evaluation first). */
+  ruleSnapshot: AutoFireRuleConfig | null;
 }
