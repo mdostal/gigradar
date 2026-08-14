@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-## [0.16.0] - 2026-08-13
+## [0.17.0] - 2026-08-13
 
 ### Added
 
@@ -36,6 +36,74 @@ All notable changes to this project are documented in this file.
 - 30 new tests (576 total, 3 opt-in real-browser tests) — new `gate.test.ts`
   (gate.ts previously had zero dedicated unit tests despite being the
   core matching logic).
+
+## [0.16.0] - 2026-08-12
+
+### Added
+
+- **Dashboard table sorting + a Source filter.** All 8 data-backed columns
+  (Source, Title, Company, Tier, Status, Rate, Weekly hrs, Seen) are now
+  clickable sort headers — click once for ascending, click again to reverse,
+  click a different column to jump straight to ascending on it. Tier sorts
+  green→yellow→red (its actual meaning, not alphabetical); Status follows
+  its real lifecycle order (new→applied→interview→archived/ignored), not
+  alphabetical either. Missing values (no company, no rate, no tier) always
+  sort last, in both directions — never silently interleaved as if they
+  were zero. New `Source` filter dropdown (options built from the sources
+  actually present in your data, never a hardcoded list) combines with the
+  existing tier/status/search filters as AND. Live-verified against the
+  real running dashboard (228 real gigs): clicking Rate sorted ascending
+  ($15/hr → up), clicking again reversed it ($185,000/yr salary listings on
+  top).
+- 18 new tests (564 total, 3 opt-in real-browser tests) — `dashboard-sort.ts`
+  is a new pure, directly-unit-tested module mirroring
+  `dashboard-filter.ts`'s existing pattern.
+- **General dashboard/nav styling pass.** Nav header: sticky at the top of
+  the page, a "gigradar" wordmark, and active-link highlighting
+  (`usePathname()`). Dashboard: filter controls grouped into one cohesive
+  card, status strip rendered as pills, table gets zebra-striped rows, a row
+  hover state, and a card-style border/shadow. Tried (and reverted) a sticky
+  table header: `position: sticky` on `<thead>`/per-`<th>` produced a real,
+  live-confirmed rendering glitch (a scrolled-past row bleeding through
+  above the header) that couldn't be cleanly resolved in this pass, so the
+  header stays in normal flow rather than shipping a visible bug — flagged
+  as a real follow-up, not silently dropped.
+
+## [0.15.1] - 2026-08-12
+
+### Fixed
+
+- **Capture Login / browser-session Google OAuth rejection.** Both headed
+  browser launches (`session-capture.ts`'s guided login capture and
+  `browser-session.ts`'s per-run session use) were launching Playwright's
+  *bundled* Chromium build ("Chrome for Testing"), which Google's sign-in
+  flow actively fingerprints and rejects ("This browser or app may not be
+  secure"), independent of session validity. Fixed by launching the real,
+  locally-installed Google Chrome (`channel: "chrome"`) instead, via a new
+  shared `launchHeadedBrowser()` helper — confirmed live to launch, navigate
+  to `accounts.google.com`, and close cleanly using the real Chrome binary.
+  Falls back to bundled Chromium (with a one-time warning) on machines
+  without Chrome installed, so the module keeps working everywhere; only the
+  OAuth-rejection risk is unresolved in that fallback case.
+- 3 new tests covering the real-Chrome-preferred launch, the
+  bundled-Chromium fallback path, and the both-launches-fail error case
+  (551 total).
+- **Config UI's Settings editor showed a misleading API-key hint for
+  sources that need no credentials at all.** Braintrust and BuiltIn are
+  both `auth:"none"` — their optional `settings` (`roleIds`, `category`)
+  are listing filters, not credentials — but the Settings editor showed
+  the same "value — e.g. env:BRAINTRUST_API_KEY"-style hint for every
+  source regardless of its actual auth type. `KNOWN_SOURCES`
+  (`src/lib/sources/origins.ts`) now carries each source's real `auth`
+  field, and the Settings editor picks a hint that actually matches: a
+  plain "no credentials needed" note for `auth:"none"`, a
+  `sessionStatePath`-specific note for `auth:"browser-session"`
+  (GoFractional, A.Team, Wellfound), and the API-key hint only for a
+  future `auth:"api-key"` source. Live-verified in the running dashboard:
+  Braintrust's Settings row now reads "value (optional listing filter —
+  this source needs no credentials)"; GoFractional/A.Team show
+  "value — e.g. a sessionStatePath, or env:VAR_NAME" with an explanatory
+  note pointing at "Capture login".
 
 ## [0.15.0] - 2026-08-12
 

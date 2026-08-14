@@ -522,17 +522,46 @@ function StringListEditor({
   );
 }
 
+/**
+ * Per-`auth` type Settings guidance — deliberately NOT a single generic
+ * "e.g. env:API_KEY" hint for every source. That used to show for
+ * `auth:"none"` sources like Braintrust, which need no credentials at all
+ * (their settings, when present, are optional listing filters like
+ * `roleIds`/`category`) — misleading, since it implied a key was expected.
+ * Keyed by `Source.auth` (see KNOWN_SOURCES in src/lib/sources/origins.ts,
+ * which mirrors each adapter's real `auth` field).
+ */
+const SETTINGS_HINT_BY_AUTH: Record<"none" | "api-key" | "browser-session", { placeholder: string; note?: string }> = {
+  none: {
+    placeholder: "value (optional listing filter — this source needs no credentials)",
+  },
+  "api-key": {
+    placeholder: "value — e.g. env:YOUR_API_KEY",
+    note: "This source needs an API key. Store the real value in a local .env file and reference it as env:VAR_NAME — never paste the raw key here.",
+  },
+  "browser-session": {
+    placeholder: "value — e.g. a sessionStatePath, or env:VAR_NAME",
+    note: "This source authenticates via a captured browser session (see \"Capture login\" below), not an API key. settings.sessionStatePath points at the saved session file.",
+  },
+};
+
 /** SourceConfig.settings key/value PAIRS editor — deliberately not a raw JSON textarea (see this story's spec). */
 function SettingsEditor({
   pairs,
   onChange,
+  auth,
 }: {
   pairs: SettingPair[];
   onChange: (next: SettingPair[]) => void;
+  /** The selected source's auth type, if known — drives the value hint below. Undefined (e.g. no source selected yet) falls back to a generic hint. */
+  auth?: "none" | "api-key" | "browser-session";
 }) {
+  const hint = auth ? SETTINGS_HINT_BY_AUTH[auth] : undefined;
+  const valuePlaceholder = hint?.placeholder ?? "value";
   return (
     <div>
       <span className={labelClass}>Settings</span>
+      {hint?.note && <p className="mt-0.5 text-xs text-slate-500">{hint.note}</p>}
       <div className="mt-1 flex flex-col gap-1.5">
         {pairs.map((pair, i) => (
           // eslint-disable-next-line react/no-array-index-key
@@ -550,7 +579,7 @@ function SettingsEditor({
             <input
               type="text"
               value={pair.value}
-              placeholder="value — e.g. env:BRAINTRUST_API_KEY"
+              placeholder={valuePlaceholder}
               onChange={(e) => {
                 const value = e.target.value;
                 onChange(pairs.map((p, idx) => (idx === i ? { ...p, value } : p)));
@@ -1184,6 +1213,7 @@ export function ConfigClient({ initial }: { initial: Config }) {
               <div className="mt-2">
                 <SettingsEditor
                   pairs={source.settings}
+                  auth={KNOWN_SOURCES.find((known) => known.id === source.id)?.auth}
                   onChange={(settings) => {
                     setDraft({
                       ...draft,
