@@ -12,8 +12,11 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { revalidatePath } from "next/cache";
 import { getConfigPath } from "@/lib/config/load";
+import { closeDb, getDb } from "@/lib/store/db";
+import { recordScan } from "@/lib/store/gigs";
+import { saveDraft, setDraftStatus } from "@/lib/store/drafts";
 import { decrypt } from "@/lib/security/vault";
-import { saveConfigAction } from "../actions";
+import { getAutoFireApprovedCountAction, saveConfigAction } from "../actions";
 
 // Same isolation pattern as src/lib/config/__tests__/save.test.ts: every
 // test points XDG_DATA_HOME (config.json) AND XDG_CONFIG_HOME (the vault
@@ -37,6 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  closeDb(); // no-op when the gigs-store tests below never opened one
   if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
   else process.env.XDG_DATA_HOME = originalXdgDataHome;
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
@@ -268,5 +272,88 @@ describe("saveConfigAction: roleArea/schedule optional semantics", () => {
 
     const onDisk = readOnDiskConfig() as Record<string, unknown>;
     expect("roleArea" in onDisk).toBe(false);
+  });
+});
+
+describe("saveConfigAction: autoFire round-trip (graduated-auto-fire-trust epic)", () => {
+  it("omits autoFire from the written document when never provided -- same optional-section semantics as roleArea/schedule", async () => {
+    const result = await saveConfigAction(validConfig);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.data.autoFire).toBeUndefined();
+
+    const onDisk = readOnDiskConfig() as Record<string, unknown>;
+    expect("autoFire" in onDisk).toBe(false);
+  });
+
+  it("persists a killSwitch + rule list exactly as sent -- what AutoFireRulesEditor's draftToEdits() produces", async () => {
+    const withAutoFire = await saveConfigAction({
+      ...validConfig,
+      autoFire: {
+        killSwitch: false,
+        rules: [{ sourceId: "braintrust", tier: "green", enabled: true, minApprovals: 3, dailyCap: 3 }],
+      },
+    });
+
+    expect(withAutoFire.ok).toBe(true);
+    if (!withAutoFire.ok) throw new Error(`expected ok, got: ${withAutoFire.error}`);
+    expect(withAutoFire.data.autoFire).toEqual({
+      killSwitch: false,
+      rules: [{ sourceId: "braintrust", tier: "green", enabled: true, minApprovals: 3, dailyCap: 3 }],
+    });
+
+    const onDisk = readOnDiskConfig() as { autoFire: unknown };
+    expect(onDisk.autoFire).toEqual({
+      killSwitch: false,
+      rules: [{ sourceId: "braintrust", tier: "green", enabled: true, minApprovals: 3, dailyCap: 3 }],
+    });
+  });
+
+  it("a rule with minApprovals sent as a non-numeric string (a cleared/invalid field) fails validation with a specific field-level error, same as needs.minRate's own convention", async () => {
+    const result = await saveConfigAction({
+      ...validConfig,
+      autoFire: {
+        killSwitch: false,
+        rules: [{ sourceId: "braintrust", tier: "green", enabled: true, minApprovals: "", dailyCap: 3 }],
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toMatch(/autoFire.*minApprovals/);
+  });
+});
+
+describe("getAutoFireApprovedCountAction (read-only trust-status lookup)", () => {
+  let storeTmpDir: string;
+
+  beforeEach(() => {
+    storeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-config-action-store-test-"));
+    process.env.GIGRADAR_DB_PATH = path.join(storeTmpDir, "gigs.db");
+    envVarsTouchedByTests.add("GIGRADAR_DB_PATH");
+  });
+
+  afterEach(() => {
+    fs.rmSync(storeTmpDir, { recursive: true, force: true });
+  });
+
+  it("returns the real approved-draft count for a (sourceId, tier) pair", async () => {
+    const db = getDb();
+    recordScan([{ sourceId: "braintrust", gigs: [{ sourceId: "braintrust", externalId: "1", title: "x", url: "https://x.test", tier: "green" }] }], {
+      db,
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    saveDraft("braintrust:1", { coverText: "hi", answers: {} }, { db, now: "2026-01-01T00:00:00.000Z" });
+    setDraftStatus("braintrust:1", "approved", { db, now: "2026-01-01T00:00:00.000Z" });
+
+    const result = await getAutoFireApprovedCountAction("braintrust", "green");
+
+    expect(result).toEqual({ ok: true, data: 1 });
+  });
+
+  it("returns 0 for a pair with no approval history at all -- not an error", async () => {
+    const result = await getAutoFireApprovedCountAction("never-configured-source", "green");
+    expect(result).toEqual({ ok: true, data: 0 });
   });
 });

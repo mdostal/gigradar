@@ -5,11 +5,12 @@ import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
 import type { ConfigEdits } from "@/lib/config/save";
 import { mergeDedupe } from "@/lib/profile-ingestion/merge";
 import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
-import type { Config, EngagementType, RoleAreaConfig, SourceConfig } from "@/lib/types";
+import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
 import {
   cancelCaptureAction,
   extractProfileFromResumeAction,
   finishCaptureAction,
+  getAutoFireApprovedCountAction,
   saveConfigAction,
   setAnthropicApiKeyAction,
   startCaptureAction,
@@ -118,6 +119,32 @@ interface DraftApplyProfile {
   rateAnchor: string;
 }
 
+/** Mirrors `AutoFireRuleConfig` in src/lib/types.ts — numeric fields are controlled-input strings, same convention as DraftEngagementProfile. */
+interface DraftAutoFireRule {
+  sourceId: string;
+  tier: Tier;
+  enabled: boolean;
+  minApprovals: string;
+  dailyCap: string;
+}
+
+/**
+ * Mirrors `Config["autoFire"]` — like `autoDraftOnScan`/`notifyOnGreenMatch`
+ * above, no enabled-flag tri-state needed: an empty `rules` list plus
+ * `killSwitch: false` is functionally identical to the section being
+ * omitted entirely (see that field's own doc comment in types.ts), so this
+ * is always sent as-is, never wrapped in a separate "configure this
+ * section" checkbox the way roleArea/applyProfile are.
+ */
+interface DraftAutoFire {
+  killSwitch: boolean;
+  rules: DraftAutoFireRule[];
+}
+
+function defaultAutoFireRule(): DraftAutoFireRule {
+  return { sourceId: "", tier: "green", enabled: true, minApprovals: "3", dailyCap: "3" };
+}
+
 interface DraftConfig {
   profile: DraftProfile;
   needs: DraftNeeds;
@@ -133,6 +160,7 @@ interface DraftConfig {
    */
   autoDraftOnScan: boolean;
   notifyOnGreenMatch: boolean;
+  autoFire: DraftAutoFire;
 }
 
 // -- Config -> Draft -----------------------------------------------------
@@ -193,6 +221,16 @@ function configToDraft(config: Config): DraftConfig {
     schedule: config.schedule ?? "",
     autoDraftOnScan: config.autoDraftOnScan ?? false,
     notifyOnGreenMatch: config.notifyOnGreenMatch ?? false,
+    autoFire: {
+      killSwitch: config.autoFire?.killSwitch ?? false,
+      rules: (config.autoFire?.rules ?? []).map((r) => ({
+        sourceId: r.sourceId,
+        tier: r.tier,
+        enabled: r.enabled,
+        minApprovals: String(r.minApprovals),
+        dailyCap: String(r.dailyCap),
+      })),
+    },
     applyProfile: {
       enabled: config.applyProfile != null,
       email: config.applyProfile?.email ?? "",
@@ -320,6 +358,19 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
   // these two don't need roleArea/schedule's enabled-flag tri-state.
   edits.autoDraftOnScan = draft.autoDraftOnScan;
   edits.notifyOnGreenMatch = draft.notifyOnGreenMatch;
+
+  // NOT typed as AutoFireRuleConfig[] here on purpose -- same draftNumber()
+  // invalid-passthrough reasoning as `needs` above.
+  edits.autoFire = {
+    killSwitch: draft.autoFire.killSwitch,
+    rules: draft.autoFire.rules.map((r) => ({
+      sourceId: r.sourceId,
+      tier: r.tier,
+      enabled: r.enabled,
+      minApprovals: draftNumber(r.minApprovals),
+      dailyCap: draftNumber(r.dailyCap),
+    })),
+  };
 
   // NOT typed as `ApplyProfileConfig` here on purpose — same reasoning as
   // `needs` above: `draftNumber(rateAnchor)` can return the original
@@ -779,6 +830,147 @@ function EngagementProfilesEditor({
         className="self-start text-xs font-medium text-slate-600 hover:underline"
       >
         + Add profile
+      </button>
+    </div>
+  );
+}
+
+const TIER_OPTIONS: Tier[] = ["green", "yellow", "red"];
+
+/** One rule row's live "N/minApprovals approved" trust status -- fetched on demand only (no polling/auto-refresh, same discipline session-capture-ui already established in this file). */
+type TrustStatus = { status: "idle" } | { status: "loading" } | { status: "loaded"; approvedCount: number } | { status: "error"; message: string };
+
+/**
+ * `Config.autoFire.rules` editor — the graduated-auto-fire-trust epic's
+ * per-`(sourceId, tier)` rule list, same repeatable-list "+ Add" / "Remove"
+ * pattern as `EngagementProfilesEditor` above. Each row's "Check status"
+ * button calls `getAutoFireApprovedCountAction()` (read-only) and shows a
+ * real "N/minApprovals approved" + graduated/not-graduated badge computed
+ * against the row's CURRENT (possibly unsaved) minApprovals value.
+ */
+function AutoFireRulesEditor({
+  rules,
+  onChange,
+}: {
+  rules: DraftAutoFireRule[];
+  onChange: (next: DraftAutoFireRule[]) => void;
+}) {
+  const [statusByIndex, setStatusByIndex] = useState<Record<number, TrustStatus>>({});
+
+  async function checkStatus(i: number, rule: DraftAutoFireRule) {
+    if (rule.sourceId.trim() === "") return;
+    setStatusByIndex((prev) => ({ ...prev, [i]: { status: "loading" } }));
+    const result = await getAutoFireApprovedCountAction(rule.sourceId, rule.tier);
+    setStatusByIndex((prev) => ({
+      ...prev,
+      [i]: result.ok ? { status: "loaded", approvedCount: result.data } : { status: "error", message: result.error },
+    }));
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-3">
+      {rules.map((r, i) => {
+        const minApprovals = Number(r.minApprovals);
+        const s = statusByIndex[i] ?? { status: "idle" };
+        return (
+          // eslint-disable-next-line react/no-array-index-key
+          <div key={i} className="rounded-md border border-slate-200 p-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <label>
+                <span className={labelClass}>Source</span>
+                <select
+                  value={r.sourceId}
+                  onChange={(e) => onChange(rules.map((rr, idx) => (idx === i ? { ...rr, sourceId: e.target.value } : rr)))}
+                  className={inputClass}
+                >
+                  <option value="" disabled>
+                    Select a source…
+                  </option>
+                  {KNOWN_SOURCES.map((s2) => (
+                    <option key={s2.id} value={s2.id}>
+                      {s2.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className={labelClass}>Tier</span>
+                <select
+                  value={r.tier}
+                  onChange={(e) => onChange(rules.map((rr, idx) => (idx === i ? { ...rr, tier: e.target.value as Tier } : rr)))}
+                  className={inputClass}
+                >
+                  {TIER_OPTIONS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className={labelClass}>Min approvals to graduate</span>
+                <input
+                  type="number"
+                  value={r.minApprovals}
+                  onChange={(e) => onChange(rules.map((rr, idx) => (idx === i ? { ...rr, minApprovals: e.target.value } : rr)))}
+                  className={inputClass}
+                />
+              </label>
+              <label>
+                <span className={labelClass}>Daily fire cap</span>
+                <input
+                  type="number"
+                  value={r.dailyCap}
+                  onChange={(e) => onChange(rules.map((rr, idx) => (idx === i ? { ...rr, dailyCap: e.target.value } : rr)))}
+                  className={inputClass}
+                />
+              </label>
+              <CheckboxField
+                label="Enabled"
+                checked={r.enabled}
+                onChange={(enabled) => onChange(rules.map((rr, idx) => (idx === i ? { ...rr, enabled } : rr)))}
+              />
+              <button
+                type="button"
+                onClick={() => onChange(rules.filter((_, idx) => idx !== i))}
+                className="shrink-0 text-xs text-red-600 hover:underline"
+              >
+                Remove rule
+              </button>
+            </div>
+
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => checkStatus(i, r)}
+                disabled={r.sourceId.trim() === "" || s.status === "loading"}
+                className="text-xs font-medium text-slate-600 hover:underline disabled:opacity-50"
+              >
+                {s.status === "loading" ? "Checking…" : "Check status"}
+              </button>
+              {s.status === "loaded" && (
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    s.approvedCount >= minApprovals
+                      ? "bg-green-100 text-green-800"
+                      : "bg-slate-100 text-slate-700"
+                  }`}
+                >
+                  {s.approvedCount}/{r.minApprovals || 0} approved —{" "}
+                  {s.approvedCount >= minApprovals ? "graduated" : "not yet graduated"}
+                </span>
+              )}
+              {s.status === "error" && <span className="text-xs text-red-700">{s.message}</span>}
+            </div>
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => onChange([...rules, defaultAutoFireRule()])}
+        className="self-start text-xs font-medium text-slate-600 hover:underline"
+      >
+        + Add rule
       </button>
     </div>
   );
@@ -1432,6 +1624,28 @@ export function ConfigClient({ initial }: { initial: Config }) {
             </label>
           </div>
         )}
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold text-slate-900">Auto-fire (optional)</h2>
+        <p className="text-xs text-slate-500">
+          Real, automatic application submission — off by default, and gated: a rule only ever fires once
+          you&apos;ve manually approved at least its own <code>minApprovals</code> drafts for that exact
+          source/tier pair. See docs/ARCHITECTURE.md for the full trust/decision-tree contract.
+        </p>
+
+        <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3">
+          <CheckboxField
+            label="Kill switch — force-disable ALL auto-fire, regardless of the rules below"
+            checked={draft.autoFire.killSwitch}
+            onChange={(killSwitch) => setDraft({ ...draft, autoFire: { ...draft.autoFire, killSwitch } })}
+          />
+        </div>
+
+        <AutoFireRulesEditor
+          rules={draft.autoFire.rules}
+          onChange={(rules) => setDraft({ ...draft, autoFire: { ...draft.autoFire, rules } })}
+        />
       </section>
 
       <div>
