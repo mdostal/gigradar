@@ -14,14 +14,63 @@ export interface Profile {
   homeBase?: { city: string; lat: number; lng: number };
 }
 
+/**
+ * The engagement types a Gig can be, or a user can declare acceptable.
+ * "contract-to-hire" is deliberately its own value, not folded into
+ * "contract" — a user who wants pure contract work but not a CTH pipeline
+ * (or vice versa) needs to be able to say so distinctly, same as this
+ * project's pre-existing (now-superseded) `allowContractToHire` flag did.
+ */
+export type EngagementType = "contract" | "fractional" | "contract-to-hire" | "full-time";
+
+/**
+ * One named rate/hours threshold for a set of engagement types — e.g.
+ * "Fractional/contract" at $250/hr, or "Full-time (700k+)" at $700,000/yr.
+ * `Needs.engagementProfiles` is a LIST of these (a user can have several:
+ * different roles, different minimum bars for different engagement types)
+ * — every profile whose `types` covers a gig's engagement type is checked,
+ * and a gig can clear more than one (matching/gate.ts's gate() reports
+ * every profile id a gig matched under, not just the first).
+ *
+ * `maxHours`/`maxHoursAtHighRate` only apply when `rateUnit === "hour"` — a
+ * salaried/`"year"` profile has no weekly-hours concept in this schema
+ * (full-time roles aren't gated on hours/week here).
+ */
+export interface EngagementProfile {
+  /** Stable slug, e.g. "fractional-contract" — referenced by Gig.matchedProfileIds, never re-derived from label (which the user can freely rename). */
+  id: string;
+  /** User-facing name shown in match reasons/dashboard, e.g. "Fractional/contract". */
+  label: string;
+  /** Which engagement type(s) this profile covers. Usually one; contract+fractional commonly share a profile since they're priced the same way. */
+  types: EngagementType[];
+  minRate: number;
+  /** A higher rate that unlocks more weekly hours (see maxHoursAtHighRate) — only meaningful when rateUnit is "hour". */
+  highRate: number;
+  /**
+   * Weekly-hours caps — REQUIRED when `rateUnit === "hour"`, omitted when
+   * `rateUnit === "year"` (a salaried profile has no weekly-hours concept
+   * in this schema). config/schema.ts's EngagementProfileSchema enforces
+   * this conditional requirement at validation time via `.refine()`.
+   */
+  maxHours?: number;
+  maxHoursAtHighRate?: number;
+  /** "hour" for contract/fractional/contract-to-hire work; "year" for full-time (total annual compensation). */
+  rateUnit: "hour" | "year";
+}
+
 /** Your hard constraints — the GO/NO-GO gate is built from these. */
 export interface Needs {
-  minRate: number;            // floor hourly rate ($)
-  /** A higher rate that unlocks more weekly hours (see maxHoursAtHighRate). */
-  highRate: number;           // e.g. 250
-  maxHours: number;           // normal weekly-hours ceiling, e.g. 20
-  maxHoursAtHighRate: number; // hours ceiling allowed when rate >= highRate, e.g. 40
-  allowContractToHire: boolean; // reject CTH by default
+  /**
+   * Ranked (display-order, not priority-order — see gate.ts, EVERY matching
+   * profile is checked, not just the first) list of accepted
+   * engagement-type + rate combinations. At least one profile is required —
+   * this is the gate's rate/hours/engagement-type hard constraint set,
+   * superseding the old flat `minRate`/`highRate`/`maxHours`/
+   * `maxHoursAtHighRate`/`allowContractToHire` fields. A config.json still
+   * using that old flat shape is migrated on read into a single default
+   * profile (see config/load.ts's migrateNeedsEngagementProfiles()).
+   */
+  engagementProfiles: EngagementProfile[];
   freshStageOnly: boolean;    // reject stale / already-proposed listings
   remoteOnly: boolean;
 }
@@ -128,6 +177,18 @@ export interface Gig {
   weeklyHours?: number;
   remote?: boolean;
   contractToHire?: boolean;
+  /**
+   * A source's EXPLICIT engagement-type signal, when it has one (e.g.
+   * BuiltIn's JobPosting JSON-LD `employmentType: "FULL_TIME"` —
+   * live-confirmed present on real listings). Deliberately 3-way, not
+   * 4-way: "contract-to-hire" is never set here — that signal already has
+   * its own dedicated `contractToHire` field above, which
+   * matching/gate.ts's effectiveEngagementType() takes priority over this
+   * field. Unset (most sources/listings) means "no explicit source
+   * signal" — the gate falls back to inferring from `rate.unit` instead of
+   * treating this as "unknown, always passes."
+   */
+  employmentType?: "contract" | "fractional" | "full-time";
   stage?: "fresh" | "stale" | "proposed" | "unknown";
   postedAt?: string;          // ISO date
   description?: string;
@@ -141,6 +202,14 @@ export interface Gig {
    * one extra value alongside each Gig.
    */
   tier?: Tier;
+  /**
+   * `EngagementProfile.id`s this gig cleared, stamped on by the runner from
+   * `MatchResult.matchedProfiles` — same "optional because a raw
+   * Source-returned Gig hasn't been through gate() yet, stamped by the
+   * runner afterward, rides through the store's normal upsert path"
+   * pattern as `tier` above. An adapter's `fetch()` never sets this.
+   */
+  matchedProfileIds?: string[];
 }
 
 /**
@@ -174,4 +243,16 @@ export interface MatchResult {
    * `gig.tier` — see that field's doc for why.
    */
   tier?: Tier;
+  /**
+   * Every `EngagementProfile.id` this gig cleared (rate + hours), NOT just
+   * the first one tried — a gig can legitimately satisfy several profiles
+   * at once (e.g. both "Fractional/contract" and a separate
+   * "Contract-to-hire" profile). Empty when `pass` is false because it
+   * failed on engagement type/rate specifically (still possibly non-empty
+   * alongside a `pass: false` if it cleared a profile's rate but failed a
+   * DIFFERENT, non-profile check like role/skill fit — see gate.ts). Also
+   * mirrored onto `gig.matchedProfileIds` for persistence, same pattern as
+   * `tier` above.
+   */
+  matchedProfiles: string[];
 }

@@ -84,6 +84,31 @@ describe("recordScan: basic upsert", () => {
     expect(stored?.description).toBe("Build stuff");
     expect(stored?.raw).toEqual({ foo: "bar" });
   });
+
+  it("round-trips employmentType and matchedProfileIds (engagement-profiles story) through the store", () => {
+    const gig = makeGig({
+      sourceId: "src-a",
+      externalId: "3",
+      employmentType: "full-time",
+      matchedProfileIds: ["full-time-700k", "another-profile"],
+    });
+
+    recordScan([{ sourceId: "src-a", gigs: [gig] }], { db, now: "2026-01-01T00:00:00.000Z" });
+
+    const stored = getGig("src-a:3", { db });
+    expect(stored?.employmentType).toBe("full-time");
+    expect(stored?.matchedProfileIds).toEqual(["full-time-700k", "another-profile"]);
+  });
+
+  it("matchedProfileIds is undefined (never [] or null) when the runner never set it (e.g. a raw Source-returned Gig)", () => {
+    const gig = makeGig({ sourceId: "src-a", externalId: "4" });
+
+    recordScan([{ sourceId: "src-a", gigs: [gig] }], { db, now: "2026-01-01T00:00:00.000Z" });
+
+    const stored = getGig("src-a:4", { db });
+    expect(stored?.matchedProfileIds).toBeUndefined();
+    expect(stored?.employmentType).toBeUndefined();
+  });
 });
 
 describe("recordScan: status and firstSeen survive a re-scan", () => {

@@ -190,7 +190,7 @@ function toPostedAt(postedText: string | undefined, now: Date): string | undefin
   return d.toISOString().slice(0, 10);
 }
 
-function toGig(item: BuiltinListItem, now: Date, detailDescription: string | undefined): Gig {
+function toGig(item: BuiltinListItem, now: Date, detail: JobPostingDetails | undefined): Gig {
   return {
     sourceId: "builtin",
     externalId: item.id,
@@ -208,7 +208,12 @@ function toGig(item: BuiltinListItem, now: Date, detailDescription: string | und
     // fetch succeeded; fall back to the short list-card snippet when it
     // failed (see fetchDetailDescription's comment) — never left completely
     // unset when SOME description was successfully obtained.
-    description: detailDescription ?? item.description,
+    description: detail?.description ?? item.description,
+    // The real JobPosting JSON-LD's employmentType field (engagement-profiles
+    // story) — live-confirmed present on real listings as "FULL_TIME". Only
+    // set when the detail fetch succeeded AND yielded a mappable value; see
+    // mapEmploymentType()'s doc comment for which values map.
+    employmentType: detail?.employmentType,
     raw: item,
   };
 }
@@ -262,12 +267,33 @@ function findJobPosting(node: unknown): Record<string, unknown> | undefined {
  * block instead of an HTML card `<div>`.
  *
  * Returns undefined (never throws) when no script matches, none parses as
- * JSON, or none contains a JobPosting with a non-empty description — an
- * unrecognized page shape, not a crash. See fetchDetailDescription's own
- * comment for why that's a deliberate difference from this adapter's
- * list-fetch throw convention.
+ * JSON, or none contains a JobPosting with a non-empty description AND no
+ * mappable employmentType either — an unrecognized page shape, not a
+ * crash. See fetchDetailDescription's own comment for why that's a
+ * deliberate difference from this adapter's list-fetch throw convention.
  */
-function extractDetailDescription(html: string): string | undefined {
+interface JobPostingDetails {
+  description?: string;
+  employmentType?: Gig["employmentType"];
+}
+
+/**
+ * Maps schema.org JobPosting's `employmentType` enum (FULL_TIME, CONTRACTOR,
+ * PART_TIME, TEMPORARY, INTERN, VOLUNTEER, PER_DIEM, OTHER) to gigradar's
+ * 3-way `Gig["employmentType"]`. Only FULL_TIME and CONTRACTOR map cleanly;
+ * everything else (including a non-string value, e.g. an array — not
+ * observed live but technically spec-legal) returns undefined rather than
+ * guessing — "no signal" is always preferable to a wrong one here, since a
+ * wrong employmentType would silently exclude a gig from the right
+ * engagement-profile match.
+ */
+function mapEmploymentType(raw: unknown): Gig["employmentType"] {
+  if (raw === "FULL_TIME") return "full-time";
+  if (raw === "CONTRACTOR") return "contract";
+  return undefined;
+}
+
+function extractJobPostingDetails(html: string): JobPostingDetails | undefined {
   LD_JSON_SCRIPT_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = LD_JSON_SCRIPT_RE.exec(html))) {
@@ -278,9 +304,17 @@ function extractDetailDescription(html: string): string | undefined {
       continue; // not valid JSON -- try the next script block, if any
     }
     const jobPosting = findJobPosting(parsed);
-    const description = jobPosting?.["description"];
-    if (typeof description === "string" && description.trim().length > 0) {
-      return stripDescriptionHtml(description);
+    if (!jobPosting) continue;
+
+    const rawDescription = jobPosting["description"];
+    const description =
+      typeof rawDescription === "string" && rawDescription.trim().length > 0
+        ? stripDescriptionHtml(rawDescription)
+        : undefined;
+    const employmentType = mapEmploymentType(jobPosting["employmentType"]);
+
+    if (description !== undefined || employmentType !== undefined) {
+      return { description, employmentType };
     }
   }
   return undefined;
@@ -303,7 +337,7 @@ function extractDetailDescription(html: string): string | undefined {
  * for that listing (see `toGig` below) — a listing's description is never
  * left completely unset just because its detail-page enrichment failed.
  */
-async function fetchDetailDescription(url: string): Promise<string | undefined> {
+async function fetchDetailDescription(url: string): Promise<JobPostingDetails | undefined> {
   let res: Response;
   try {
     res = await fetch(url, { headers: { accept: "text/html" } });
@@ -317,21 +351,21 @@ async function fetchDetailDescription(url: string): Promise<string | undefined> 
   } catch {
     return undefined;
   }
-  return extractDetailDescription(html);
+  return extractJobPostingDetails(html);
 }
 
 const DETAIL_FETCH_BATCH_SIZE = 4;
 
 /**
- * Fetches every listing's detail-page description, bounded to
- * `DETAIL_FETCH_BATCH_SIZE` concurrent requests at a time: fixed-size
+ * Fetches every listing's detail-page description + employmentType, bounded
+ * to `DETAIL_FETCH_BATCH_SIZE` concurrent requests at a time: fixed-size
  * batches, `Promise.all()` per batch, each batch awaited before the next
  * starts. A bare `Promise.all(items.map(fetchDetailDescription))` over the
  * whole list would fire every request simultaneously and respect no cap at
  * all -- this is the concrete mechanism that actually enforces one.
  */
-async function fetchDetailDescriptions(items: BuiltinListItem[]): Promise<Map<string, string | undefined>> {
-  const results = new Map<string, string | undefined>();
+async function fetchDetailDescriptions(items: BuiltinListItem[]): Promise<Map<string, JobPostingDetails | undefined>> {
+  const results = new Map<string, JobPostingDetails | undefined>();
   for (let i = 0; i < items.length; i += DETAIL_FETCH_BATCH_SIZE) {
     const batch = items.slice(i, i + DETAIL_FETCH_BATCH_SIZE);
     const batchResults = await Promise.all(batch.map((item) => fetchDetailDescription(item.url)));
@@ -394,10 +428,10 @@ export const builtinSource: Source = {
 
     // Best-effort per-listing enrichment -- see fetchDetailDescription's
     // comment for why a detail-fetch failure degrades to the list-card
-    // snippet rather than failing this whole scan.
-    const detailDescriptions = await fetchDetailDescriptions(uniqueItems);
+    // snippet (and no employmentType signal) rather than failing this whole scan.
+    const details = await fetchDetailDescriptions(uniqueItems);
 
-    return uniqueItems.map((item) => toGig(item, now, detailDescriptions.get(item.id)));
+    return uniqueItems.map((item) => toGig(item, now, details.get(item.id)));
   },
 };
 

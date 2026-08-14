@@ -185,6 +185,61 @@ export function migrateConfigToEncryptedAtomically(configPath: string, raw: stri
 }
 
 /**
+ * Backfills `needs.engagementProfiles` from the deprecated flat
+ * `needs.minRate`/`highRate`/`maxHours`/`maxHoursAtHighRate`/
+ * `allowContractToHire` fields when the new field is absent —
+ * engagement-profiles story. A pre-existing config.json (written before
+ * that story) has the old flat shape and would otherwise fail
+ * ConfigSchema's validation on every read, since `engagementProfiles` is
+ * required with no default. Runs on the PARSED-but-not-yet-validated JS
+ * object, before ConfigSchema.safeParse() — a read-time-only shape
+ * migration (never writes to disk itself; the caller's own encrypted-at-
+ * rest migrate-on-read, if any, handles persistence separately). The old
+ * fields are left in place harmlessly (zod strips unknown keys); a
+ * subsequent config save naturally drops them since the config UI's draft
+ * no longer round-trips them.
+ *
+ * The single synthesized profile covers contract/fractional/
+ * contract-to-hire-or-not exactly as the old flat fields did: CTH included
+ * when `allowContractToHire` was true, excluded when false or absent.
+ * Nothing here can infer a "full-time" profile — that's new capability
+ * with no historical equivalent to migrate from, so a migrated config
+ * simply has no full-time profile until the user adds one.
+ */
+export function migrateNeedsEngagementProfiles(parsed: unknown): unknown {
+  if (typeof parsed !== "object" || parsed === null) return parsed;
+  const doc = parsed as Record<string, unknown>;
+  const needs = doc.needs;
+  if (typeof needs !== "object" || needs === null) return parsed;
+  const needsObj = needs as Record<string, unknown>;
+  if ("engagementProfiles" in needsObj) return parsed;
+  const { minRate, highRate, maxHours, maxHoursAtHighRate, allowContractToHire } = needsObj;
+  if (
+    typeof minRate !== "number" ||
+    typeof highRate !== "number" ||
+    typeof maxHours !== "number" ||
+    typeof maxHoursAtHighRate !== "number"
+  ) {
+    return parsed;
+  }
+  const types: string[] = ["contract", "fractional"];
+  if (allowContractToHire === true) types.push("contract-to-hire");
+  const engagementProfiles = [
+    {
+      id: "default",
+      label: "Contract/fractional",
+      types,
+      minRate,
+      highRate,
+      maxHours,
+      maxHoursAtHighRate,
+      rateUnit: "hour",
+    },
+  ];
+  return { ...doc, needs: { ...needsObj, engagementProfiles } };
+}
+
+/**
  * Reads, decrypts (if needed), parses, and validates config.json from the
  * XDG data directory. Synchronous by design (not deferred) — this matches
  * the primary caller (src/lib/apply/runner.ts, invoked via tsx) and
@@ -271,7 +326,9 @@ export function loadConfig(): Config {
     migrateConfigToEncryptedAtomically(configPath, raw);
   }
 
-  const result = ConfigSchema.safeParse(parsed);
+  const migrated = migrateNeedsEngagementProfiles(parsed);
+
+  const result = ConfigSchema.safeParse(migrated);
   if (!result.success) {
     const details = result.error.issues
       .map((issue) => `  - ${issue.path.length ? issue.path.join(".") : "(root)"}: ${issue.message}`)

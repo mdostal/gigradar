@@ -18,12 +18,14 @@ CREATE TABLE IF NOT EXISTS gigs (
   weekly_hours      REAL,
   remote            INTEGER,            -- 0/1, nullable (unknown != false)
   contract_to_hire  INTEGER,            -- 0/1, nullable
+  employment_type   TEXT,               -- 'contract' | 'fractional' | 'full-time', nullable (no explicit source signal); see db.ts's ensureColumn() for the ALTER TABLE path this same column needs on a pre-existing DB
   stage             TEXT,               -- 'fresh' | 'stale' | 'proposed' | 'unknown'
   posted_at         TEXT,               -- ISO date, as reported by the source
   description       TEXT,
   raw               TEXT,               -- JSON-stringified original payload, for debugging
   tier              TEXT                -- 'green' | 'yellow' | 'red', nullable (not yet classified); see matching/tiering.ts
                       CHECK (tier IS NULL OR tier IN ('green', 'yellow', 'red')),
+  matched_profile_ids TEXT,             -- JSON-stringified string[] of EngagementProfile.id -- nullable (not yet classified); see db.ts's ensureColumn() for the ALTER TABLE path this same column needs on a pre-existing DB
   status            TEXT NOT NULL DEFAULT 'new'
                       CHECK (status IN ('new', 'applied', 'interview', 'archived', 'ignored')),
   first_seen        TEXT NOT NULL,      -- ISO datetime, set once, never overwritten

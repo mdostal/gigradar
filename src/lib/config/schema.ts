@@ -21,13 +21,34 @@ export const ProfileSchema = z.object({
   homeBase: HomeBaseSchema.optional(),
 });
 
+/** Mirrors `EngagementType` in src/lib/types.ts. */
+export const EngagementTypeSchema = z.enum(["contract", "fractional", "contract-to-hire", "full-time"]);
+
+/**
+ * Mirrors `EngagementProfile` in src/lib/types.ts. `maxHours`/
+ * `maxHoursAtHighRate` are required only when `rateUnit === "hour"` — see
+ * that field's doc comment — enforced here via `.refine()` since zod's
+ * object shape alone can't express a conditional-on-a-sibling-field
+ * requirement.
+ */
+export const EngagementProfileSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    types: z.array(EngagementTypeSchema).min(1),
+    minRate: z.number(),
+    highRate: z.number(),
+    maxHours: z.number().optional(),
+    maxHoursAtHighRate: z.number().optional(),
+    rateUnit: z.enum(["hour", "year"]),
+  })
+  .refine((p) => p.rateUnit !== "hour" || (p.maxHours !== undefined && p.maxHoursAtHighRate !== undefined), {
+    message: "maxHours and maxHoursAtHighRate are required when rateUnit is \"hour\"",
+  });
+
 /** Mirrors `Needs` in src/lib/types.ts — every field here is required (the gate's hard constraints). */
 export const NeedsSchema = z.object({
-  minRate: z.number(),
-  highRate: z.number(),
-  maxHours: z.number(),
-  maxHoursAtHighRate: z.number(),
-  allowContractToHire: z.boolean(),
+  engagementProfiles: z.array(EngagementProfileSchema).min(1),
   freshStageOnly: z.boolean(),
   remoteOnly: z.boolean(),
 });

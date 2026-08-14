@@ -16,11 +16,7 @@ function blankConfig(): Config {
   return {
     profile: { name: "", roles: [], skills: [], timezone: "" },
     needs: {
-      minRate: 0,
-      highRate: 0,
-      maxHours: 0,
-      maxHoursAtHighRate: 0,
-      allowContractToHire: false,
+      engagementProfiles: [],
       freshStageOnly: false,
       remoteOnly: false,
     },

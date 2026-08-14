@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-13
+
+### Added
+
+- **Ranked engagement profiles — real job-requirements filtering, replacing
+  the old flat `minRate`/`allowContractToHire`.** `Needs.engagementProfiles`
+  is now a list of named profiles, each with its own accepted engagement
+  type(s) (contract / fractional / contract-to-hire / full-time) and its own
+  rate floor, in its own unit ($/hr or $/yr total comp). A gig is checked
+  against every profile whose type it matches — not just the first — so it
+  can clear more than one at once, and each match is recorded
+  (`Gig.matchedProfileIds`, persisted). Concretely: a user can say "I want
+  $250+/hr fractional or contract work, AND I'd also take a full-time role
+  but only above $700k total comp" — a $500k salaried listing is excluded
+  while a $750k one passes, and a good hourly contract still passes
+  independently. A gig's real engagement type comes from the strongest
+  available signal: an explicit `contractToHire` flag, a source's own
+  `employmentType` (BuiltIn's real `JobPosting` JSON-LD reports
+  `"FULL_TIME"`/`"CONTRACTOR"` — live-confirmed and now extracted), a $/year
+  rate (a strong real-world full-time signal — confirmed against 74 of the
+  owner's own real tracked listings), or unknown (falls back to hourly
+  profiles, matching this project's pre-existing behavior exactly).
+- Config UI: the old 4-number-fields-plus-a-checkbox Needs section is now a
+  real repeatable profile editor — add/remove profiles, per-profile
+  engagement-type checkboxes, rate unit selector (hours fields hide
+  automatically for a $/year profile, live-verified).
+- A config.json still in the old flat shape (every existing install, until
+  next save) is migrated transparently on read into one equivalent profile
+  — live-verified against the owner's own real config.
+- 30 new tests (576 total, 3 opt-in real-browser tests) — new `gate.test.ts`
+  (gate.ts previously had zero dedicated unit tests despite being the
+  core matching logic).
+
 ## [0.15.0] - 2026-08-12
 
 ### Added
