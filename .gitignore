@@ -33,3 +33,9 @@ sessions/
 .playwright-mcp/
 # scripts/update.sh's local dev-service log/state dir (see that script's own header comment)
 .run/
+# tauri-installer epic: generated/downloaded, never committed --
+# scripts/prepare-tauri-sidecars.sh regenerates all of these on demand.
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/resources/
+src-tauri/gen/
