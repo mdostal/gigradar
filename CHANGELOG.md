@@ -23,6 +23,22 @@ All notable changes to this project are documented in this file.
 - 3 new tests covering the real-Chrome-preferred launch, the
   bundled-Chromium fallback path, and the both-launches-fail error case
   (551 total).
+- **Config UI's Settings editor showed a misleading API-key hint for
+  sources that need no credentials at all.** Braintrust and BuiltIn are
+  both `auth:"none"` — their optional `settings` (`roleIds`, `category`)
+  are listing filters, not credentials — but the Settings editor showed
+  the same "value — e.g. env:BRAINTRUST_API_KEY"-style hint for every
+  source regardless of its actual auth type. `KNOWN_SOURCES`
+  (`src/lib/sources/origins.ts`) now carries each source's real `auth`
+  field, and the Settings editor picks a hint that actually matches: a
+  plain "no credentials needed" note for `auth:"none"`, a
+  `sessionStatePath`-specific note for `auth:"browser-session"`
+  (GoFractional, A.Team, Wellfound), and the API-key hint only for a
+  future `auth:"api-key"` source. Live-verified in the running dashboard:
+  Braintrust's Settings row now reads "value (optional listing filter —
+  this source needs no credentials)"; GoFractional/A.Team show
+  "value — e.g. a sessionStatePath, or env:VAR_NAME" with an explanatory
+  note pointing at "Capture login".
 
 ## [0.15.0] - 2026-08-12
 
