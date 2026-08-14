@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>gigradar — find and track fractional/contract engagements, locally</title>
-<meta name="description" content="An open-source, local-first tool that tracks fractional and contract engagements across the sources you enable, gates them against your own criteria, and assists the apply — never auto-submitted." />
+<meta name="description" content="An open-source, local-first tool that tracks fractional and contract engagements across the sources you enable, gates them against your own criteria, and assists the apply — human-approved by default, with an optional, earned auto-fire you fully control." />
 <link rel="canonical" href="https://mdostal.github.io/gigradar/" />
 
 <!-- Favicons -->
@@ -19,7 +19,7 @@
 <meta property="og:site_name" content="gigradar" />
 <meta property="og:url" content="https://mdostal.github.io/gigradar/" />
 <meta property="og:title" content="gigradar — track fractional &amp; contract work like it's radar" />
-<meta property="og:description" content="Open-source, local-first job tracking. Explainable gating, guided browser login, and a human-approved apply — nothing hosted, nothing auto-submitted." />
+<meta property="og:description" content="Open-source, local-first job tracking. Explainable gating, guided browser login, ranked rate profiles, and an apply step that's human-approved by default — with an optional, earned auto-fire you fully control." />
 <meta property="og:image" content="https://mdostal.github.io/gigradar/assets/og-image.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
@@ -28,7 +28,7 @@
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="gigradar — track fractional &amp; contract work like it's radar" />
-<meta name="twitter:description" content="Open-source, local-first job tracking. Explainable gating, guided browser login, and a human-approved apply — nothing hosted, nothing auto-submitted." />
+<meta name="twitter:description" content="Open-source, local-first job tracking. Explainable gating, guided browser login, ranked rate profiles, and an apply step that's human-approved by default — with an optional, earned auto-fire you fully control." />
 <meta name="twitter:image" content="https://mdostal.github.io/gigradar/assets/og-image.png" />
 <style>
   :root {
@@ -180,8 +180,10 @@
     <h1>Track fractional &amp; contract work<br/>like it's <span class="hl">radar</span>, not a chore.</h1>
     <p class="sub">
       An open-source, local-first tool that scans the sources you enable, gates every
-      listing against your own criteria — explainably, never a black box — and keeps
-      the apply step human-approved. Nothing hosted, nothing auto-submitted.
+      listing against your own ranked rate/hours profiles — explainably, never a black
+      box — and keeps the apply step human-approved by default. Nothing hosted. The one
+      optional exception is auto-fire: real submission automation you have to earn per
+      source, with a kill switch always one click away.
     </p>
     <div class="cta-row">
       <a class="btn primary" href="https://github.com/mdostal/gigradar">View on GitHub</a>
@@ -202,15 +204,22 @@
       (like an LLM call you triggered yourself).</p>
     <div class="grid">
       <div class="card">
-        <h3>🔌 Plugin source adapters</h3>
-        <p>Add a board with config and a plugin — zero edits to the core. Public
-          boards need no login; others use a guided, real-browser login capture.</p>
+        <h3>🔌 A real adapter per board</h3>
+        <p>LinkedIn, GoFractional, A.Team, Wellfound, Braintrust, and more — nine and
+          counting, each live-verified against the real site. Add another with config
+          and a plugin — zero edits to the core.</p>
       </div>
       <div class="card">
         <h3><span class="tier-chip g">GREEN</span> Explainable gate + tiering</h3>
         <p>A deterministic pass/fail with a human-readable reason per rule, plus
           <span class="tier-chip g">green</span>/<span class="tier-chip y">yellow</span>/<span class="tier-chip r">red</span>
           role-area tiering so "unknown, worth a look" never gets silently dropped.</p>
+      </div>
+      <div class="card">
+        <h3>🎯 Ranked engagement profiles</h3>
+        <p>Set a $250/hr fractional floor <em>and</em> a separate $700k full-time floor —
+          every listing is checked against every profile it could match, not just the
+          first one that fits.</p>
       </div>
       <div class="card">
         <h3>🔒 Encrypted at rest by default</h3>
@@ -223,14 +232,27 @@
           (including Google/GitHub SSO) — no manual CLI dance, no pasted cookies.</p>
       </div>
       <div class="card">
-        <h3>✍️ Assisted, never automatic</h3>
-        <p>Applications are staged for human approval — nothing submits itself.
-          Your resume/links can seed your profile via an LLM call you explicitly trigger.</p>
+        <h3>✍️ Assisted by default</h3>
+        <p>Applications are staged for human approval — nothing submits itself
+          unless you opt in below. Your resume/links can seed your profile via an
+          LLM call you explicitly trigger.</p>
+      </div>
+      <div class="card">
+        <h3>🚦 Graduated auto-fire, opt-in</h3>
+        <p>Real submission automation — but only per source/tier, only after you've
+          manually approved enough real drafts to earn it, and a kill switch that
+          disables everything, instantly, no matter what.</p>
+      </div>
+      <div class="card">
+        <h3>⏰ Scheduled scans + real alerts</h3>
+        <p>A cron-driven scheduler runs on your own machine, with per-source backoff
+          and desktop notifications on new matches — plus a severity-tiered issues
+          view so nothing silently fails in a log you never read.</p>
       </div>
       <div class="card">
         <h3>📊 A dashboard, not a spreadsheet</h3>
-        <p>Filter by tier and status, search, and track a listing from "new" through
-          "applied" → "interview" → "archived" in one place.</p>
+        <p>Sort, filter, and search by tier and status, and track a listing from
+          "new" through "applied" → "interview" → "archived" in one place.</p>
       </div>
     </div>
   </div>
@@ -290,6 +312,8 @@
         <div class="badge-row">
           <span class="pill">TypeScript</span>
           <span class="pill">Next.js</span>
+          <span class="pill">SQLite</span>
+          <span class="pill">Electron (optional)</span>
           <span class="pill">Zero telemetry</span>
           <span class="pill">Local-first</span>
         </div>
