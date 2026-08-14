@@ -31,3 +31,5 @@ sessions/
 *.sqlite3
 .playwright-mcp/
 .playwright-mcp/
+# scripts/update.sh's local dev-service log/state dir (see that script's own header comment)
+.run/

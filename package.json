@@ -14,7 +14,8 @@
     "radar": "NODE_OPTIONS=--experimental-sqlite tsx src/lib/apply/runner.ts",
     "mcp": "NODE_OPTIONS=--experimental-sqlite tsx src/mcp/server.ts",
     "scheduler": "NODE_OPTIONS=--experimental-sqlite tsx src/scheduler/index.ts",
-    "electron": "npm run build && electron electron/main.ts"
+    "electron": "npm run build && electron electron/main.ts",
+    "update": "bash scripts/update.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
