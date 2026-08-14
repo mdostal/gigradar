@@ -1,0 +1,19 @@
+name: notifications-epic
+title: Severity-tiered issue signaling (raiseIssue/resolveIssue + dashboard surface)
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+
+stories:
+  - id: issues-data-model
+    title: "issues table + raiseIssue()/resolveIssue()/listIssues() + dedupe-on-open"
+    complexity: medium
+    depends_on: []
+  - id: issues-real-call-sites
+    title: "Wire raiseIssue() into runCycle's source errors + auto-draft/auto-fire failures"
+    complexity: low
+    depends_on: [issues-data-model]
+  - id: issues-dashboard-ui
+    title: "Nav badge (open-issue count/severity) + /issues page with Resolve"
+    complexity: medium
+    depends_on: [issues-real-call-sites]
