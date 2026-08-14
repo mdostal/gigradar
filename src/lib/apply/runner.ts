@@ -62,11 +62,11 @@ export async function runRadar(
 
       const gateResult = gate(g, config.needs, config.profile);
       const tierResult = tier(g, config.roleArea ?? EMPTY_ROLE_AREA_CONFIG);
-      // Stamp the tier onto the persisted gig (not the original `g`, so a
-      // caller's own Gig object is never mutated) — this is the object that
-      // both the batch and the returned MatchResult reference, so the store
-      // and the in-memory result agree on the same tier.
-      const gigWithTier: Gig = { ...g, tier: tierResult.tier };
+      // Stamp tier + matchedProfileIds onto the persisted gig (not the
+      // original `g`, so a caller's own Gig object is never mutated) — this
+      // is the object that both the batch and the returned MatchResult
+      // reference, so the store and the in-memory result agree on both.
+      const gigWithTier: Gig = { ...g, tier: tierResult.tier, matchedProfileIds: gateResult.matchedProfiles };
 
       deduped.push(gigWithTier);
       results.push({

@@ -112,7 +112,14 @@ export async function generateDraftAction(key: string): Promise<ActionResult<{ g
     );
   }
 
-  const matchResult: MatchResult = { gig, pass: true, reasons: [], score: 1, tier: gig.tier };
+  const matchResult: MatchResult = {
+    gig,
+    pass: true,
+    reasons: [],
+    score: 1,
+    tier: gig.tier,
+    matchedProfiles: gig.matchedProfileIds ?? [],
+  };
 
   try {
     await stageApplication(matchResult, parsedConfig.data, apiKey);

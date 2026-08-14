@@ -111,11 +111,18 @@ const validConfig = {
     timezone: "America/Chicago",
   },
   needs: {
-    minRate: 150,
-    highRate: 250,
-    maxHours: 20,
-    maxHoursAtHighRate: 40,
-    allowContractToHire: false,
+    engagementProfiles: [
+      {
+        id: "fractional-contract",
+        label: "Fractional/contract",
+        types: ["contract", "fractional"],
+        minRate: 150,
+        highRate: 250,
+        maxHours: 20,
+        maxHoursAtHighRate: 40,
+        rateUnit: "hour",
+      },
+    ],
     freshStageOnly: true,
     remoteOnly: true,
   },
@@ -251,6 +258,90 @@ describe("loadConfig: optional fields", () => {
   });
 });
 
+describe("loadConfig: needs.engagementProfiles migration from the deprecated flat shape", () => {
+  function legacyFlatConfig(allowContractToHire: boolean) {
+    return {
+      profile: { name: "Ada", roles: ["Fractional CTO"], skills: [], timezone: "America/Chicago" },
+      needs: {
+        minRate: 150,
+        highRate: 250,
+        maxHours: 20,
+        maxHoursAtHighRate: 40,
+        allowContractToHire,
+        freshStageOnly: true,
+        remoteOnly: true,
+      },
+      sources: [{ id: "braintrust", enabled: true }],
+    };
+  }
+
+  it("a real, pre-existing config.json in the old flat shape (allowContractToHire: false) loads successfully into one synthesized profile covering contract+fractional only", () => {
+    writePlaintextConfig(JSON.stringify(legacyFlatConfig(false)));
+
+    const config = loadConfig();
+
+    expect(config.needs.engagementProfiles).toEqual([
+      {
+        id: "default",
+        label: "Contract/fractional",
+        types: ["contract", "fractional"],
+        minRate: 150,
+        highRate: 250,
+        maxHours: 20,
+        maxHoursAtHighRate: 40,
+        rateUnit: "hour",
+      },
+    ]);
+    expect(config.needs.freshStageOnly).toBe(true);
+    expect(config.needs.remoteOnly).toBe(true);
+  });
+
+  it("allowContractToHire: true migrates 'contract-to-hire' into the synthesized profile's types", () => {
+    writePlaintextConfig(JSON.stringify(legacyFlatConfig(true)));
+
+    const config = loadConfig();
+
+    expect(config.needs.engagementProfiles[0]?.types).toEqual(["contract", "fractional", "contract-to-hire"]);
+  });
+
+  it("does nothing (passes the document through unchanged) when engagementProfiles is already present — never double-migrates", () => {
+    const already = {
+      profile: { name: "Ada", roles: [], skills: [], timezone: "UTC" },
+      needs: {
+        engagementProfiles: [
+          {
+            id: "custom",
+            label: "Custom",
+            types: ["fractional"],
+            minRate: 999,
+            highRate: 999,
+            maxHours: 1,
+            maxHoursAtHighRate: 1,
+            rateUnit: "hour",
+          },
+        ],
+        freshStageOnly: false,
+        remoteOnly: false,
+      },
+      sources: [],
+    };
+    writePlaintextConfig(JSON.stringify(already));
+
+    const config = loadConfig();
+
+    expect(config.needs.engagementProfiles).toEqual(already.needs.engagementProfiles);
+  });
+
+  it("an already-encrypted legacy-shape config.json also migrates correctly (migration runs after decryption, before validation)", () => {
+    writeEncryptedConfig(legacyFlatConfig(false));
+
+    const config = loadConfig();
+
+    expect(config.needs.engagementProfiles).toHaveLength(1);
+    expect(config.needs.engagementProfiles[0]?.minRate).toBe(150);
+  });
+});
+
 describe("loadConfig: missing file", () => {
   it("throws a specific, actionable error naming the expected path — not a generic fs error", () => {
     const expectedPath = getConfigPath();
@@ -279,10 +370,10 @@ describe("loadConfig: invalid JSON", () => {
 describe("loadConfig: zod validation failure", () => {
   it("throws a specific, field-level zod error when a required Needs field is missing — not a generic 'invalid config' message", () => {
     const { needs, ...rest } = validConfig;
-    const { minRate, ...needsWithoutMinRate } = needs;
-    writePlaintextConfig(JSON.stringify({ ...rest, needs: needsWithoutMinRate }));
+    const { engagementProfiles, ...needsWithoutProfiles } = needs;
+    writePlaintextConfig(JSON.stringify({ ...rest, needs: needsWithoutProfiles }));
 
-    expect(() => loadConfig()).toThrow(/needs\.minRate/);
+    expect(() => loadConfig()).toThrow(/needs\.engagementProfiles/);
   });
 
   it("throws when required top-level fields (e.g. needs) are missing entirely", () => {

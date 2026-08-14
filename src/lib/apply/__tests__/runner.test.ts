@@ -63,11 +63,26 @@ function makeConfig(roleArea?: RoleAreaConfig): Config {
   return {
     profile: { name: "Test User", roles: [], skills: [], timezone: "UTC" },
     needs: {
-      minRate: 0,
-      highRate: 999_999,
-      maxHours: 999,
-      maxHoursAtHighRate: 999,
-      allowContractToHire: true,
+      engagementProfiles: [
+        {
+          id: "any-hourly",
+          label: "Any (hourly)",
+          types: ["contract", "fractional", "contract-to-hire"],
+          minRate: 0,
+          highRate: 999_999,
+          maxHours: 999,
+          maxHoursAtHighRate: 999,
+          rateUnit: "hour",
+        },
+        {
+          id: "any-salaried",
+          label: "Any (salaried)",
+          types: ["full-time"],
+          minRate: 0,
+          highRate: 999_999_999,
+          rateUnit: "year",
+        },
+      ],
       freshStageOnly: false,
       remoteOnly: false,
     },
@@ -213,5 +228,20 @@ describe("runRadar: tiering integration", () => {
     expect(result.errors).toEqual([]);
     expect(result.results[0]?.tier).toBe("yellow");
     expect(getGig("braintrust:1", { db })?.tier).toBe("yellow");
+  });
+});
+
+describe("runRadar: engagement-profiles integration", () => {
+  it("stamps gate()'s matchedProfiles onto both the in-memory MatchResult.gig and the persisted store row (same pattern as tier)", async () => {
+    nextGigs = [makeGig("1", "Fractional CTO for a Seed-Stage Startup")];
+
+    const result = await runRadar(makeConfig(), { db });
+
+    expect(result.errors).toEqual([]);
+    // makeConfig()'s Needs fixture (top of this file) has an "any-hourly"
+    // profile that any unpriced/hourly gig matches.
+    expect(result.results[0]?.gig.matchedProfileIds).toEqual(["any-hourly"]);
+    expect(result.results[0]?.matchedProfiles).toEqual(["any-hourly"]);
+    expect(getGig("braintrust:1", { db })?.matchedProfileIds).toEqual(["any-hourly"]);
   });
 });

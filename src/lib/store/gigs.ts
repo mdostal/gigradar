@@ -25,11 +25,13 @@ interface GigRow {
   weekly_hours: number | null;
   remote: number | null;
   contract_to_hire: number | null;
+  employment_type: string | null;
   stage: string | null;
   posted_at: string | null;
   description: string | null;
   raw: string | null;
   tier: string | null;
+  matched_profile_ids: string | null;
   status: string;
   first_seen: string;
   last_seen: string;
@@ -55,11 +57,13 @@ function toStoredGig(row: GigRow): StoredGig {
     weeklyHours: row.weekly_hours ?? undefined,
     remote: row.remote === null ? undefined : row.remote === 1,
     contractToHire: row.contract_to_hire === null ? undefined : row.contract_to_hire === 1,
+    employmentType: (row.employment_type as Gig["employmentType"] | null) ?? undefined,
     stage: (row.stage as Gig["stage"] | null) ?? undefined,
     postedAt: row.posted_at ?? undefined,
     description: row.description ?? undefined,
     raw: row.raw !== null ? JSON.parse(row.raw) : undefined,
     tier: (row.tier as Gig["tier"] | null) ?? undefined,
+    matchedProfileIds: row.matched_profile_ids !== null ? JSON.parse(row.matched_profile_ids) : undefined,
     status: row.status as GigStatus,
     firstSeen: row.first_seen,
     lastSeen: row.last_seen,
@@ -101,11 +105,13 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     weekly_hours: gig.weeklyHours ?? null,
     remote: gig.remote === undefined ? null : gig.remote ? 1 : 0,
     contract_to_hire: gig.contractToHire === undefined ? null : gig.contractToHire ? 1 : 0,
+    employment_type: gig.employmentType ?? null,
     stage: gig.stage ?? null,
     posted_at: gig.postedAt ?? null,
     description: gig.description ?? null,
     raw: gig.raw === undefined ? null : JSON.stringify(gig.raw),
     tier: gig.tier ?? null,
+    matched_profile_ids: gig.matchedProfileIds === undefined ? null : JSON.stringify(gig.matchedProfileIds),
     now,
   };
 
@@ -113,12 +119,12 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     db.prepare(
       `INSERT INTO gigs (
          key, source_id, external_id, title, company, url, rate_min, rate_max, rate_unit,
-         weekly_hours, remote, contract_to_hire, stage, posted_at, description, raw, tier,
-         status, first_seen, last_seen, unavailable_since, reappeared_at
+         weekly_hours, remote, contract_to_hire, employment_type, stage, posted_at, description, raw, tier,
+         matched_profile_ids, status, first_seen, last_seen, unavailable_since, reappeared_at
        ) VALUES (
          :key, :source_id, :external_id, :title, :company, :url, :rate_min, :rate_max, :rate_unit,
-         :weekly_hours, :remote, :contract_to_hire, :stage, :posted_at, :description, :raw, :tier,
-         'new', :now, :now, NULL, NULL
+         :weekly_hours, :remote, :contract_to_hire, :employment_type, :stage, :posted_at, :description, :raw, :tier,
+         :matched_profile_ids, 'new', :now, :now, NULL, NULL
        )`,
     ).run(params);
     return { key, inserted: true, reappeared: false };
@@ -133,7 +139,9 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
        title = :title, company = :company, url = :url,
        rate_min = :rate_min, rate_max = :rate_max, rate_unit = :rate_unit,
        weekly_hours = :weekly_hours, remote = :remote, contract_to_hire = :contract_to_hire,
+       employment_type = :employment_type,
        stage = :stage, posted_at = :posted_at, description = :description, raw = :raw, tier = :tier,
+       matched_profile_ids = :matched_profile_ids,
        last_seen = :now,
        unavailable_since = NULL,
        reappeared_at = CASE WHEN :was_unavailable THEN :now ELSE reappeared_at END
@@ -148,11 +156,13 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     weekly_hours: params.weekly_hours,
     remote: params.remote,
     contract_to_hire: params.contract_to_hire,
+    employment_type: params.employment_type,
     stage: params.stage,
     posted_at: params.posted_at,
     description: params.description,
     raw: params.raw,
     tier: params.tier,
+    matched_profile_ids: params.matched_profile_ids,
     now: params.now,
     key: params.key,
     was_unavailable: wasUnavailable ? 1 : 0,

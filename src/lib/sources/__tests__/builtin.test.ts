@@ -240,6 +240,58 @@ describe("builtinSource", () => {
       expect(gig?.description).toBe(LIST_SNIPPET_TEXT);
     });
 
+    it("extracts the real JobPosting employmentType (FULL_TIME -> 'full-time') when the detail fetch succeeds", async () => {
+      const fetchMock = vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u === CATEGORY_URL) return htmlResponse(fixtureHtml);
+        if (u === DETAIL_FIXTURE_URL) return htmlResponse(detailFixtureHtml);
+        return htmlResponse(UNRECOGNIZED_DETAIL_HTML);
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const gigs = await builtinSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
+      const gig = gigs.find((g) => g.externalId === "10611593");
+
+      expect(gig?.employmentType).toBe("full-time");
+    });
+
+    it("maps CONTRACTOR -> 'contract', and leaves an unmapped/unrecognized employmentType value unset (never guessed)", async () => {
+      const contractorHtml = detailFixtureHtml.replace('"employmentType":"FULL_TIME"', '"employmentType":"CONTRACTOR"');
+      const partTimeHtml = detailFixtureHtml.replace('"employmentType":"FULL_TIME"', '"employmentType":"PART_TIME"');
+
+      global.fetch = vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u === CATEGORY_URL) return htmlResponse(fixtureHtml);
+        if (u === DETAIL_FIXTURE_URL) return htmlResponse(contractorHtml);
+        return htmlResponse(UNRECOGNIZED_DETAIL_HTML);
+      }) as unknown as typeof fetch;
+      const contractorGigs = await builtinSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
+      expect(contractorGigs.find((g) => g.externalId === "10611593")?.employmentType).toBe("contract");
+
+      global.fetch = vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u === CATEGORY_URL) return htmlResponse(fixtureHtml);
+        if (u === DETAIL_FIXTURE_URL) return htmlResponse(partTimeHtml);
+        return htmlResponse(UNRECOGNIZED_DETAIL_HTML);
+      }) as unknown as typeof fetch;
+      const partTimeGigs = await builtinSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
+      expect(partTimeGigs.find((g) => g.externalId === "10611593")?.employmentType).toBeUndefined();
+    });
+
+    it("leaves employmentType unset when the detail-page fetch fails (same graceful-degradation path as description)", async () => {
+      const fetchMock = vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u === CATEGORY_URL) return htmlResponse(fixtureHtml);
+        if (u === DETAIL_FIXTURE_URL) throw new Error("getaddrinfo ENOTFOUND builtin.com");
+        return htmlResponse(UNRECOGNIZED_DETAIL_HTML);
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const gigs = await builtinSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
+      const gig = gigs.find((g) => g.externalId === "10611593");
+      expect(gig?.employmentType).toBeUndefined();
+    });
+
     it("falls back to the list-card snippet when the detail page has an unrecognized shape (no JobPosting JSON-LD found)", async () => {
       const fetchMock = vi.fn(async (url: string | URL) => {
         const u = String(url);

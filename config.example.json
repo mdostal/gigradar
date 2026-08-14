@@ -7,11 +7,26 @@
     "homeBase": { "city": "Chicago, IL", "lat": 41.8781, "lng": -87.6298 }
   },
   "needs": {
-    "minRate": 150,
-    "highRate": 250,
-    "maxHours": 20,
-    "maxHoursAtHighRate": 40,
-    "allowContractToHire": false,
+    "engagementProfiles": [
+      {
+        "id": "fractional-contract",
+        "label": "Fractional/contract",
+        "types": ["contract", "fractional"],
+        "minRate": 150,
+        "highRate": 250,
+        "maxHours": 20,
+        "maxHoursAtHighRate": 40,
+        "rateUnit": "hour"
+      },
+      {
+        "id": "full-time-700k",
+        "label": "Full-time (700k+ total comp)",
+        "types": ["full-time"],
+        "minRate": 700000,
+        "highRate": 900000,
+        "rateUnit": "year"
+      }
+    ],
     "freshStageOnly": true,
     "remoteOnly": true
   },

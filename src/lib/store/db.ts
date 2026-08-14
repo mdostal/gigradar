@@ -101,7 +101,25 @@ function openConnection(dbPath: string, busyTimeoutMs: number): DatabaseSyncType
   execWithBusyRetry(db, "PRAGMA journal_mode = WAL", busyTimeoutMs);
   db.exec("PRAGMA foreign_keys = ON");
   execWithBusyRetry(db, SCHEMA_SQL, busyTimeoutMs);
+  ensureColumn(db, "gigs", "employment_type", "TEXT");
+  ensureColumn(db, "gigs", "matched_profile_ids", "TEXT");
   return db;
+}
+
+/**
+ * Adds `column` to `table` if it doesn't already exist. Needed because
+ * `SCHEMA_SQL`'s `CREATE TABLE IF NOT EXISTS` is a no-op against a DB file
+ * that already exists (see schema.ts's own header comment: this repo has no
+ * migrations framework, so a shape change under existing data needs an
+ * explicit guarded `ALTER TABLE` step here) — this node:sqlite build
+ * doesn't support `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` syntax
+ * (confirmed: throws a syntax error), so the existence check is done in JS
+ * via `PRAGMA table_info` instead of relying on SQL-level idempotency.
+ */
+function ensureColumn(db: DatabaseSyncType, table: string, column: string, sqlType: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${sqlType}`);
 }
 
 export interface GetDbOptions {

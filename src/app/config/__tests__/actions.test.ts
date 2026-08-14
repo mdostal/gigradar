@@ -60,11 +60,18 @@ const validConfig = {
     timezone: "America/Chicago",
   },
   needs: {
-    minRate: 150,
-    highRate: 250,
-    maxHours: 20,
-    maxHoursAtHighRate: 40,
-    allowContractToHire: false,
+    engagementProfiles: [
+      {
+        id: "fractional-contract",
+        label: "Fractional/contract",
+        types: ["contract", "fractional"],
+        minRate: 150,
+        highRate: 250,
+        maxHours: 20,
+        maxHoursAtHighRate: 40,
+        rateUnit: "hour",
+      },
+    ],
     freshStageOnly: true,
     remoteOnly: true,
   },
@@ -105,12 +112,15 @@ describe("saveConfigAction: validation failure", () => {
   it("rejects a Needs field emptied to an invalid type (a real form-clearing scenario) with a field-level error", async () => {
     const result = await saveConfigAction({
       ...validConfig,
-      needs: { ...validConfig.needs, minRate: Number.NaN },
+      needs: {
+        ...validConfig.needs,
+        engagementProfiles: [{ ...validConfig.needs.engagementProfiles[0], minRate: Number.NaN }],
+      },
     });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("needs.minRate");
+    expect(result.error).toContain("needs.engagementProfiles.0.minRate");
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
@@ -122,12 +132,15 @@ describe("saveConfigAction: validation failure", () => {
     async () => {
       const result = await saveConfigAction({
         ...validConfig,
-        needs: { ...validConfig.needs, minRate: "" },
+        needs: {
+          ...validConfig.needs,
+          engagementProfiles: [{ ...validConfig.needs.engagementProfiles[0], minRate: "" }],
+        },
       });
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected failure — a blank required Needs field must not silently become 0");
-      expect(result.error).toContain("needs.minRate");
+      expect(result.error).toContain("needs.engagementProfiles.0.minRate");
       expect(fs.existsSync(getConfigPath())).toBe(false);
     },
   );

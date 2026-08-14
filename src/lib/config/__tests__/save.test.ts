@@ -89,11 +89,18 @@ const validConfig = {
     timezone: "America/Chicago",
   },
   needs: {
-    minRate: 150,
-    highRate: 250,
-    maxHours: 20,
-    maxHoursAtHighRate: 40,
-    allowContractToHire: false,
+    engagementProfiles: [
+      {
+        id: "fractional-contract",
+        label: "Fractional/contract",
+        types: ["contract", "fractional"],
+        minRate: 150,
+        highRate: 250,
+        maxHours: 20,
+        maxHoursAtHighRate: 40,
+        rateUnit: "hour",
+      },
+    ],
     freshStageOnly: true,
     remoteOnly: true,
   },
@@ -163,11 +170,12 @@ describe("saveConfig: happy path (overwrite existing file)", () => {
 
     // Only editing `needs` here — profile/sources/schedule should survive
     // untouched via the merge against the freshly re-read raw document.
-    const result = saveConfig({ needs: { ...full.needs, minRate: 200 } });
+    const editedProfiles = [{ ...full.needs.engagementProfiles[0]!, minRate: 200 }];
+    const result = saveConfig({ needs: { ...full.needs, engagementProfiles: editedProfiles } });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.data.needs.minRate).toBe(200);
+    expect(result.data.needs.engagementProfiles[0]!.minRate).toBe(200);
     expect(result.data.profile).toEqual(full.profile);
     expect(result.data.sources).toEqual(full.sources);
     expect(result.data.schedule).toBe(full.schedule);
@@ -301,12 +309,15 @@ describe("saveConfig: validation failure writes nothing", () => {
     // minRate must be a number — send a string to fail schema validation.
     const result = saveConfig({
       ...validConfig,
-      needs: { ...validConfig.needs, minRate: "not-a-number" },
+      needs: {
+        ...validConfig.needs,
+        engagementProfiles: [{ ...validConfig.needs.engagementProfiles[0], minRate: "not-a-number" }],
+      },
     });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("needs.minRate");
+    expect(result.error).toContain("needs.engagementProfiles.0.minRate");
 
     const after = fs.readFileSync(getConfigPath(), "utf8");
     const afterStat = fs.statSync(getConfigPath());
@@ -327,12 +338,15 @@ describe("saveConfig: validation failure writes nothing", () => {
 
       const result = saveConfig({
         ...validConfig,
-        needs: { ...validConfig.needs, minRate: "not-a-number" },
+        needs: {
+          ...validConfig.needs,
+          engagementProfiles: [{ ...validConfig.needs.engagementProfiles[0], minRate: "not-a-number" }],
+        },
       });
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected failure");
-      expect(result.error).toContain("needs.minRate");
+      expect(result.error).toContain("needs.engagementProfiles.0.minRate");
 
       const after = fs.readFileSync(getConfigPath(), "utf8");
       const afterStat = fs.statSync(getConfigPath());
@@ -405,6 +419,30 @@ describe("readRawConfig: the config-editing UI's pre-populate read path", () => 
 
     expect(raw).toEqual(validConfig);
     expect(isEncryptedEnvelope(fs.readFileSync(configPath, "utf8"))).toBe(true);
+  });
+
+  it("given a config.json still in the deprecated flat needs shape (minRate/allowContractToHire, no engagementProfiles), readRawConfig() returns it already migrated to a real profile — the config UI never sees the old shape", () => {
+    writeConfig({
+      profile: { name: "Ada", roles: [], skills: [], timezone: "UTC" },
+      needs: {
+        minRate: 150,
+        highRate: 250,
+        maxHours: 20,
+        maxHoursAtHighRate: 40,
+        allowContractToHire: false,
+        freshStageOnly: true,
+        remoteOnly: true,
+      },
+      sources: [],
+    });
+
+    const raw = readRawConfig() as {
+      needs: { engagementProfiles: { minRate: number; types: string[] }[] };
+    };
+
+    expect(raw.needs.engagementProfiles).toHaveLength(1);
+    expect(raw.needs.engagementProfiles[0]?.minRate).toBe(150);
+    expect(raw.needs.engagementProfiles[0]?.types).toEqual(["contract", "fractional"]);
   });
 
   it("given an already-encrypted config.json, readRawConfig() decrypts and returns the document with no further write", () => {

@@ -38,11 +38,26 @@ function makeConfig(applyProfile?: ApplyProfileConfig): Config {
   return {
     profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
     needs: {
-      minRate: 0,
-      highRate: 999_999,
-      maxHours: 999,
-      maxHoursAtHighRate: 999,
-      allowContractToHire: true,
+      engagementProfiles: [
+        {
+          id: "any-hourly",
+          label: "Any (hourly)",
+          types: ["contract", "fractional", "contract-to-hire"],
+          minRate: 0,
+          highRate: 999_999,
+          maxHours: 999,
+          maxHoursAtHighRate: 999,
+          rateUnit: "hour",
+        },
+        {
+          id: "any-salaried",
+          label: "Any (salaried)",
+          types: ["full-time"],
+          minRate: 0,
+          highRate: 999_999_999,
+          rateUnit: "year",
+        },
+      ],
       freshStageOnly: false,
       remoteOnly: false,
     },
@@ -60,7 +75,7 @@ function makeGig(overrides: Partial<Gig> & { sourceId: string; externalId: strin
 }
 
 function makeMatchResult(gig: Gig, tier: MatchResult["tier"]): MatchResult {
-  return { gig, pass: true, reasons: [], score: 1, tier };
+  return { gig, pass: true, reasons: [], score: 1, tier, matchedProfiles: [] };
 }
 
 /** Seeds a real gig row via the store (application_drafts' FK needs a real gigs row). */

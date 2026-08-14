@@ -5,7 +5,7 @@ import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
 import type { ConfigEdits } from "@/lib/config/save";
 import { mergeDedupe } from "@/lib/profile-ingestion/merge";
 import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
-import type { Config, RoleAreaConfig, SourceConfig } from "@/lib/types";
+import type { Config, EngagementType, RoleAreaConfig, SourceConfig } from "@/lib/types";
 import {
   cancelCaptureAction,
   extractProfileFromResumeAction,
@@ -48,14 +48,50 @@ interface DraftProfile {
   homeBaseLng: string;
 }
 
-interface DraftNeeds {
+/** Mirrors `EngagementProfile` in src/lib/types.ts — numeric fields are controlled-input strings, same convention as DraftNeeds' old flat fields. */
+interface DraftEngagementProfile {
+  id: string;
+  label: string;
+  types: EngagementType[];
   minRate: string;
   highRate: string;
   maxHours: string;
   maxHoursAtHighRate: string;
-  allowContractToHire: boolean;
+  rateUnit: "hour" | "year";
+}
+
+interface DraftNeeds {
+  engagementProfiles: DraftEngagementProfile[];
   freshStageOnly: boolean;
   remoteOnly: boolean;
+}
+
+const ALL_ENGAGEMENT_TYPES: EngagementType[] = ["contract", "fractional", "contract-to-hire", "full-time"];
+
+const ENGAGEMENT_TYPE_LABEL: Record<EngagementType, string> = {
+  contract: "Contract",
+  fractional: "Fractional",
+  "contract-to-hire": "Contract-to-hire",
+  "full-time": "Full-time (salaried, benefits)",
+};
+
+/** Generates a stable-enough profile id from its label + a random suffix — collisions are harmless (ids only need to be unique WITHIN one user's profile list, never compared across configs). */
+function makeProfileId(label: string): string {
+  const slug = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "profile";
+  return `${slug}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function defaultEngagementProfile(): DraftEngagementProfile {
+  return {
+    id: makeProfileId("new-profile"),
+    label: "",
+    types: ["contract", "fractional"],
+    minRate: "",
+    highRate: "",
+    maxHours: "",
+    maxHoursAtHighRate: "",
+    rateUnit: "hour",
+  };
 }
 
 interface DraftRoleArea {
@@ -126,11 +162,16 @@ function configToDraft(config: Config): DraftConfig {
       homeBaseLng: config.profile.homeBase ? String(config.profile.homeBase.lng) : "",
     },
     needs: {
-      minRate: String(config.needs.minRate),
-      highRate: String(config.needs.highRate),
-      maxHours: String(config.needs.maxHours),
-      maxHoursAtHighRate: String(config.needs.maxHoursAtHighRate),
-      allowContractToHire: config.needs.allowContractToHire,
+      engagementProfiles: config.needs.engagementProfiles.map((p) => ({
+        id: p.id,
+        label: p.label,
+        types: p.types,
+        minRate: String(p.minRate),
+        highRate: String(p.highRate),
+        maxHours: String(p.maxHours),
+        maxHoursAtHighRate: String(p.maxHoursAtHighRate),
+        rateUnit: p.rateUnit,
+      })),
       freshStageOnly: config.needs.freshStageOnly,
       remoteOnly: config.needs.remoteOnly,
     },
@@ -229,11 +270,20 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
   };
 
   const needs = {
-    minRate: draftNumber(draft.needs.minRate),
-    highRate: draftNumber(draft.needs.highRate),
-    maxHours: draftNumber(draft.needs.maxHours),
-    maxHoursAtHighRate: draftNumber(draft.needs.maxHoursAtHighRate),
-    allowContractToHire: draft.needs.allowContractToHire,
+    engagementProfiles: draft.needs.engagementProfiles.map((p) => ({
+      id: p.id,
+      label: p.label,
+      types: p.types,
+      minRate: draftNumber(p.minRate),
+      highRate: draftNumber(p.highRate),
+      rateUnit: p.rateUnit,
+      // maxHours/maxHoursAtHighRate are omitted entirely for a "year"
+      // (salaried) profile — EngagementProfileSchema only requires them
+      // when rateUnit is "hour" (see that schema's .refine()).
+      ...(p.rateUnit === "hour"
+        ? { maxHours: draftNumber(p.maxHours), maxHoursAtHighRate: draftNumber(p.maxHoursAtHighRate) }
+        : {}),
+    })),
     freshStageOnly: draft.needs.freshStageOnly,
     remoteOnly: draft.needs.remoteOnly,
   };
@@ -576,6 +626,146 @@ function CheckboxField({
       />
       {label}
     </label>
+  );
+}
+
+/**
+ * `Needs.engagementProfiles` editor — a repeatable list, same "+ Add" /
+ * "Remove" pattern as SettingsEditor above. Each profile is its own
+ * engagement-type checklist + rate/hours threshold — see EngagementProfile
+ * in src/lib/types.ts for the full semantics (a gig can clear more than one
+ * profile at once; matching/gate.ts checks every applicable one, not just
+ * the first).
+ */
+function EngagementProfilesEditor({
+  profiles,
+  onChange,
+}: {
+  profiles: DraftEngagementProfile[];
+  onChange: (next: DraftEngagementProfile[]) => void;
+}) {
+  return (
+    <div className="mt-3 flex flex-col gap-3">
+      {profiles.map((p, i) => (
+        <div key={p.id} className="rounded-md border border-slate-200 p-3">
+          <div className="flex items-end gap-3">
+            <label className="flex-1">
+              <span className={labelClass}>Profile label</span>
+              <input
+                type="text"
+                value={p.label}
+                placeholder="e.g. Fractional/contract"
+                onChange={(e) =>
+                  onChange(profiles.map((pp, idx) => (idx === i ? { ...pp, label: e.target.value } : pp)))
+                }
+                className={inputClass}
+              />
+            </label>
+            <label>
+              <span className={labelClass}>Rate unit</span>
+              <select
+                value={p.rateUnit}
+                onChange={(e) =>
+                  onChange(
+                    profiles.map((pp, idx) =>
+                      idx === i ? { ...pp, rateUnit: e.target.value as "hour" | "year" } : pp,
+                    ),
+                  )
+                }
+                className={inputClass}
+              >
+                <option value="hour">$/hour</option>
+                <option value="year">$/year (total comp)</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => onChange(profiles.filter((_, idx) => idx !== i))}
+              className="shrink-0 text-xs text-red-600 hover:underline"
+            >
+              Remove profile
+            </button>
+          </div>
+
+          <div className="mt-2 flex flex-wrap gap-3">
+            {ALL_ENGAGEMENT_TYPES.map((t) => (
+              <label key={t} className="flex items-center gap-1.5 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={p.types.includes(t)}
+                  onChange={(e) => {
+                    const types = e.target.checked ? [...p.types, t] : p.types.filter((x) => x !== t);
+                    onChange(profiles.map((pp, idx) => (idx === i ? { ...pp, types } : pp)));
+                  }}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                {ENGAGEMENT_TYPE_LABEL[t]}
+              </label>
+            ))}
+          </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <label>
+              <span className={labelClass}>Minimum rate ({p.rateUnit === "hour" ? "$/hr" : "$/yr"})</span>
+              <input
+                type="number"
+                value={p.minRate}
+                onChange={(e) =>
+                  onChange(profiles.map((pp, idx) => (idx === i ? { ...pp, minRate: e.target.value } : pp)))
+                }
+                className={inputClass}
+              />
+            </label>
+            <label>
+              <span className={labelClass}>High rate ({p.rateUnit === "hour" ? "$/hr" : "$/yr"})</span>
+              <input
+                type="number"
+                value={p.highRate}
+                onChange={(e) =>
+                  onChange(profiles.map((pp, idx) => (idx === i ? { ...pp, highRate: e.target.value } : pp)))
+                }
+                className={inputClass}
+              />
+            </label>
+            {p.rateUnit === "hour" && (
+              <>
+                <label>
+                  <span className={labelClass}>Max weekly hours</span>
+                  <input
+                    type="number"
+                    value={p.maxHours}
+                    onChange={(e) =>
+                      onChange(profiles.map((pp, idx) => (idx === i ? { ...pp, maxHours: e.target.value } : pp)))
+                    }
+                    className={inputClass}
+                  />
+                </label>
+                <label>
+                  <span className={labelClass}>Max weekly hours at high rate</span>
+                  <input
+                    type="number"
+                    value={p.maxHoursAtHighRate}
+                    onChange={(e) =>
+                      onChange(
+                        profiles.map((pp, idx) => (idx === i ? { ...pp, maxHoursAtHighRate: e.target.value } : pp)),
+                      )
+                    }
+                    className={inputClass}
+                  />
+                </label>
+              </>
+            )}
+          </div>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...profiles, defaultEngagementProfile()])}
+        className="self-start text-xs font-medium text-slate-600 hover:underline"
+      >
+        + Add profile
+      </button>
+    </div>
   );
 }
 
@@ -948,53 +1138,17 @@ export function ConfigClient({ initial }: { initial: Config }) {
 
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-slate-900">Needs</h2>
-        <p className="text-xs text-slate-500">All seven fields are required — this is the gate's hard constraint set.</p>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <label>
-            <span className={labelClass}>Minimum rate ($/hr)</span>
-            <input
-              type="number"
-              value={draft.needs.minRate}
-              onChange={(e) => setDraft({ ...draft, needs: { ...draft.needs, minRate: e.target.value } })}
-              className={inputClass}
-            />
-          </label>
-          <label>
-            <span className={labelClass}>High rate ($/hr)</span>
-            <input
-              type="number"
-              value={draft.needs.highRate}
-              onChange={(e) => setDraft({ ...draft, needs: { ...draft.needs, highRate: e.target.value } })}
-              className={inputClass}
-            />
-          </label>
-          <label>
-            <span className={labelClass}>Max weekly hours</span>
-            <input
-              type="number"
-              value={draft.needs.maxHours}
-              onChange={(e) => setDraft({ ...draft, needs: { ...draft.needs, maxHours: e.target.value } })}
-              className={inputClass}
-            />
-          </label>
-          <label>
-            <span className={labelClass}>Max weekly hours at high rate</span>
-            <input
-              type="number"
-              value={draft.needs.maxHoursAtHighRate}
-              onChange={(e) =>
-                setDraft({ ...draft, needs: { ...draft.needs, maxHoursAtHighRate: e.target.value } })
-              }
-              className={inputClass}
-            />
-          </label>
-        </div>
+        <p className="text-xs text-slate-500">
+          At least one engagement profile is required — this is the gate's hard constraint set. A gig is checked
+          against every profile whose engagement type it matches (a listing can clear more than one); each profile
+          has its own rate floor, so e.g. a low-ball full-time salary can be excluded even while a good hourly
+          contract rate passes.
+        </p>
+        <EngagementProfilesEditor
+          profiles={draft.needs.engagementProfiles}
+          onChange={(engagementProfiles) => setDraft({ ...draft, needs: { ...draft.needs, engagementProfiles } })}
+        />
         <div className="mt-3 flex flex-wrap gap-4">
-          <CheckboxField
-            label="Allow contract-to-hire"
-            checked={draft.needs.allowContractToHire}
-            onChange={(v) => setDraft({ ...draft, needs: { ...draft.needs, allowContractToHire: v } })}
-          />
           <CheckboxField
             label="Fresh-stage listings only"
             checked={draft.needs.freshStageOnly}
