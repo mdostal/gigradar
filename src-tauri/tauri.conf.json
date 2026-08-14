@@ -30,7 +30,8 @@
       "binaries/node"
     ],
     "resources": [
-      "resources/server/**/*"
+      "resources/server/**/*",
+      "resources/playwright-browsers/**/*"
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"

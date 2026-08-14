@@ -14,9 +14,15 @@
 #      this story: `.next/static` and `public/` are NOT auto-copied by
 #      Next's own standalone build — this script does it, same as Next's
 #      own documented standalone-deploy instructions).
-#
-# Chromium bundling (tauri-chromium-sidecar story) is NOT this script's
-# job yet — added when that story lands.
+#   3. resources/playwright-browsers/ — a real Chromium build, bundled so
+#      Capture Login / browser-session sources never hit the network for a
+#      first-run browser download. NOT a Tauri externalBin sidecar (Tauri
+#      never invokes it directly) -- Playwright itself launches it once
+#      PLAYWRIGHT_BROWSERS_PATH points here (main.rs sets this env var on
+#      the Node sidecar's spawn). Live-verified this story: a bare
+#      chromium.launch()/chromium.executablePath() call transparently
+#      respects PLAYWRIGHT_BROWSERS_PATH with ZERO code change needed in
+#      src/lib/auth/browser-session.ts.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -61,6 +67,19 @@ mkdir -p "$RES_DIR/.next/static"
 cp -r .next/static/. "$RES_DIR/.next/static/"
 if [ -d public ]; then
   cp -r public "$RES_DIR/public"
+fi
+
+BROWSERS_DIR="src-tauri/resources/playwright-browsers"
+if [ ! -d "$BROWSERS_DIR" ] || [ -z "$(ls -A "$BROWSERS_DIR" 2>/dev/null)" ]; then
+  echo "prepare-tauri-sidecars: installing Chromium into $BROWSERS_DIR..."
+  mkdir -p "$BROWSERS_DIR"
+  # --no-shell: browser-session.ts only ever launches headed (headless:
+  # false is hardcoded there -- see that file's own header comment on why),
+  # so the separate chromium-headless-shell variant Playwright installs by
+  # default is dead weight in this bundle -- skipping it saves ~200MB.
+  PLAYWRIGHT_BROWSERS_PATH="$(pwd)/$BROWSERS_DIR" npx playwright install chromium --no-shell
+else
+  echo "prepare-tauri-sidecars: $BROWSERS_DIR already populated, skipping Chromium install."
 fi
 
 echo "prepare-tauri-sidecars: done."

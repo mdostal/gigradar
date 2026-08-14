@@ -60,6 +60,11 @@ pub fn run() {
                 .resource_dir()
                 .expect("gigradar: could not resolve the app's resource directory");
             let server_entry = resource_dir.join("resources/server/server.js");
+            // tauri-chromium-sidecar story: PLAYWRIGHT_BROWSERS_PATH is
+            // transparently respected by chromium.launch()/executablePath()
+            // with ZERO code change needed in browser-session.ts (live-
+            // verified this story) -- just point it at the bundled browser.
+            let browsers_dir = resource_dir.join("resources/playwright-browsers");
 
             let sidecar = app
                 .shell()
@@ -67,6 +72,7 @@ pub fn run() {
                 .expect("gigradar: bundled node sidecar not found — did scripts/prepare-tauri-sidecars.sh run?")
                 .args([server_entry.to_string_lossy().to_string()])
                 .env("NODE_OPTIONS", "--experimental-sqlite")
+                .env("PLAYWRIGHT_BROWSERS_PATH", browsers_dir.to_string_lossy().to_string())
                 .env("PORT", SERVER_PORT);
 
             let (mut rx, _child) = sidecar
