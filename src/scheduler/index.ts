@@ -40,6 +40,7 @@
 import { Cron } from "croner";
 import { runRadar, stageApplication } from "../lib/apply/runner.js";
 import { loadConfig } from "../lib/config/load.js";
+import { sendDesktopNotification } from "../lib/notify/desktop.js";
 import { getDraft, gigKey } from "../lib/store/index.js";
 import type { Config, MatchResult, SourceConfig } from "../lib/types.js";
 import { BackoffTracker, DEFAULT_MAX_BACKOFF_MS } from "./backoff.js";
@@ -66,6 +67,8 @@ export interface SchedulerOptions {
   stageApplicationFn?: typeof stageApplication;
   /** Defaults to the real getDraft(). Overridable so tests simulate an already-drafted gig without a live DB — mirrors runRadarFn's own injectable-options pattern. */
   getDraftFn?: typeof getDraft;
+  /** Defaults to the real sendDesktopNotification(). Overridable so tests observe/simulate notify-on-green-match calls without firing a real OS notification — mirrors runRadarFn's own injectable-options pattern. */
+  notifyFn?: typeof sendDesktopNotification;
   /** ms between idle rechecks when Config.schedule is unset. Defaults to DEFAULT_IDLE_RECHECK_MS (1 hour); tests override with a tiny value or a synchronous-firing setTimeoutFn to avoid real waiting. */
   idleRecheckMs?: number;
   /** Ceiling forwarded to each schedule-activation's BackoffTracker. Defaults to backoff.ts's own 24h default. */
@@ -229,6 +232,52 @@ export async function runAutoDraft(
 }
 
 /**
+ * `notify-on-green-match` story: after a cycle's `runRadarFn()` returns its
+ * `passed` matches and `newlyInsertedKeys`, fires ONE best-effort desktop
+ * notification (`notifyFn`, `sendDesktopNotification()` unmodified) when the
+ * cycle found one or more BRAND-NEW green-tier matches — opt-in via
+ * `config.notifyOnGreenMatch`. Never throws: `sendDesktopNotification()`
+ * itself never rejects (see its own doc comment), and the call here is still
+ * wrapped defensively so a notification can never fail the cycle.
+ *
+ * "New" is `newlyInsertedKeys` (from `runRadar()`'s own `recordScan()`
+ * insertion signal) — a gig re-seen on a later scan is never re-notified,
+ * even if it's still green-tier. Deliberately a single summarizing
+ * notification per cycle, never one per gig — same "no per-item spam"
+ * discipline `runAutoDraft()`'s own log line follows.
+ */
+export async function runNotifyOnGreenMatch(
+  config: Config,
+  passed: MatchResult[],
+  newlyInsertedKeys: string[],
+  notifyFn: typeof sendDesktopNotification,
+): Promise<void> {
+  if (!config.notifyOnGreenMatch) return;
+
+  const newKeys = new Set(newlyInsertedKeys);
+  const newGreenMatches = passed.filter(
+    (r) => r.tier === "green" && newKeys.has(gigKey(r.gig.sourceId, r.gig.externalId)),
+  );
+
+  if (newGreenMatches.length === 0) return;
+
+  const first = newGreenMatches[0];
+  const title = newGreenMatches.length === 1 ? "gigradar: new green-tier match" : "gigradar: new green-tier matches";
+  const body =
+    newGreenMatches.length === 1
+      ? `${first?.gig.title} @ ${first?.gig.company ?? "?"}`
+      : `${newGreenMatches.length} new matches, including "${first?.gig.title}"`;
+
+  try {
+    await notifyFn({ title, body });
+  } catch (e) {
+    console.warn(`gigradar scheduler: notify-on-green-match failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  console.log(`gigradar scheduler: ${newGreenMatches.length} new green-tier match(es) this cycle — notified.`);
+}
+
+/**
  * Starts the scheduler: loads Config via `loadConfigFn` (real `loadConfig()`
  * by default). If `Config.schedule` is unset, logs clearly and idles,
  * rechecking every `idleRecheckMs` — never exits (see this file's header
@@ -251,6 +300,7 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
   const runRadarFn = options.runRadarFn ?? runRadar;
   const stageApplicationFn = options.stageApplicationFn ?? stageApplication;
   const getDraftFn = options.getDraftFn ?? getDraft;
+  const notifyFn = options.notifyFn ?? sendDesktopNotification;
   const idleRecheckMs = options.idleRecheckMs ?? DEFAULT_IDLE_RECHECK_MS;
   const maxBackoffMs = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
   const nowFn = options.now ?? Date.now;
@@ -299,6 +349,11 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
       // unset/false is a no-op inside runAutoDraft() itself) — see that
       // function's own doc comment above for the full behavior.
       await runAutoDraft(config, result.passed, stageApplicationFn, getDraftFn);
+
+      // notify-on-green-match story: opt-in, off by default (same no-op
+      // pattern as runAutoDraft() above) — see that function's own doc
+      // comment for the full behavior.
+      await runNotifyOnGreenMatch(config, result.passed, result.newlyInsertedKeys, notifyFn);
     } catch (e) {
       // Anything that reaches here is, by construction, OUTSIDE runRadar()'s
       // own per-source try/catch (that function never throws for a single

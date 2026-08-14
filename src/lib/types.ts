@@ -164,6 +164,18 @@ export interface Config {
    * .pHive/epics/auto-draft-on-scan/docs/design-discussion.md.
    */
   autoDraftOnScan?: boolean;
+  /**
+   * Opt-in: when true, each scheduled scan cycle that finds one or more
+   * BRAND-NEW (never seen before this cycle) green-tier matches fires one
+   * best-effort desktop notification summarizing them (see
+   * src/lib/notify/desktop.ts) — never per-gig spam, never more than one
+   * notification per cycle. A notification failure (unsupported platform,
+   * missing OS notification tool) is logged and swallowed, never breaks the
+   * scan. Omitted/false => no behavior change from before this flag
+   * existed — same "omission is a meaningful, valid do-nothing default"
+   * pattern as autoDraftOnScan above.
+   */
+  notifyOnGreenMatch?: boolean;
 }
 
 /** A normalized gig, whatever source it came from. */

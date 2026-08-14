@@ -125,6 +125,14 @@ interface DraftConfig {
   roleArea: DraftRoleArea;
   schedule: string;
   applyProfile: DraftApplyProfile;
+  /**
+   * Unlike roleArea/schedule, `autoDraftOnScan`/`notifyOnGreenMatch`
+   * omitted vs explicitly `false` are functionally IDENTICAL in the
+   * scheduler's own code (both mean "don't do the behavior") — no
+   * enabled-flag tri-state needed here, always sent as a plain boolean.
+   */
+  autoDraftOnScan: boolean;
+  notifyOnGreenMatch: boolean;
 }
 
 // -- Config -> Draft -----------------------------------------------------
@@ -183,6 +191,8 @@ function configToDraft(config: Config): DraftConfig {
       redKeywords: config.roleArea?.redKeywords ?? [],
     },
     schedule: config.schedule ?? "",
+    autoDraftOnScan: config.autoDraftOnScan ?? false,
+    notifyOnGreenMatch: config.notifyOnGreenMatch ?? false,
     applyProfile: {
       enabled: config.applyProfile != null,
       email: config.applyProfile?.email ?? "",
@@ -305,6 +315,11 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
 
   const schedule = draft.schedule.trim();
   edits.schedule = schedule === "" ? undefined : schedule;
+
+  // Always sent as plain booleans -- see DraftConfig's own comment on why
+  // these two don't need roleArea/schedule's enabled-flag tri-state.
+  edits.autoDraftOnScan = draft.autoDraftOnScan;
+  edits.notifyOnGreenMatch = draft.notifyOnGreenMatch;
 
   // NOT typed as `ApplyProfileConfig` here on purpose — same reasoning as
   // `needs` above: `draftNumber(rateAnchor)` can return the original
@@ -1315,6 +1330,21 @@ export function ConfigClient({ initial }: { initial: Config }) {
             className={inputClass}
           />
         </label>
+        <p className="mt-3 text-xs text-slate-500">
+          Only take effect while the scheduler (<code>npm run scheduler</code>) is running.
+        </p>
+        <div className="mt-2 flex flex-col gap-2">
+          <CheckboxField
+            label="Auto-draft new green-tier matches each scan"
+            checked={draft.autoDraftOnScan}
+            onChange={(v) => setDraft({ ...draft, autoDraftOnScan: v })}
+          />
+          <CheckboxField
+            label="Notify (desktop) on new green-tier matches each scan"
+            checked={draft.notifyOnGreenMatch}
+            onChange={(v) => setDraft({ ...draft, notifyOnGreenMatch: v })}
+          />
+        </div>
       </section>
 
       <section className={sectionClass}>

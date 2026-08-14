@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-14
+
+### Added
+
+- **Desktop notifications on new green-tier matches (`Config.notifyOnGreenMatch`,
+  opt-in, off by default).** Each scheduled scan that finds one or more
+  BRAND-NEW (never seen before) green-tier matches fires one best-effort
+  native desktop notification (macOS `osascript`, Linux `notify-send`) —
+  one summarizing notification per cycle, never one per gig. A gig re-seen
+  on a later scan is never re-notified, even if still green-tier. A
+  notification failure (unsupported platform, missing OS tool) is logged
+  and swallowed — never breaks the scan. New `src/lib/notify/desktop.ts`,
+  zero external dependencies; untrusted scraped content (gig title/company)
+  is sanitized and escaped before ever reaching a shell command. Live-fired
+  a real notification end-to-end through the actual scheduler pipeline to
+  confirm.
+- `runRadar()` now also returns `newlyInsertedKeys` (from `recordScan()`'s
+  own insertion signal) — the new mechanism the notify feature uses to tell
+  "just discovered this cycle" apart from "already existed, re-seen."
+- **Closed a real gap found while building this:** `autoDraftOnScan` has
+  existed since the `auto-draft-on-scan` epic but had ZERO config UI
+  wiring — hand-edit-config.json only. Both `autoDraftOnScan` and the new
+  `notifyOnGreenMatch` now have real checkboxes in `/config`'s Schedule
+  section. Live-verified against the owner's real config.json: "Auto-draft"
+  correctly showed pre-checked (matching the value set earlier by hand),
+  "Notify" correctly showed unchecked.
+- 14 new tests (610 total, 3 opt-in real-browser tests).
+
 ## [0.17.1] - 2026-08-14
 
 ### Fixed
