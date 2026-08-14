@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-12
+
+### Added
+
+- **Dashboard table sorting + a Source filter.** All 8 data-backed columns
+  (Source, Title, Company, Tier, Status, Rate, Weekly hrs, Seen) are now
+  clickable sort headers — click once for ascending, click again to reverse,
+  click a different column to jump straight to ascending on it. Tier sorts
+  green→yellow→red (its actual meaning, not alphabetical); Status follows
+  its real lifecycle order (new→applied→interview→archived/ignored), not
+  alphabetical either. Missing values (no company, no rate, no tier) always
+  sort last, in both directions — never silently interleaved as if they
+  were zero. New `Source` filter dropdown (options built from the sources
+  actually present in your data, never a hardcoded list) combines with the
+  existing tier/status/search filters as AND. Live-verified against the
+  real running dashboard (228 real gigs): clicking Rate sorted ascending
+  ($15/hr → up), clicking again reversed it ($185,000/yr salary listings on
+  top).
+- 18 new tests (564 total, 3 opt-in real-browser tests) — `dashboard-sort.ts`
+  is a new pure, directly-unit-tested module mirroring
+  `dashboard-filter.ts`'s existing pattern.
+- **General dashboard/nav styling pass.** Nav header: sticky at the top of
+  the page, a "gigradar" wordmark, and active-link highlighting
+  (`usePathname()`). Dashboard: filter controls grouped into one cohesive
+  card, status strip rendered as pills, table gets zebra-striped rows, a row
+  hover state, and a card-style border/shadow. Tried (and reverted) a sticky
+  table header: `position: sticky` on `<thead>`/per-`<th>` produced a real,
+  live-confirmed rendering glitch (a scrolled-past row bleeding through
+  above the header) that couldn't be cleanly resolved in this pass, so the
+  header stays in normal flow rather than shipping a visible bug — flagged
+  as a real follow-up, not silently dropped.
+
 ## [0.15.1] - 2026-08-12
 
 ### Fixed

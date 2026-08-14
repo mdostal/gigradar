@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredGig } from "@/lib/store";
-import { filterGigs } from "../dashboard-filter";
+import { distinctSources, filterGigs } from "../dashboard-filter";
 
 function makeGig(overrides: Partial<StoredGig> & { key: string }): StoredGig {
   return {
@@ -22,7 +22,7 @@ const ALL_STATUSES = new Set<StoredGig["status"]>(["new", "applied", "interview"
 describe("filterGigs", () => {
   it("tier filter: 'all' passes every gig regardless of tier", () => {
     const gigs = [makeGig({ key: "1", tier: "green" }), makeGig({ key: "2", tier: undefined })];
-    expect(filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "" })).toHaveLength(2);
+    expect(filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "", source: "all" })).toHaveLength(2);
   });
 
   it("tier filter: a specific tier excludes non-matching and untiered gigs", () => {
@@ -31,13 +31,13 @@ describe("filterGigs", () => {
       makeGig({ key: "2", tier: "yellow" }),
       makeGig({ key: "3", tier: undefined }),
     ];
-    const result = filterGigs(gigs, { tier: "green", statuses: ALL_STATUSES, search: "" });
+    const result = filterGigs(gigs, { tier: "green", statuses: ALL_STATUSES, search: "", source: "all" });
     expect(result.map((g) => g.key)).toEqual(["1"]);
   });
 
   it("status filter: only gigs whose status is in the checked set pass", () => {
     const gigs = [makeGig({ key: "1", status: "new" }), makeGig({ key: "2", status: "applied" })];
-    const result = filterGigs(gigs, { tier: "all", statuses: new Set(["applied"]), search: "" });
+    const result = filterGigs(gigs, { tier: "all", statuses: new Set(["applied"]), search: "", source: "all" });
     expect(result.map((g) => g.key)).toEqual(["2"]);
   });
 
@@ -47,7 +47,7 @@ describe("filterGigs", () => {
       makeGig({ key: "2", tier: "red", status: "applied" }), // status matches, tier doesn't
       makeGig({ key: "3", tier: "green", status: "applied" }), // both match
     ];
-    const result = filterGigs(gigs, { tier: "green", statuses: new Set(["applied"]), search: "" });
+    const result = filterGigs(gigs, { tier: "green", statuses: new Set(["applied"]), search: "", source: "all" });
     expect(result.map((g) => g.key)).toEqual(["3"]);
   });
 
@@ -57,16 +57,16 @@ describe("filterGigs", () => {
       makeGig({ key: "2", title: "Backend Engineer", company: "Other Co" }),
       makeGig({ key: "3", title: "Something", company: "ACME Corp" }),
     ];
-    const byTitle = filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "fractional" });
+    const byTitle = filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "fractional", source: "all" });
     expect(byTitle.map((g) => g.key)).toEqual(["1"]);
 
-    const byCompany = filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "acme" });
+    const byCompany = filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "acme", source: "all" });
     expect(byCompany.map((g) => g.key)).toEqual(["1", "3"]);
   });
 
   it("empty search matches everything", () => {
     const gigs = [makeGig({ key: "1" }), makeGig({ key: "2" })];
-    expect(filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "   " })).toHaveLength(2);
+    expect(filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "   ", source: "all" })).toHaveLength(2);
   });
 
   it("all three filters combine as AND", () => {
@@ -78,7 +78,47 @@ describe("filterGigs", () => {
       tier: "green",
       statuses: new Set(["applied"]),
       search: "fractional",
+      source: "all",
     });
     expect(result.map((g) => g.key)).toEqual(["1"]);
+  });
+
+  it("source filter: only gigs from the exact selected sourceId pass", () => {
+    const gigs = [
+      makeGig({ key: "1", sourceId: "gofractional" }),
+      makeGig({ key: "2", sourceId: "wellfound" }),
+    ];
+    const result = filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "", source: "gofractional" });
+    expect(result.map((g) => g.key)).toEqual(["1"]);
+  });
+
+  it("source filter: 'all' passes every source", () => {
+    const gigs = [makeGig({ key: "1", sourceId: "gofractional" }), makeGig({ key: "2", sourceId: "wellfound" })];
+    expect(filterGigs(gigs, { tier: "all", statuses: ALL_STATUSES, search: "", source: "all" })).toHaveLength(2);
+  });
+
+  it("source combines with the other filters as AND", () => {
+    const gigs = [
+      makeGig({ key: "1", sourceId: "gofractional", tier: "green" }),
+      makeGig({ key: "2", sourceId: "gofractional", tier: "red" }),
+      makeGig({ key: "3", sourceId: "wellfound", tier: "green" }),
+    ];
+    const result = filterGigs(gigs, { tier: "green", statuses: ALL_STATUSES, search: "", source: "gofractional" });
+    expect(result.map((g) => g.key)).toEqual(["1"]);
+  });
+});
+
+describe("distinctSources", () => {
+  it("returns each distinct sourceId present in the gigs, alphabetically sorted", () => {
+    const gigs = [
+      makeGig({ key: "1", sourceId: "wellfound" }),
+      makeGig({ key: "2", sourceId: "ateam" }),
+      makeGig({ key: "3", sourceId: "wellfound" }), // duplicate -- must not appear twice
+    ];
+    expect(distinctSources(gigs)).toEqual(["ateam", "wellfound"]);
+  });
+
+  it("returns an empty array for an empty gigs list", () => {
+    expect(distinctSources([])).toEqual([]);
   });
 });

@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import type { GigStatus, StoredGig } from "@/lib/store";
 import { generateDraftAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
-import { filterGigs, type TierFilter } from "./dashboard-filter";
+import { distinctSources, filterGigs, type TierFilter } from "./dashboard-filter";
+import { sortGigs, type SortField, type SortState } from "./dashboard-sort";
 
 const TIER_TABS: TierFilter[] = ["all", "green", "yellow", "red"];
 
@@ -60,6 +61,46 @@ function tabClass(active: boolean): string {
   ].join(" ");
 }
 
+/** Column header -> SortField for the 8 data-backed columns. "Change status"/"Draft" are actions, not data — deliberately absent, never sortable. */
+const SORTABLE_COLUMNS: { label: string; field: SortField }[] = [
+  { label: "Source", field: "source" },
+  { label: "Title", field: "title" },
+  { label: "Company", field: "company" },
+  { label: "Tier", field: "tier" },
+  { label: "Status", field: "status" },
+  { label: "Rate", field: "rate" },
+  { label: "Weekly hrs", field: "weeklyHours" },
+  { label: "Seen", field: "firstSeen" },
+];
+
+/** A clickable column header: cycles asc -> desc -> asc on the same field, jumps straight to asc when switching fields. Shows a chevron only on the currently-active field. */
+function SortableHeader({
+  label,
+  field,
+  sort,
+  onSort,
+}: {
+  label: string;
+  field: SortField;
+  sort: SortState | null;
+  onSort: (field: SortField) => void;
+}) {
+  const active = sort?.field === field;
+  return (
+    <th className="px-3 py-2 text-left font-semibold text-slate-600">
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        aria-sort={active ? (sort?.direction === "asc" ? "ascending" : "descending") : "none"}
+        className="flex items-center gap-1 hover:text-slate-900"
+      >
+        {label}
+        <span className="text-slate-400">{active ? (sort?.direction === "asc" ? "▲" : "▼") : ""}</span>
+      </button>
+    </th>
+  );
+}
+
 /**
  * The interactive dashboard: tier tabs, status checkboxes, text search, and
  * the results table, all filtering client-side over the full `gigs` array
@@ -86,16 +127,32 @@ export function DashboardClient({
   const [tier, setTier] = useState<TierFilter>("all");
   const [statuses, setStatuses] = useState<ReadonlySet<GigStatus>>(new Set(ALL_STATUSES));
   const [search, setSearch] = useState("");
+  const [source, setSource] = useState<string | "all">("all");
+  const [sort, setSort] = useState<SortState | null>(null);
   const [isPending, startTransition] = useTransition();
   const [errorByKey, setErrorByKey] = useState<Record<string, string>>({});
   const [, startDraftTransition] = useTransition();
   const [generatingKeys, setGeneratingKeys] = useState<ReadonlySet<string>>(new Set());
   const [draftErrorByKey, setDraftErrorByKey] = useState<Record<string, string>>({});
 
+  const sources = useMemo(() => distinctSources(gigs), [gigs]);
+
   const filtered = useMemo(
-    () => filterGigs(gigs, { tier, statuses, search }),
-    [gigs, tier, statuses, search],
+    () => filterGigs(gigs, { tier, statuses, search, source }),
+    [gigs, tier, statuses, search, source],
   );
+
+  const sorted = useMemo(() => sortGigs(filtered, sort), [filtered, sort]);
+
+  /** Clicking the currently-active column's header toggles asc/desc; clicking a different column jumps straight to asc on that column. */
+  function handleSort(field: SortField) {
+    setSort((prev) => {
+      if (prev?.field === field) {
+        return { field, direction: prev.direction === "asc" ? "desc" : "asc" };
+      }
+      return { field, direction: "asc" };
+    });
+  }
 
   function toggleStatus(status: GigStatus) {
     setStatuses((prev) => {
@@ -156,67 +213,82 @@ export function DashboardClient({
 
   return (
     <div className="mt-6 flex flex-col gap-4">
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filter by tier">
-        {TIER_TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tier === t}
-            className={tabClass(tier === t)}
-            onClick={() => setTier(t)}
-          >
-            {TIER_TAB_LABEL[t]}
-          </button>
-        ))}
-      </div>
+      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filter by tier">
+          {TIER_TABS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={tier === t}
+              className={tabClass(tier === t)}
+              onClick={() => setTier(t)}
+            >
+              {TIER_TAB_LABEL[t]}
+            </button>
+          ))}
+        </div>
 
-      <div className="flex flex-wrap gap-4" role="group" aria-label="Filter by status">
-        {ALL_STATUSES.map((s) => (
-          <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={statuses.has(s)}
-              onChange={() => toggleStatus(s)}
-              className="h-4 w-4 rounded border-slate-300"
-            />
-            {STATUS_LABEL[s]}
+        <div className="flex flex-wrap gap-4" role="group" aria-label="Filter by status">
+          {ALL_STATUSES.map((s) => (
+            <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={statuses.has(s)}
+                onChange={() => toggleStatus(s)}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              {STATUS_LABEL[s]}
+            </label>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search company or title…"
+            aria-label="Search company or title"
+            className="w-full max-w-sm rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:outline-none"
+          />
+          <label className="flex items-center gap-1.5 text-sm text-slate-700">
+            Source
+            <select
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              aria-label="Filter by source"
+              className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900"
+            >
+              <option value="all">All</option>
+              {sources.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
           </label>
-        ))}
+        </div>
       </div>
-
-      <input
-        type="search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search company or title…"
-        aria-label="Search company or title"
-        className="w-full max-w-sm rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:outline-none"
-      />
 
       <p className="text-sm text-slate-500">
         {filtered.length} of {gigs.length} gig{gigs.length === 1 ? "" : "s"}
       </p>
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200">
+      <div className="overflow-x-auto rounded-lg border border-slate-200 shadow-sm">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Source</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Title</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Company</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Tier</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Status</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Rate</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Weekly hrs</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600">Seen</th>
+              {SORTABLE_COLUMNS.map(({ label, field }) => (
+                <SortableHeader key={field} label={label} field={field} sort={sort} onSort={handleSort} />
+              ))}
               <th className="px-3 py-2 text-left font-semibold text-slate-600">Change status</th>
               <th className="px-3 py-2 text-left font-semibold text-slate-600">Draft</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
-            {filtered.map((gig) => (
-              <tr key={gig.key}>
+            {sorted.map((gig) => (
+              <tr key={gig.key} className="odd:bg-white even:bg-slate-50/60 hover:bg-slate-100">
                 <td className="px-3 py-2 text-slate-600">{gig.sourceId}</td>
                 <td className="px-3 py-2 font-medium text-slate-900">
                   <a
@@ -279,7 +351,7 @@ export function DashboardClient({
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {sorted.length === 0 && (
               <tr>
                 <td colSpan={10} className="px-3 py-6 text-center text-slate-400">
                   No gigs match the current filters.

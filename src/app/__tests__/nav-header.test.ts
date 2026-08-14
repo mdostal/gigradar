@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { NAV_LINKS } from "../nav-header";
 
-// nav-header.tsx itself renders a Server Component with no client-side
-// logic — this repo has no React Testing Library dependency (see
+// nav-header.tsx itself is a Client Component (usePathname() for
+// active-link highlighting, dashboard-styling-pass) — this repo has no
+// React Testing Library dependency (see
 // dashboard-filter.test.ts's convention: pull the assertable contract out
 // into plain data). NAV_LINKS is that contract: exactly the three links
 // (Dashboard -> /, Drafts -> /drafts, Config -> /config) NavHeader() maps
