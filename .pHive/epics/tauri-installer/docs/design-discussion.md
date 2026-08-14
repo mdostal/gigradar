@@ -188,23 +188,29 @@ not this epic's first pass.
 - Core/user-layer boundary: unaffected — packaging is pure
   distribution/build tooling, touches no `src/lib` core logic.
 
-## 6. Open Questions
+## 6. Open Questions — RESOLVED (owner, 2026-08-14)
 
-1. **Server-readiness polling**: port `electron/server-ready.ts`'s logic
-   to Rust (native, no extra Node process just to poll), or keep it as
-   a tiny bundled Node script invoked before the main server spawn?
-   Proposed default: Rust-native (fewer moving pieces at startup) —
-   confirm or override.
-2. **Release-tagging convention for dev vs. prod channels**: exact tag/
-   manifest naming (e.g. `vX.Y.Z-dev.N` prereleases vs. plain `vX.Y.Z`)
-   — proposed to match `scripts/update.sh`'s already-established dev/
-   prod branch-channel language, just extended to real version tags.
-3. **Where does the update-signing private key live?** This is
-   genuinely the owner's call, not a default I should pick.
-4. **Apple notarization — pursue now, or ship unsigned + right-click-
-   open for now?** Proposed default: unsigned for now (real cost/
-   account setup, not blocking), revisit before any distribution wider
-   than the owner's own machine.
+1. **Server-readiness polling**: still open, proposed default (Rust-
+   native) stands unopposed — revisit during H/V if it turns out
+   non-trivial to port.
+2. **Release-tagging convention for dev vs. prod channels**: still open,
+   proposed default stands — resolve during H/V/stories.
+3. **Where does the update-signing private key live?** RESOLVED: real
+   production signing keys are generated and vaulted in Portunus (the
+   owner's own secrets-manager system) when the time comes for real
+   signed builds — NOT generated or stored ad hoc by planning/building
+   this epic. This epic's own scope therefore builds the full packaging/
+   sidecar/CI scaffolding against UNSIGNED or local placeholder test
+   keys; real Portunus-vaulted key generation is a distinct, later,
+   owner-gated step, not a story in this epic's own critical path.
+4. **Apple notarization**: RESOLVED — unsigned for now, matches the
+   proposed default. Ship with a documented "right-click → Open"
+   first-run workaround. Revisit if/when distributing beyond the
+   owner's own machine.
+
+**Planning depth, also resolved**: full H/V planning + structured
+outline (matches this doc's own Large-scope recommendation), not
+`--fast`.
 
 ## 7. Verification Strategy
 
