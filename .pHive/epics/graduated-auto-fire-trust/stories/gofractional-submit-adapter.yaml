@@ -1,10 +1,47 @@
 id: gofractional-submit-adapter
 epic: graduated-auto-fire-trust
 title: "Real GoFractional SubmitAdapter + double-submit safety net (live-verified)"
-status: pending
+status: paused
 complexity: high
 methodology: classic
 depends_on: [autofire-decision-engine]
+
+pause_note: |
+  PAUSED 2026-08-14, live-verified with the owner directly (not assumed):
+  GoFractional's job-detail page (/job/{slug}) shows a Cloudflare
+  "Performing security verification" challenge that did NOT clear even
+  after the owner personally attempted to clear it live, in a real
+  headed Chrome window, using the real authenticated session. This
+  contradicts the initial assumption that consistent OAuth sign-in
+  reliably clears it -- for THIS specific listing/session at THIS time,
+  it did not. No longer blocking the rest of the epic: autofire-
+  scheduler-wiring's depends_on was repointed to autofire-decision-
+  engine directly (the decision engine already treats "no
+  SubmitAdapter registered" as a correct, safe terminal state -- see
+  that story). This story resumes once a viable path is found (a
+  different first submit target, or a resolved approach for GoFractional
+  specifically) -- see docs/ARCHITECTURE.md's future notifications epic
+  (task #58) for the general "flag it, don't fail permanently" pattern
+  this kind of thing should route through going forward.
+
+  LIKELY REAL FIX, found via structural reference from the legacy tool
+  (`~/Code/gig-radar/gf-driver.mjs` on the hive machine, read for structural
+  reference only per this project's standing discipline): the legacy tool's
+  own header comment documents this EXACT regression and its fix -- headless
+  Chromium gets Cloudflare-blocked "FOREVER"; the working fix was not just
+  `--headed`, but routing every command into ONE PERSISTENT browser instance
+  living on the real logged-in console/VNC display, reused across calls,
+  with storageState loaded once and refreshed -- never a fresh
+  browser+context spun up per call. gigradar's current
+  `src/lib/auth/browser-session.ts` does the opposite: `launchHeadedBrowser()`
+  + `browser.newContext({storageState})` fresh on EVERY call, closed after.
+  A freshly-launched automation context (even real Chrome channel) may
+  simply be more bot-detectable than a long-lived, occasionally
+  human-driven session. This is a real, structural lead for unblocking
+  GoFractional (and possibly ateam.ts/wellfound.ts too) -- but
+  re-architecting the shared session mechanism for persistence is its own
+  scoped piece of work, not something to bolt onto this story. Flag for a
+  future design discussion before attempting it.
 
 description: |
   Vertical Plan Slice 3 — the one genuinely risky, live-verification-

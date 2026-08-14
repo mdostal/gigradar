@@ -17,10 +17,11 @@ stories:
     title: "Real GoFractional SubmitAdapter + double-submit safety net (live-verified)"
     complexity: high
     depends_on: [autofire-decision-engine]
+    status: paused # Cloudflare live-verification blocker, see this story's own pause_note
   - id: autofire-scheduler-wiring
     title: "Wire evaluateAutoFire() into the scheduler cycle"
     complexity: low
-    depends_on: [gofractional-submit-adapter]
+    depends_on: [autofire-decision-engine] # repointed off gofractional-submit-adapter (paused) -- "no adapter registered" is a safe, correct terminal state
   - id: autofire-config-ui
     title: "/config Auto-fire section: kill switch, rule editor, trust-status display"
     complexity: medium
