@@ -52,7 +52,8 @@ import type { Tier } from "../lib/types.js";
 // this run_scan would report "no such registered source" for every
 // configured source no matter what's in config.json. Mirrors the exact
 // registration step src/lib/apply/runner.ts's CLI entrypoint added (see
-// that file's `main()` for the same 4 imports) — but UNLIKE that file,
+// that file's `main()` for the same imports, kept in sync by hand) — but
+// UNLIKE that file,
 // these are plain top-level imports here, at true module/startup scope, not
 // deferred inside a function: runner.ts defers them into main() specifically
 // because runner.test.ts imports runRadar() directly and registers its own
@@ -68,6 +69,11 @@ import "../lib/sources/ateam.js";
 import "../lib/sources/braintrust.js";
 import "../lib/sources/builtin.js";
 import "../lib/sources/gofractional.js";
+import "../lib/sources/fractionaljobs.js";
+import "../lib/sources/fractionus.js";
+import "../lib/sources/fractionalfinders.js";
+import "../lib/sources/wellfound.js";
+import "../lib/sources/linkedin.js";
 
 const SERVER_NAME = "gigradar";
 const SERVER_VERSION = "0.9.1";

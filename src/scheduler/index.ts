@@ -424,11 +424,10 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
 // documented there: this module's own tests import startScheduler()
 // directly and register their own network-free test-double sources under
 // the SAME ids — a top-level import here would collide with "duplicate
-// source id" in that same test process. (This registers all 8 of the
-// project's current adapters, not the 4 that existed when this story's own
-// spec text was first drafted — adapter-batch-public-boards shipped 4 more
-// since; matching runner.ts's real, current main() exactly is the actual
-// "reuse this exact pattern" bar, not the stale headcount.)
+// source id" in that same test process. (This registers every one of the
+// project's current adapters — matching runner.ts's real, current main()
+// exactly is the actual "reuse this exact pattern" bar, not a fixed
+// headcount that will go stale as more adapters ship.)
 async function main(): Promise<void> {
   await Promise.all([
     import("../lib/sources/braintrust.js"),
@@ -439,6 +438,7 @@ async function main(): Promise<void> {
     import("../lib/sources/fractionus.js"),
     import("../lib/sources/fractionalfinders.js"),
     import("../lib/sources/wellfound.js"),
+    import("../lib/sources/linkedin.js"),
   ]);
 
   startScheduler();

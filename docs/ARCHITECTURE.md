@@ -462,6 +462,31 @@ test exists at all.
 4. **Assisted, not auto** — applications are staged for human approval; nothing submits itself.
 5. **No fabricated data** — a source returns what the site actually shows; unknown fields stay unknown, not guessed.
 
+### Deliberate exception: `linkedin.ts` and `robots.txt`
+
+Every other adapter in `src/lib/sources/` either respects the target site's
+`robots.txt` (`builtin.ts` deliberately scoped itself down to do so) or
+fetches a page with no `Disallow` conflict at all. `linkedin.ts` is the one
+deliberate exception: LinkedIn's `robots.txt` disallows everything for
+generic/unnamed bots (`User-agent: *` / `Disallow: /`), and this adapter
+fetches its public guest job-search page anyway.
+
+This was a conscious, discussed tradeoff, not an oversight. The reasoning:
+`robots.txt`'s actual target is bulk/commercial crawling — republishing or
+serving scraped data to other people. `linkedin.ts` runs entirely on a
+single individual's own machine, on their own schedule, against their own
+locally-stored config, and its output is never republished or served to
+anyone else — it's the same "assisted, not auto," local-first posture this
+whole project is already built on (rule 4 above), just applied to the fetch
+step instead of the apply step. A user who enables the `linkedin` source in
+their own local `config.json` is doing so with that tradeoff explicit and in
+front of them, in this file.
+
+This exception is scoped to this one adapter. It does not change the
+`robots.txt`-respecting default for any other adapter, and a new adapter
+that wants the same exception should document its own reasoning here rather
+than assume this one generalizes.
+
 ## Build-out roadmap
 
 - [x] Persistence layer (`src/lib/store/`, SQLite/WAL, delisting detection) — `find-pipeline-foundation` epic.
@@ -493,6 +518,7 @@ test exists at all.
 - [x] Guided session-capture UI — a "Capture login" button per browser-session-auth source in `/config`, driving `startCapture`/`finishCapture`/`cancelCapture` via three Server Actions and auto-writing the captured path into that source's `settings.sessionStatePath` — `session-capture-ui` epic, `session-capture-ui` story. See "The config editor" below (its "Session capture" subsection) for the full flow. Real-headed-browser-verified end to end using a local, non-real-site login target (see that subsection for exactly what was and wasn't verified this way). The pre-existing manual `playwright-cli`/scripted-Playwright bootstrap path (see "Session-capture mechanism" above, "Bootstrapping a storageState file") remains documented as a fallback — not removed, not deprecated, just no longer the only path.
 - [x] AES-256-GCM vault primitives (`src/lib/security/vault.ts`, `src/lib/security/key-path.ts`) and encryption-at-rest, with transparent migrate-on-read for legacy plaintext files, across all three local secret/state file locations — `config.json`, `.env`, and every captured `<sourceId>-session.json` — `encrypted-local-storage` epic, `vault-module` + `config-json-encryption` + `env-encryption` + `session-file-encryption` stories (the epic's full scope, now complete). See "Config loading", "Writing config.json", "`browser-session` mechanism", and "Session-capture mechanism" above. The vault key lives in a directory tree deliberately separate from the data it protects (`XDG_CONFIG_HOME`/`~/.config/gigradar/key`, never alongside `XDG_DATA_HOME`); losing it is real, accepted, non-silent data loss — `getOrCreateKey()`'s `hasAnyEncryptedFileFn` (`hasAnyEncryptedFile()` in `load.ts`) checks `config.json` OR `.env` OR any file in the session-state directory before ever minting a fresh key, throwing `VaultKeyLostError` rather than silently orphaning already-encrypted data.
 - [x] Electron desktop runtime mode (`electron/main.ts`, `npm run electron`) — `electron-wrapper` epic, `electron-wrapper` story. Spawns the existing `npm run start` as a child process, polls for readiness, opens a `BrowserWindow`; server code never runs inside Electron's own process. See "Two runtime modes: browser vs. Electron" above. Live-verified end to end on the owner's real machine.
+- [x] `linkedin` real `Source` adapter (`src/lib/sources/linkedin.ts`, `auth: "none"`) — fetches LinkedIn's public, server-rendered guest job-search page (`/jobs/search/?keywords=...`), zero cookies/authentication required — live-verified both via a real headed browser and a bare cookieless `fetch()`. Deliberately does NOT check LinkedIn's `robots.txt` (see "Deliberate exception: `linkedin.ts` and `robots.txt`" above for the full rationale) — the one adapter in this project that doesn't respect it. `rate`/`weeklyHours` are left `undefined` (LinkedIn's guest cards show neither); real per-listing URLs with ephemeral tracking query params stripped.
 
 ## Running the dashboard
 

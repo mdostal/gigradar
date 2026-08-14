@@ -186,6 +186,7 @@ async function main(): Promise<void> {
     import("../sources/fractionus.js"),
     import("../sources/fractionalfinders.js"),
     import("../sources/wellfound.js"),
+    import("../sources/linkedin.js"),
   ]);
 
   const config = loadConfig();
