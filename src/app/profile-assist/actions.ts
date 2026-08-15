@@ -10,11 +10,18 @@
 // already establishes, for the same reason: this app's Server Action
 // request path never populates process.env from .env itself.
 import { actionErr, actionOk } from "@/lib/actions/result";
-import { endAssistSession, getAssistSessionPage, startAssistSession, type AssistMode } from "@/lib/auth/assist-session";
+import {
+  endAssistSession,
+  getAssistSessionInfo,
+  getAssistSessionPage,
+  startAssistSession,
+  type AssistMode,
+} from "@/lib/auth/assist-session";
 import { readEnvVar } from "@/lib/config/env-store";
 import { ConfigSchema } from "@/lib/config/schema";
 import { readRawConfig } from "@/lib/config/save";
 import { suggestProfileFields, type FieldSuggestion } from "@/lib/apply/profile-suggest";
+import { advanceLoopTurn, answerHuman, clearLoop, resolveApproval, type LoopEvent } from "@/lib/apply/profile-assist-loop";
 import type { ActionResult } from "@/lib/actions/result";
 import type { ApplyProfileConfig, Profile } from "@/lib/types";
 
@@ -62,8 +69,21 @@ export async function startAssistSessionAction(
   }
 }
 
-/** No revalidatePath() call: ending a session only closes in-memory Playwright state, same reasoning startCaptureAction's own doc comment gives for why it also skips revalidation — nothing on disk that a Server Component render reads has changed. */
+/**
+ * No revalidatePath() call: ending a session only closes in-memory
+ * Playwright state, same reasoning startCaptureAction's own doc comment
+ * gives for why it also skips revalidation — nothing on disk that a
+ * Server Component render reads has changed.
+ *
+ * clearLoop() (profile-assist-guided-mode story) runs unconditionally
+ * BEFORE endAssistSession() — a session ending is the natural end of its
+ * loop's lifetime too (a Guided/Full-auto session's tool-use conversation
+ * has no meaning once the browser it was acting on is gone), and clearing
+ * it first means an unexpected endAssistSession() failure still leaves no
+ * orphaned loop state.
+ */
 export async function endAssistSessionAction(sessionId: string): Promise<ActionResult<null>> {
+  clearLoop(sessionId);
   try {
     await endAssistSession(sessionId);
     return actionOk(null);
@@ -99,6 +119,70 @@ export async function suggestProfileFieldsAction(sessionId: string): Promise<Act
     const page = getAssistSessionPage(sessionId);
     const suggestions = await suggestProfileFields(page, profileData.profile, profileData.applyProfile, apiKey);
     return actionOk(suggestions);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Guided/Full-auto tool-use loop actions (profile-assist-guided-mode story)
+// — thin wrappers around profile-assist-loop.ts, resolving the same
+// apiKey/profile/applyProfile/page every advanceLoopTurnAction() call needs
+// via readAssistLoopInputs() below, mirroring suggestProfileFieldsAction's
+// own resolution above rather than a third, duplicated version of it.
+// ---------------------------------------------------------------------------
+
+function readAssistLoopInputs(
+  sessionId: string,
+):
+  | { apiKey: string; profile: Profile; applyProfile: ApplyProfileConfig; mode: "guided" | "full-auto" }
+  | { error: string } {
+  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  if (!apiKey) return { error: MISSING_API_KEY_ERROR };
+
+  const info = getAssistSessionInfo(sessionId);
+  if (!info) return { error: `gigradar profile-assist: session not found or expired (id "${sessionId}").` };
+  if (info.mode !== "guided" && info.mode !== "full-auto") {
+    return { error: `gigradar profile-assist: session "${sessionId}" is not in a tool-use mode (mode: "${info.mode}").` };
+  }
+
+  const profileData = readProfileAndApplyProfile();
+  if ("error" in profileData) return { error: profileData.error };
+
+  return { apiKey, profile: profileData.profile, applyProfile: profileData.applyProfile, mode: info.mode };
+}
+
+export async function advanceLoopTurnAction(sessionId: string): Promise<ActionResult<LoopEvent>> {
+  const inputs = readAssistLoopInputs(sessionId);
+  if ("error" in inputs) return actionErr(new Error(inputs.error));
+
+  try {
+    const page = getAssistSessionPage(sessionId);
+    const event = await advanceLoopTurn(sessionId, page, inputs.mode, inputs.profile, inputs.applyProfile, inputs.apiKey);
+    return actionOk(event);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+export async function resolveApprovalAction(
+  sessionId: string,
+  approve: boolean,
+  editedValue?: string,
+): Promise<ActionResult<null>> {
+  try {
+    const page = getAssistSessionPage(sessionId);
+    await resolveApproval(sessionId, page, approve, editedValue);
+    return actionOk(null);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+export async function answerHumanAction(sessionId: string, answer: string): Promise<ActionResult<null>> {
+  try {
+    answerHuman(sessionId, answer);
+    return actionOk(null);
   } catch (e) {
     return actionErr(e);
   }
