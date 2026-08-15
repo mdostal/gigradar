@@ -1,0 +1,15 @@
+{
+  "version": "0.21.1",
+  "notes": "See the assets below to download and install this version.",
+  "pub_date": "2026-08-15T02:41:24.279Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUZ3EvR0pjVUpsN2h2Um53MDYvNkkzLzQwNmswaTB3T0hHVHljOCtYdEN1cUVlRVJPMEdjMlIrVzZYRjVZcXE3d0FvWmVnNXZyLzFEbDlEb0Fra3djSmRrRjhoREpFYkFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzYxNjM4CWZpbGU6Z2lncmFkYXIuYXBwLnRhci5negozcVNmeDhGSVJBWWFNc1JPMFY3VUdyaGkxUXB4VXA0bk1kQUdUUTEzZ1hHRWtvRGxGd1QrUTRpdVgwVzRFNnJWSHh3ajhGSk1LZHh3eTlIRU12MzlDQT09Cg==",
+      "url": "https://api.github.com/repos/mdostal/gigradar/releases/assets/515220882"
+    },
+    "darwin-aarch64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUZ3EvR0pjVUpsN2h2Um53MDYvNkkzLzQwNmswaTB3T0hHVHljOCtYdEN1cUVlRVJPMEdjMlIrVzZYRjVZcXE3d0FvWmVnNXZyLzFEbDlEb0Fra3djSmRrRjhoREpFYkFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzYxNjM4CWZpbGU6Z2lncmFkYXIuYXBwLnRhci5negozcVNmeDhGSVJBWWFNc1JPMFY3VUdyaGkxUXB4VXA0bk1kQUdUUTEzZ1hHRWtvRGxGd1QrUTRpdVgwVzRFNnJWSHh3ajhGSk1LZHh3eTlIRU12MzlDQT09Cg==",
+      "url": "https://api.github.com/repos/mdostal/gigradar/releases/assets/515220882"
+    }
+  }
+}
