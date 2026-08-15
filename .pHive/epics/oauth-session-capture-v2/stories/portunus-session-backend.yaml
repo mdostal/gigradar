@@ -5,6 +5,7 @@ status: pending
 complexity: medium
 methodology: classic
 depends_on: [real-chrome-spawn-attach]
+status: done
 
 description: |
   Vertical Plan Slice 2. Live-confirmed this session: Portunus's CLI
