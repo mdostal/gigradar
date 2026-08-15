@@ -1,7 +1,7 @@
 id: profile-assist-guided-mode
 epic: profile-assist
 title: "Guided mode: the tool-use loop, human-approval-gated"
-status: pending
+status: done
 complexity: high
 methodology: classic
 depends_on: [profile-assist-persistent-session-manual-mode]
