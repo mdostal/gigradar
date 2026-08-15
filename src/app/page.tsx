@@ -32,7 +32,7 @@ export default function HomePage() {
   const draftedGigKeys = new Set(listDrafts().map((d) => d.gigKey));
 
   return (
-    <main className="mx-auto max-w-6xl p-6">
+    <main className="mx-auto max-w-[88rem] p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Dashboard</h1>
         <p className="text-sm text-slate-500">

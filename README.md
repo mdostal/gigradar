@@ -47,7 +47,20 @@ const needs: Needs = { minRate: 175, highRate: 250, maxHours: 20, maxHoursAtHigh
 
 ## Status
 
-`v0.1.0` — scaffold. Core contracts + the explainable gate engine are in place and runnable against the demo source. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and the build-out roadmap (real source adapters, auth/session handling, the Next.js config UI, and the assisted-apply drafting layer).
+`v0.21.0` — real source adapters (LinkedIn, GoFractional, A.Team, Wellfound, Braintrust, and more), the Next.js dashboard/config UI, guided browser-session login, ranked engagement profiles, assisted-apply drafting, a cron scheduler with desktop notifications, a severity-tiered issues view, and an opt-in, trust-gated auto-fire submission system. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and build-out roadmap. Try it live at [mdostal.github.io/gigradar](https://mdostal.github.io/gigradar/).
+
+## Support this project
+
+Free and open source, always. A few ways to help — or just say hi:
+
+- **Use it, star it, file an issue.** Honestly the best support an open-source project can get. → [this project](https://github.com/mdostal/gigradar)
+- **Hire me.** I do fractional-CTO and consulting work — fixing and scaling tech stacks. → [mdostal.com/contact](https://mdostal.com/contact)
+- **[Buy me a coffee](https://www.buymeacoffee.com/mdostal)** if it saved you time.
+- **More tools like this** → [tools.mdostal.com](https://tools.mdostal.com)
+- **Life outside the terminal** → [life.mdostal.com](https://life.mdostal.com)
+- **What we're building at Firefly Events** — event discovery, 8,000+ events/day from 7+ sources → [ff.events](https://ff.events)
+
+Always up for a conversation if any of it's useful to you.
 
 ## License
 

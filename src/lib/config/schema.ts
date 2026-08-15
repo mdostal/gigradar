@@ -134,4 +134,5 @@ export const ConfigSchema = z.object({
   autoDraftOnScan: z.boolean().optional(),
   notifyOnGreenMatch: z.boolean().optional(),
   autoFire: AutoFireConfigSchema.optional(),
+  appIcon: z.string().optional(),
 });

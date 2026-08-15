@@ -37,12 +37,22 @@ const BADGE_COLOR_CLASS: Record<IssuesBadgeInfo["color"], string> = {
  * issues-badge.ts's own doc comment for why that's the correct empty state,
  * not a "0" badge.
  */
-export function NavHeader({ issuesBadge = null }: { issuesBadge?: IssuesBadgeInfo | null }) {
+export function NavHeader({
+  issuesBadge = null,
+  iconSrc,
+}: {
+  issuesBadge?: IssuesBadgeInfo | null;
+  /** Public path of the current `Config.appIcon` pick (`icon-picker` story) — layout.tsx resolves this server-side via resolveAppIcon(), so it's always a valid path, never undefined in practice. Optional only so tests can render NavHeader standalone without wiring it. */
+  iconSrc?: string;
+}) {
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
       <nav className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
-        <span className="text-sm font-bold tracking-tight text-slate-900">gigradar</span>
+        <span className="flex items-center gap-1.5 text-sm font-bold tracking-tight text-slate-900">
+          {iconSrc && <img src={iconSrc} alt="" width={20} height={20} className="rounded-sm" />}
+          gigradar
+        </span>
         <div className="flex items-center gap-1">
           {NAV_LINKS.map((link) => {
             const active = pathname === link.href;

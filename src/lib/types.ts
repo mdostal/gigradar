@@ -189,6 +189,14 @@ export interface Config {
     killSwitch?: boolean;
     rules: AutoFireRuleConfig[];
   };
+  /**
+   * Which app-icon option (favicon + in-app header mark) to render — an id
+   * from `APP_ICONS` in src/lib/app-icons.ts. Omitted (or an id that no
+   * longer exists) falls back to `DEFAULT_APP_ICON_ID` there, never an
+   * error — same "meaningful, valid do-nothing default" pattern as the
+   * other optional fields on this interface. Not a secret, cosmetic only.
+   */
+  appIcon?: string;
 }
 
 /**

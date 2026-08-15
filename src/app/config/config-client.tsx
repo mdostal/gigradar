@@ -1,6 +1,7 @@
 "use client";
 
 import { type ChangeEvent, type FormEvent, useState, useTransition } from "react";
+import { APP_ICONS, DEFAULT_APP_ICON_ID } from "@/lib/app-icons";
 import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
 import type { ConfigEdits } from "@/lib/config/save";
 import { mergeDedupe } from "@/lib/profile-ingestion/merge";
@@ -161,6 +162,8 @@ interface DraftConfig {
   autoDraftOnScan: boolean;
   notifyOnGreenMatch: boolean;
   autoFire: DraftAutoFire;
+  /** An `APP_ICONS` id (src/lib/app-icons.ts) — like autoDraftOnScan/notifyOnGreenMatch, always sent as-is, no enabled-flag tri-state needed (it always has a value, defaulting to DEFAULT_APP_ICON_ID). */
+  appIcon: string;
 }
 
 // -- Config -> Draft -----------------------------------------------------
@@ -221,6 +224,7 @@ function configToDraft(config: Config): DraftConfig {
     schedule: config.schedule ?? "",
     autoDraftOnScan: config.autoDraftOnScan ?? false,
     notifyOnGreenMatch: config.notifyOnGreenMatch ?? false,
+    appIcon: config.appIcon ?? DEFAULT_APP_ICON_ID,
     autoFire: {
       killSwitch: config.autoFire?.killSwitch ?? false,
       rules: (config.autoFire?.rules ?? []).map((r) => ({
@@ -358,6 +362,7 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
   // these two don't need roleArea/schedule's enabled-flag tri-state.
   edits.autoDraftOnScan = draft.autoDraftOnScan;
   edits.notifyOnGreenMatch = draft.notifyOnGreenMatch;
+  edits.appIcon = draft.appIcon;
 
   // NOT typed as AutoFireRuleConfig[] here on purpose -- same draftNumber()
   // invalid-passthrough reasoning as `needs` above.
@@ -692,6 +697,42 @@ function CheckboxField({
       />
       {label}
     </label>
+  );
+}
+
+/**
+ * `Config.appIcon` picker (`icon-picker` story) — a grid of every
+ * `APP_ICONS` option (src/lib/app-icons.ts), each a clickable thumbnail
+ * button. Unlike CheckboxField's binary on/off, this is single-select over
+ * a fixed, non-empty list, so a radio-group-shaped click handler (not a
+ * checkbox) is the right control here.
+ */
+function IconPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  return (
+    <div role="radiogroup" aria-label="App icon" className="grid grid-cols-4 gap-3 sm:grid-cols-6">
+      {APP_ICONS.map((icon) => {
+        const selected = icon.id === value;
+        return (
+          <button
+            key={icon.id}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            title={icon.description}
+            onClick={() => onChange(icon.id)}
+            className={[
+              "flex flex-col items-center gap-1.5 rounded-lg border p-2 text-center transition-colors",
+              selected
+                ? "border-slate-900 bg-slate-50 ring-1 ring-slate-900"
+                : "border-slate-200 bg-white hover:border-slate-400",
+            ].join(" ")}
+          >
+            <img src={icon.path} alt="" width={48} height={48} className="rounded-md" />
+            <span className="text-xs font-medium text-slate-700">{icon.label}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1646,6 +1687,30 @@ export function ConfigClient({ initial }: { initial: Config }) {
           rules={draft.autoFire.rules}
           onChange={(rules) => setDraft({ ...draft, autoFire: { ...draft.autoFire, rules } })}
         />
+      </section>
+
+      <section className={sectionClass}>
+        <h2 className="text-lg font-semibold text-slate-900">Appearance</h2>
+        <p className="text-xs text-slate-500">
+          Sets the favicon and the small mark next to &quot;gigradar&quot; in the nav — cosmetic only, no
+          functional effect. This is a per-install preference (whoever's config.json this is), not shared with
+          anyone else running gigradar.
+        </p>
+        <div className="mt-3">
+          <IconPicker value={draft.appIcon} onChange={(appIcon) => setDraft({ ...draft, appIcon })} />
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          Have an opinion, or an idea for another one?{" "}
+          <a
+            href="https://github.com/mdostal/gigradar/discussions/20"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="underline hover:text-slate-700"
+          >
+            Vote / suggest icons on GitHub Discussions
+          </a>
+          .
+        </p>
       </section>
 
       <div>
