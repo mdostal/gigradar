@@ -1,7 +1,7 @@
 id: tauri-chromium-sidecar
 epic: tauri-installer
 title: "Bundle Playwright's Chromium so Capture Login + browser-session sources work fully packaged"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [tauri-bare-packaged-app]

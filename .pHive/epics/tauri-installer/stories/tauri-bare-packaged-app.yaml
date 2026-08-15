@@ -1,7 +1,7 @@
 id: tauri-bare-packaged-app
 epic: tauri-installer
 title: "Bare packaged .app: Tauri shell + bundled Node sidecar running gigradar's real server"
-status: pending
+status: done
 complexity: high
 methodology: classic
 depends_on: []

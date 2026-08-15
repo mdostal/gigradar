@@ -1,7 +1,7 @@
 id: tauri-real-auto-update
 epic: tauri-installer
 title: "Real in-app auto-update: dev/prod channel toggle + Tauri updater plugin"
-status: pending
+status: done
 complexity: high
 methodology: classic
 depends_on: [tauri-ci-release-pipeline]
