@@ -60,7 +60,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { Browser, BrowserContext } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { hasAnyEncryptedFile } from "../config/load.js";
 import { encrypt, getOrCreateKey } from "../security/vault.js";
 import { SOURCE_ORIGINS } from "../sources/origins.js";
@@ -230,6 +230,32 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
   });
 
   return { captureId };
+}
+
+/**
+ * Looks up the live `Page` for `captureId` — used by capture-guidance.ts's
+ * `checkCaptureReadiness()` (oauth-session-capture-v2 epic,
+ * llm-capture-readiness-check story) to read the in-flight capture
+ * window's CURRENT page, whatever the human has navigated to since
+ * `startCapture()`. Read-only: this function itself never touches the idle
+ * timeout, the disconnect listener, or the map entry — a readiness check
+ * is advisory, not a lifecycle event (see finishCapture()/cancelCapture()
+ * for the actual lifecycle-ending operations).
+ *
+ * Throws a specific "capture not found or already expired" error if
+ * `captureId` isn't a live entry, same wording finishCapture()/
+ * cancelCapture() already use for this exact case.
+ */
+export function getCapturePage(captureId: string): Page {
+  const entry = captures.get(captureId);
+  if (!entry) {
+    throw new Error(`${MODULE_PREFIX}: capture not found or already expired (id "${captureId}").`);
+  }
+  const page = entry.context.pages()[0];
+  if (!page) {
+    throw new Error(`${MODULE_PREFIX}: capture "${captureId}" has no open page.`);
+  }
+  return page;
 }
 
 /** finishCapture()'s result — discriminated on which backend the session was persisted to. Never both, never a silent fallback from one to the other (oauth-session-capture-v2 epic, portunus-session-backend story). */

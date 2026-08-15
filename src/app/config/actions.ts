@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { actionErr, actionOk } from "@/lib/actions/result";
 import { approvedCount } from "@/lib/apply/autofire";
-import { cancelCapture, finishCapture, startCapture } from "@/lib/auth/session-capture";
+import { checkCaptureReadiness, type CaptureReadiness } from "@/lib/auth/capture-guidance";
+import { cancelCapture, finishCapture, getCapturePage, startCapture } from "@/lib/auth/session-capture";
 import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
@@ -229,6 +230,38 @@ export async function cancelCaptureAction(captureId: string): Promise<ActionResu
   try {
     await cancelCapture(captureId);
     return actionOk(null);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Wraps `checkCaptureReadiness()` (`src/lib/auth/capture-guidance.ts`,
+ * oauth-session-capture-v2 epic, llm-capture-readiness-check story) for the
+ * Capture Login waiting screen's optional "Check if I'm ready" button.
+ * ADVISORY ONLY: this action never calls `finishCapture()` and never
+ * mutates anything — no `saveConfig()`/`revalidatePath()` call, same as
+ * `cancelCaptureAction()` above. The "I'm done" button remains a fully
+ * independent, always-available action regardless of what this returns
+ * (see config-client.tsx's `CaptureLoginControl`).
+ *
+ * The Anthropic API key is resolved fresh, inside this handler, via
+ * `readEnvVar()` — same non-negotiable discipline
+ * `extractProfileFromResumeAction()` below already establishes (see that
+ * function's own doc comment for why). A missing key returns
+ * `MISSING_API_KEY_ERROR` before `getCapturePage()`/`checkCaptureReadiness()`
+ * ever run.
+ */
+export async function checkCaptureReadinessAction(captureId: string, sourceId: string): Promise<ActionResult<CaptureReadiness>> {
+  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  if (!apiKey) {
+    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  }
+
+  try {
+    const page = getCapturePage(captureId);
+    const readiness = await checkCaptureReadiness(page, sourceId, apiKey);
+    return actionOk(readiness);
   } catch (e) {
     return actionErr(e);
   }

@@ -48,7 +48,7 @@ const FAKE_REAL_CHROME_HANDLE = { process: { kill: vi.fn() }, cdpPort: 54732, us
 
 import { SOURCE_ORIGINS } from "../../sources/origins.js";
 import { VaultKeyLostError, decrypt, encrypt, isEncryptedEnvelope } from "../../security/vault.js";
-import { cancelCapture, finishCapture, IDLE_TIMEOUT_MS, startCapture, writeStorageStateAtomically } from "../session-capture.js";
+import { cancelCapture, finishCapture, getCapturePage, IDLE_TIMEOUT_MS, startCapture, writeStorageStateAtomically } from "../session-capture.js";
 
 /** finishCapture() defaults to the "local" backend -- this test suite exercises only that path (Portunus is covered separately in session-backend.test.ts). Narrows the discriminated result down to its local-path shape, or fails loudly if a test somehow ended up with the "portunus" branch. */
 async function finishCaptureLocal(captureId: string): Promise<{ path: string }> {
@@ -71,10 +71,11 @@ function createFakePage(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** A fake BrowserContext: newPage()/storageState() resolve, close() is a tracked spy. */
+/** A fake BrowserContext: newPage()/storageState() resolve, close() is a tracked spy, pages() returns the same page newPage() resolved (mirrors real Playwright: the page created by newPage() shows up in pages() too) -- used by getCapturePage()'s tests. */
 function createFakeContext(page: unknown, storageStateResult: unknown) {
   return {
     newPage: vi.fn().mockResolvedValue(page),
+    pages: vi.fn().mockReturnValue([page]),
     storageState: vi.fn().mockResolvedValue(storageStateResult),
     close: vi.fn().mockResolvedValue(undefined),
   };
@@ -277,6 +278,33 @@ describe("startCapture / finishCapture: happy path", () => {
 
     await expect(startCapture(SOURCE_ID, LOGIN_URL)).rejects.toThrow(/failed to attach to the spawned Chrome/);
     expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
+  });
+});
+
+describe("getCapturePage: used by capture-guidance.ts's checkCaptureReadiness() (oauth-session-capture-v2 epic)", () => {
+  it("returns the capture's current live page", async () => {
+    const { page } = setUpFakeBrowserChain(GOOD_STORAGE_STATE);
+
+    const { captureId } = await startCapture(SOURCE_ID, LOGIN_URL);
+
+    expect(getCapturePage(captureId)).toBe(page);
+  });
+
+  it("throws a specific 'not found or already expired' error for an unknown captureId, same wording finishCapture()/cancelCapture() use", () => {
+    expect(() => getCapturePage("not-a-real-capture-id")).toThrow(/not found or already expired/);
+  });
+
+  it("never touches the idle timeout, disconnect listener, or map entry -- purely a read", async () => {
+    const { browser } = setUpFakeBrowserChain(GOOD_STORAGE_STATE);
+    const { captureId } = await startCapture(SOURCE_ID, LOGIN_URL);
+
+    getCapturePage(captureId);
+    getCapturePage(captureId);
+
+    expect(browser.off).not.toHaveBeenCalled();
+    expect(browser.close).not.toHaveBeenCalled();
+    // The capture is still live afterward -- finishCapture() still finds it.
+    await expect(finishCaptureLocal(captureId)).resolves.toBeDefined();
   });
 });
 

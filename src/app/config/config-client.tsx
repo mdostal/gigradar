@@ -9,6 +9,7 @@ import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
 import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
 import {
   cancelCaptureAction,
+  checkCaptureReadinessAction,
   extractProfileFromResumeAction,
   finishCaptureAction,
   getAutoFireApprovedCountAction,
@@ -431,6 +432,18 @@ type CaptureUIState =
   | { status: "error"; message: string };
 
 /**
+ * "Check if I'm ready" state (oauth-session-capture-v2 epic,
+ * llm-capture-readiness-check story) — deliberately its own type/state map,
+ * separate from `CaptureUIState` above (see `readinessState`'s own comment
+ * for why).
+ */
+type ReadinessUIState =
+  | { status: "idle" }
+  | { status: "checking" }
+  | { status: "done"; ready: boolean; note: string }
+  | { status: "error"; message: string };
+
+/**
  * Adds/overwrites a single key in a `SettingPair[]` list, used to fold a
  * just-captured `sessionStatePath` into a source row's Settings pairs
  * editor immediately on success — see `handleFinishCapture()` below for why
@@ -461,15 +474,21 @@ function CaptureLoginControl({
   onStart,
   onFinish,
   onCancel,
+  readiness,
+  onCheckReadiness,
 }: {
   sourceId: string;
   state: CaptureUIState;
   onStart: () => void;
   onFinish: () => void;
   onCancel: () => void;
+  /** Undefined-safe: "Check if I'm ready" is optional UI, not part of CaptureUIState's own lifecycle — see this file's readinessState comment. */
+  readiness?: ReadinessUIState;
+  onCheckReadiness?: () => void;
 }) {
   if (state.status === "waiting" || state.status === "finishing" || state.status === "cancelling") {
     const busy = state.status !== "waiting";
+    const checking = readiness?.status === "checking";
     return (
       <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
         <p>
@@ -482,7 +501,23 @@ function CaptureLoginControl({
           <button type="button" onClick={onCancel} disabled={busy} className={captureButtonClass}>
             {state.status === "cancelling" ? "Cancelling…" : "Cancel"}
           </button>
+          {onCheckReadiness && (
+            <button type="button" onClick={onCheckReadiness} disabled={busy || checking} className={captureButtonClass}>
+              {checking ? "Checking…" : "Check if I'm ready"}
+            </button>
+          )}
         </div>
+        {readiness?.status === "done" && (
+          <p role="status" className={`mt-2 text-xs ${readiness.ready ? "text-green-700" : "text-amber-800"}`}>
+            {readiness.ready ? "✓ " : ""}
+            {readiness.note}
+          </p>
+        )}
+        {readiness?.status === "error" && (
+          <p role="alert" className="mt-2 text-xs text-red-700">
+            {readiness.message}
+          </p>
+        )}
       </div>
     );
   }
@@ -1182,6 +1217,24 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
     setRowCapture(i, { status: "idle" });
   }
 
+  // "Check if I'm ready" readiness state (oauth-session-capture-v2 epic,
+  // llm-capture-readiness-check story) — deliberately its OWN state map,
+  // separate from `captureState` above: a readiness check is advisory and
+  // fully independent of the waiting/finishing/cancelling lifecycle (see
+  // this story's design_decisions — it must never gate or auto-trigger
+  // "I'm done"), so it never touches `captureState` itself.
+  const [readinessState, setReadinessState] = useState<Record<number, ReadinessUIState>>({});
+
+  async function handleCheckReadiness(i: number, captureId: string, sourceId: string) {
+    setReadinessState((prev) => ({ ...prev, [i]: { status: "checking" } }));
+    const result = await checkCaptureReadinessAction(captureId, sourceId);
+    if (!result.ok) {
+      setReadinessState((prev) => ({ ...prev, [i]: { status: "error", message: result.error } }));
+      return;
+    }
+    setReadinessState((prev) => ({ ...prev, [i]: { status: "done", ready: result.data.ready, note: result.data.note } }));
+  }
+
   // -- Anthropic API key ("resume-link-ui" story) --------------------------
   // Writes straight to .env via setAnthropicApiKeyAction, independent of
   // draft/Save — see design_decisions in
@@ -1566,6 +1619,11 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                   onCancel={() => {
                     const rowState = captureState[i];
                     if (rowState?.status === "waiting") handleCancelCapture(i, rowState.captureId, rowState.sourceId);
+                  }}
+                  readiness={readinessState[i] ?? { status: "idle" }}
+                  onCheckReadiness={() => {
+                    const rowState = captureState[i];
+                    if (rowState?.status === "waiting") handleCheckReadiness(i, rowState.captureId, rowState.sourceId);
                   }}
                 />
               )}

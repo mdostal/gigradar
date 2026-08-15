@@ -21,18 +21,26 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 const startCaptureMock = vi.fn();
 const finishCaptureMock = vi.fn();
 const cancelCaptureMock = vi.fn();
+const getCapturePageMock = vi.fn();
 
 vi.mock("@/lib/auth/session-capture", () => ({
   startCapture: (...args: unknown[]) => startCaptureMock(...args),
   finishCapture: (...args: unknown[]) => finishCaptureMock(...args),
   cancelCapture: (...args: unknown[]) => cancelCaptureMock(...args),
+  getCapturePage: (...args: unknown[]) => getCapturePageMock(...args),
+}));
+
+const checkCaptureReadinessMock = vi.fn();
+vi.mock("@/lib/auth/capture-guidance", () => ({
+  checkCaptureReadiness: (...args: unknown[]) => checkCaptureReadinessMock(...args),
 }));
 
 import { revalidatePath } from "next/cache";
 import { getConfigPath } from "@/lib/config/load";
+import { setEnvVar } from "@/lib/config/env-store";
 import { decrypt } from "@/lib/security/vault";
 import { SOURCE_LOGIN_URLS } from "@/lib/sources/origins";
-import { cancelCaptureAction, finishCaptureAction, startCaptureAction } from "../actions";
+import { cancelCaptureAction, checkCaptureReadinessAction, finishCaptureAction, startCaptureAction } from "../actions";
 
 // Same isolation pattern as actions.test.ts / save.test.ts: every test
 // points XDG_DATA_HOME (config.json) AND XDG_CONFIG_HOME (the vault key —
@@ -55,6 +63,8 @@ beforeEach(() => {
   startCaptureMock.mockReset();
   finishCaptureMock.mockReset();
   cancelCaptureMock.mockReset();
+  getCapturePageMock.mockReset();
+  checkCaptureReadinessMock.mockReset();
 });
 
 afterEach(() => {
@@ -304,5 +314,59 @@ describe("cancelCaptureAction", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.error).toBe("some unexpected cancel failure");
+  });
+});
+
+describe("checkCaptureReadinessAction (oauth-session-capture-v2 epic, llm-capture-readiness-check story)", () => {
+  it("returns {ok:true, data:{ready, note}} from checkCaptureReadiness(), and writes nothing / never revalidates", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-fake-test-key");
+    getCapturePageMock.mockReturnValue({ fake: "page" });
+    checkCaptureReadinessMock.mockResolvedValue({ ready: true, note: "Looks like a signed-in dashboard." });
+
+    const result = await checkCaptureReadinessAction("capture-123", "gofractional");
+
+    expect(getCapturePageMock).toHaveBeenCalledWith("capture-123");
+    expect(checkCaptureReadinessMock).toHaveBeenCalledWith({ fake: "page" }, "gofractional", "sk-ant-fake-test-key");
+    expect(result).toEqual({ ok: true, data: { ready: true, note: "Looks like a signed-in dashboard." } });
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("returns a specific error and never calls checkCaptureReadiness() when no Anthropic API key is set", async () => {
+    const result = await checkCaptureReadinessAction("capture-123", "gofractional");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("no Anthropic API key is set");
+    expect(getCapturePageMock).not.toHaveBeenCalled();
+    expect(checkCaptureReadinessMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces getCapturePage()'s SPECIFIC error (e.g. an expired capture) verbatim, never calling checkCaptureReadiness()", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-fake-test-key");
+    getCapturePageMock.mockImplementation(() => {
+      throw new Error('gigradar session-capture: capture not found or already expired (id "capture-123").');
+    });
+
+    const result = await checkCaptureReadinessAction("capture-123", "gofractional");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("not found or already expired");
+    expect(checkCaptureReadinessMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces checkCaptureReadiness()'s SPECIFIC error verbatim, never a generic message", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-fake-test-key");
+    getCapturePageMock.mockReturnValue({ fake: "page" });
+    checkCaptureReadinessMock.mockRejectedValue(
+      new Error("gigradar capture-guidance: the Anthropic API response did not include the expected structured readiness result."),
+    );
+
+    const result = await checkCaptureReadinessAction("capture-123", "gofractional");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("did not include the expected structured readiness result");
   });
 });
