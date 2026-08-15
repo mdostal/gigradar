@@ -32,12 +32,8 @@
 // safety-critical and must never fork.
 import crypto from "node:crypto";
 import type { Browser, BrowserContext, Page } from "playwright";
-import {
-  checkChromiumAvailable,
-  filterStorageStateToAllowlist,
-  launchHeadedBrowser,
-  readStorageStateFile,
-} from "./browser-session.js";
+import { filterStorageStateToAllowlist, readStorageStateFile } from "./browser-session.js";
+import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
 import { resolveEnvString } from "../config/load.js";
 import { SOURCE_ORIGINS, SOURCE_PROFILE_URLS } from "../sources/origins.js";
 
@@ -52,6 +48,7 @@ interface AssistSessionEntry {
   browser: Browser;
   context: BrowserContext;
   page: Page;
+  realChrome: RealChromeHandle;
   sourceId: string;
   mode: AssistMode;
   startedAt: number;
@@ -66,13 +63,14 @@ interface AssistSessionEntry {
 const sessions: Map<string, AssistSessionEntry> = ((globalThis as any).__gigradarAssistSessions ??=
   new Map<string, AssistSessionEntry>());
 
-/** Closes `browser`, swallowing any error -- same helper session-capture.ts uses, for the same reason (a cleanup path may race the user closing the window directly). */
-async function safeCloseBrowser(browser: Browser): Promise<void> {
+/** Closes both halves of a session's browser resources -- Playwright's CDP connection (`browser`) AND the real, independently-spawned Chrome process + its temp --user-data-dir (`realChrome`, via real-chrome.ts's closeRealChrome()) -- same helper session-capture.ts uses, for the same reason (a cleanup path may race the user closing the window directly). */
+async function safeCloseBrowser(browser: Browser, realChrome: RealChromeHandle): Promise<void> {
   try {
     await browser.close();
   } catch {
     // already closed/closing -- nothing more to do.
   }
+  closeRealChrome(realChrome);
 }
 
 function scheduleIdleTimeout(sessionId: string): ReturnType<typeof setTimeout> {
@@ -82,6 +80,7 @@ function scheduleIdleTimeout(sessionId: string): ReturnType<typeof setTimeout> {
     sessions.delete(sessionId);
     entry.browser.off("disconnected", entry.disconnectedListener);
     void entry.browser.close().catch(() => {});
+    closeRealChrome(entry.realChrome);
   }, IDLE_TIMEOUT_MS);
 }
 
@@ -101,8 +100,10 @@ export interface AssistSessionInfo {
  * Starts a new persistent assist session for `sourceId`: resolves and
  * origin-scopes the source's storageState via browser-session.ts's own
  * readStorageStateFile()/filterStorageStateToAllowlist() (reused,
- * unmodified), launches a headed browser via launchHeadedBrowser() (also
- * reused, unchanged), and navigates to the source's registered
+ * unmodified), spawns and attaches to a real, independent Chrome via
+ * real-chrome.ts's spawnRealChrome()/attachToRealChrome() (never
+ * playwright.chromium.launch() -- see real-chrome.ts's header comment for
+ * why), and navigates to the source's registered
  * SOURCE_PROFILE_URLS entry -- see origins.ts's own comment: these URLs are
  * NOT all live-confirmed yet, a known, flagged gap, not silently assumed
  * correct.
@@ -144,9 +145,17 @@ export async function startAssistSession(
   const rawStorageState = readStorageStateFile(resolvedPath);
   const scopedStorageState = filterStorageStateToAllowlist(rawStorageState, [...allowedOrigins]);
 
-  checkChromiumAvailable();
+  const realChrome = await spawnRealChrome();
 
-  const browser = await launchHeadedBrowser(`profile-assist source "${sourceId}"`);
+  let browser: Browser;
+  try {
+    browser = await attachToRealChrome(realChrome.cdpPort);
+  } catch (e) {
+    closeRealChrome(realChrome);
+    throw new Error(
+      `${MODULE_PREFIX}: failed to attach to the spawned Chrome for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 
   let context: BrowserContext;
   let page: Page;
@@ -155,7 +164,7 @@ export async function startAssistSession(
     page = await context.newPage();
     await page.goto(profileUrl);
   } catch (e) {
-    await safeCloseBrowser(browser);
+    await safeCloseBrowser(browser, realChrome);
     throw new Error(
       `${MODULE_PREFIX}: failed to open the profile page for source "${sourceId}" at "${profileUrl}": ${e instanceof Error ? e.message : String(e)}`,
     );
@@ -168,6 +177,11 @@ export async function startAssistSession(
     if (!entry) return; // already cleaned up via endAssistSession()/the idle timeout
     clearTimeout(entry.timeoutHandle);
     sessions.delete(sessionId);
+    // The real Chrome process may already be gone (this is often WHY we
+    // disconnected -- the user closed the window directly), but the temp
+    // --user-data-dir still needs removing -- see closeRealChrome()'s doc
+    // comment on why it's always safe to call.
+    closeRealChrome(entry.realChrome);
   };
   browser.on("disconnected", disconnectedListener);
 
@@ -176,6 +190,7 @@ export async function startAssistSession(
     browser,
     context,
     page,
+    realChrome,
     sourceId,
     mode,
     startedAt: now,
@@ -228,5 +243,5 @@ export async function endAssistSession(sessionId: string): Promise<void> {
   entry.browser.off("disconnected", entry.disconnectedListener);
   sessions.delete(sessionId);
 
-  await safeCloseBrowser(entry.browser);
+  await safeCloseBrowser(entry.browser, entry.realChrome);
 }

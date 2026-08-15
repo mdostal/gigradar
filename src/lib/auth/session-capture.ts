@@ -2,9 +2,12 @@
 // remember it" flow that produces exactly the kind of storageState file
 // browser-session.ts's withBrowserSession() already knows how to consume
 // (see .pHive/epics/session-capture-ui/stories/session-capture-mechanism.yaml).
-// This module never modifies browser-session.ts; it only reuses two of its
-// exports (filterStorageStateToAllowlist(), checkChromiumAvailable()) and
-// its StorageState type shapes.
+// This module never modifies browser-session.ts; it only reuses its
+// filterStorageStateToAllowlist() export and its StorageState type shapes.
+// The browser itself is acquired via real-chrome.ts's
+// spawnRealChrome()/attachToRealChrome() (never
+// playwright.chromium.launch()/browser-session.ts's launchHeadedBrowser() --
+// see real-chrome.ts's header comment for why).
 //
 // THE EPIC'S SINGLE HIGHEST-NOVELTY PIECE: holding a live Playwright
 // Browser/BrowserContext handle in server memory across separate Next.js
@@ -35,10 +38,9 @@
 // below is called with no options at all — no `recordHar`, no
 // `recordVideo`, no `context.tracing.start()`, no
 // `page.on("console"|"request"|"response", ...)` anywhere in this file.
-// chromium.launch() goes through browser-session.ts's launchHeadedBrowser()
-// (headed, preferring real Chrome over bundled Chromium for Google OAuth
-// compatibility — see that function's docstring); that helper carries the
-// same no-debug-option discipline.
+// The browser itself comes from real-chrome.ts's spawnRealChrome() (a real,
+// independently-launched Chrome, headed, attached over CDP) which carries
+// the same no-debug-option discipline.
 //
 // SANITY-CHECK BEFORE WRITE, NEVER WRITE-THEN-HOPE.
 // filterStorageStateToAllowlist() was only ever proven against
@@ -63,12 +65,8 @@ import { hasAnyEncryptedFile } from "../config/load.js";
 import { encrypt, getOrCreateKey } from "../security/vault.js";
 import { SOURCE_ORIGINS } from "../sources/origins.js";
 import { getDefaultDataDir } from "../store/path.js";
-import {
-  checkChromiumAvailable,
-  filterStorageStateToAllowlist,
-  launchHeadedBrowser,
-  type StorageState,
-} from "./browser-session.js";
+import { filterStorageStateToAllowlist, type StorageState } from "./browser-session.js";
+import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
 
 const MODULE_PREFIX = "gigradar session-capture";
 
@@ -78,6 +76,7 @@ export const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 interface CaptureEntry {
   browser: Browser;
   context: BrowserContext;
+  realChrome: RealChromeHandle;
   sourceId: string;
   startedAt: number;
   timeoutHandle: ReturnType<typeof setTimeout>;
@@ -108,13 +107,23 @@ interface CaptureEntry {
 const captures: Map<string, CaptureEntry> = ((globalThis as any).__gigradarCaptures ??=
   new Map<string, CaptureEntry>());
 
-/** Closes `browser`, swallowing any error — used on cleanup paths where the browser may already be closed/closing (e.g. the user closed the window directly, racing our own cleanup). Never this call's own failure. */
-async function safeCloseBrowser(browser: Browser): Promise<void> {
+/**
+ * Closes both halves of a capture's browser resources — Playwright's CDP
+ * connection (`browser`) AND the real, independently-spawned Chrome process
+ * + its temp `--user-data-dir` (`realChrome`, via real-chrome.ts's
+ * closeRealChrome()) — swallowing any error from the Playwright side (the
+ * connection may already be closed/closing, e.g. the user closed the window
+ * directly, racing our own cleanup). closeRealChrome() itself already
+ * swallows its own errors (see that function's doc comment), so this is
+ * never this call's own failure either way.
+ */
+async function safeCloseBrowser(browser: Browser, realChrome: RealChromeHandle): Promise<void> {
   try {
     await browser.close();
   } catch {
     // already closed/closing — nothing more to do.
   }
+  closeRealChrome(realChrome);
 }
 
 /**
@@ -131,22 +140,31 @@ async function safeCloseBrowser(browser: Browser): Promise<void> {
  * (see this story's accepted v1 risk: no cross-capture process sweep beyond
  * this per-capture bound).
  *
- * Throws (before ever launching a browser) if the Chromium binary itself
- * isn't installed — see `checkChromiumAvailable()`.
+ * Throws (before ever spawning a browser) if the real Chrome binary isn't
+ * installed at the expected macOS path — see real-chrome.ts's
+ * spawnRealChrome().
  */
 export async function startCapture(sourceId: string, loginUrl: string): Promise<{ captureId: string }> {
-  checkChromiumAvailable();
+  const realChrome = await spawnRealChrome();
 
-  const browser: Browser = await launchHeadedBrowser(`source "${sourceId}"`);
+  let browser: Browser;
+  try {
+    browser = await attachToRealChrome(realChrome.cdpPort);
+  } catch (e) {
+    closeRealChrome(realChrome);
+    throw new Error(
+      `${MODULE_PREFIX}: failed to attach to the spawned Chrome for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 
   let context: BrowserContext;
   try {
     // No storageState passed in, no other options: a fresh context that
     // creates a session via a real login. Same "no debug capture"
-    // constraint as launch() above.
+    // constraint as spawnRealChrome() above.
     context = await browser.newContext();
   } catch (e) {
-    await safeCloseBrowser(browser);
+    await safeCloseBrowser(browser, realChrome);
     throw new Error(
       `${MODULE_PREFIX}: failed to open a browser context for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
     );
@@ -156,7 +174,7 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
     const page = await context.newPage();
     await page.goto(loginUrl);
   } catch (e) {
-    await safeCloseBrowser(browser);
+    await safeCloseBrowser(browser, realChrome);
     throw new Error(
       `${MODULE_PREFIX}: failed to open the login page for source "${sourceId}" at "${loginUrl}": ${e instanceof Error ? e.message : String(e)}`,
     );
@@ -172,6 +190,11 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
     if (!entry) return; // already cleaned up via finishCapture()/cancelCapture()/the idle timeout
     clearTimeout(entry.timeoutHandle);
     captures.delete(captureId);
+    // The real Chrome process may already be gone (this is often WHY we
+    // disconnected — the user closed the window directly), but the temp
+    // --user-data-dir still needs removing — see closeRealChrome()'s doc
+    // comment on why it's always safe to call.
+    closeRealChrome(entry.realChrome);
   };
   browser.on("disconnected", disconnectedListener);
 
@@ -187,9 +210,18 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
     // "disconnected" listener (which close() itself depends on) intact.
     entry.browser.off("disconnected", entry.disconnectedListener);
     void entry.browser.close().catch(() => {});
+    closeRealChrome(entry.realChrome);
   }, IDLE_TIMEOUT_MS);
 
-  captures.set(captureId, { browser, context, sourceId, startedAt: Date.now(), timeoutHandle, disconnectedListener });
+  captures.set(captureId, {
+    browser,
+    context,
+    realChrome,
+    sourceId,
+    startedAt: Date.now(),
+    timeoutHandle,
+    disconnectedListener,
+  });
 
   return { captureId };
 }
@@ -258,7 +290,7 @@ export async function finishCapture(captureId: string): Promise<{ path: string }
     writeStorageStateAtomically(destPath, filtered);
     return { path: destPath };
   } finally {
-    await safeCloseBrowser(entry.browser);
+    await safeCloseBrowser(entry.browser, entry.realChrome);
   }
 }
 
@@ -279,7 +311,7 @@ export async function cancelCapture(captureId: string): Promise<void> {
   entry.browser.off("disconnected", entry.disconnectedListener);
   captures.delete(captureId);
 
-  await safeCloseBrowser(entry.browser);
+  await safeCloseBrowser(entry.browser, entry.realChrome);
 }
 
 /**

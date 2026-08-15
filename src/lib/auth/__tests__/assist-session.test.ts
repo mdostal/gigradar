@@ -19,15 +19,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const launchMock = vi.fn();
-const executablePathMock = vi.fn();
+const spawnRealChromeMock = vi.fn();
+const attachToRealChromeMock = vi.fn();
+const closeRealChromeMock = vi.fn();
 
-vi.mock("playwright", () => ({
-  chromium: {
-    launch: (...args: unknown[]) => launchMock(...args),
-    executablePath: (...args: unknown[]) => executablePathMock(...args),
-  },
+vi.mock("../real-chrome.js", () => ({
+  spawnRealChrome: (...args: unknown[]) => spawnRealChromeMock(...args),
+  attachToRealChrome: (...args: unknown[]) => attachToRealChromeMock(...args),
+  closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
 }));
+
+const FAKE_REAL_CHROME_HANDLE = { process: { kill: vi.fn() }, cdpPort: 54732, userDataDir: "/fake/tmp/gigradar-real-chrome" };
 
 import {
   endAssistSession,
@@ -48,7 +50,6 @@ const SOURCE_ID = "gofractional";
 
 let tmpDataDir: string;
 let tmpKeyDir: string;
-const realExistsSync = fs.existsSync.bind(fs);
 
 function createFakePage() {
   return { goto: vi.fn().mockResolvedValue(undefined) };
@@ -82,7 +83,8 @@ function setUpFakeBrowserChain() {
   const page = createFakePage();
   const context = createFakeContext(page);
   const browser = createFakeBrowser(context);
-  launchMock.mockResolvedValue(browser);
+  spawnRealChromeMock.mockResolvedValue(FAKE_REAL_CHROME_HANDLE);
+  attachToRealChromeMock.mockResolvedValue(browser);
   return { page, context, browser };
 }
 
@@ -106,13 +108,9 @@ beforeEach(() => {
   tmpKeyDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-assist-session-test-key-"));
   process.env.XDG_DATA_HOME = tmpDataDir;
   process.env.XDG_CONFIG_HOME = tmpKeyDir;
-  launchMock.mockReset();
-  executablePathMock.mockReset();
-  executablePathMock.mockReturnValue("/fake/chromium/executable");
-  vi.spyOn(fs, "existsSync").mockImplementation((p) => {
-    if (p === "/fake/chromium/executable") return true;
-    return realExistsSync(p);
-  });
+  spawnRealChromeMock.mockReset();
+  attachToRealChromeMock.mockReset();
+  closeRealChromeMock.mockReset();
 });
 
 afterEach(async () => {
@@ -150,6 +148,13 @@ describe("startAssistSession / getAssistSessionPage / endAssistSession: happy pa
     await endAssistSession(info.sessionId);
     expect(browser.close).toHaveBeenCalledTimes(1);
     expect(browser.off).toHaveBeenCalledWith("disconnected", expect.any(Function));
+
+    // The real, independently-spawned Chrome process + its temp
+    // --user-data-dir are torn down alongside the Playwright CDP connection
+    // -- see real-chrome.ts's closeRealChrome().
+    expect(spawnRealChromeMock).toHaveBeenCalledWith();
+    expect(attachToRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE.cdpPort);
+    expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
   });
 
   it("navigates to the source's registered SOURCE_PROFILE_URLS entry", async () => {
@@ -168,12 +173,12 @@ describe("one session per sourceId", () => {
     const storageStatePath = writeStorageStateFixture();
 
     await startAssistSession(SOURCE_ID, "manual", storageStatePath);
-    launchMock.mockClear();
+    spawnRealChromeMock.mockClear();
 
     await expect(startAssistSession(SOURCE_ID, "manual", storageStatePath)).rejects.toThrow(
       /already active for source/,
     );
-    expect(launchMock).not.toHaveBeenCalled();
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
   });
 
   it("allows starting a new session for the same sourceId after the first one ends", async () => {
@@ -217,7 +222,7 @@ describe("registry gaps throw before launching a browser", () => {
     await expect(startAssistSession("not-a-real-source", "manual", storageStatePath)).rejects.toThrow(
       /no origin allowlist registered/,
     );
-    expect(launchMock).not.toHaveBeenCalled();
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
   });
 });
 
