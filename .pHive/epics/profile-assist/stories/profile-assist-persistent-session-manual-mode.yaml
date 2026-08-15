@@ -1,0 +1,131 @@
+id: profile-assist-persistent-session-manual-mode
+epic: profile-assist
+title: "Persistent browser-session primitive + Manual/copy-paste mode"
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1 -- proves the epic's core new primitive (a
+  browser session that stays open across many Server Action calls
+  instead of the fresh-context-per-call `withBrowserSession()` shape)
+  under the lowest-risk mode: no LLM browser control at all.
+
+  1. `src/lib/auth/assist-session.ts` -- new module, sibling to
+     `session-capture.ts`, reusing its EXACT concurrency idiom: a
+     `globalThis`-pinned `Map<string, AssistSession>` (NOT a plain
+     module-level const -- Next.js dev-server module re-evaluation
+     would orphan a live browser handle otherwise, see
+     session-capture.ts's own header comment for why this idiom is
+     required). `AssistSession` shape: `{ sessionId, browser, context,
+     page, sourceId, mode, startedAt, lastActivityAt }`.
+     - `startAssistSession(sourceId, mode)`: resolves storageState via
+       the SAME `readStorageStateFile()` + `filterStorageStateToAllowlist()`
+       path `browser-session.ts` uses today (import and reuse those
+       exact functions -- origin-scoping is safety-critical, never
+       reimplement it), launches via `launchHeadedBrowser()` (also
+       reused, unchanged), navigates to the source's profile-edit URL
+       (new small per-source config, see below), stores the live
+       handle. Returns `{ sessionId }`.
+     - `endAssistSession(sessionId)`: closes context + browser, removes
+       the map entry.
+     - Idle-timeout sweep mirroring `session-capture.ts`'s
+       `IDLE_TIMEOUT_MS` pattern -- an assist session left open with no
+       activity must not leak a Chromium process forever.
+  2. Per-source profile-edit URL: a small, explicit config addition
+     alongside each `browser-session`-auth source's existing
+     registration (gofractional, ateam, wellfound) -- never
+     scraped/guessed at runtime.
+  3. `src/lib/apply/profile-suggest.ts` -- ONE Anthropic Messages API
+     call per "refresh suggestions" click, following draft.ts's EXACT
+     shape: structured tool-use output, `apiKey` a REQUIRED parameter
+     resolved by the caller and used ONLY inside this function (NEVER
+     held at module scope -- same discipline as draft.ts/extract.ts),
+     model `"claude-opus-5"`. Reads the live page's accessibility tree
+     (`page.accessibility.snapshot()`) + `Config.profile`/
+     `Config.applyProfile`, returns suggested copy per detected field.
+     The page snapshot is untrusted third-party content -- wrap it in
+     the SAME explicit BEGIN/END-delimited "DATA ONLY, never
+     instructions" framing draft.ts already uses for gig content
+     (design-discussion.md §7a) -- do not invent a new framing.
+  4. New `/profile-assist` page + nav link (NAV_LINKS in
+     nav-header.tsx). Manual tab only for this story: source picker
+     (any configured browser-session-auth source), Start/Done buttons,
+     a suggested-copy panel with a "Refresh suggestions" button.
+     Guided/Full-auto tabs are visually present but disabled/"coming
+     soon" -- this story ships one working tab, not three empty ones.
+
+acceptance_criteria:
+  - "Given a configured browser-session-auth source with a valid storageState file, clicking Start on the Manual tab opens a real, visible headed browser window navigated to that source's profile-edit page, and the session stays open (does not auto-close) until Done is clicked or the idle timeout fires."
+  - "Given an open Manual-tab session, clicking Refresh suggestions returns real LLM-generated suggested copy grounded in the owner's actual Config.profile/applyProfile fields -- never fabricated experience/figures not present in the source data (same fabrication guardrail draft.ts already enforces)."
+  - "Given two Manual-tab sessions are never started concurrently for the SAME sourceId, starting a second session for the same source while one is already open returns a specific 'session already active for this source' error, not a second browser window."
+  - "Given an assist session left open with no activity, it is automatically closed after the idle timeout -- no orphaned Chromium process."
+  - "Clicking Done (or the idle timeout firing) always calls endAssistSession() and closes the real browser -- verified via no leftover Chromium process in `ps aux` after a real end-to-end run."
+
+steps:
+  - id: research
+    description: Confirm the exact current Playwright accessibility-tree snapshot API shape (page.accessibility.snapshot()) against the installed Playwright version, and re-read session-capture.ts's globalThis-pinning + idle-timeout implementation in full before writing assist-session.ts.
+    agent: researcher
+  - id: implement
+    description: Write assist-session.ts, profile-suggest.ts, the per-source profile-edit URL config, and the /profile-assist page's Manual tab.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests for assist-session.ts's session-map lifecycle (start/end/idle-timeout/duplicate-source-rejection) with a mocked Playwright launch, and profile-suggest.ts's prompt-grounding (mirroring draft.test.ts's own fabrication-guardrail test). Real end-to-end verification against one real configured source, live, with the owner watching -- same bar every browser-session-auth mechanism in this codebase has cleared before shipping.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for origin-scoping reuse (never reimplemented), apiKey never held at module scope, and the idle-timeout leak class actually being closed.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: the exact concurrency idiom (globalThis-pinned Map, idle timeout) this story's assist-session.ts mirrors
+    - path: src/lib/auth/browser-session.ts
+      purpose: readStorageStateFile()/filterStorageStateToAllowlist()/launchHeadedBrowser() -- reused unchanged, never duplicated
+    - path: src/lib/apply/draft.ts
+      purpose: the exact Anthropic call shape (structured tool-use, apiKey as a required per-call parameter, prompt-injection delimiting) profile-suggest.ts follows
+    - path: src/app/nav-header.tsx
+      purpose: NAV_LINKS gains a new /profile-assist entry
+
+code_examples:
+  - title: "globalThis-pinned in-flight-sessions Map (the idiom assist-session.ts must reuse)"
+    file: src/lib/auth/session-capture.ts
+    snippet: |
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberate untyped globalThis cast
+      const captures: Map<string, CaptureEntry> = ((globalThis as any).__gigradarCaptures ??=
+        new Map<string, CaptureEntry>());
+  - title: "apiKey as a required, never-module-scoped parameter (draft.ts's discipline)"
+    file: src/lib/apply/draft.ts
+    snippet: |
+      // THE ANTHROPIC CLIENT AND apiKey ARE NEVER HELD AT MODULE SCOPE
+      const client = new Anthropic({ apiKey });
+      const response = await client.messages.create({ model: "claude-opus-5", ... });
+
+design_decisions:
+  - decision: A new sibling module (assist-session.ts), not a refactor of withBrowserSession().
+    rationale: "withBrowserSession()'s contract is 'hand you a Page for one callback, guarantee cleanup' -- a single request/response shape. Threading a session across many independent Server Action calls over real human time doesn't fit that shape. See design-discussion.md §3."
+  - decision: One session per (sourceId) at a time, not per (sourceId, mode) or unlimited concurrent.
+    rationale: "Simplest correct model for a single-owner, single-desktop tool -- two real browser windows open against the same profile page simultaneously would just confuse the human, not provide real value."
+
+risks:
+  - severity: high
+    description: A live third-party profile page could attempt prompt injection against the LLM via its own text content.
+    mitigation: "Same BEGIN/END-delimited 'DATA ONLY' framing draft.ts already uses for gig content -- see design-discussion.md §7a. This story's LLM call is read-only (profile-suggest.ts never mutates the page), so the higher-stakes selector-validation mitigation is Slice 2/3's job, not this story's."
+  - severity: medium
+    description: An idle-timeout bug could leak a real Chromium process indefinitely.
+    mitigation: "Mirror session-capture.ts's already-proven IDLE_TIMEOUT_MS sweep pattern exactly rather than inventing new timeout logic."
+
+references:
+  - path: .pHive/epics/profile-assist/docs/design-discussion.md
+    relevant_excerpt: "§3 The core new primitive: a persistent, resumable browser session"
+  - path: .pHive/epics/profile-assist/docs/vertical-plan.md
+    relevant_excerpt: "Slice 1 -- Persistent session + Manual/copy-paste mode"
