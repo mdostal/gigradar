@@ -1,15 +1,15 @@
 {
   "version": "0.21.1",
   "notes": "See the assets below to download and install this version.",
-  "pub_date": "2026-08-15T02:41:24.279Z",
+  "pub_date": "2026-08-15T04:28:52.341Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUZ3EvR0pjVUpsN2h2Um53MDYvNkkzLzQwNmswaTB3T0hHVHljOCtYdEN1cUVlRVJPMEdjMlIrVzZYRjVZcXE3d0FvWmVnNXZyLzFEbDlEb0Fra3djSmRrRjhoREpFYkFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzYxNjM4CWZpbGU6Z2lncmFkYXIuYXBwLnRhci5negozcVNmeDhGSVJBWWFNc1JPMFY3VUdyaGkxUXB4VXA0bk1kQUdUUTEzZ1hHRWtvRGxGd1QrUTRpdVgwVzRFNnJWSHh3ajhGSk1LZHh3eTlIRU12MzlDQT09Cg==",
-      "url": "https://api.github.com/repos/mdostal/gigradar/releases/assets/515220882"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUZ3EvR0pjVUpsN3RCL1lacndzaVdJUEJ1WXdBQUFhd1p6VUsvK1lhOVFwZldhckRpdXlKd3MvZlpIRkZMYmJIV0ZaYUhqeGVWc3V2UGVvTzQrQUk0aHIvRm5FY09pSWdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzY4MDg1CWZpbGU6Z2lncmFkYXIuYXBwLnRhci5negpSRUNVeTNycG9QaG1pYlo3UnVpQzYvSnB6bWxBRTFEeWVickxXMlB6TytJOGppK3EzSFFFdlQ2cmpSVkRhbVltMUdXVHVKUlBJVGlUdWhzRlRnckpDZz09Cg==",
+      "url": "https://api.github.com/repos/mdostal/gigradar/releases/assets/515317635"
     },
     "darwin-aarch64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUZ3EvR0pjVUpsN2h2Um53MDYvNkkzLzQwNmswaTB3T0hHVHljOCtYdEN1cUVlRVJPMEdjMlIrVzZYRjVZcXE3d0FvWmVnNXZyLzFEbDlEb0Fra3djSmRrRjhoREpFYkFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzYxNjM4CWZpbGU6Z2lncmFkYXIuYXBwLnRhci5negozcVNmeDhGSVJBWWFNc1JPMFY3VUdyaGkxUXB4VXA0bk1kQUdUUTEzZ1hHRWtvRGxGd1QrUTRpdVgwVzRFNnJWSHh3ajhGSk1LZHh3eTlIRU12MzlDQT09Cg==",
-      "url": "https://api.github.com/repos/mdostal/gigradar/releases/assets/515220882"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUZ3EvR0pjVUpsN3RCL1lacndzaVdJUEJ1WXdBQUFhd1p6VUsvK1lhOVFwZldhckRpdXlKd3MvZlpIRkZMYmJIV0ZaYUhqeGVWc3V2UGVvTzQrQUk0aHIvRm5FY09pSWdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzY4MDg1CWZpbGU6Z2lncmFkYXIuYXBwLnRhci5negpSRUNVeTNycG9QaG1pYlo3UnVpQzYvSnB6bWxBRTFEeWVickxXMlB6TytJOGppK3EzSFFFdlQ2cmpSVkRhbVltMUdXVHVKUlBJVGlUdWhzRlRnckpDZz09Cg==",
+      "url": "https://api.github.com/repos/mdostal/gigradar/releases/assets/515317635"
     }
   }
 }
