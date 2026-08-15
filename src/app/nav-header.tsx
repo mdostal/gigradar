@@ -47,10 +47,18 @@ export function NavHeader({
 }) {
   const pathname = usePathname();
   return (
-    <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+    <header className="sticky top-0 z-10 border-b border-brand-border bg-brand-bg/95 backdrop-blur supports-[backdrop-filter]:bg-brand-bg/90">
       <nav className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
-        <span className="flex items-center gap-1.5 text-sm font-bold tracking-tight text-slate-900">
-          {iconSrc && <img src={iconSrc} alt="" width={20} height={20} className="rounded-sm" />}
+        <span className="flex items-center gap-2 text-sm font-bold tracking-tight text-brand-text">
+          {iconSrc && (
+            <img
+              src={iconSrc}
+              alt=""
+              width={22}
+              height={22}
+              className="rounded-md shadow-[0_0_10px_1px_rgba(52,211,153,0.35)]"
+            />
+          )}
           gigradar
         </span>
         <div className="flex items-center gap-1">
@@ -63,7 +71,9 @@ export function NavHeader({
                 aria-current={active ? "page" : undefined}
                 className={[
                   "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
-                  active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+                  active
+                    ? "bg-brand-accent/15 text-brand-accent ring-1 ring-inset ring-brand-accent/30"
+                    : "text-brand-text-dim hover:bg-brand-bg-elevated hover:text-brand-text",
                 ].join(" ")}
               >
                 {link.label}

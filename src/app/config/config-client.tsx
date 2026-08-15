@@ -1717,7 +1717,7 @@ export function ConfigClient({ initial }: { initial: Config }) {
         <button
           type="submit"
           disabled={isPending}
-          className="rounded-md border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50"
+          className="rounded-md border border-brand-accent bg-brand-accent px-4 py-2 text-sm font-medium text-brand-bg transition-colors hover:bg-brand-accent/90 disabled:opacity-50"
         >
           {isPending ? "Saving…" : "Save config"}
         </button>
