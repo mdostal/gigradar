@@ -1,7 +1,7 @@
 id: real-chrome-spawn-attach
 epic: oauth-session-capture-v2
 title: "Spawn-then-attach real Chrome (the actual OAuth fix) for session-capture.ts and assist-session.ts"
-status: implemented-pending-live-verification
+status: done
 complexity: high
 methodology: classic
 depends_on: []
