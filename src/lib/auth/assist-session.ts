@@ -32,8 +32,9 @@
 // safety-critical and must never fork.
 import crypto from "node:crypto";
 import type { Browser, BrowserContext, Page } from "playwright";
-import { filterStorageStateToAllowlist, readStorageStateFile } from "./browser-session.js";
+import { filterStorageStateToAllowlist, readStorageStateFile, type StorageState } from "./browser-session.js";
 import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
+import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
 import { resolveEnvString } from "../config/load.js";
 import { SOURCE_ORIGINS, SOURCE_PROFILE_URLS } from "../sources/origins.js";
 
@@ -111,8 +112,9 @@ export interface AssistSessionInfo {
  * Throws (before ever launching a browser) if: a session is already active
  * for `sourceId` (one session per source at a time -- see this file's
  * header comment); the source has no registered origin allowlist or
- * profile URL; or the storageState file is missing/unreadable/malformed
- * (via readStorageStateFile()).
+ * profile URL; or the session storage state is missing/unreadable/malformed
+ * -- via readStorageStateFile() for the (default) `"local"` backend, or via
+ * session-backend.ts's readSessionViaPortunus() for `"portunus"`.
  *
  * Registers the same `browser.on("disconnected", ...)` cleanup listener and
  * `IDLE_TIMEOUT_MS` idle-timeout sweep session-capture.ts's startCapture()
@@ -122,7 +124,8 @@ export interface AssistSessionInfo {
 export async function startAssistSession(
   sourceId: string,
   mode: AssistMode,
-  storageStatePathSetting: string,
+  storageStatePathSetting?: string,
+  sessionBackend: SessionBackend = "local",
 ): Promise<AssistSessionInfo> {
   for (const entry of sessions.values()) {
     if (entry.sourceId === sourceId) {
@@ -141,8 +144,18 @@ export async function startAssistSession(
     throw new Error(`${MODULE_PREFIX}: no profile-edit URL registered for source "${sourceId}" (see SOURCE_PROFILE_URLS in src/lib/sources/origins.ts).`);
   }
 
-  const resolvedPath = resolveEnvString(storageStatePathSetting, `source "${sourceId}" settings storageState path`);
-  const rawStorageState = readStorageStateFile(resolvedPath);
+  let rawStorageState: StorageState;
+  if (sessionBackend === "portunus") {
+    rawStorageState = await readSessionViaPortunus(sourceId, PORTUNUS_SESSION_ACCOUNT);
+  } else {
+    if (!storageStatePathSetting) {
+      throw new Error(
+        `${MODULE_PREFIX}: source "${sourceId}" is using the local session backend but no storageState path was supplied.`,
+      );
+    }
+    const resolvedPath = resolveEnvString(storageStatePathSetting, `source "${sourceId}" settings storageState path`);
+    rawStorageState = readStorageStateFile(resolvedPath);
+  }
   const scopedStorageState = filterStorageStateToAllowlist(rawStorageState, [...allowedOrigins]);
 
   const realChrome = await spawnRealChrome();

@@ -67,6 +67,12 @@ import { SOURCE_ORIGINS } from "../sources/origins.js";
 import { getDefaultDataDir } from "../store/path.js";
 import { filterStorageStateToAllowlist, type StorageState } from "./browser-session.js";
 import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
+import {
+  PORTUNUS_SESSION_ACCOUNT,
+  PORTUNUS_SESSION_TTL_SECONDS,
+  writeSessionViaPortunus,
+  type SessionBackend,
+} from "./session-backend.js";
 
 const MODULE_PREFIX = "gigradar session-capture";
 
@@ -226,16 +232,25 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
   return { captureId };
 }
 
+/** finishCapture()'s result — discriminated on which backend the session was persisted to. Never both, never a silent fallback from one to the other (oauth-session-capture-v2 epic, portunus-session-backend story). */
+export type FinishCaptureResult =
+  | { backend: "local"; path: string }
+  | { backend: "portunus"; site: string; account: string };
+
 /**
  * Completes capture `captureId`: reads the live context's storage state,
  * scopes it to `SOURCE_ORIGINS[entry.sourceId]` via
  * `filterStorageStateToAllowlist()` (reused, unmodified, from
  * browser-session.ts), and — only if that scoped result actually contains
- * at least one cookie for the source's own origin(s) — writes it atomically
- * and ENCRYPTED (temp file + rename, mode 0600, via
- * writeStorageStateAtomically() below) to
- * `<getDefaultDataDir()>/<sourceId>-session.json`, overwriting any prior
- * capture for that source.
+ * at least one cookie for the source's own origin(s) — persists it to
+ * exactly ONE backend, chosen by `sessionBackend` (default `"local"`,
+ * byte-identical to this function's pre-Portunus behavior):
+ *   - `"local"`: writes it atomically and ENCRYPTED (temp file + rename,
+ *     mode 0600, via writeStorageStateAtomically() below) to
+ *     `<getDefaultDataDir()>/<sourceId>-session.json`, overwriting any
+ *     prior capture for that source.
+ *   - `"portunus"`: writes it via session-backend.ts's
+ *     writeSessionViaPortunus() — stdin only, never a local file.
  *
  * Throws a specific "capture not found or already expired" error if
  * `captureId` isn't a live entry (already timed out, disconnected, finished,
@@ -251,7 +266,7 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
  * failure alike — once `finishCapture()` has been called for an id, that
  * capture is over either way.
  */
-export async function finishCapture(captureId: string): Promise<{ path: string }> {
+export async function finishCapture(captureId: string, sessionBackend: SessionBackend = "local"): Promise<FinishCaptureResult> {
   const entry = captures.get(captureId);
   if (!entry) {
     throw new Error(`${MODULE_PREFIX}: capture not found or already expired (id "${captureId}").`);
@@ -286,9 +301,14 @@ export async function finishCapture(captureId: string): Promise<{ path: string }
       );
     }
 
+    if (sessionBackend === "portunus") {
+      await writeSessionViaPortunus(entry.sourceId, PORTUNUS_SESSION_ACCOUNT, filtered, PORTUNUS_SESSION_TTL_SECONDS);
+      return { backend: "portunus", site: entry.sourceId, account: PORTUNUS_SESSION_ACCOUNT };
+    }
+
     const destPath = path.join(getDefaultDataDir(), `${entry.sourceId}-session.json`);
     writeStorageStateAtomically(destPath, filtered);
-    return { path: destPath };
+    return { backend: "local", path: destPath };
   } finally {
     await safeCloseBrowser(entry.browser, entry.realChrome);
   }

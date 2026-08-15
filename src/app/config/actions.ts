@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { actionErr, actionOk } from "@/lib/actions/result";
 import { approvedCount } from "@/lib/apply/autofire";
 import { cancelCapture, finishCapture, startCapture } from "@/lib/auth/session-capture";
+import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
@@ -130,12 +131,32 @@ function withSessionStatePath(
 }
 
 /**
- * Wraps `finishCapture(captureId)`. `sourceId` is supplied by the caller
- * (the client already knows it — it's the same id `startCaptureAction()`
- * was called with for this row) rather than derived from `captureId`,
- * since `finishCapture()`'s return value (`{ path }`) doesn't expose it.
+ * Finds `sourceId`'s raw entry in `rawSources` and resolves which session
+ * backend it's configured for via session-backend.ts's sessionBackendFrom()
+ * — "local" (the default, when the source has no entry yet or no
+ * settings.sessionBackend) or "portunus". This is deliberately a READ of
+ * whatever's already configured (set via the /config Settings editor, same
+ * convention as every other per-source setting) — Capture Login itself
+ * never lets the user pick a backend ad hoc.
+ */
+function rawSessionBackendFor(rawSources: unknown, sourceId: string): "local" | "portunus" {
+  const sources = Array.isArray(rawSources) ? rawSources : [];
+  const entry = sources.find(
+    (s): s is Record<string, unknown> => typeof s === "object" && s !== null && (s as Record<string, unknown>).id === sourceId,
+  );
+  return sessionBackendFrom({ id: sourceId, enabled: true, settings: (entry?.settings as Record<string, unknown> | undefined) ?? {} });
+}
+
+/**
+ * Wraps `finishCapture(captureId, sessionBackend)`. `sourceId` is supplied
+ * by the caller (the client already knows it — it's the same id
+ * `startCaptureAction()` was called with for this row) rather than derived
+ * from `captureId`, since `finishCapture()`'s return value doesn't expose
+ * it. `sessionBackend` is resolved from `sourceId`'s EXISTING config
+ * (`rawSessionBackendFor()` above) — set ahead of time via the /config
+ * Settings editor, never chosen ad hoc in this flow.
  *
- * On success: AUTO-WRITES the returned path into that source's
+ * On a `"local"` result: AUTO-WRITES the returned path into that source's
  * `SourceConfig.settings.sessionStatePath` — reads the current raw document
  * fresh via `readRawConfig()`, merges the update in via
  * `withSessionStatePath()` above (preserving every other field/source), and
@@ -146,33 +167,50 @@ function withSessionStatePath(
  * write actually succeeds, so a reload never serves a stale pre-capture
  * config.json from the Full Route Cache.
  *
+ * On a `"portunus"` result: nothing to persist into config.json — the
+ * session now lives in Portunus, keyed by `sourceId`, and
+ * `settings.sessionBackend` was already `"portunus"` (that's how this
+ * action knew to pass that backend to `finishCapture()` in the first
+ * place). No `saveConfig()`/`revalidatePath()` call — nothing on disk that
+ * `/config`'s render depends on changed.
+ *
  * On failure — either `finishCapture()` itself throwing (e.g. the
- * zero-cookies sanity check, or "capture not found or already expired") or
- * the subsequent `saveConfig()` call failing validation — the SPECIFIC
- * error message is returned verbatim via `actionErr()`, never a generic
- * "capture failed" string. A `finishCapture()` failure writes nothing (that
- * guarantee lives in `session-capture.ts` itself); a `saveConfig()` failure
- * after a successful `finishCapture()` leaves the just-captured session
- * file on disk (capture succeeded) but the config.json write did not go
- * through — surfaced as an explicit error rather than silently pretending
- * the whole operation succeeded.
+ * zero-cookies sanity check, "capture not found or already expired", or a
+ * Portunus write failure) or the subsequent `saveConfig()` call (local
+ * backend only) failing validation — the SPECIFIC error message is
+ * returned verbatim via `actionErr()`, never a generic "capture failed"
+ * string. A `finishCapture()` failure writes nothing (that guarantee lives
+ * in `session-capture.ts` itself); a `saveConfig()` failure after a
+ * successful LOCAL `finishCapture()` leaves the just-captured session file
+ * on disk (capture succeeded) but the config.json write did not go through
+ * — surfaced as an explicit error rather than silently pretending the whole
+ * operation succeeded.
  */
-export async function finishCaptureAction(captureId: string, sourceId: string): Promise<ActionResult<{ path: string }>> {
-  let path: string;
+export async function finishCaptureAction(
+  captureId: string,
+  sourceId: string,
+): Promise<ActionResult<{ backend: "local"; path: string } | { backend: "portunus" }>> {
+  const raw = readRawConfig();
+  const sessionBackend = rawSessionBackendFor(raw.sources, sourceId);
+
+  let result: Awaited<ReturnType<typeof finishCapture>>;
   try {
-    ({ path } = await finishCapture(captureId));
+    result = await finishCapture(captureId, sessionBackend);
   } catch (e) {
     return actionErr(e);
   }
 
-  const raw = readRawConfig();
-  const sources = withSessionStatePath(raw.sources, sourceId, path);
+  if (result.backend === "portunus") {
+    return actionOk({ backend: "portunus" });
+  }
+
+  const sources = withSessionStatePath(raw.sources, sourceId, result.path);
 
   const saveResult = saveConfig({ sources });
   if (!saveResult.ok) return actionErr(new Error(saveResult.error));
 
   revalidatePath("/config");
-  return actionOk({ path });
+  return actionOk({ backend: "local", path: result.path });
 }
 
 /**

@@ -160,8 +160,10 @@ describe("finishCaptureAction: success", () => {
 
     const result = await finishCaptureAction("capture-123", "gofractional");
 
-    expect(finishCaptureMock).toHaveBeenCalledWith("capture-123");
-    expect(result).toEqual({ ok: true, data: { path: "/data/gofractional-session.json" } });
+    // "local" -- resolved from this source's config, which has no
+    // settings.sessionBackend set (defaults to "local").
+    expect(finishCaptureMock).toHaveBeenCalledWith("capture-123", "local");
+    expect(result).toEqual({ ok: true, data: { backend: "local", path: "/data/gofractional-session.json" } });
 
     const onDisk = readOnDiskConfig();
     const savedSource = onDisk.sources.find((s: { id: string }) => s.id === "gofractional");
@@ -261,15 +263,23 @@ describe("finishCaptureAction: failure", () => {
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("leaves an existing config.json byte-for-byte untouched when finishCapture() fails", async () => {
-    writeConfig({ ...validConfigBase, sources: [{ id: "gofractional", enabled: true }] });
-    const before = fs.readFileSync(getConfigPath(), "utf8");
+  it("leaves an existing config.json's CONTENT untouched when finishCapture() fails", async () => {
+    // Content, not raw bytes: finishCaptureAction() now reads config.json
+    // BEFORE calling finishCapture() (to resolve which session backend the
+    // source is configured for), and readRawConfig() migrate-writes a
+    // legacy plaintext file to an encrypted envelope on read (same
+    // migrate-on-read behavior every other raw config read already has) --
+    // a content-preserving encoding change, not data loss. The invariant
+    // this test actually cares about is that the DATA is unchanged, so it
+    // compares decrypted content rather than raw on-disk bytes.
+    const seeded = { ...validConfigBase, sources: [{ id: "gofractional", enabled: true }] };
+    writeConfig(seeded);
     finishCaptureMock.mockRejectedValue(new Error("gigradar session-capture: capture produced no usable session"));
 
     const result = await finishCaptureAction("capture-123", "gofractional");
 
     expect(result.ok).toBe(false);
-    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+    expect(readOnDiskConfig()).toEqual(seeded);
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

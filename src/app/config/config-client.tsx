@@ -427,6 +427,7 @@ type CaptureUIState =
   | { status: "finishing"; captureId: string; sourceId: string }
   | { status: "cancelling"; captureId: string; sourceId: string }
   | { status: "success"; path: string }
+  | { status: "success-portunus" }
   | { status: "error"; message: string };
 
 /**
@@ -499,6 +500,11 @@ function CaptureLoginControl({
       {state.status === "success" && (
         <p role="status" className="mt-1 text-xs text-green-700">
           Captured — saved to {state.path} and written to this source&rsquo;s settings.
+        </p>
+      )}
+      {state.status === "success-portunus" && (
+        <p role="status" className="mt-1 text-xs text-green-700">
+          Captured — stored in Portunus for {sourceId}.
         </p>
       )}
       {state.status === "error" && (
@@ -1086,6 +1092,20 @@ export function ConfigClient({ initial }: { initial: Config }) {
       setRowCapture(i, { status: "error", message: result.error });
       return;
     }
+    if (result.data.backend === "portunus") {
+      // The session now lives in Portunus, keyed by this source's id — there
+      // is no local path to fold into settings (settings.sessionBackend is
+      // already "portunus", which is how finishCaptureAction() knew to use
+      // this backend in the first place).
+      setRowCapture(i, { status: "success-portunus" });
+      return;
+    }
+
+    // Captured narrower into a local (rather than reading result.data.path
+    // again below) since TypeScript's discriminant narrowing above doesn't
+    // carry through into the setDraft() closure.
+    const path = result.data.path;
+
     // Fold the captured path into this row's draft settings too, not just
     // on disk — otherwise a later "Save config" click (which resubmits the
     // WHOLE `sources` section) would silently overwrite the just-auto-written
@@ -1094,10 +1114,10 @@ export function ConfigClient({ initial }: { initial: Config }) {
     setDraft((prev) => ({
       ...prev,
       sources: prev.sources.map((s, idx) =>
-        idx === i ? { ...s, settings: upsertSettingPair(s.settings, "sessionStatePath", result.data.path) } : s,
+        idx === i ? { ...s, settings: upsertSettingPair(s.settings, "sessionStatePath", path) } : s,
       ),
     }));
-    setRowCapture(i, { status: "success", path: result.data.path });
+    setRowCapture(i, { status: "success", path });
   }
 
   async function handleCancelCapture(i: number, captureId: string, sourceId: string) {

@@ -50,6 +50,13 @@ import { SOURCE_ORIGINS } from "../../sources/origins.js";
 import { VaultKeyLostError, decrypt, encrypt, isEncryptedEnvelope } from "../../security/vault.js";
 import { cancelCapture, finishCapture, IDLE_TIMEOUT_MS, startCapture, writeStorageStateAtomically } from "../session-capture.js";
 
+/** finishCapture() defaults to the "local" backend -- this test suite exercises only that path (Portunus is covered separately in session-backend.test.ts). Narrows the discriminated result down to its local-path shape, or fails loudly if a test somehow ended up with the "portunus" branch. */
+async function finishCaptureLocal(captureId: string): Promise<{ path: string }> {
+  const result = await finishCapture(captureId);
+  if (result.backend !== "local") throw new Error(`expected the local backend, got "${result.backend}"`);
+  return result;
+}
+
 const SOURCE_ID = "gofractional";
 const LOGIN_URL = "https://www.gofractional.com/login";
 
@@ -205,7 +212,7 @@ describe("startCapture / finishCapture: happy path", () => {
     expect(typeof captureId).toBe("string");
     expect(captureId.length).toBeGreaterThan(0);
 
-    const { path: written } = await finishCapture(captureId);
+    const { path: written } = await finishCaptureLocal(captureId);
 
     expect(written).toBe(sessionFilePath(SOURCE_ID));
     expect(fs.existsSync(written)).toBe(true);
@@ -291,7 +298,9 @@ describe("globalThis-pinning: survives a simulated module re-evaluation (the HMR
     expect(freshModule.finishCapture).not.toBe(finishCapture); // genuinely a distinct module instance
 
     // "New" module instance completes the SAME capture id.
-    const { path: written } = await freshModule.finishCapture(captureId);
+    const freshResult = await freshModule.finishCapture(captureId);
+    if (freshResult.backend !== "local") throw new Error(`expected the local backend, got "${freshResult.backend}"`);
+    const written = freshResult.path;
 
     expect(fs.existsSync(written)).toBe(true);
   });
@@ -428,7 +437,7 @@ describe("finishCapture: file permissions", () => {
     setUpFakeBrowserChain(GOOD_STORAGE_STATE);
     const { captureId } = await startCapture(SOURCE_ID, LOGIN_URL);
 
-    const { path: written } = await finishCapture(captureId);
+    const { path: written } = await finishCaptureLocal(captureId);
 
     const mode = fs.statSync(written).mode & 0o777;
     expect(mode).toBe(0o600);
