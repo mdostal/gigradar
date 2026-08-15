@@ -1,0 +1,61 @@
+name: tauri-release
+
+# tauri-installer epic, tauri-ci-release-pipeline story (Vertical Plan
+# Slice 3) — proves the .dmg builds reproducibly outside the owner's own
+# machine, independent of in-app update-check logic (that's Slice 4,
+# tauri-real-auto-update). No signing key is configured here on purpose:
+# tauri-action only signs/produces an update manifest (latest.json) when
+# tauri.conf.json's updater plugin is configured, which it isn't yet at
+# this story's scope — confirmed live against tauri-action's own docs
+# during this story's research step.
+#
+# Tag convention (design-discussion.md's resolved decision): prod
+# releases are tagged `vX.Y.Z` (matches package.json's version, same
+# convention every prior epic's release-finalize step already uses);
+# dev-channel releases are tagged `vX.Y.Z-dev.N`. `prerelease` below is
+# derived from that shape, not a separate manual input.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish-tauri:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          # Pinned to match scripts/prepare-tauri-sidecars.sh's bundled
+          # Node version -- both need --experimental-sqlite support, and
+          # keeping CI's own Node the same version avoids "works locally,
+          # fails in CI" drift.
+          node-version: "22.12.0"
+          cache: "npm"
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install dependencies
+        run: npm ci
+
+      - name: build + publish
+        id: tauri-action
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # The exact pushed tag, not a __VERSION__-reconstructed one --
+          # this repo's dev/prod tags (vX.Y.Z vs vX.Y.Z-dev.N) don't
+          # always match package.json's version 1:1 (a dev tag can be cut
+          # between version bumps), so the real ref is the source of truth.
+          tagName: ${{ github.ref_name }}
+          releaseName: "gigradar ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download and install this version."
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-dev.') }}
