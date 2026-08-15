@@ -1,3 +1,4 @@
+import { isPortunusAvailable } from "@/lib/auth/session-backend";
 import { ConfigSchema } from "@/lib/config/schema";
 import { readRawConfig } from "@/lib/config/save";
 import type { Config } from "@/lib/types";
@@ -42,11 +43,18 @@ function blankConfig(): Config {
  * an existing file fails validation for some other reason) the form falls
  * back to `blankConfig()` rather than rendering an error page.
  */
-export default function ConfigPage() {
+export default async function ConfigPage() {
   const raw = readRawConfig();
   const configExists = Object.keys(raw).length > 0;
   const parsed = ConfigSchema.safeParse(raw);
   const initial: Config = parsed.success ? parsed.data : blankConfig();
+
+  // Real, live `portunus --version` check (oauth-session-capture-v2 epic,
+  // portunus-session-backend story) — the Settings editor's backend picker
+  // is shown ONLY when this is true, hidden (not just disabled) otherwise.
+  // See session-backend.ts's own doc comment on why "hidden" is the correct
+  // posture for OSS users without Portunus installed.
+  const portunusAvailable = await isPortunusAvailable();
 
   let subtitle: string;
   if (!configExists) {
@@ -62,7 +70,7 @@ export default function ConfigPage() {
     <main className="mx-auto max-w-4xl p-6">
       <h1 className="text-2xl font-bold tracking-tight text-slate-900">Configure gigradar</h1>
       <p className="text-sm text-slate-500">{subtitle}</p>
-      <ConfigClient initial={initial} />
+      <ConfigClient initial={initial} portunusAvailable={portunusAvailable} />
     </main>
   );
 }

@@ -684,6 +684,58 @@ function SettingsEditor({
   );
 }
 
+/**
+ * `sources[].settings.sessionBackend` picker (oauth-session-capture-v2
+ * epic, portunus-session-backend story) — shown ONLY next to a
+ * `browser-session`-auth source, and only by the caller passing
+ * `portunusAvailable: true` (this component itself doesn't check
+ * availability — see /config's Server Component, which reads the real
+ * isPortunusAvailable() once for the whole page). Reuses the SAME
+ * `SettingPair[]`/`upsertSettingPair()` plumbing every other setting goes
+ * through, rather than a separate write path — "Local" REMOVES the
+ * `sessionBackend` key entirely (byte-identical to before this feature
+ * existed, matching sessionBackendFrom()'s own "absent means local"
+ * default) instead of writing an explicit `"local"` value.
+ */
+function SessionBackendPicker({
+  pairs,
+  onChange,
+  radioGroupName,
+}: {
+  pairs: SettingPair[];
+  onChange: (next: SettingPair[]) => void;
+  radioGroupName: string;
+}) {
+  const current = pairs.find((p) => p.key === "sessionBackend")?.value === "portunus" ? "portunus" : "local";
+  return (
+    <div className="mt-2">
+      <span className={labelClass}>Session vault</span>
+      <div className="mt-1 flex gap-4 text-sm text-slate-700">
+        <label className="flex items-center gap-1.5">
+          <input
+            type="radio"
+            name={radioGroupName}
+            checked={current === "local"}
+            onChange={() => onChange(pairs.filter((p) => p.key !== "sessionBackend"))}
+            className="h-4 w-4"
+          />
+          Local (encrypted file)
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input
+            type="radio"
+            name={radioGroupName}
+            checked={current === "portunus"}
+            onChange={() => onChange(upsertSettingPair(pairs, "sessionBackend", "portunus"))}
+            className="h-4 w-4"
+          />
+          Portunus
+        </label>
+      </div>
+    </div>
+  );
+}
+
 function CheckboxField({
   label,
   checked,
@@ -1035,7 +1087,7 @@ function AutoFireRulesEditor({
  * on Save — the same `{ok,error}` Server Action convention
  * `updateGigStatusAction` established (src/app/actions.ts).
  */
-export function ConfigClient({ initial }: { initial: Config }) {
+export function ConfigClient({ initial, portunusAvailable }: { initial: Config; portunusAvailable: boolean }) {
   const [draft, setDraft] = useState<DraftConfig>(() => configToDraft(initial));
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -1490,6 +1542,18 @@ export function ConfigClient({ initial }: { initial: Config }) {
                   }}
                 />
               </div>
+              {source.id in SOURCE_ORIGINS && portunusAvailable && (
+                <SessionBackendPicker
+                  pairs={source.settings}
+                  radioGroupName={`session-backend-${i}`}
+                  onChange={(settings) => {
+                    setDraft({
+                      ...draft,
+                      sources: draft.sources.map((s, idx) => (idx === i ? { ...s, settings } : s)),
+                    });
+                  }}
+                />
+              )}
               {source.id in SOURCE_ORIGINS && (
                 <CaptureLoginControl
                   sourceId={source.id}

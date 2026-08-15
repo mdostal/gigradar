@@ -17,6 +17,7 @@ import {
   startAssistSession,
   type AssistMode,
 } from "@/lib/auth/assist-session";
+import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { readEnvVar } from "@/lib/config/env-store";
 import { ConfigSchema } from "@/lib/config/schema";
 import { readRawConfig } from "@/lib/config/save";
@@ -39,14 +40,27 @@ const MISSING_API_KEY_ERROR =
  * browser-session-auth adapter already passes its own raw
  * storageStatePathSetting into withBrowserSession() the same way.
  */
-function rawSessionStatePathFor(sourceId: string): string | undefined {
+function rawSourceSettingsFor(sourceId: string): Record<string, unknown> | undefined {
   const raw = readRawConfig();
   const sources = Array.isArray(raw.sources) ? raw.sources : [];
   const entry = sources.find(
     (s): s is Record<string, unknown> => typeof s === "object" && s !== null && (s as Record<string, unknown>).id === sourceId,
   );
-  const settings = entry && typeof entry.settings === "object" && entry.settings !== null ? (entry.settings as Record<string, unknown>) : undefined;
-  const value = settings?.sessionStatePath;
+  return entry && typeof entry.settings === "object" && entry.settings !== null ? (entry.settings as Record<string, unknown>) : undefined;
+}
+
+/**
+ * Finds `sourceId`'s RAW (possibly "env:VAR_NAME") sessionStatePath setting
+ * from config.json — reads via readRawConfig(), never loadConfig(), same
+ * "raw everywhere except the actual pipeline resolve step" rule this
+ * codebase holds everywhere else (see CLAUDE.md's Secret handling
+ * section). The raw value is handed to startAssistSession(), which
+ * resolves it internally via resolveEnvString() — mirroring how every
+ * browser-session-auth adapter already passes its own raw
+ * storageStatePathSetting into withBrowserSession() the same way.
+ */
+function rawSessionStatePathFor(sourceId: string): string | undefined {
+  const value = rawSourceSettingsFor(sourceId)?.sessionStatePath;
   return typeof value === "string" ? value : undefined;
 }
 
@@ -54,15 +68,17 @@ export async function startAssistSessionAction(
   sourceId: string,
   mode: AssistMode,
 ): Promise<ActionResult<{ sessionId: string }>> {
-  const sessionStatePathSetting = rawSessionStatePathFor(sourceId);
-  if (!sessionStatePathSetting) {
+  const sessionBackend = sessionBackendFrom({ id: sourceId, enabled: true, settings: rawSourceSettingsFor(sourceId) ?? {} });
+
+  const sessionStatePathSetting = sessionBackend === "local" ? rawSessionStatePathFor(sourceId) : undefined;
+  if (sessionBackend === "local" && !sessionStatePathSetting) {
     return actionErr(
       new Error(`gigradar profile-assist: source "${sourceId}" is missing settings.sessionStatePath — capture a login for it first.`),
     );
   }
 
   try {
-    const { sessionId } = await startAssistSession(sourceId, mode, sessionStatePathSetting);
+    const { sessionId } = await startAssistSession(sourceId, mode, sessionStatePathSetting, sessionBackend);
     return actionOk({ sessionId });
   } catch (e) {
     return actionErr(e);

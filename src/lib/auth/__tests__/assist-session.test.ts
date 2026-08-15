@@ -29,6 +29,12 @@ vi.mock("../real-chrome.js", () => ({
   closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
 }));
 
+const readSessionViaPortunusMock = vi.fn();
+vi.mock("../session-backend.js", () => ({
+  PORTUNUS_SESSION_ACCOUNT: "gigradar",
+  readSessionViaPortunus: (...args: unknown[]) => readSessionViaPortunusMock(...args),
+}));
+
 const FAKE_REAL_CHROME_HANDLE = { process: { kill: vi.fn() }, cdpPort: 54732, userDataDir: "/fake/tmp/gigradar-real-chrome" };
 
 import {
@@ -111,6 +117,7 @@ beforeEach(() => {
   spawnRealChromeMock.mockReset();
   attachToRealChromeMock.mockReset();
   closeRealChromeMock.mockReset();
+  readSessionViaPortunusMock.mockReset();
 });
 
 afterEach(async () => {
@@ -213,6 +220,36 @@ describe("unknown/expired session handling", () => {
 
     await expect(endAssistSession(info.sessionId)).resolves.toBeUndefined();
     expect(browser.close).toHaveBeenCalledTimes(1); // not called again
+  });
+});
+
+describe("startAssistSession: sessionBackend \"portunus\" (oauth-session-capture-v2 epic)", () => {
+  it("reads via readSessionViaPortunus(sourceId, PORTUNUS_SESSION_ACCOUNT) instead of the local file, and never requires a storageStatePathSetting", async () => {
+    const { context } = setUpFakeBrowserChain();
+    readSessionViaPortunusMock.mockResolvedValue({
+      cookies: [{ name: "session", value: "v", domain: "gofractional.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" as const }],
+      origins: [],
+    });
+
+    const info = await startAssistSession(SOURCE_ID, "manual", undefined, "portunus");
+
+    expect(readSessionViaPortunusMock).toHaveBeenCalledWith(SOURCE_ID, "gigradar");
+    expect(info.sourceId).toBe(SOURCE_ID);
+    expect(context.newPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a readSessionViaPortunus() failure without ever spawning real Chrome", async () => {
+    readSessionViaPortunusMock.mockRejectedValue(new Error("gigradar session-backend: portunus session load failed"));
+
+    await expect(startAssistSession(SOURCE_ID, "manual", undefined, "portunus")).rejects.toThrow(/portunus session load failed/);
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+  });
+
+  it('throws a specific error when the backend is (or defaults to) "local" but no storageStatePathSetting was supplied', async () => {
+    await expect(startAssistSession(SOURCE_ID, "manual")).rejects.toThrow(
+      /local session backend but no storageState path was supplied/,
+    );
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
   });
 });
 

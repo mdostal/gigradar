@@ -46,6 +46,12 @@ vi.mock("playwright", () => ({
   },
 }));
 
+const readSessionViaPortunusMock = vi.fn();
+vi.mock("../session-backend.js", () => ({
+  PORTUNUS_SESSION_ACCOUNT: "gigradar",
+  readSessionViaPortunus: (...args: unknown[]) => readSessionViaPortunusMock(...args),
+}));
+
 // Imported AFTER the mock is registered (vi.mock is hoisted by vitest, so
 // this ordering is actually irrelevant, but keeping it below documents the
 // dependency clearly).
@@ -86,6 +92,7 @@ beforeEach(() => {
   process.env.XDG_DATA_HOME = tmpDir;
   launchMock.mockReset();
   executablePathMock.mockReset();
+  readSessionViaPortunusMock.mockReset();
   executablePathMock.mockReturnValue("/fake/chromium/executable");
   // Chromium "available" by default in every test except the dedicated
   // missing-binary tests below, which override this — but ONLY for the
@@ -773,6 +780,81 @@ describe("checkChromiumAvailable / withBrowserSession: Chromium binary availabil
     ).rejects.toThrow(/npx playwright install chromium/);
 
     expect(launchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("withBrowserSession: sessionBackend \"portunus\" (oauth-session-capture-v2 epic)", () => {
+  it('reads via readSessionViaPortunus(sourceId, PORTUNUS_SESSION_ACCOUNT) instead of a local file, and still applies the origin filter before newContext()', async () => {
+    readSessionViaPortunusMock.mockResolvedValue(FIXTURE);
+    const { browser } = setUpFakeBrowserChain();
+
+    await withBrowserSession(
+      {
+        sourceId: "test-source",
+        sessionBackend: "portunus",
+        allowedOrigins: TARGET_ALLOWLIST,
+        url: "https://app.targetsource.example/jobs",
+        isAuthenticated: async () => true,
+      },
+      async () => "ok",
+    );
+
+    expect(readSessionViaPortunusMock).toHaveBeenCalledWith("test-source", "gigradar");
+    const passedArg = browser.newContext.mock.calls[0]?.[0] as { storageState: StorageState };
+    expect(passedArg.storageState).toEqual(filterStorageStateToAllowlist(FIXTURE, TARGET_ALLOWLIST));
+  });
+
+  it("never touches the local storageState file / storageStatePathSetting when the backend is portunus", async () => {
+    readSessionViaPortunusMock.mockResolvedValue(FIXTURE);
+    setUpFakeBrowserChain();
+    const readFileSpy = vi.spyOn(fs, "readFileSync");
+
+    await withBrowserSession(
+      {
+        sourceId: "test-source",
+        // Deliberately omitted -- a portunus-backed source has no local path at all.
+        sessionBackend: "portunus",
+        allowedOrigins: TARGET_ALLOWLIST,
+        url: "https://app.targetsource.example/jobs",
+        isAuthenticated: async () => true,
+      },
+      async () => "ok",
+    );
+
+    expect(readFileSpy).not.toHaveBeenCalled();
+  });
+
+  it("propagates a readSessionViaPortunus() failure without ever launching a browser", async () => {
+    readSessionViaPortunusMock.mockRejectedValue(new Error("gigradar session-backend: portunus session load failed"));
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          sessionBackend: "portunus",
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated: async () => true,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(/portunus session load failed/);
+
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
+  it('throws a specific error when the backend is (or defaults to) "local" but no storageStatePathSetting was supplied', async () => {
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated: async () => true,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(/local session backend but no storageState path was supplied/);
   });
 });
 
