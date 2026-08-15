@@ -1,7 +1,7 @@
 id: profile-assist-full-auto-mode
 epic: profile-assist
 title: "Full-auto mode: unsupervised tool-use loop with ask_human escape hatch"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [profile-assist-guided-mode]

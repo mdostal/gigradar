@@ -24,7 +24,7 @@ type Tab = "manual" | "guided" | "full-auto";
 const TABS: { id: Tab; label: string; enabled: boolean }[] = [
   { id: "manual", label: "Manual", enabled: true },
   { id: "guided", label: "Guided", enabled: true },
-  { id: "full-auto", label: "Full auto", enabled: false },
+  { id: "full-auto", label: "Full auto", enabled: true },
 ];
 
 type SessionState =
@@ -131,7 +131,9 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     setTranscript([]);
     setPendingEvent(null);
     setPendingQuestion(null);
-    const mode = tab === "guided" ? "guided" : "manual";
+    // Tab and AssistMode are the same union ("manual" | "guided" |
+    // "full-auto") by design — the tab IS the mode, no mapping needed.
+    const mode = tab;
     const result = await startAssistSessionAction(sourceId, mode);
     if (!result.ok) {
       setSession({ status: "error", message: result.error });
@@ -139,7 +141,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     }
     setSession({ status: "active", sessionId: result.data.sessionId });
     setSuggest({ status: "idle" });
-    if (mode === "guided") {
+    if (mode === "guided" || mode === "full-auto") {
       void runUntilBlocked(result.data.sessionId);
     }
   }
@@ -363,7 +365,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
         </div>
       )}
 
-      {tab === "guided" && (
+      {(tab === "guided" || tab === "full-auto") && (
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           {session.status === "idle" || session.status === "starting" || session.status === "error" ? (
             startForm
@@ -371,8 +373,9 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-slate-600">
-                  A real browser window is open on your desktop — every proposed action needs your approval below
-                  before it happens.
+                  {tab === "guided"
+                    ? "A real browser window is open on your desktop — every proposed action needs your approval below before it happens."
+                    : "A real browser window is open on your desktop — the LLM acts on it directly. It'll pause and ask if it's unsure."}
                 </p>
                 {doneButton}
               </div>
