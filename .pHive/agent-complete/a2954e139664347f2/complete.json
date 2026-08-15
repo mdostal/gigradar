@@ -1,0 +1,16 @@
+{
+  "agent_id": "a2954e139664347f2",
+  "session_id": "2096c7db-36b6-4ae7-a206-bb4fff054912",
+  "agent_type": "",
+  "cwd": "/Users/mdostal/Documents/work/gigradar",
+  "agent_transcript_path": "/Users/mdostal/.claude/projects/-Users-mdostal-Documents-work-gigradar/2096c7db-36b6-4ae7-a206-bb4fff054912/subagents/agent-a2954e139664347f2.jsonl",
+  "last_assistant_message": "Building out gigradar end to end. Just shipped the notifications epic and synced the live GitHub Pages site to match — everything's tested and running. Next up: pick from the queued epics (profile-assist, career CRM, or the Tauri installer) or park here.",
+  "prompt_id": "c0eecd37-541e-4c3b-87d1-7c06d612051f",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "verdict": "failure",
+  "verdict_source": "missing_marker",
+  "written_at": "2026-08-14T19:15:30Z"
+}

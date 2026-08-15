@@ -33,3 +33,16 @@ sessions/
 .playwright-mcp/
 # scripts/update.sh's local dev-service log/state dir (see that script's own header comment)
 .run/
+# tauri-installer epic: generated/downloaded, never committed --
+# scripts/prepare-tauri-sidecars.sh regenerates all of these on demand.
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/resources/
+src-tauri/gen/
+# tauri-real-auto-update story: the LOCAL TEST updater signing keypair's
+# private half -- never committed, regenerate with `npx tauri signer
+# generate` if lost. The real Portunus-vaulted production key is a
+# separate, later, owner-gated step (see design-discussion.md's resolved
+# Open Question 3) -- this test key exists only so this story's own
+# dev-loop testing has something to sign with.
+src-tauri/test-signing.key

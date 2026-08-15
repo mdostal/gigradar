@@ -1,0 +1,23 @@
+name: tauri-installer
+title: True 1-click macOS installer (Tauri) + real dev/prod auto-update
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+
+stories:
+  - id: tauri-bare-packaged-app
+    title: "Bare packaged .app: Tauri shell + bundled Node sidecar running gigradar's real server"
+    complexity: high
+    depends_on: []
+  - id: tauri-chromium-sidecar
+    title: "Bundle Playwright's Chromium so Capture Login + browser-session sources work fully packaged"
+    complexity: medium
+    depends_on: [tauri-bare-packaged-app]
+  - id: tauri-ci-release-pipeline
+    title: "GitHub Actions: build the .dmg on a clean runner, publish to Releases"
+    complexity: medium
+    depends_on: [tauri-chromium-sidecar]
+  - id: tauri-real-auto-update
+    title: "Real in-app auto-update: dev/prod channel toggle + Tauri updater plugin"
+    complexity: high
+    depends_on: [tauri-ci-release-pipeline]

@@ -1,6 +1,6 @@
 {
   "name": "gigradar",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "private": false,
   "license": "MIT",
   "description": "Open-source gig radar: define your accounts, needs, and role — it tracks and finds matching fractional/contract roles across the sources you enable, runs on a schedule, and assists the apply.",
@@ -21,6 +21,8 @@
     "@anthropic-ai/sdk": "^0.116.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@tanstack/react-table": "^8.21.3",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "croner": "^10.0.1",
     "dotenv": "^17.4.2",
     "next": "^15.0.0",
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "electron": "^43.4.0",

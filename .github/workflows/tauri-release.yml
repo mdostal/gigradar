@@ -1,0 +1,113 @@
+name: tauri-release
+
+# tauri-installer epic. Slice 3 (tauri-ci-release-pipeline) proved the .dmg
+# builds reproducibly outside the owner's own machine. Slice 4
+# (tauri-real-auto-update) added real signing + a dev-channel manifest
+# pointer on top of that same pipeline, rather than a second workflow --
+# same build, same artifact, just now signed and (for dev tags) mirrored
+# to a place the running app's updater can find it.
+#
+# Tag convention (design-discussion.md's resolved decision): prod
+# releases are tagged `vX.Y.Z` (matches package.json's version, same
+# convention every prior epic's release-finalize step already uses);
+# dev-channel releases are tagged `vX.Y.Z-dev.N`. `prerelease` below is
+# derived from that shape, not a separate manual input.
+#
+# TAURI_SIGNING_PRIVATE_KEY / _PASSWORD (repo secrets) are the LOCAL TEST
+# keypair generated for this story (`npx tauri signer generate`) -- its
+# public half is what's embedded in tauri.conf.json's plugins.updater.pubkey.
+# The real Portunus-vaulted production key is a separate, later,
+# owner-gated step (design-discussion.md's resolved Open Question 3), not
+# this story's job.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish-tauri:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          # Pinned to match scripts/prepare-tauri-sidecars.sh's bundled
+          # Node version -- both need --experimental-sqlite support, and
+          # keeping CI's own Node the same version avoids "works locally,
+          # fails in CI" drift.
+          node-version: "22.12.0"
+          cache: "npm"
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install dependencies
+        run: npm ci
+
+      - name: build + publish
+        id: tauri-action
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Presence of these two is what makes tauri-action/tauri build
+          # actually sign the update bundle and emit latest.json -- with
+          # createUpdaterArtifacts: true in tauri.conf.json (Slice 4) but
+          # no key, the build fails outright rather than silently skipping.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # The exact pushed tag, not a __VERSION__-reconstructed one --
+          # this repo's dev/prod tags (vX.Y.Z vs vX.Y.Z-dev.N) don't
+          # always match package.json's version 1:1 (a dev tag can be cut
+          # between version bumps), so the real ref is the source of truth.
+          tagName: ${{ github.ref_name }}
+          releaseName: "gigradar ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download and install this version."
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-dev.') }}
+
+      - name: publish dev-channel manifest pointer
+        # PROD's updater endpoint uses GitHub's own "/releases/latest/
+        # download/" alias, which only ever resolves non-prerelease tags --
+        # exactly prod's convention. Dev tags ARE marked prerelease, so
+        # that alias never finds them; there's no GitHub-native "latest
+        # prerelease" equivalent. Instead, mirror the just-published
+        # latest.json onto a dedicated `dev-manifest` branch (a plain file
+        # CI overwrites every dev-channel publish) that src-tauri/src/
+        # updater.rs's DEV_ENDPOINT reads via raw.githubusercontent.com.
+        # The actual signed update bundle stays a normal, permanent
+        # release asset -- only this "which version is current" pointer
+        # needs to be overwritable.
+        if: contains(github.ref_name, '-dev.')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          WORK_DIR="$(mktemp -d)"
+          gh release download "${{ github.ref_name }}" --repo "${{ github.repository }}" --pattern "latest.json" --dir "$WORK_DIR" --clobber
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          MANIFEST_DIR="$(mktemp -d)"
+          git -C "$MANIFEST_DIR" init -q
+          git -C "$MANIFEST_DIR" remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          if git -C "$MANIFEST_DIR" fetch -q origin dev-manifest; then
+            git -C "$MANIFEST_DIR" checkout -q dev-manifest
+          else
+            git -C "$MANIFEST_DIR" checkout -q --orphan dev-manifest
+            git -C "$MANIFEST_DIR" rm -rfq . 2>/dev/null || true
+          fi
+          cp "$WORK_DIR/latest.json" "$MANIFEST_DIR/latest.json"
+          git -C "$MANIFEST_DIR" add latest.json
+          if ! git -C "$MANIFEST_DIR" diff --cached --quiet; then
+            git -C "$MANIFEST_DIR" commit -q -m "dev-channel manifest pointer -> ${{ github.ref_name }}"
+            git -C "$MANIFEST_DIR" push -q origin dev-manifest
+          else
+            echo "dev-manifest already up to date for ${{ github.ref_name }}"
+          fi

@@ -1,0 +1,78 @@
+id: tauri-bare-packaged-app
+epic: tauri-installer
+title: "Bare packaged .app: Tauri shell + bundled Node sidecar running gigradar's real server"
+status: done
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1 — the first Rust/Tauri code in this repo. A real,
+  double-clickable macOS .app that spawns a BUNDLED Node binary (not the
+  system's) running gigradar's built Next.js server, and loads the real
+  dashboard into a Tauri webview. No Chromium bundling yet (Slice 2) --
+  Capture Login/browser-session sources are expected to not work from
+  this build, not a bug.
+
+  1. `npx tauri init` scaffolds `src-tauri/` (Cargo.toml,
+     tauri.conf.json, src/main.rs) against this repo's existing
+     package.json.
+  2. `next.config.js`: add `output: "standalone"` (additive -- verify
+     live that `node:sqlite`/`--experimental-sqlite` behaves identically
+     from the standalone server entrypoint vs. the existing `next
+     start`, per structured-outline.md's own elicitation note; do not
+     assume).
+  3. New `scripts/prepare-tauri-sidecars.sh`: downloads a PINNED
+     (exact version, not "latest") Node.js release for macOS arm64,
+     renames to Tauri's `node-{target-triple}` convention, places at
+     `src-tauri/binaries/`. Copies the standalone build output into
+     `src-tauri/resources/`.
+  4. `tauri.conf.json`: `bundle.externalBin: ["binaries/node"]`,
+     `bundle.resources` includes the standalone server output.
+  5. `src-tauri/src/main.rs`: on `app.ready()`, spawn the bundled Node
+     sidecar (via `app.shell().sidecar("node")`) with
+     `NODE_OPTIONS=--experimental-sqlite` and the bundled server
+     entrypoint as an arg. Poll `127.0.0.1:3000` via a simple TCP-connect
+     retry loop (Rust-native, per Open Question 1's resolution) before
+     opening a `WebviewWindowBuilder` pointed at that URL.
+
+acceptance_criteria:
+  - "npx tauri build produces a real, installable .app on macOS arm64."
+  - "Double-clicking the built .app (on a machine with no Node/npm on PATH) launches a window showing gigradar's real dashboard, reading the real on-disk SQLite store at the same XDG data path every other runtime mode already uses."
+  - "The bundled Node's node:sqlite/--experimental-sqlite behavior is confirmed identical to the existing npm run start path -- explicitly verified live, not assumed."
+  - "Capture Login / browser-session sources are confirmed to NOT work from this build (expected gap, closed by the next story) -- not silently broken in a way that looks like a bug."
+
+steps:
+  - id: research
+    description: Confirm Tauri v2's exact externalBin/resources config shape and app.shell().sidecar() API against the installed @tauri-apps/cli version (docs move fast; verify live, don't trust training-data recall alone).
+    agent: researcher
+  - id: implement
+    description: Scaffold src-tauri/, the sidecar-prep script, next.config.js's standalone output, and main.rs's spawn+poll+load-url logic.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Manual verification per acceptance criteria (this story has no automated-test surface -- it's packaging, not application logic, per design-discussion.md's own Verification Strategy).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review main.rs for the minimal-Rust-surface discipline (spawn + poll + load URL only, no gigradar logic reimplemented in Rust).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: electron/main.ts
+      purpose: the exact spawn/poll/load-window pattern this story ports to Tauri+Rust
+    - path: electron/server-ready.ts
+      purpose: the readiness-polling logic being reimplemented Rust-native
+    - path: next.config.js
+      purpose: gains output:"standalone"
+
+references:
+  - path: .pHive/epics/tauri-installer/docs/structured-outline.md
+    relevant_excerpt: "Part 1, Slice 1: Bare packaged app -- full step-by-step."
