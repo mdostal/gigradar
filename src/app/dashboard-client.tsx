@@ -1,21 +1,22 @@
 "use client";
 
+import {
+  type ColumnDef,
+  type ColumnFiltersState,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  type SortingState,
+  useReactTable,
+} from "@tanstack/react-table";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { GigStatus, StoredGig } from "@/lib/store";
 import { generateDraftAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
-import { distinctSources, filterGigs, type TierFilter } from "./dashboard-filter";
-import { sortGigs, type SortField, type SortState } from "./dashboard-sort";
-
-const TIER_TABS: TierFilter[] = ["all", "green", "yellow", "red"];
-
-const TIER_TAB_LABEL: Record<TierFilter, string> = {
-  all: "All",
-  green: "Green",
-  yellow: "Yellow",
-  red: "Red",
-};
+import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, type SeenWindow } from "./dashboard-filter";
+import { compareByField, type SortField } from "./dashboard-sort";
 
 const ALL_STATUSES: GigStatus[] = ["new", "applied", "interview", "archived", "ignored"];
 
@@ -52,60 +53,144 @@ function formatDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 }
 
-function tabClass(active: boolean): string {
-  return [
-    "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-    active
-      ? "border-slate-900 bg-slate-900 text-white"
-      : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
-  ].join(" ");
+const filterInputClass =
+  "w-full rounded border border-slate-300 px-1.5 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:outline-none";
+
+/**
+ * Per-column filter control shape — driven by each ColumnDef's own `meta`
+ * (module-augmented below), so the header-row renderer stays generic
+ * instead of a giant switch keyed on column id.
+ */
+type FilterKind = "text" | "select" | "status-multi" | "number-min" | "number-max" | "seen-window" | "none";
+
+declare module "@tanstack/react-table" {
+  interface ColumnMeta<TData, TValue> {
+    filterKind: FilterKind;
+    /** Only for filterKind: "select" — option VALUES, "All" is always prepended. */
+    selectOptions?: string[];
+  }
 }
 
-/** Column header -> SortField for the 8 data-backed columns. "Change status"/"Draft" are actions, not data — deliberately absent, never sortable. */
-const SORTABLE_COLUMNS: { label: string; field: SortField }[] = [
-  { label: "Source", field: "source" },
-  { label: "Title", field: "title" },
-  { label: "Company", field: "company" },
-  { label: "Tier", field: "tier" },
-  { label: "Status", field: "status" },
-  { label: "Rate", field: "rate" },
-  { label: "Weekly hrs", field: "weeklyHours" },
-  { label: "Seen", field: "firstSeen" },
-];
-
-/** A clickable column header: cycles asc -> desc -> asc on the same field, jumps straight to asc when switching fields. Shows a chevron only on the currently-active field. */
-function SortableHeader({
+/** Renders the right filter control for one column, in the filter row under the sortable headers. Chips (status) vs. text/number/select inputs are visually distinct but share the same compact footprint. */
+function ColumnFilterCell({
+  filterKind,
+  value,
+  onChange,
+  selectOptions,
   label,
-  field,
-  sort,
-  onSort,
 }: {
+  filterKind: FilterKind;
+  value: unknown;
+  onChange: (next: unknown) => void;
+  selectOptions?: string[];
   label: string;
-  field: SortField;
-  sort: SortState | null;
-  onSort: (field: SortField) => void;
 }) {
-  const active = sort?.field === field;
-  return (
-    <th className="sticky top-0 z-[1] isolate bg-slate-50 px-3 py-2 text-left font-semibold text-slate-600">
-      <button
-        type="button"
-        onClick={() => onSort(field)}
-        aria-sort={active ? (sort?.direction === "asc" ? "ascending" : "descending") : "none"}
-        className="flex items-center gap-1 hover:text-slate-900"
+  if (filterKind === "none") return null;
+
+  if (filterKind === "text") {
+    return (
+      <input
+        type="text"
+        value={(value as string) ?? ""}
+        onChange={(e) => onChange(e.target.value || undefined)}
+        placeholder="Filter…"
+        aria-label={`Filter by ${label}`}
+        className={filterInputClass}
+      />
+    );
+  }
+
+  if (filterKind === "select") {
+    return (
+      <select
+        value={(value as string) ?? "all"}
+        onChange={(e) => onChange(e.target.value === "all" ? undefined : e.target.value)}
+        aria-label={`Filter by ${label}`}
+        className={filterInputClass}
       >
-        {label}
-        <span className="text-slate-400">{active ? (sort?.direction === "asc" ? "▲" : "▼") : ""}</span>
-      </button>
-    </th>
-  );
+        <option value="all">All</option>
+        {(selectOptions ?? []).map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (filterKind === "seen-window") {
+    return (
+      <select
+        value={(value as SeenWindow) ?? "any"}
+        onChange={(e) => onChange(e.target.value === "any" ? undefined : e.target.value)}
+        aria-label={`Filter by ${label}`}
+        className={filterInputClass}
+      >
+        {SEEN_WINDOW_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (filterKind === "number-min" || filterKind === "number-max") {
+    return (
+      <input
+        type="number"
+        value={(value as number | undefined) ?? ""}
+        onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+        placeholder={filterKind === "number-min" ? "Min…" : "Max…"}
+        aria-label={`Filter by ${label}`}
+        className={filterInputClass}
+      />
+    );
+  }
+
+  if (filterKind === "status-multi") {
+    const checked = (value as ReadonlySet<GigStatus>) ?? new Set(ALL_STATUSES);
+    return (
+      <div className="flex flex-wrap gap-1">
+        {ALL_STATUSES.map((s) => {
+          const active = checked.has(s);
+          return (
+            <button
+              key={s}
+              type="button"
+              aria-pressed={active}
+              onClick={() => {
+                const next = new Set(checked);
+                if (next.has(s)) next.delete(s);
+                else next.add(s);
+                onChange(next);
+              }}
+              className={[
+                "rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors",
+                active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+              ].join(" ")}
+            >
+              {STATUS_LABEL[s]}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+/** field -> ascending comparator, reusing dashboard-sort.ts's domain-aware compareByField (tier/status rank, nullable-last) instead of TanStack's generic default sort for these columns. TanStack negates automatically for desc — these only ever need to implement "asc". */
+function sortingFnFor(field: SortField) {
+  return (rowA: { original: StoredGig }, rowB: { original: StoredGig }) =>
+    compareByField(field, "asc", rowA.original, rowB.original);
 }
 
 /**
- * The interactive dashboard: tier tabs, status checkboxes, text search, and
- * the results table, all filtering client-side over the full `gigs` array
- * the Server Component parent fetched via listGigs() (see
- * src/app/dashboard-filter.ts for the pure filter logic and
+ * The interactive dashboard: a TanStack Table with a sortable, per-column-
+ * filterable results grid, all filtering/sorting client-side over the full
+ * `gigs` array the Server Component parent fetched via listGigs() (see
  * src/app/page.tsx for the fetch). Status changes call updateGigStatusAction
  * (src/app/actions.ts), a Server Action that revalidates "/" on success so a
  * reload always reflects the latest state.
@@ -124,11 +209,10 @@ export function DashboardClient({
   draftedGigKeys?: ReadonlySet<string>;
 }) {
   const router = useRouter();
-  const [tier, setTier] = useState<TierFilter>("all");
-  const [statuses, setStatuses] = useState<ReadonlySet<GigStatus>>(new Set(ALL_STATUSES));
-  const [search, setSearch] = useState("");
-  const [source, setSource] = useState<string | "all">("all");
-  const [sort, setSort] = useState<SortState | null>(null);
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([
+    { id: "status", value: new Set(ALL_STATUSES) },
+  ]);
   const [isPending, startTransition] = useTransition();
   const [errorByKey, setErrorByKey] = useState<Record<string, string>>({});
   const [, startDraftTransition] = useTransition();
@@ -136,35 +220,6 @@ export function DashboardClient({
   const [draftErrorByKey, setDraftErrorByKey] = useState<Record<string, string>>({});
 
   const sources = useMemo(() => distinctSources(gigs), [gigs]);
-
-  const filtered = useMemo(
-    () => filterGigs(gigs, { tier, statuses, search, source }),
-    [gigs, tier, statuses, search, source],
-  );
-
-  const sorted = useMemo(() => sortGigs(filtered, sort), [filtered, sort]);
-
-  /** Clicking the currently-active column's header toggles asc/desc; clicking a different column jumps straight to asc on that column. */
-  function handleSort(field: SortField) {
-    setSort((prev) => {
-      if (prev?.field === field) {
-        return { field, direction: prev.direction === "asc" ? "desc" : "asc" };
-      }
-      return { field, direction: "asc" };
-    });
-  }
-
-  function toggleStatus(status: GigStatus) {
-    setStatuses((prev) => {
-      const next = new Set(prev);
-      if (next.has(status)) {
-        next.delete(status);
-      } else {
-        next.add(status);
-      }
-      return next;
-    });
-  }
 
   function handleStatusChange(key: string, status: GigStatus) {
     setErrorByKey((prev) => {
@@ -211,68 +266,180 @@ export function DashboardClient({
     });
   }
 
-  return (
-    <div className="mt-6 flex flex-col gap-4">
-      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filter by tier">
-          {TIER_TABS.map((t) => (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              aria-selected={tier === t}
-              className={tabClass(tier === t)}
-              onClick={() => setTier(t)}
-            >
-              {TIER_TAB_LABEL[t]}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap gap-4" role="group" aria-label="Filter by status">
-          {ALL_STATUSES.map((s) => (
-            <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={statuses.has(s)}
-                onChange={() => toggleStatus(s)}
-                className="h-4 w-4 rounded border-slate-300"
-              />
-              {STATUS_LABEL[s]}
-            </label>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search company or title…"
-            aria-label="Search company or title"
-            className="w-full max-w-sm rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:outline-none"
-          />
-          <label className="flex items-center gap-1.5 text-sm text-slate-700">
-            Source
+  const columns: ColumnDef<StoredGig>[] = [
+    {
+      id: "source",
+      header: "Source",
+      accessorFn: (g) => g.sourceId,
+      cell: ({ row }) => row.original.sourceId,
+      sortingFn: sortingFnFor("source"),
+      filterFn: (row, _id, value) => !value || row.original.sourceId === value,
+      meta: { filterKind: "select", selectOptions: sources },
+    },
+    {
+      id: "title",
+      header: "Title",
+      accessorFn: (g) => g.title,
+      cell: ({ row }) => (
+        <a
+          href={row.original.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="font-medium text-slate-900 hover:underline"
+        >
+          {row.original.title}
+        </a>
+      ),
+      sortingFn: sortingFnFor("title"),
+      filterFn: (row, _id, value) =>
+        !value || row.original.title.toLowerCase().includes(String(value).toLowerCase()),
+      meta: { filterKind: "text" },
+    },
+    {
+      id: "company",
+      header: "Company",
+      accessorFn: (g) => g.company ?? "",
+      cell: ({ row }) => row.original.company ?? "—",
+      sortingFn: sortingFnFor("company"),
+      filterFn: (row, _id, value) =>
+        !value || (row.original.company ?? "").toLowerCase().includes(String(value).toLowerCase()),
+      meta: { filterKind: "text" },
+    },
+    {
+      id: "tier",
+      header: "Tier",
+      accessorFn: (g) => g.tier ?? "",
+      cell: ({ row }) => {
+        const tier = row.original.tier;
+        return (
+          <span
+            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+              tier ? TIER_BADGE_CLASS[tier] : TIER_BADGE_FALLBACK
+            }`}
+          >
+            {tier ?? "unrated"}
+          </span>
+        );
+      },
+      sortingFn: sortingFnFor("tier"),
+      filterFn: (row, _id, value) => !value || row.original.tier === value,
+      meta: { filterKind: "select", selectOptions: ["green", "yellow", "red"] },
+    },
+    {
+      id: "status",
+      header: "Status",
+      accessorFn: (g) => g.status,
+      cell: ({ row }) => STATUS_LABEL[row.original.status],
+      sortingFn: sortingFnFor("status"),
+      filterFn: (row, _id, value) => {
+        const checked = value as ReadonlySet<GigStatus> | undefined;
+        return !checked || checked.has(row.original.status);
+      },
+      meta: { filterKind: "status-multi" },
+    },
+    {
+      id: "rate",
+      header: "Rate",
+      accessorFn: (g) => g.rate?.min ?? null,
+      cell: ({ row }) => formatRate(row.original.rate),
+      sortingFn: sortingFnFor("rate"),
+      filterFn: (row, _id, value) =>
+        value == null || (row.original.rate?.min != null && row.original.rate.min >= (value as number)),
+      meta: { filterKind: "number-min" },
+    },
+    {
+      id: "weeklyHours",
+      header: "Weekly hrs",
+      accessorFn: (g) => g.weeklyHours ?? null,
+      cell: ({ row }) => row.original.weeklyHours ?? "—",
+      sortingFn: sortingFnFor("weeklyHours"),
+      filterFn: (row, _id, value) =>
+        value == null || (row.original.weeklyHours != null && row.original.weeklyHours <= (value as number)),
+      meta: { filterKind: "number-max" },
+    },
+    {
+      id: "firstSeen",
+      header: "Seen",
+      accessorFn: (g) => g.firstSeen,
+      cell: ({ row }) => formatDate(row.original.firstSeen),
+      sortingFn: sortingFnFor("firstSeen"),
+      filterFn: (row, _id, value) =>
+        isWithinSeenWindow(row.original.firstSeen, (value as SeenWindow) ?? "any", Date.now()),
+      meta: { filterKind: "seen-window" },
+    },
+    {
+      id: "changeStatus",
+      header: "Change status",
+      enableSorting: false,
+      enableColumnFilter: false,
+      cell: ({ row }) => {
+        const gig = row.original;
+        return (
+          <>
             <select
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              aria-label="Filter by source"
-              className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900"
+              value={gig.status}
+              disabled={isPending}
+              onChange={(e) => handleStatusChange(gig.key, e.target.value as GigStatus)}
+              aria-label={`Change status for ${gig.title}`}
+              className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900 disabled:opacity-50"
             >
-              <option value="all">All</option>
-              {sources.map((s) => (
+              {ALL_STATUSES.map((s) => (
                 <option key={s} value={s}>
-                  {s}
+                  {STATUS_LABEL[s]}
                 </option>
               ))}
             </select>
-          </label>
-        </div>
-      </div>
+            {errorByKey[gig.key] && <p className="mt-1 max-w-[16rem] text-xs text-red-600">{errorByKey[gig.key]}</p>}
+          </>
+        );
+      },
+      meta: { filterKind: "none" },
+    },
+    {
+      id: "draft",
+      header: "Draft",
+      enableSorting: false,
+      enableColumnFilter: false,
+      cell: ({ row }) => {
+        const gig = row.original;
+        if (!canGenerateDraft(gig.tier)) return null;
+        return (
+          <>
+            <button
+              type="button"
+              disabled={generatingKeys.has(gig.key)}
+              onClick={() => handleGenerateDraft(gig.key)}
+              className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {generatingKeys.has(gig.key) ? "Generating…" : draftButtonLabel(draftedGigKeys.has(gig.key))}
+            </button>
+            {draftErrorByKey[gig.key] && (
+              <p className="mt-1 max-w-[16rem] text-xs text-red-600">{draftErrorByKey[gig.key]}</p>
+            )}
+          </>
+        );
+      },
+      meta: { filterKind: "none" },
+    },
+  ];
 
+  const table = useReactTable({
+    data: gigs,
+    columns,
+    state: { sorting, columnFilters },
+    onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+  });
+
+  const rows = table.getRowModel().rows;
+
+  return (
+    <div className="mt-6 flex flex-col gap-3">
       <p className="text-sm text-slate-500">
-        {filtered.length} of {gigs.length} gig{gigs.length === 1 ? "" : "s"}
+        {rows.length} of {gigs.length} gig{gigs.length === 1 ? "" : "s"}
       </p>
 
       {/*
@@ -294,90 +461,71 @@ export function DashboardClient({
         for a real bleed-through glitch (a scrolled-past row's text visible
         above the header): z-index alone did NOT reliably force a new
         stacking context for a sticky table cell in testing, isolation does.
+        Only the label/sort header row is sticky -- the filter row below it
+        scrolls away with the body, avoiding fragile two-row sticky offset
+        math for a modest UX tradeoff (set filters before scrolling).
       */}
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 shadow-sm">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id}>
+                {headerGroup.headers.map((header) => {
+                  const sortDirection = header.column.getIsSorted();
+                  return (
+                    <th
+                      key={header.id}
+                      className="sticky top-0 z-[1] isolate bg-slate-50 px-3 py-2 text-left font-semibold text-slate-600"
+                    >
+                      {header.column.getCanSort() ? (
+                        <button
+                          type="button"
+                          onClick={header.column.getToggleSortingHandler()}
+                          aria-sort={sortDirection ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
+                          className="flex items-center gap-1 hover:text-slate-900"
+                        >
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          <span className="text-slate-400">
+                            {sortDirection ? (sortDirection === "asc" ? "▲" : "▼") : ""}
+                          </span>
+                        </button>
+                      ) : (
+                        flexRender(header.column.columnDef.header, header.getContext())
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            ))}
             <tr>
-              {SORTABLE_COLUMNS.map(({ label, field }) => (
-                <SortableHeader key={field} label={label} field={field} sort={sort} onSort={handleSort} />
+              {table.getFlatHeaders().map((header) => (
+                <th key={`filter-${header.id}`} className="bg-slate-50 px-3 pb-2">
+                  <ColumnFilterCell
+                    filterKind={header.column.columnDef.meta?.filterKind ?? "none"}
+                    selectOptions={header.column.columnDef.meta?.selectOptions}
+                    value={header.column.getFilterValue()}
+                    onChange={(v) => header.column.setFilterValue(v)}
+                    label={
+                      typeof header.column.columnDef.header === "string" ? header.column.columnDef.header : header.id
+                    }
+                  />
+                </th>
               ))}
-              <th className="sticky top-0 z-[1] isolate bg-slate-50 px-3 py-2 text-left font-semibold text-slate-600">
-                Change status
-              </th>
-              <th className="sticky top-0 z-[1] isolate bg-slate-50 px-3 py-2 text-left font-semibold text-slate-600">
-                Draft
-              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
-            {sorted.map((gig) => (
-              <tr key={gig.key} className="odd:bg-white even:bg-slate-50/60 hover:bg-slate-100">
-                <td className="px-3 py-2 text-slate-600">{gig.sourceId}</td>
-                <td className="px-3 py-2 font-medium text-slate-900">
-                  <a
-                    href={gig.url}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="hover:underline"
-                  >
-                    {gig.title}
-                  </a>
-                </td>
-                <td className="px-3 py-2 text-slate-600">{gig.company ?? "—"}</td>
-                <td className="px-3 py-2">
-                  <span
-                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                      gig.tier ? TIER_BADGE_CLASS[gig.tier] : TIER_BADGE_FALLBACK
-                    }`}
-                  >
-                    {gig.tier ?? "unrated"}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-slate-600">{STATUS_LABEL[gig.status]}</td>
-                <td className="px-3 py-2 text-slate-600">{formatRate(gig.rate)}</td>
-                <td className="px-3 py-2 text-slate-600">{gig.weeklyHours ?? "—"}</td>
-                <td className="px-3 py-2 text-slate-600">{formatDate(gig.firstSeen)}</td>
-                <td className="px-3 py-2">
-                  <select
-                    value={gig.status}
-                    disabled={isPending}
-                    onChange={(e) => handleStatusChange(gig.key, e.target.value as GigStatus)}
-                    aria-label={`Change status for ${gig.title}`}
-                    className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900 disabled:opacity-50"
-                  >
-                    {ALL_STATUSES.map((s) => (
-                      <option key={s} value={s}>
-                        {STATUS_LABEL[s]}
-                      </option>
-                    ))}
-                  </select>
-                  {errorByKey[gig.key] && (
-                    <p className="mt-1 max-w-[16rem] text-xs text-red-600">{errorByKey[gig.key]}</p>
-                  )}
-                </td>
-                <td className="px-3 py-2">
-                  {canGenerateDraft(gig.tier) && (
-                    <>
-                      <button
-                        type="button"
-                        disabled={generatingKeys.has(gig.key)}
-                        onClick={() => handleGenerateDraft(gig.key)}
-                        className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        {generatingKeys.has(gig.key) ? "Generating…" : draftButtonLabel(draftedGigKeys.has(gig.key))}
-                      </button>
-                      {draftErrorByKey[gig.key] && (
-                        <p className="mt-1 max-w-[16rem] text-xs text-red-600">{draftErrorByKey[gig.key]}</p>
-                      )}
-                    </>
-                  )}
-                </td>
+            {rows.map((row) => (
+              <tr key={row.original.key} className="odd:bg-white even:bg-slate-50/60 hover:bg-slate-100">
+                {row.getVisibleCells().map((cell) => (
+                  <td key={cell.id} className="px-3 py-2 text-slate-600">
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
               </tr>
             ))}
-            {sorted.length === 0 && (
+            {rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-3 py-6 text-center text-slate-400">
+                <td colSpan={columns.length} className="px-3 py-6 text-center text-slate-400">
                   No gigs match the current filters.
                 </td>
               </tr>
