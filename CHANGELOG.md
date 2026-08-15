@@ -4,6 +4,46 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-08-15
+
+### Added
+
+- **True 1-click macOS installer (Tauri).** A real, double-clickable
+  `.app`/`.dmg` alongside the existing browser/Electron modes — a Tauri
+  shell spawns a bundled, pinned Node sidecar running gigradar's own
+  `.next/standalone` server (never Node-SEA/`pkg`-compiled, for
+  `node:sqlite`/Playwright native-binding robustness), polls it for real
+  readiness, and only then opens a window — no window before the server
+  is confirmed up. Playwright's Chromium is bundled too (zero code
+  changes needed in `browser-session.ts` — `PLAYWRIGHT_BROWSERS_PATH` is
+  transparently respected), so Capture Login and browser-session sources
+  work fully packaged, no first-run download.
+- **Real GitHub Actions release pipeline.** Pushing a `vX.Y.Z` (prod) or
+  `vX.Y.Z-dev.N` (dev channel) tag builds and publishes a real, signed
+  `.dmg` to GitHub Releases (`.github/workflows/tauri-release.yml`).
+- **Real in-app auto-update**, dev/prod channel toggle included. A native
+  tray menu ("Check for Updates", "Update channel: Dev/Prod", "Quit") —
+  checks on launch and on demand, downloads, installs, and restarts.
+  Channel preference is a small sibling file next to gigradar's own data
+  dir (installer-level state, not `Config`), defaulting to prod (the
+  safer choice). Prod's endpoint uses GitHub's own "latest release" alias
+  (only resolves non-prerelease tags); dev's endpoint is a `latest.json`
+  kept current on a dedicated `dev-manifest` branch, since GitHub has no
+  "latest prerelease" equivalent. Live-verified end to end: a real
+  installed build detected and applied a real published update, channel
+  preference intact across the update-triggered restart. Signed with a
+  local test keypair for now — the real production signing key is a
+  later, owner-gated step (Portunus-vaulted).
+- **App icon picker.** 10 new icon candidates (Gemini "Nano Banana"),
+  plus the original hand-drawn mark, selectable per-install from
+  `Config → Appearance` — drives both the web app's favicon and the
+  desktop app's bundle icon. `iso-radar` is the new default.
+- **Dashboard table rebuilt on TanStack Table.** Every column now has
+  both a sort control and its own filter control (previously one
+  combined search box + a separate filter panel): independent title/
+  company text filters, min-rate and max-weekly-hours thresholds, and a
+  seen-within-window preset (24h/7d/30d) are all genuinely new.
+
 ## [0.21.0] - 2026-08-14
 
 ### Added

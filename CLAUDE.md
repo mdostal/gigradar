@@ -47,13 +47,20 @@ npm run typecheck
 Both must pass. `npm test` runs the vitest suite (no live network calls);
 `npm run typecheck` runs `tsc --noEmit`.
 
-## Runtime modes: browser vs. Electron
+## Runtime modes: browser, Electron, or a packaged Tauri app
 
 `npm run dev` / `npm run build && npm run start` — the default, unchanged
 browser mode. `npm run electron` — same app in a native desktop window
 (spawns `npm run start` as a child process; server code never runs inside
 Electron's own process). See `docs/ARCHITECTURE.md`'s "Two runtime modes"
 section for the full mechanism.
+
+A third mode, a true double-clickable `.app`/`.dmg` (`src-tauri/`, `npx
+tauri dev` / `npx tauri build`), packages the same server into a bundled
+Node sidecar with real signed auto-update (dev/prod channel toggle via a
+native tray menu) — see `docs/ARCHITECTURE.md`'s roadmap entry for the
+`tauri-installer` epic and `.github/workflows/tauri-release.yml` for the
+release pipeline.
 
 ## Using gigradar as an MCP tool
 
