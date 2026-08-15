@@ -1,0 +1,117 @@
+id: real-chrome-spawn-attach
+epic: oauth-session-capture-v2
+title: "Spawn-then-attach real Chrome (the actual OAuth fix) for session-capture.ts and assist-session.ts"
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1 -- the actual fix for the real, live failure that
+  prompted this epic (Google's "Couldn't sign you in -- this browser or
+  app may not be secure" rejection, confirmed via a fresh screenshot
+  during a real GoFractional Google sign-in attempt). Task #47's earlier
+  fix (preferring channel:"chrome" in launchHeadedBrowser()) was
+  necessary but not sufficient: `chromium.launch()` itself -- regardless
+  of which Chrome binary it launches -- adds automation markers
+  (navigator.webdriver=true, --enable-automation) Google's sign-in
+  specifically detects, independent of the binary choice. Confirmed live
+  via Playwright's own docs that chromium.connectOverCDP() against an
+  INDEPENDENTLY-launched browser (started directly by the OS, never
+  through Playwright's launch()) does not carry those fingerprints.
+
+  1. `src/lib/auth/real-chrome.ts` -- new module:
+     - `spawnRealChrome()`: resolves the real Chrome binary at the
+       standard macOS install path
+       (`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+       -- macOS-only for this epic's first pass, matching
+       scripts/prepare-tauri-sidecars.sh's own established "macOS only,
+       first pass" scope precedent; a specific, actionable error if not
+       found there, NEVER a silent fallback to Playwright's bundled
+       Chromium). Picks a free local port, creates a FRESH isolated
+       temp `--user-data-dir` (never the user's real personal Chrome
+       profile), spawns via `child_process.spawn()` DIRECTLY -- not
+       `playwright.chromium.launch()` -- with exactly
+       `--remote-debugging-port=<port> --user-data-dir=<tmp>
+       --no-first-run --no-default-browser-check`. Polls
+       `http://127.0.0.1:<port>/json/version` until it responds before
+       returning (mirrors src-tauri/src/lib.rs's own TCP-connect
+       readiness-poll pattern from the tauri-installer epic).
+     - `attachToRealChrome(cdpPort)`: thin wrapper around
+       `playwright.chromium.connectOverCDP()`.
+     - `closeRealChrome({process, userDataDir})`: terminates the
+       spawned process AND removes the temp user-data-dir -- never
+       leave a stray profile directory on disk.
+  2. Rewire `session-capture.ts`'s `startCapture()`/`finishCapture()`/
+     `cancelCapture()` to use spawnRealChrome()/attachToRealChrome()/
+     closeRealChrome() instead of launchHeadedBrowser()+
+     browser.newContext(). The globalThis-pinned in-flight map, idle
+     timeout, origin-scoped filtering, and atomic encrypted write are
+     ALL UNCHANGED -- only the browser-acquisition step changes.
+  3. Rewire `assist-session.ts`'s `startAssistSession()`/
+     `endAssistSession()` the same way, for the same reason
+     (profile-assist's own login step is exactly as bot-detection-
+     exposed as Capture Login's).
+  4. `withBrowserSession()` (browser-session.ts) and
+     `launchHeadedBrowser()` itself are explicitly UNCHANGED -- this
+     story ADDS the spawn-then-attach path for login/capture-shaped
+     flows specifically, it does not remove or alter the existing
+     fetch-and-close mechanism real adapters use.
+
+acceptance_criteria:
+  - "Given Capture Login is clicked for a Google-OAuth-gated source, the opened Chrome window successfully completes a real Google sign-in (no 'Couldn't sign you in' rejection) -- live-verified against a real account, the exact failure this epic exists to fix."
+  - "Given a real capture session, the spawned Chrome process is bound to 127.0.0.1 only (never 0.0.0.0) on a fresh, non-fixed port per session."
+  - "Given a capture is finished, cancelled, or times out, both the spawned Chrome process AND its temp --user-data-dir are cleaned up -- verified via `ps aux` (no leftover process) and a filesystem check (no leftover temp dir) after a real end-to-end run."
+  - "Given the real Chrome binary is not found at the expected macOS path, startCapture()/startAssistSession() throw a specific, actionable error naming the exact path checked -- never a silent fallback to Playwright's bundled Chromium (which would reintroduce the exact fingerprint problem this story fixes)."
+  - "Given profile-assist's Manual/Guided/Full-auto modes, starting a session still works identically from the caller's perspective (same Page API surface via connectOverCDP()) -- no behavior change in any downstream code that consumes the Page beyond the browser-acquisition step."
+
+steps:
+  - id: research
+    description: Confirm the exact current child_process spawn arguments needed for a real Chrome with --remote-debugging-port + --user-data-dir on macOS, and re-confirm chromium.connectOverCDP()'s exact API shape (browser.contexts()[0], context.pages()) against the installed Playwright version.
+    agent: researcher
+  - id: implement
+    description: Write real-chrome.ts and rewire session-capture.ts + assist-session.ts to use it.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests for real-chrome.ts's spawn/attach/close lifecycle with a mocked child_process + mocked connectOverCDP. Real end-to-end verification against a real Google OAuth sign-in, live, with the owner watching -- the actual bar this epic exists to clear.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for the 127.0.0.1-only bind, fresh-port-per-session, no leaked process/temp-dir on any exit path, and that no automation-flag equivalent was accidentally reintroduced.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: startCapture()/finishCapture()/cancelCapture() -- rewired to use real-chrome.ts instead of launchHeadedBrowser()
+    - path: src/lib/auth/assist-session.ts
+      purpose: startAssistSession()/endAssistSession() -- rewired the same way
+    - path: src/lib/auth/browser-session.ts
+      purpose: launchHeadedBrowser()/withBrowserSession() -- explicitly UNCHANGED, real-chrome.ts is a sibling, not a replacement
+
+design_decisions:
+  - decision: Direct child_process.spawn(), never playwright.chromium.launch(), for the login/capture browser acquisition step.
+    rationale: "The automation fingerprints (navigator.webdriver, --enable-automation) are added by Playwright's OWN launch() call, independent of which Chrome binary it launches -- confirmed live via Playwright's connectOverCDP() docs. Only bypassing launch() entirely removes them."
+  - decision: macOS-only, standard Chrome install path, for this epic's first pass.
+    rationale: "Matches this project's own established scope-narrowing precedent (scripts/prepare-tauri-sidecars.sh). A specific actionable error beats a silent fallback that reintroduces the fixed bug."
+
+risks:
+  - severity: high
+    description: A leaked Chrome process or temp user-data-dir on an unexpected exit path (crash, unhandled exception between spawn and close).
+    mitigation: "Same finally-block discipline withBrowserSession()/session-capture.ts already prove out for their own resources, applied to the new spawn/attach/close triad. Real end-to-end verification explicitly checks ps aux + filesystem after a real run, not just unit-level cleanup assertions."
+  - severity: medium
+    description: A real Chrome instance with an open --remote-debugging-port is a local attack surface (any local process could attach while it's open).
+    mitigation: "127.0.0.1-only bind (never 0.0.0.0), a fresh port per session (never fixed/guessable), and the window only stays open for one capture's duration -- closed immediately on finish/cancel/idle-timeout."
+
+references:
+  - path: .pHive/epics/oauth-session-capture-v2/docs/design-discussion.md
+    relevant_excerpt: "§4 The core mechanism: spawn-then-attach, never launch"
+  - path: .pHive/epics/oauth-session-capture-v2/docs/vertical-plan.md
+    relevant_excerpt: "Slice 1 -- Spawn-then-attach real Chrome (the actual OAuth fix)"

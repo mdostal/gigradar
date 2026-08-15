@@ -1,0 +1,19 @@
+name: oauth-session-capture-v2
+title: Real Google OAuth session capture — spawn-then-attach real Chrome, optional Portunus backend, LLM-guided readiness check
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+
+stories:
+  - id: real-chrome-spawn-attach
+    title: "Spawn-then-attach real Chrome (the actual OAuth fix) for session-capture.ts and assist-session.ts"
+    complexity: high
+    depends_on: []
+  - id: portunus-session-backend
+    title: "Portunus as an optional, owner-selectable session-vault backend"
+    complexity: medium
+    depends_on: [real-chrome-spawn-attach]
+  - id: llm-capture-readiness-check
+    title: "LLM-guided capture readiness check (read-only, advisory)"
+    complexity: low
+    depends_on: [real-chrome-spawn-attach]
