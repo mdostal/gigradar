@@ -9,7 +9,7 @@
 //      the type level (a mutation attempt must fail to compile), not just a
 //      naming convention.
 import { describe, expect, it } from "vitest";
-import { KNOWN_SOURCES, SOURCE_LOGIN_URLS, SOURCE_ORIGINS } from "../origins.js";
+import { KNOWN_SOURCES, SOURCE_LOGIN_URLS, SOURCE_ORIGINS, SOURCE_PROFILE_URLS } from "../origins.js";
 
 // Hardcoded snapshot of the exact values that were inline in
 // gofractional.ts's/ateam.ts's own `const ALLOWED_ORIGINS = [...]` before
@@ -99,6 +99,25 @@ describe("SOURCE_LOGIN_URLS", () => {
 
   it("every URL is a real https:// URL (sanity check against an accidental empty string/typo)", () => {
     for (const url of Object.values(SOURCE_LOGIN_URLS)) {
+      expect(url).toMatch(/^https:\/\/.+/);
+    }
+  });
+});
+
+// profile-assist epic, profile-assist-persistent-session-manual-mode
+// story — the per-source profile-edit URL registry assist-session.ts reads.
+// None of these three values are live-confirmed (see origins.ts's own
+// comment) — this test only asserts the registry's SHAPE (an entry per
+// browser-session source, real https:// URLs), never the specific path,
+// since those paths are expected to be corrected by the owner's own
+// standing follow-up without needing a test update every time.
+describe("SOURCE_PROFILE_URLS", () => {
+  it("has an entry for every browser-session-auth source (SOURCE_LOGIN_URLS' key set)", () => {
+    expect(Object.keys(SOURCE_PROFILE_URLS).sort()).toEqual(Object.keys(SOURCE_LOGIN_URLS).sort());
+  });
+
+  it("every URL is a real https:// URL (sanity check against an accidental empty string/typo)", () => {
+    for (const url of Object.values(SOURCE_PROFILE_URLS)) {
       expect(url).toMatch(/^https:\/\/.+/);
     }
   });

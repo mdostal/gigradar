@@ -10,12 +10,14 @@ import { NAV_LINKS } from "../nav-header";
 // NavHeader() maps over to render <Link>s, so asserting on it here is
 // equivalent to asserting the rendered links/hrefs without needing a DOM.
 // `/drafts` was added by the `draft-review-ui` story
-// (`assisted-apply-drafting` epic); `/issues` by the `notifications-epic`.
+// (`assisted-apply-drafting` epic); `/issues` by the `notifications-epic`;
+// `/profile-assist` by the `profile-assist` epic.
 describe("NAV_LINKS", () => {
-  it("has working links to /, /drafts, /issues, and /config, in that order", () => {
+  it("has working links to /, /drafts, /profile-assist, /issues, and /config, in that order", () => {
     expect(NAV_LINKS).toEqual([
       { href: "/", label: "Dashboard" },
       { href: "/drafts", label: "Drafts" },
+      { href: "/profile-assist", label: "Profile assist" },
       { href: "/issues", label: "Issues" },
       { href: "/config", label: "Config" },
     ]);

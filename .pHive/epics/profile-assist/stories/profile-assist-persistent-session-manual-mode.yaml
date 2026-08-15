@@ -1,7 +1,7 @@
 id: profile-assist-persistent-session-manual-mode
 epic: profile-assist
 title: "Persistent browser-session primitive + Manual/copy-paste mode"
-status: pending
+status: done
 complexity: high
 methodology: classic
 depends_on: []
