@@ -39,3 +39,10 @@ src-tauri/target/
 src-tauri/binaries/
 src-tauri/resources/
 src-tauri/gen/
+# tauri-real-auto-update story: the LOCAL TEST updater signing keypair's
+# private half -- never committed, regenerate with `npx tauri signer
+# generate` if lost. The real Portunus-vaulted production key is a
+# separate, later, owner-gated step (see design-discussion.md's resolved
+# Open Question 3) -- this test key exists only so this story's own
+# dev-loop testing has something to sign with.
+src-tauri/test-signing.key

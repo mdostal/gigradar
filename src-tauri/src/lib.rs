@@ -9,9 +9,13 @@
 // minimal (see structured-outline.md's elicitation notes).
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+
+mod updater;
 
 const SERVER_HOST: &str = "127.0.0.1";
 const SERVER_PORT: &str = "3000";
@@ -42,6 +46,7 @@ fn wait_for_server_ready() -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -50,6 +55,53 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // tauri-real-auto-update story: a native tray menu, not a
+            // Next.js page (see updater.rs's own header comment for why).
+            // "Check for Updates" triggers a manual check; the channel
+            // item's own label IS the toggle ("Update channel: Prod
+            // (click to switch)") and updates in place via
+            // updater::toggle_channel(); Quit exits the whole app,
+            // including the bundled Node sidecar (Tauri kills child
+            // processes on app.exit() by default).
+            let check_updates_item =
+                MenuItem::with_id(app, "check-updates", "Check for Updates", true, None::<&str>)?;
+            let toggle_channel_item = MenuItem::with_id(
+                app,
+                "toggle-channel",
+                updater::initial_menu_label(),
+                true,
+                None::<&str>,
+            )?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(
+                app,
+                &[
+                    &check_updates_item,
+                    &toggle_channel_item,
+                    &PredefinedMenuItem::separator(app)?,
+                    &quit_item,
+                ],
+            )?;
+
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().expect("gigradar: no default window icon set").clone())
+                .menu(&tray_menu)
+                .tooltip("gigradar")
+                .on_menu_event(move |app, event| match event.id.as_ref() {
+                    "check-updates" => {
+                        let app_handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(err) = updater::check_for_updates(app_handle).await {
+                                log::error!("gigradar: update check failed: {err}");
+                            }
+                        });
+                    }
+                    "toggle-channel" => updater::toggle_channel(&toggle_channel_item),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
 
             // Resolve the bundled server entrypoint's real on-disk path
             // (a Tauri "resource", staged by scripts/prepare-tauri-sidecars.sh
@@ -112,6 +164,17 @@ pub fn run() {
                         .inner_size(1280.0, 860.0)
                         .build()
                         .expect("gigradar: failed to create the main window");
+
+                        // Launch-time update check (acceptance criteria:
+                        // "checks for updates on launch and via a manual
+                        // trigger") -- non-blocking, never delays the
+                        // window that's already up by this point.
+                        let update_check_handle = app_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(err) = updater::check_for_updates(update_check_handle).await {
+                                log::error!("gigradar: launch-time update check failed: {err}");
+                            }
+                        });
                     }
                     Err(message) => {
                         log::error!("gigradar: {message}");
