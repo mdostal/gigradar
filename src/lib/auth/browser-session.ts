@@ -137,8 +137,13 @@ export interface BrowserSessionOptions {
  * VaultTamperError — re-thrown with an actionable, session-file-specific
  * message — if the encrypted file's content has been corrupted/tampered
  * with (GCM auth-tag mismatch).
+ *
+ * EXPORTED (profile-assist epic) so assist-session.ts can reuse this exact
+ * read/decrypt/migrate path for a persistent session's initial storageState
+ * load, instead of a second, duplicated implementation — origin-scoping is
+ * safety-critical and must never fork into two copies.
  */
-function readStorageStateFile(filePath: string): StorageState {
+export function readStorageStateFile(filePath: string): StorageState {
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, "utf8");

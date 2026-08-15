@@ -64,7 +64,13 @@ const DRAFT_TOOL_SCHEMA = {
  * "N/A" or "[not provided]") — an omission the model could otherwise
  * mistake for real, if vague, content to draw on.
  */
-function buildApplicantDataBlock(profile: Profile, applyProfile: ApplyProfileConfig): string {
+/**
+ * EXPORTED (profile-assist epic) so profile-suggest.ts builds the exact
+ * same trusted-applicant-data block instead of a second, duplicated
+ * implementation that could drift out of sync with this one (e.g. a field
+ * added here but forgotten there).
+ */
+export function buildApplicantDataBlock(profile: Profile, applyProfile: ApplyProfileConfig): string {
   const lines: string[] = [
     "Applicant data (real, provided directly by the user — the ONLY source of truth for this draft):",
     `Name: ${profile.name}`,

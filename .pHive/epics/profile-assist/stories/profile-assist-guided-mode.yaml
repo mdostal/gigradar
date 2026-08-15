@@ -1,0 +1,109 @@
+id: profile-assist-guided-mode
+epic: profile-assist
+title: "Guided mode: the tool-use loop, human-approval-gated"
+status: pending
+complexity: high
+methodology: classic
+depends_on: [profile-assist-persistent-session-manual-mode]
+
+description: |
+  Vertical Plan Slice 2 -- builds the tool-use loop that Full-auto
+  (Slice 3) will reuse verbatim, but gates every mutating action behind
+  human approval so the loop's mechanics are proven safe before Slice 3
+  ever lets it act unsupervised.
+
+  1. The tool-use loop (`src/lib/apply/profile-assist-loop.ts`):
+     turn-by-turn -- send the LLM the CURRENT page's accessibility-tree
+     snapshot (freshly re-read every turn, per design-discussion.md §7:
+     never a stale cached snapshot from session start) wrapped in the
+     SAME "DATA ONLY" delimited framing Slice 1's profile-suggest.ts
+     already established, plus the owner's profile data, plus a fixed
+     4-tool schema:
+       - `read()` -- re-snapshot the live page, no side effect.
+       - `click(selector)` -- click an element.
+       - `fill(selector, value)` -- fill a field.
+       - `ask_human(question)` -- pause, surface the question in the
+         UI transcript, block until the human answers; the browser
+         stays open and human-usable while paused (design-discussion.md
+         §7's resolved answer -- ask_human blocks only that turn, not
+         the whole session).
+     The LLM picks ONE tool call per turn; the Server Action executes
+     it (or, for ask_human, waits). A hard per-session turn cap (config
+     constant, e.g. 40) prevents a runaway loop.
+  2. Selector validation, the SECOND layer of prompt-injection defense
+     (design-discussion.md §7a) -- new to this story, higher stakes
+     than Slice 1's read-only case: before executing a proposed
+     `click`/`fill`, the Server Action validates the selector against
+     elements ACTUALLY PRESENT in the just-read snapshot. A selector
+     for an element that wasn't in the snapshot is rejected outright
+     (returned to the LLM as a tool error, not silently executed) --
+     even a successfully-injected instruction can only ever act on
+     real, currently-visible page elements.
+  3. Approval gate: `click`/`fill` proposals are NOT executed
+     immediately. They're surfaced in the UI as a pending-action card
+     (selector + value + the LLM's own stated reason) with Approve /
+     Reject / Edit-then-approve. `read`/`ask_human` need no approval
+     (no side effect). Only on Approve does the Server Action actually
+     run the tool call against the live page.
+  4. Guided tab on `/profile-assist`: a running transcript (every
+     turn: what the LLM did/proposed/asked), pending-approval cards,
+     reuses Slice 1's Start/Done session lifecycle unchanged.
+
+acceptance_criteria:
+  - "Given an open Guided-tab session, an LLM-proposed click/fill action appears as a pending-approval card and does NOT execute until the human clicks Approve."
+  - "Given a pending-approval card, Reject discards the action and the loop continues to the next turn without it having touched the page; Edit-then-approve executes the human-edited value instead of the LLM's original proposal."
+  - "Given the LLM proposes a selector for an element not present in the current page snapshot, the Server Action rejects it as a tool error BEFORE it ever reaches the approval-card UI -- never silently executed, never silently dropped without the LLM seeing why."
+  - "Given an ask_human tool call, the question appears in the transcript and the loop blocks on that turn only -- the human can still manually interact with the open browser window while waiting to answer."
+  - "Given a session that reaches the hard turn cap, the loop stops cleanly with a clear 'turn limit reached' message in the transcript, not a silent hang or crash."
+  - "Real end-to-end verification: the owner runs a full Guided-mode session against a real configured source and approves/rejects/edits a mix of real proposed actions, watching the live browser update accordingly."
+
+steps:
+  - id: research
+    description: Confirm the current @anthropic-ai/sdk multi-turn tool-use conversation shape (tool_result blocks, conversation history threading) against the installed SDK version -- draft.ts is single-shot, this is the first multi-turn loop in this codebase.
+    agent: researcher
+  - id: implement
+    description: Write profile-assist-loop.ts, selector validation, the approval-gate Server Actions, and the Guided tab UI.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests for selector validation (present vs absent element), turn-cap enforcement, and approve/reject/edit branching, with a mocked LLM + mocked page. Real end-to-end verification per the acceptance criteria's last item.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review the prompt-injection mitigation (delimiting + selector validation) and the approval gate for any path where a click/fill could execute without an explicit Approve.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/assist-session.ts
+      purpose: Slice 1's persistent session primitive -- this story's loop operates on its live `page` handle, unchanged
+    - path: src/lib/apply/profile-suggest.ts
+      purpose: Slice 1's prompt-injection delimiting pattern, reused for every per-turn page snapshot in this story's loop
+    - path: src/lib/apply/draft.ts
+      purpose: single-shot Anthropic tool-use call shape this story's multi-turn loop extends
+
+design_decisions:
+  - decision: Guided mode is built BEFORE Full-auto, even though the epic's north star is full autonomy.
+    rationale: "The tool-use loop is new to this codebase. Proving its mechanics (tool selection, selector validation, turn-by-turn execution) under human approval-gating is materially lower risk than trusting it unsupervised on the first real run. See vertical-plan.md's ordering rationale."
+  - decision: Selector validation rejects as a tool error (LLM sees it and can retry/ask_human), not a silent no-op.
+    rationale: "A silently-dropped action leaves the LLM's own model of page state wrong on the next turn -- it would 'think' the fill happened. An explicit tool error keeps the LLM's context accurate."
+
+risks:
+  - severity: high
+    description: A bug in the approval gate could let a click/fill execute without an explicit human Approve.
+    mitigation: "Reviewer step explicitly audits every code path that calls the underlying click()/fill() Playwright calls for a missing approval check -- this is the single most safety-critical review in this story."
+  - severity: medium
+    description: An unbounded tool-use loop could run up real API cost or hang the session indefinitely.
+    mitigation: Hard per-session turn cap, enforced server-side, not advisory.
+
+references:
+  - path: .pHive/epics/profile-assist/docs/design-discussion.md
+    relevant_excerpt: "§4 The three modes, concretely -- Guided; §7a Prompt injection from third-party page content"
+  - path: .pHive/epics/profile-assist/docs/vertical-plan.md
+    relevant_excerpt: "Slice 2 -- Guided mode (the tool-use loop, human-gated)"
