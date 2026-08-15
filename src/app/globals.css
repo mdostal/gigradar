@@ -1,1 +1,22 @@
 @import "tailwindcss";
+
+/*
+ * Brand tokens (icon-picker / styling-pass follow-up) -- the exact palette
+ * docs/index.html's marketing page and the app-icon set (src/lib/app-icons.ts)
+ * already use: dark navy ground, teal-green accent. Tailwind v4's @theme
+ * block turns these into first-class utilities (bg-brand-bg, text-brand-
+ * accent, etc.) so the rest of the app can reuse them without repeating
+ * hex literals. Scoped intentionally to chrome (nav, primary actions) --
+ * NOT a full dark-mode conversion of the data-dense dashboard/config pages,
+ * which stay light for table/form readability.
+ */
+@theme {
+  --color-brand-bg: #0b1220;
+  --color-brand-bg-elevated: #111a2e;
+  --color-brand-border: #1f2a44;
+  --color-brand-text: #e6ebf5;
+  --color-brand-text-dim: #93a2c2;
+  --color-brand-accent: #34d399;
+  --color-brand-yellow: #fbbf24;
+  --color-brand-red: #f87171;
+}
