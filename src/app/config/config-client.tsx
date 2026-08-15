@@ -1702,7 +1702,7 @@ export function ConfigClient({ initial }: { initial: Config }) {
         <p className="mt-3 text-xs text-slate-500">
           Have an opinion, or an idea for another one?{" "}
           <a
-            href="https://github.com/mdostal/gigradar/discussions"
+            href="https://github.com/mdostal/gigradar/discussions/20"
             target="_blank"
             rel="noreferrer noopener"
             className="underline hover:text-slate-700"
