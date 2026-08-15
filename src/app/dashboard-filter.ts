@@ -1,41 +1,45 @@
-// Pure client-side filtering logic for the dashboard, split out of
-// dashboard-client.tsx so it's directly unit-testable without React
-// Testing Library (not a dependency of this project). listGigs() has no
-// pagination/filtering-by-tier support server-side, so the dashboard fetches
-// the full set once and does all filtering (tier, status, text search) here
-// over that in-memory array — see this story's spec and
-// docs/ARCHITECTURE.md's design-decision note on that tradeoff.
-import type { GigStatus, StoredGig } from "@/lib/store";
+// Pure, directly-unit-testable filter logic for the dashboard's per-column
+// TanStack Table filters (dashboard-client.tsx) — split out the same way
+// dashboard-sort.ts's compareByField() is, for the same reason (no React
+// Testing Library dependency in this project). Most per-column filters
+// (text substring, single-value equality, numeric threshold) are simple
+// enough to live inline as column filterFns in dashboard-client.tsx; only
+// the ones with real logic worth isolating live here.
+import type { StoredGig } from "@/lib/store";
 import type { Tier } from "@/lib/types";
 
 export type TierFilter = Tier | "all";
 
-export interface DashboardFilters {
-  tier: TierFilter;
-  /** Which statuses are currently checked (multi-select). */
-  statuses: ReadonlySet<GigStatus>;
-  /** Free-text search over company + title, case-insensitive substring match. */
-  search: string;
-  /** A specific Gig.sourceId, or "all" (the default -- every source passes). */
-  source: string | "all";
-}
-
-/** Tier filter AND status filter AND source filter AND text search — all four combine as AND. */
-export function filterGigs(gigs: readonly StoredGig[], filters: DashboardFilters): StoredGig[] {
-  const term = filters.search.trim().toLowerCase();
-  return gigs.filter((gig) => {
-    if (filters.tier !== "all" && gig.tier !== filters.tier) return false;
-    if (!filters.statuses.has(gig.status)) return false;
-    if (filters.source !== "all" && gig.sourceId !== filters.source) return false;
-    if (term) {
-      const haystack = `${gig.title} ${gig.company ?? ""}`.toLowerCase();
-      if (!haystack.includes(term)) return false;
-    }
-    return true;
-  });
-}
-
-/** The distinct sourceIds actually present in `gigs`, alphabetically sorted -- drives the Source filter dropdown's option list (never a hardcoded/registered-sources list, so it never offers a source with zero gigs). */
+/** The distinct sourceIds actually present in `gigs`, alphabetically sorted -- drives the Source column filter's option list (never a hardcoded/registered-sources list, so it never offers a source with zero gigs). */
 export function distinctSources(gigs: readonly StoredGig[]): string[] {
   return [...new Set(gigs.map((g) => g.sourceId))].sort((a, b) => a.localeCompare(b));
+}
+
+export type SeenWindow = "any" | "24h" | "7d" | "30d";
+
+export const SEEN_WINDOW_OPTIONS: { value: SeenWindow; label: string }[] = [
+  { value: "any", label: "Any time" },
+  { value: "24h", label: "Last 24h" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
+];
+
+const SEEN_WINDOW_MS: Record<Exclude<SeenWindow, "any">, number> = {
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+  "30d": 30 * 24 * 60 * 60 * 1000,
+};
+
+/**
+ * `nowMs` is a parameter (not `Date.now()` read internally) so this stays a
+ * pure, deterministically-testable function — dashboard-client.tsx's column
+ * filterFn is the only real caller and passes the actual current time.
+ * "any" always matches; an unparseable `firstSeenIso` never matches a
+ * bounded window (never guessed as "recent").
+ */
+export function isWithinSeenWindow(firstSeenIso: string, window: SeenWindow, nowMs: number): boolean {
+  if (window === "any") return true;
+  const seenMs = new Date(firstSeenIso).getTime();
+  if (Number.isNaN(seenMs)) return false;
+  return nowMs - seenMs <= SEEN_WINDOW_MS[window];
 }
