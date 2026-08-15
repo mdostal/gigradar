@@ -5,6 +5,7 @@ status: pending
 complexity: low
 methodology: classic
 depends_on: [real-chrome-spawn-attach]
+status: done
 
 description: |
   Vertical Plan Slice 3. Reuses profile-suggest.ts's EXACT single-shot
