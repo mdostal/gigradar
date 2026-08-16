@@ -5,7 +5,8 @@ import { endChatSessionAction, resolveChatApprovalAction, sendChatMessageAction,
 
 type ChatMessage =
   | { role: "user" | "assistant" | "system"; text: string }
-  | { role: "proposal"; tool: string; description: string; resolved?: "approved" | "rejected" };
+  | { role: "proposal"; tool: string; description: string; resolved?: "approved" | "rejected" }
+  | { role: "screenshot"; sourceId: string; dataUrl: string };
 
 /**
  * Starts a real chat session on mount, ends it on unmount (idempotent —
@@ -49,11 +50,28 @@ export function ChatClient() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  function applyEvent(event: { type: "message"; text: string } | { type: "proposal"; tool: string; input: Record<string, unknown>; description: string } | { type: "turn_limit_reached" }) {
+  type ChatScreenshot = { sourceId: string; dataUrl: string };
+
+  function applyEvent(
+    event:
+      | { type: "message"; text: string; screenshots?: ChatScreenshot[] }
+      | { type: "proposal"; tool: string; input: Record<string, unknown>; description: string; screenshots?: ChatScreenshot[] }
+      | { type: "turn_limit_reached" },
+  ) {
     if (event.type === "message") {
-      setMessages((prev) => [...prev, { role: "assistant", text: event.text }]);
+      const screenshots = event.screenshots ?? [];
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: event.text },
+        ...screenshots.map((s): ChatMessage => ({ role: "screenshot", sourceId: s.sourceId, dataUrl: s.dataUrl })),
+      ]);
     } else if (event.type === "proposal") {
-      setMessages((prev) => [...prev, { role: "proposal", tool: event.tool, description: event.description }]);
+      const screenshots = event.screenshots ?? [];
+      setMessages((prev) => [
+        ...prev,
+        ...screenshots.map((s): ChatMessage => ({ role: "screenshot", sourceId: s.sourceId, dataUrl: s.dataUrl })),
+        { role: "proposal", tool: event.tool, description: event.description },
+      ]);
     } else {
       setMessages((prev) => [...prev, { role: "system", text: "Hit the turn limit for this message — try asking again, or more specifically." }]);
     }
@@ -103,6 +121,16 @@ export function ChatClient() {
           </p>
         )}
         {messages.map((m, i) => {
+          if (m.role === "screenshot") {
+            return (
+              // eslint-disable-next-line react/no-array-index-key -- messages are append-only within this session, index is stable
+              <div key={i} className="self-start rounded-md border border-slate-200 bg-slate-50 p-2">
+                <p className="mb-1 text-xs text-slate-500">Screenshot of the open login capture for &ldquo;{m.sourceId}&rdquo;:</p>
+                {/* eslint-disable-next-line @next/next/no-img-element -- a data: URI screenshot, never a remote/optimizable src */}
+                <img src={m.dataUrl} alt={`Screenshot of the login capture for ${m.sourceId}`} className="max-h-80 max-w-full rounded border border-slate-300" />
+              </div>
+            );
+          }
           if (m.role === "proposal") {
             return (
               // eslint-disable-next-line react/no-array-index-key -- messages are append-only within this session, index is stable

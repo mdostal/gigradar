@@ -33,16 +33,20 @@
 // delimited the same way every other LLM call site in this repo treats
 // scraped content -- see buildGigResultBlock() below.
 import Anthropic from "@anthropic-ai/sdk";
-import { generateDraft } from "../apply/draft.js";
 import { generatePrepPacket } from "../apply/prep.js";
-import { stageApplication } from "../apply/runner.js";
-import { runRadar } from "../apply/runner.js";
+import { stageApplication, runRadar } from "../apply/runner.js";
+import { cancelCapture, finishCapture, getCapturePage, startCapture } from "../auth/session-capture.js";
+import { sessionBackendFrom } from "../auth/session-backend.js";
+import { buildAuthorizationUrl, deleteTokenSet } from "../auth/oauth2.js";
+import { resolveOAuthClientCredentials } from "../auth/oauth-credentials.js";
+import { GMAIL_PROVIDER } from "../auth/oauth-providers/gmail.js";
+import { resolveAllowedOrigins, resolveLoginUrl } from "../sources/origins.js";
 import { computeStatusStrip } from "../status/status-strip.js";
 import { getGig, listGigs, setStatus } from "../store/gigs.js";
 import { saveInterviewPrep } from "../store/prep.js";
 import type { GigFilter, GigStatus, StoredGig } from "../store/types.js";
-import { readRawConfig } from "../config/save.js";
-import type { Config, MatchResult, Tier } from "../types.js";
+import { readRawConfig, saveConfig } from "../config/save.js";
+import type { Config, MatchResult, SourceConfig, Tier } from "../types.js";
 
 const MODULE_PREFIX = "gigradar agent-chat-loop";
 
@@ -56,9 +60,25 @@ const UPDATE_GIG_STATUS_TOOL = "update_gig_status";
 const GENERATE_DRAFT_TOOL = "generate_draft";
 const GENERATE_PREP_PACKET_TOOL = "generate_prep_packet";
 const RUN_SCAN_TOOL = "run_scan";
+const START_CAPTURE_LOGIN_TOOL = "start_capture_login";
+const FINISH_CAPTURE_LOGIN_TOOL = "finish_capture_login";
+const CANCEL_CAPTURE_LOGIN_TOOL = "cancel_capture_login";
+const START_GMAIL_CONNECT_TOOL = "start_gmail_connect";
+const DISCONNECT_GMAIL_TOOL = "disconnect_gmail";
+const TAKE_SCREENSHOT_TOOL = "take_screenshot";
 
 /** Every tool NOT in this set is read-only and auto-executes; every tool IN this set is approval-gated, no exceptions. */
-const WRITE_TOOLS = new Set([UPDATE_GIG_STATUS_TOOL, GENERATE_DRAFT_TOOL, GENERATE_PREP_PACKET_TOOL, RUN_SCAN_TOOL]);
+const WRITE_TOOLS = new Set([
+  UPDATE_GIG_STATUS_TOOL,
+  GENERATE_DRAFT_TOOL,
+  GENERATE_PREP_PACKET_TOOL,
+  RUN_SCAN_TOOL,
+  START_CAPTURE_LOGIN_TOOL,
+  FINISH_CAPTURE_LOGIN_TOOL,
+  CANCEL_CAPTURE_LOGIN_TOOL,
+  START_GMAIL_CONNECT_TOOL,
+  DISCONNECT_GMAIL_TOOL,
+]);
 
 const GIG_STATUS_VALUES = ["new", "applied", "interview", "archived", "ignored"] as const;
 const TIER_VALUES = ["green", "yellow", "red"] as const;
@@ -131,6 +151,56 @@ const CHAT_TOOLS: Anthropic.Tool[] = [
     description: "Propose running a real scan across every enabled, configured source. Slow and network-bound. Requires explicit user approval before it runs.",
     input_schema: { type: "object", properties: {}, additionalProperties: false },
   },
+  {
+    name: START_CAPTURE_LOGIN_TOOL,
+    description:
+      "Propose starting a guided login capture for a source: opens a real Chrome window for the user to log into that site. Requires explicit user approval before it runs. Only one capture can be open in this chat at a time.",
+    input_schema: {
+      type: "object",
+      properties: { sourceId: { type: "string", description: "The configured source's id, e.g. \"gofractional\"." } },
+      required: ["sourceId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: FINISH_CAPTURE_LOGIN_TOOL,
+    description:
+      "Propose finishing the login capture this chat currently has open (started via start_capture_login), after the user has finished logging in. Saves the session. Requires explicit user approval before it runs.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: CANCEL_CAPTURE_LOGIN_TOOL,
+    description:
+      "Propose cancelling the login capture this chat currently has open (started via start_capture_login) without saving a session. Requires explicit user approval before it runs.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: START_GMAIL_CONNECT_TOOL,
+    description:
+      "Propose starting a Gmail OAuth connection for a source. Returns a Google authorization link for the user to open. Requires explicit user approval before it runs.",
+    input_schema: {
+      type: "object",
+      properties: { sourceId: { type: "string", description: "The configured source's id." } },
+      required: ["sourceId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: DISCONNECT_GMAIL_TOOL,
+    description: "Propose disconnecting a source's connected Gmail account (deletes its stored token set). Requires explicit user approval before it runs.",
+    input_schema: {
+      type: "object",
+      properties: { sourceId: { type: "string", description: "The configured source's id." } },
+      required: ["sourceId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TAKE_SCREENSHOT_TOOL,
+    description:
+      "Take a screenshot of the login capture window this chat currently has open (started via start_capture_login), so you can see what's on screen right now. Read-only -- runs immediately, no approval needed. Fails if no capture is currently open.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
 ];
 
 interface PendingApproval {
@@ -139,18 +209,38 @@ interface PendingApproval {
   input: Record<string, unknown>;
 }
 
+interface ActiveCapture {
+  captureId: string;
+  sourceId: string;
+}
+
 interface LoopEntry {
   history: Anthropic.MessageParam[];
   pendingApproval?: PendingApproval;
+  /**
+   * The login capture THIS CHAT SESSION started via start_capture_login,
+   * if any. v1 scope deliberately limited to a chat-owned capture -- the
+   * loop has no way to discover or cross-reference a capture opened by a
+   * DIFFERENT page/flow (the /config Capture Login UI, e.g.), so
+   * finish_capture_login/cancel_capture_login/take_screenshot only ever
+   * act on this session's own capture, never an arbitrary captureId.
+   */
+  activeCapture?: ActiveCapture;
 }
 
 // globalThis-pinned -- see this file's header comment.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberate untyped globalThis cast; see file header for why this exact idiom is required.
 const sessions: Map<string, LoopEntry> = ((globalThis as any).__gigradarAgentChatSessions ??= new Map<string, LoopEntry>());
 
+/** A screenshot taken during this turn, for the CHAT UI to render inline (not just fed to the model as tool_result context) -- see take_screenshot's own comment for why this needs a dedicated channel. */
+interface ChatScreenshot {
+  sourceId: string;
+  dataUrl: string;
+}
+
 export type ChatLoopEvent =
-  | { type: "message"; text: string }
-  | { type: "proposal"; tool: string; input: Record<string, unknown>; description: string }
+  | { type: "message"; text: string; screenshots?: ChatScreenshot[] }
+  | { type: "proposal"; tool: string; input: Record<string, unknown>; description: string; screenshots?: ChatScreenshot[] }
   | { type: "turn_limit_reached" };
 
 /** Starts a fresh chat session, discarding any prior history for this id. */
@@ -204,26 +294,64 @@ function toolResultMessage(toolUseId: string, text: string, isError = false): An
   };
 }
 
-async function executeReadOnlyTool(toolUse: Anthropic.ToolUseBlock): Promise<Anthropic.MessageParam> {
+interface ReadOnlyToolResult {
+  message: Anthropic.MessageParam;
+  /** Set only by take_screenshot -- see runTurnLoop's own comment for why this rides alongside `message` instead of being derived back out of it. */
+  screenshot?: ChatScreenshot;
+}
+
+async function executeReadOnlyTool(toolUse: Anthropic.ToolUseBlock, entry: LoopEntry): Promise<ReadOnlyToolResult> {
   const input = toolUse.input as Record<string, unknown>;
 
   if (toolUse.name === LIST_GIGS_TOOL) {
     const gigs = runListGigs(input as { tier?: string; status?: string; search?: string });
-    return toolResultMessage(toolUse.id, JSON.stringify(gigs));
+    return { message: toolResultMessage(toolUse.id, JSON.stringify(gigs)) };
   }
 
   if (toolUse.name === GET_GIG_TOOL) {
     const key = String(input.key ?? "");
     const gig = getGig(key);
-    if (!gig) return toolResultMessage(toolUse.id, `get_gig: no gig found with key "${key}".`, true);
-    return toolResultMessage(toolUse.id, buildGigResultBlock(gig));
+    if (!gig) return { message: toolResultMessage(toolUse.id, `get_gig: no gig found with key "${key}".`, true) };
+    return { message: toolResultMessage(toolUse.id, buildGigResultBlock(gig)) };
   }
 
   if (toolUse.name === GET_STATUS_SUMMARY_TOOL) {
     const gigs = listGigs();
     const rawConfig = readRawConfig();
     const summary = computeStatusStrip(gigs, rawConfig);
-    return toolResultMessage(toolUse.id, JSON.stringify(summary));
+    return { message: toolResultMessage(toolUse.id, JSON.stringify(summary)) };
+  }
+
+  if (toolUse.name === TAKE_SCREENSHOT_TOOL) {
+    const active = entry.activeCapture;
+    if (!active) {
+      return {
+        message: toolResultMessage(
+          toolUse.id,
+          "take_screenshot: no login capture is currently open in this chat -- start one with start_capture_login first.",
+          true,
+        ),
+      };
+    }
+    const page = getCapturePage(active.captureId);
+    const screenshot = await page.screenshot({ type: "png" });
+    const base64 = screenshot.toString("base64");
+    return {
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: toolUse.id,
+            content: [
+              { type: "text", text: `Screenshot of the open login capture for "${active.sourceId}":` },
+              { type: "image", source: { type: "base64", media_type: "image/png", data: base64 } },
+            ],
+          },
+        ],
+      },
+      screenshot: { sourceId: active.sourceId, dataUrl: `data:image/png;base64,${base64}` },
+    };
   }
 
   throw new Error(`${MODULE_PREFIX}: unrecognized read-only tool "${toolUse.name}".`);
@@ -240,13 +368,42 @@ function describeProposal(tool: string, input: Record<string, unknown>): string 
       return `Generate a prep packet for gig "${input.key}"`;
     case RUN_SCAN_TOOL:
       return "Run a real scan across every enabled source (slow, network-bound)";
+    case START_CAPTURE_LOGIN_TOOL:
+      return `Start a guided login capture for source "${input.sourceId}" (opens a real browser window)`;
+    case FINISH_CAPTURE_LOGIN_TOOL:
+      return "Finish the open login capture and save the session";
+    case CANCEL_CAPTURE_LOGIN_TOOL:
+      return "Cancel the open login capture without saving a session";
+    case START_GMAIL_CONNECT_TOOL:
+      return `Start a Gmail OAuth connection for source "${input.sourceId}"`;
+    case DISCONNECT_GMAIL_TOOL:
+      return `Disconnect source "${input.sourceId}"'s connected Gmail account`;
     default:
       return tool;
   }
 }
 
-/** Executes an approved write tool for real. `apiKey` and `config` are resolved by the CALLER (the Server Action), never inside this function -- same discipline every other LLM/config-touching function in this repo follows. */
-async function executeWriteTool(tool: string, input: Record<string, unknown>, apiKey: string, config: Config): Promise<string> {
+/** Local, deliberately-duplicated "find by id" scan over a parsed Config's sources -- same convention as src/app/config/actions.ts's rawSourceConfigFor(), operating on the already-validated SourceConfig[] this module receives instead of a raw unknown[]. Missing entries resolve to a bare default rather than throwing, matching that file's own fallback. */
+function sourceConfigFor(config: Config, sourceId: string): SourceConfig {
+  return config.sources.find((s) => s.id === sourceId) ?? { id: sourceId, enabled: true, settings: {} };
+}
+
+/** Local, deliberately-duplicated equivalent of src/app/config/actions.ts's withSessionStatePath() -- merges `sessionStatePath` into `sourceId`'s settings within the RAW (not-yet-validated) sources array, preserving every other field/source, for the saveConfig({sources}) write finish_capture_login needs. */
+function withSessionStatePathRaw(rawSources: unknown, sourceId: string, sessionStatePath: string): Record<string, unknown>[] {
+  const sources = Array.isArray(rawSources) ? [...(rawSources as unknown[])] : [];
+  const idx = sources.findIndex((s) => typeof s === "object" && s !== null && (s as Record<string, unknown>).id === sourceId);
+
+  const existing: Record<string, unknown> = idx >= 0 ? (sources[idx] as Record<string, unknown>) : { id: sourceId, enabled: true };
+  const existingSettings = typeof existing.settings === "object" && existing.settings !== null ? (existing.settings as Record<string, unknown>) : {};
+
+  const updated: Record<string, unknown> = { ...existing, settings: { ...existingSettings, sessionStatePath } };
+  if (idx >= 0) sources[idx] = updated;
+  else sources.push(updated);
+  return sources as Record<string, unknown>[];
+}
+
+/** Executes an approved write tool for real. `apiKey` and `config` are resolved by the CALLER (the Server Action), never inside this function -- same discipline every other LLM/config-touching function in this repo follows. `entry` is mutated directly for the two capture tools that set/clear `entry.activeCapture`. */
+async function executeWriteTool(tool: string, input: Record<string, unknown>, apiKey: string, config: Config, entry: LoopEntry): Promise<string> {
   if (tool === UPDATE_GIG_STATUS_TOOL) {
     const key = String(input.key ?? "");
     const status = String(input.status ?? "") as GigStatus;
@@ -277,11 +434,72 @@ async function executeWriteTool(tool: string, input: Record<string, unknown>, ap
     return `Scan complete: ${result.results.length} gig(s) found, ${result.passed.length} passed the gate, ${result.errors.length} source error(s).`;
   }
 
+  if (tool === START_CAPTURE_LOGIN_TOOL) {
+    const sourceId = String(input.sourceId ?? "");
+    const cfg = sourceConfigFor(config, sourceId);
+    const loginUrl = resolveLoginUrl(sourceId, cfg);
+    if (!loginUrl) {
+      throw new Error(
+        `start_capture_login: no login URL registered for source "${sourceId}" (see src/lib/sources/origins.ts, or set settings.loginUrl on /config).`,
+      );
+    }
+    const allowedOrigins = resolveAllowedOrigins(sourceId, cfg);
+    const { captureId } = await startCapture(sourceId, loginUrl, allowedOrigins);
+    entry.activeCapture = { captureId, sourceId };
+    return `Opened a real browser window for you to log into "${sourceId}". Log in, then ask me to finish (or cancel) the capture -- you can also ask me for a screenshot to check progress.`;
+  }
+
+  if (tool === FINISH_CAPTURE_LOGIN_TOOL) {
+    const active = entry.activeCapture;
+    if (!active) throw new Error("finish_capture_login: no login capture is currently open in this chat.");
+    const sessionBackend = sessionBackendFrom(sourceConfigFor(config, active.sourceId));
+    const result = await finishCapture(active.captureId, sessionBackend);
+    entry.activeCapture = undefined;
+
+    if (result.backend === "portunus") {
+      return `Saved "${active.sourceId}"'s session to Portunus.`;
+    }
+    const raw = readRawConfig();
+    const sources = withSessionStatePathRaw(raw.sources, active.sourceId, result.path);
+    const saveResult = saveConfig({ sources });
+    if (!saveResult.ok) throw new Error(saveResult.error);
+    return `Saved "${active.sourceId}"'s session locally.`;
+  }
+
+  if (tool === CANCEL_CAPTURE_LOGIN_TOOL) {
+    const active = entry.activeCapture;
+    if (!active) throw new Error("cancel_capture_login: no login capture is currently open in this chat.");
+    await cancelCapture(active.captureId);
+    entry.activeCapture = undefined;
+    return `Cancelled the login capture for "${active.sourceId}". Nothing was saved.`;
+  }
+
+  if (tool === START_GMAIL_CONNECT_TOOL) {
+    const sourceId = String(input.sourceId ?? "");
+    const { clientId } = resolveOAuthClientCredentials(sourceId, GMAIL_PROVIDER);
+    const { url } = buildAuthorizationUrl(GMAIL_PROVIDER, sourceId, clientId);
+    return `Open this link to connect "${sourceId}"'s Gmail account: ${url}`;
+  }
+
+  if (tool === DISCONNECT_GMAIL_TOOL) {
+    const sourceId = String(input.sourceId ?? "");
+    const backend = sessionBackendFrom(sourceConfigFor(config, sourceId));
+    await deleteTokenSet(GMAIL_PROVIDER, sourceId, backend);
+    return `Disconnected "${sourceId}"'s Gmail account.`;
+  }
+
   throw new Error(`${MODULE_PREFIX}: unrecognized write tool "${tool}".`);
 }
 
 async function runTurnLoop(entry: LoopEntry, apiKey: string): Promise<ChatLoopEvent> {
   const client = new Anthropic({ apiKey });
+  // Screenshots taken during THIS call's read-only tool chain -- scoped to
+  // this one sendMessage()/resolveApproval() call, not entry-level state.
+  // Fed to the model as a tool_result either way (see
+  // executeReadOnlyTool's TAKE_SCREENSHOT_TOOL branch), but ALSO returned
+  // directly on the event so the chat UI can render the image inline for
+  // the human, rather than only ever reaching the model.
+  const screenshots: ChatScreenshot[] = [];
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const response = await client.messages.create({
@@ -300,16 +518,24 @@ async function runTurnLoop(entry: LoopEntry, apiKey: string): Promise<ChatLoopEv
         .filter((block): block is Anthropic.TextBlock => block.type === "text")
         .map((block) => block.text)
         .join("\n");
-      return { type: "message", text };
+      return { type: "message", text, screenshots: screenshots.length ? screenshots : undefined };
     }
 
     if (WRITE_TOOLS.has(toolUse.name)) {
       const input = toolUse.input as Record<string, unknown>;
       entry.pendingApproval = { toolUseId: toolUse.id, tool: toolUse.name, input };
-      return { type: "proposal", tool: toolUse.name, input, description: describeProposal(toolUse.name, input) };
+      return {
+        type: "proposal",
+        tool: toolUse.name,
+        input,
+        description: describeProposal(toolUse.name, input),
+        screenshots: screenshots.length ? screenshots : undefined,
+      };
     }
 
-    entry.history.push(await executeReadOnlyTool(toolUse));
+    const result = await executeReadOnlyTool(toolUse, entry);
+    entry.history.push(result.message);
+    if (result.screenshot) screenshots.push(result.screenshot);
   }
 
   return { type: "turn_limit_reached" };
@@ -355,7 +581,7 @@ export async function resolveApproval(sessionId: string, apiKey: string, approve
   }
 
   try {
-    const outcome = await executeWriteTool(pending.tool, pending.input, apiKey, config);
+    const outcome = await executeWriteTool(pending.tool, pending.input, apiKey, config, entry);
     entry.history.push(toolResultMessage(pending.toolUseId, outcome));
   } catch (e) {
     entry.history.push(toolResultMessage(pending.toolUseId, e instanceof Error ? e.message : String(e), true));

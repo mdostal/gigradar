@@ -39,6 +39,38 @@ vi.mock("../../apply/prep.js", () => ({
   generatePrepPacket: (...args: unknown[]) => generatePrepPacketMock(...args),
 }));
 
+// Source-connection tools (chat-sessions-screenshots story) similarly mock
+// the underlying session-capture/oauth mechanism rather than re-testing
+// session-capture.test.ts's/oauth2.test.ts's own business rules -- this
+// file's job is proving the chat loop's approval-gating, chat-owned
+// activeCapture scoping, and dispatch, not those modules' internals.
+const startCaptureMock = vi.fn();
+const finishCaptureMock = vi.fn();
+const cancelCaptureMock = vi.fn();
+const getCapturePageMock = vi.fn();
+vi.mock("../../auth/session-capture.js", () => ({
+  startCapture: (...args: unknown[]) => startCaptureMock(...args),
+  finishCapture: (...args: unknown[]) => finishCaptureMock(...args),
+  cancelCapture: (...args: unknown[]) => cancelCaptureMock(...args),
+  getCapturePage: (...args: unknown[]) => getCapturePageMock(...args),
+}));
+
+const buildAuthorizationUrlMock = vi.fn();
+const deleteTokenSetMock = vi.fn();
+vi.mock("../../auth/oauth2.js", () => ({
+  buildAuthorizationUrl: (...args: unknown[]) => buildAuthorizationUrlMock(...args),
+  deleteTokenSet: (...args: unknown[]) => deleteTokenSetMock(...args),
+}));
+
+const resolveOAuthClientCredentialsMock = vi.fn();
+vi.mock("../../auth/oauth-credentials.js", () => ({
+  resolveOAuthClientCredentials: (...args: unknown[]) => resolveOAuthClientCredentialsMock(...args),
+}));
+
+vi.mock("../../auth/oauth-providers/gmail.js", () => ({
+  GMAIL_PROVIDER: { id: "gmail" },
+}));
+
 import { closeDb, getDb } from "../../store/db.js";
 import { recordScan } from "../../store/gigs.js";
 import type { Config } from "../../types.js";
@@ -55,6 +87,10 @@ let tmpDir: string;
 let dbPath: string;
 let db: DatabaseSync;
 let originalDbPathEnv: string | undefined;
+let xdgDataDir: string;
+let xdgConfigDir: string;
+let originalXdgDataHome: string | undefined;
+let originalXdgConfigHome: string | undefined;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-agent-chat-loop-test-"));
@@ -66,17 +102,43 @@ beforeEach(() => {
   originalDbPathEnv = process.env.GIGRADAR_DB_PATH;
   process.env.GIGRADAR_DB_PATH = dbPath;
   db = getDb();
+
+  // Separate, own-per-test XDG dirs (two, not one -- same "vault key dir
+  // must differ from data dir" convention src/app/chat/__tests__/actions.test.ts
+  // established) so finish_capture_login's REAL readRawConfig()/saveConfig()
+  // write to an isolated config.json, never the process-wide default temp
+  // dir vitest.setup.ts points at (let alone a real user's data dir).
+  xdgDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-agent-chat-loop-test-xdg-data-"));
+  xdgConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-agent-chat-loop-test-xdg-config-"));
+  originalXdgDataHome = process.env.XDG_DATA_HOME;
+  originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_DATA_HOME = xdgDataDir;
+  process.env.XDG_CONFIG_HOME = xdgConfigDir;
+
   mockCreate.mockReset();
   stageApplicationMock.mockReset();
   runRadarMock.mockReset();
   generatePrepPacketMock.mockReset();
+  startCaptureMock.mockReset();
+  finishCaptureMock.mockReset();
+  cancelCaptureMock.mockReset();
+  getCapturePageMock.mockReset();
+  buildAuthorizationUrlMock.mockReset();
+  deleteTokenSetMock.mockReset();
+  resolveOAuthClientCredentialsMock.mockReset();
 });
 
 afterEach(() => {
   closeDb();
   if (originalDbPathEnv === undefined) delete process.env.GIGRADAR_DB_PATH;
   else process.env.GIGRADAR_DB_PATH = originalDbPathEnv;
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(xdgDataDir, { recursive: true, force: true });
+  fs.rmSync(xdgConfigDir, { recursive: true, force: true });
 });
 
 function makeGig(overrides: Partial<Gig> & { sourceId: string; externalId: string }): Gig {
@@ -385,5 +447,193 @@ describe("write tools: propose then approve, no exceptions", () => {
 
     expect(result).toEqual({ type: "message", text: "That gig doesn't exist." });
     endChatSession("w9");
+  });
+});
+
+describe("source-connection tools: propose then approve, no exceptions", () => {
+  it("start_capture_login produces a proposal, never opens a browser before approval", async () => {
+    mockCreate.mockResolvedValueOnce(fakeToolUseResponse("start_capture_login", { sourceId: "gofractional" }));
+
+    startChatSession("c1");
+    const result = await sendMessage("c1", "fake-api-key", "log me into gofractional");
+
+    expect(result).toEqual({
+      type: "proposal",
+      tool: "start_capture_login",
+      input: { sourceId: "gofractional" },
+      description: 'Start a guided login capture for source "gofractional" (opens a real browser window)',
+    });
+    expect(startCaptureMock).not.toHaveBeenCalled();
+    endChatSession("c1");
+  });
+
+  it("start_capture_login: approval calls the REAL startCapture() with the registry login URL, and sets chat-owned activeCapture state", async () => {
+    startCaptureMock.mockResolvedValue({ captureId: "cap-1" });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("start_capture_login", { sourceId: "gofractional" }))
+      .mockResolvedValueOnce(fakeTextResponse("Browser window opened -- log in, then let me know."));
+
+    startChatSession("c2");
+    await sendMessage("c2", "fake-api-key", "log me into gofractional");
+    const result = await resolveApproval("c2", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Browser window opened -- log in, then let me know." });
+    expect(startCaptureMock).toHaveBeenCalledWith("gofractional", "https://www.gofractional.com/login", ["gofractional.com"]);
+    endChatSession("c2");
+  });
+
+  it("finish_capture_login: no-op error (not a throw out of resolveApproval) when this chat never started a capture", async () => {
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("finish_capture_login", {}))
+      .mockResolvedValueOnce(fakeTextResponse("There's no login capture open right now."));
+
+    startChatSession("c3");
+    await sendMessage("c3", "fake-api-key", "finish the login");
+    const result = await resolveApproval("c3", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "There's no login capture open right now." });
+    expect(finishCaptureMock).not.toHaveBeenCalled();
+    endChatSession("c3");
+  });
+
+  it("finish_capture_login (local backend): approval calls the REAL finishCapture() against the chat-owned capture, and persists sessionStatePath to config.json", async () => {
+    // finish_capture_login's write path merges into the REAL config.json via
+    // readRawConfig()/saveConfig() (not mocked -- this test proves the
+    // actual persistence, isolated to this test's own XDG temp dirs, see
+    // beforeEach). saveConfig() re-validates the FULL merged document, so a
+    // base valid config must exist first, exactly like a real user who has
+    // already filled out /config once.
+    const { saveConfig } = await import("../../config/save.js");
+    const seedResult = saveConfig({
+      profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
+      needs: {
+        engagementProfiles: [
+          { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+        ],
+        freshStageOnly: false,
+        remoteOnly: false,
+      },
+      sources: [{ id: "gofractional", enabled: true }],
+    });
+    expect(seedResult.ok).toBe(true);
+
+    startCaptureMock.mockResolvedValue({ captureId: "cap-2" });
+    finishCaptureMock.mockResolvedValue({ backend: "local", path: "/fake/path/gofractional-session.json" });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("start_capture_login", { sourceId: "gofractional" }))
+      .mockResolvedValueOnce(fakeTextResponse("Browser window opened."))
+      .mockResolvedValueOnce(fakeToolUseResponse("finish_capture_login", {}))
+      .mockResolvedValueOnce(fakeTextResponse("Saved."));
+
+    startChatSession("c4");
+    await sendMessage("c4", "fake-api-key", "log me into gofractional");
+    await resolveApproval("c4", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("c4", "fake-api-key", "I'm done, finish it");
+    const result = await resolveApproval("c4", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Saved." });
+    expect(finishCaptureMock).toHaveBeenCalledWith("cap-2", "local");
+
+    const { readRawConfig } = await import("../../config/save.js");
+    const raw = readRawConfig() as { sources?: Array<{ id: string; settings?: { sessionStatePath?: string } }> };
+    const persisted = raw.sources?.find((s) => s.id === "gofractional");
+    expect(persisted?.settings?.sessionStatePath).toBe("/fake/path/gofractional-session.json");
+    endChatSession("c4");
+  });
+
+  it("a second start_capture_login while one is already open still lets take_screenshot/finish/cancel act on the chat's single activeCapture (no cross-session lookup)", async () => {
+    startCaptureMock.mockResolvedValue({ captureId: "cap-3" });
+    cancelCaptureMock.mockResolvedValue(undefined);
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("start_capture_login", { sourceId: "gofractional" }))
+      .mockResolvedValueOnce(fakeTextResponse("Opened."))
+      .mockResolvedValueOnce(fakeToolUseResponse("cancel_capture_login", {}))
+      .mockResolvedValueOnce(fakeTextResponse("Cancelled."));
+
+    startChatSession("c5");
+    await sendMessage("c5", "fake-api-key", "log me into gofractional");
+    await resolveApproval("c5", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("c5", "fake-api-key", "never mind, cancel it");
+    const result = await resolveApproval("c5", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Cancelled." });
+    expect(cancelCaptureMock).toHaveBeenCalledWith("cap-3");
+    endChatSession("c5");
+  });
+
+  it("start_gmail_connect: approval returns the REAL authorization URL from buildAuthorizationUrl()", async () => {
+    resolveOAuthClientCredentialsMock.mockReturnValue({ clientId: "client-123" });
+    buildAuthorizationUrlMock.mockReturnValue({ url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=client-123" });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("start_gmail_connect", { sourceId: "gmail-alerts" }))
+      .mockResolvedValueOnce(fakeTextResponse("Open the link I gave you to connect Gmail."));
+
+    startChatSession("c6");
+    await sendMessage("c6", "fake-api-key", "connect my gmail alerts source");
+    const result = await resolveApproval("c6", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Open the link I gave you to connect Gmail." });
+    expect(buildAuthorizationUrlMock).toHaveBeenCalledWith({ id: "gmail" }, "gmail-alerts", "client-123");
+    endChatSession("c6");
+  });
+
+  it("disconnect_gmail: approval calls the REAL deleteTokenSet() for the source", async () => {
+    deleteTokenSetMock.mockResolvedValue(undefined);
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("disconnect_gmail", { sourceId: "gmail-alerts" }))
+      .mockResolvedValueOnce(fakeTextResponse("Disconnected."));
+
+    startChatSession("c7");
+    await sendMessage("c7", "fake-api-key", "disconnect gmail-alerts");
+    const result = await resolveApproval("c7", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Disconnected." });
+    expect(deleteTokenSetMock).toHaveBeenCalledWith({ id: "gmail" }, "gmail-alerts", "local");
+    endChatSession("c7");
+  });
+});
+
+describe("take_screenshot: read-only, auto-executes against the chat-owned capture", () => {
+  it("returns a clean tool error (not a thrown exception) when no capture is open in this chat", async () => {
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("take_screenshot", {}))
+      .mockResolvedValueOnce(fakeTextResponse("There's nothing open to screenshot."));
+
+    startChatSession("s9");
+    const result = await sendMessage("s9", "fake-api-key", "show me the login window");
+
+    expect(result).toEqual({ type: "message", text: "There's nothing open to screenshot." });
+    expect(getCapturePageMock).not.toHaveBeenCalled();
+    endChatSession("s9");
+  });
+
+  it("takes a real screenshot of the chat's own active capture and feeds it back as an image tool_result", async () => {
+    startCaptureMock.mockResolvedValue({ captureId: "cap-4" });
+    const fakeScreenshot = vi.fn().mockResolvedValue(Buffer.from("fake-png-bytes"));
+    getCapturePageMock.mockReturnValue({ screenshot: fakeScreenshot });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("start_capture_login", { sourceId: "gofractional" }))
+      .mockResolvedValueOnce(fakeTextResponse("Opened."))
+      .mockResolvedValueOnce(fakeToolUseResponse("take_screenshot", {}))
+      .mockResolvedValueOnce(fakeTextResponse("I can see the login page."));
+
+    startChatSession("s10");
+    await sendMessage("s10", "fake-api-key", "log me into gofractional");
+    await resolveApproval("s10", "fake-api-key", true, FAKE_CONFIG);
+    const result = await sendMessage("s10", "fake-api-key", "what does it look like?");
+
+    expect(result).toEqual({
+      type: "message",
+      text: "I can see the login page.",
+      screenshots: [{ sourceId: "gofractional", dataUrl: `data:image/png;base64,${Buffer.from("fake-png-bytes").toString("base64")}` }],
+    });
+    expect(getCapturePageMock).toHaveBeenCalledWith("cap-4");
+    expect(fakeScreenshot).toHaveBeenCalled();
+
+    const lastCall = mockCreate.mock.calls[mockCreate.mock.calls.length - 1]?.[0] as Anthropic.MessageCreateParams;
+    const messagesJson = JSON.stringify(lastCall.messages);
+    expect(messagesJson).toContain('"type":"image"');
+    expect(messagesJson).toContain(Buffer.from("fake-png-bytes").toString("base64"));
+    endChatSession("s10");
   });
 });

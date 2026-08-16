@@ -1,7 +1,7 @@
 id: chat-sessions-screenshots
 epic: agent-chat
 title: "Source-connection tools (Capture Login, Gmail) + live screenshots"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [chat-propose-approve]
@@ -10,13 +10,26 @@ description: |
   Vertical Plan Slice 3. Approval-gated source-connection tools:
   start_capture_login/finish_capture_login/cancel_capture_login (wraps
   session-capture.ts), start_gmail_connect/disconnect_gmail (wraps the
-  email-digest-ingestion Server Actions). Plus take_screenshot -- the ONE
-  auto-executing (read-only) tool this slice adds, capturing the current
-  page of whichever live session (capture-login / verification-copilot /
-  profile-assist) is open via page.screenshot(), returned as an image
-  content block the chat UI renders inline. Throws a specific "no active
-  session" error rather than returning a stale/wrong image when nothing
-  is open.
+  email-digest-ingestion mechanism's oauth2.ts/oauth-credentials.ts, the
+  same functions src/app/config/actions.ts's startGmailOAuthAction/
+  disconnectGmailAction already wrap -- a new front door, not a second
+  implementation). Plus take_screenshot -- the ONE auto-executing
+  (read-only) tool this slice adds.
+
+  SCOPE DECISION (deliberate narrowing from the original "whichever live
+  session is open" framing above): the chat loop has no mechanism to
+  discover or cross-reference a session opened by a DIFFERENT page/flow
+  (the /config Capture Login UI, verification-copilot, profile-assist), so
+  v1 ships take_screenshot/finish_capture_login/cancel_capture_login
+  scoped to ONLY the login capture THIS CHAT SESSION itself opened via its
+  own start_capture_login call (tracked as `entry.activeCapture` on
+  agent-chat-loop.ts's LoopEntry). Honest and simple over broad-but-wrong;
+  cross-session lookup is a real future extension, not implemented here.
+
+  take_screenshot's image is returned on a DEDICATED `screenshots` field
+  of the ChatLoopEvent (not just embedded in the tool_result fed to the
+  model) so the chat UI renders it inline for the human, not only ever
+  reaching the model's own context.
 
 acceptance_criteria:
   - "start_capture_login is approval-gated like every other mutating tool -- opening a real browser window never happens without an explicit click."
