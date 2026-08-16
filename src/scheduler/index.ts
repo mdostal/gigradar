@@ -423,7 +423,11 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
         .filter((s) => !cycleConfig.sources.some((c) => c.id === s.id))
         .map((s) => s.id);
 
-      const result = await runRadarFn(cycleConfig);
+      // llm-custom-sources epic: resolved fresh each cycle, same
+      // process.env.ANTHROPIC_API_KEY convention runAutoDraft() below
+      // already uses for this exact long-running CLI/scheduler context
+      // (never readEnvVar() -- that's the Server Action convention).
+      const result = await runRadarFn(cycleConfig, {}, { anthropicApiKey: process.env.ANTHROPIC_API_KEY });
 
       const erroredIds = new Set(result.errors.map((e) => e.sourceId));
       for (const source of cycleConfig.sources as SourceConfig[]) {

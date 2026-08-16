@@ -22,8 +22,17 @@ export interface Source {
    * MUST return real per-listing urls (never a search page) and set `stage`
    * where the source exposes it. Throw on auth failure so the runner can
    * report "needs login" instead of silently returning zero.
+   *
+   * `apiKey`: an optional trailing parameter (llm-custom-sources epic) —
+   * every hand-written adapter ignores it (TS structural typing already
+   * allows an implementation to declare fewer parameters than the
+   * interface, so none of them need to change). Only `customLlmSource`
+   * (src/lib/sources/custom-llm-source.ts) reads it, to construct its own
+   * Anthropic client — resolved by the CALLER (runner.ts), never
+   * module-scope, same discipline `stageApplication()`'s own `apiKey`
+   * parameter already established.
    */
-  fetch(cfg: SourceConfig, profile: Profile): Promise<Gig[]>;
+  fetch(cfg: SourceConfig, profile: Profile, apiKey?: string): Promise<Gig[]>;
 }
 
 const registry = new Map<string, Source>();

@@ -119,7 +119,7 @@ describe("startCaptureAction", () => {
     const result = await startCaptureAction("gofractional");
 
     expect(startCaptureMock).toHaveBeenCalledTimes(1);
-    expect(startCaptureMock).toHaveBeenCalledWith("gofractional", SOURCE_LOGIN_URLS["gofractional"]);
+    expect(startCaptureMock).toHaveBeenCalledWith("gofractional", SOURCE_LOGIN_URLS["gofractional"], ["gofractional.com"]);
     expect(result).toEqual({ ok: true, data: { captureId: "capture-123" } });
     // Starting a capture never mutates config.json — nothing to revalidate.
     expect(revalidatePath).not.toHaveBeenCalled();
@@ -130,7 +130,7 @@ describe("startCaptureAction", () => {
 
     const result = await startCaptureAction("ateam");
 
-    expect(startCaptureMock).toHaveBeenCalledWith("ateam", SOURCE_LOGIN_URLS["ateam"]);
+    expect(startCaptureMock).toHaveBeenCalledWith("ateam", SOURCE_LOGIN_URLS["ateam"], ["a.team", "platform.a.team"]);
     expect(result).toEqual({ ok: true, data: { captureId: "capture-456" } });
   });
 

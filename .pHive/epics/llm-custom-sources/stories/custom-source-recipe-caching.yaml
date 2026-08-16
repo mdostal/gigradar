@@ -1,0 +1,109 @@
+id: custom-source-recipe-caching
+epic: llm-custom-sources
+title: "Extraction-recipe caching: selector-based fast path, LLM-derived fallback"
+status: done
+complexity: high
+methodology: classic
+depends_on: [custom-source-core-mechanism]
+
+description: |
+  Vertical Plan Slice 2. Slice 1 calls the LLM on EVERY fetch -- fine for
+  proving the mechanism, wrong for a scheduler that scans every N minutes.
+  This slice adds a cached, reusable "extraction recipe" (CSS selectors, not
+  aria refs -- aria [ref=eN] handles are not stable across page loads, see
+  design-discussion.md §4) so a stable site's repeat scans cost zero LLM
+  calls, with automatic self-healing (one fresh LLM call) when the recipe
+  stops matching.
+
+  1. `src/lib/sources/custom-source-recipe.ts` (new):
+     - `CustomSourceRecipe` type: `{ listItemSelector: string; fields:
+       Record<"title"|"company"|"url"|"rateText"|..., { selector: string;
+       attribute?: string }>; derivedAt: string }`.
+     - `readRecipe(sourceId): CustomSourceRecipe | undefined` /
+       `writeRecipe(sourceId, recipe): void` -- plain JSON file at
+       `<getDefaultDataDir()>/custom-source-recipes/<sourceId>.json`. NOT
+       config.json, NOT encrypted (recipes are derived/regenerable
+       structural data, not user secrets or settings -- see
+       design-discussion.md §5's rationale for this storage-tier choice).
+       Reuse getDefaultDataDir() from store/path.ts, do not duplicate its
+       XDG resolution.
+     - `extractWithRecipe(page, recipe): Promise<Gig[] | null>` -- a pure
+       Playwright selector walk (`page.locator(recipe.listItemSelector)
+       .all()`, per-field `.locator(fieldSelector).textContent()`/
+       `.getAttribute(attribute)`), ZERO LLM calls. Returns `null` (not an
+       empty array -- the distinction matters, see acceptance criteria) when
+       the selector matches zero items, OR every matched item is missing a
+       REQUIRED field (title or url) -- both signal "this recipe is stale,"
+       not "this scan legitimately found zero listings."
+     - `deriveRecipeAndExtract(page, sourceId, hint, apiKey):
+       Promise<{gigs: Gig[]; recipe: CustomSourceRecipe}>` -- reads
+       `page.content()` (raw HTML), size-caps it (reuse
+       profile-ingestion/extract.ts's AC6/AC7 streaming-size-cap discipline
+       -- truncate, never error, note the truncation in a comment/log, do
+       not silently send unbounded HTML to the API), single-shot Anthropic
+       tool-use call asking for BOTH today's Gig[] AND the reusable
+       selector recipe in one structured response. Same BEGIN/END untrusted-
+       DATA delimiting as every other page-content LLM call in this repo,
+       applied to raw HTML instead of an aria snapshot this time.
+  2. `custom-llm-source.ts`'s `fetch()` rewired: `const cached =
+     readRecipe(cfg.id); const viaRecipe = cached ? await
+     extractWithRecipe(page, cached) : null; if (viaRecipe) return
+     viaRecipe; const { gigs, recipe } = await deriveRecipeAndExtract(...);
+     writeRecipe(cfg.id, recipe); return gigs;` -- Slice 1's
+     always-call-the-LLM path becomes ONLY the fallback path.
+
+acceptance_criteria:
+  - "Given a source with no cached recipe yet, fetch() calls deriveRecipeAndExtract() (one LLM call) and writes a recipe file afterward."
+  - "Given a source with a cached recipe that still matches the (mocked) live page, fetch() extracts via extractWithRecipe() ALONE -- the mocked Anthropic client is never called."
+  - "Given a cached recipe whose selectors now match zero items (simulating a site redesign), fetch() falls back to deriveRecipeAndExtract() and overwrites the stale recipe file with a fresh one."
+  - "Given a cached recipe whose selectors match items but every one is missing both title AND url, fetch() treats this the same as zero matches -- falls back, does not return the malformed partial result."
+  - "Given raw HTML larger than the size cap, deriveRecipeAndExtract() truncates it before sending to the LLM rather than erroring or sending it unbounded."
+  - "Given the recipe file for one source, it lives at <dataDir>/custom-source-recipes/<sourceId>.json, is plain (non-encrypted) JSON, and writeRecipe() never touches config.json/saveConfig() at all."
+
+steps:
+  - id: research
+    description: Confirm the exact Playwright API for page.content() and locator-based text/attribute extraction against the installed Playwright version; re-read extract.ts's size-cap implementation to reuse its exact discipline, not approximate it.
+    agent: researcher
+  - id: implement
+    description: Write custom-source-recipe.ts and rewire custom-llm-source.ts's fetch() to use it.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests (mocked Anthropic client, mocked Playwright page/locator) for the cache-hit, cache-miss, stale-recipe-fallback, and size-cap paths.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the recipe file never contains anything config.json-worthy (no secrets), confirm zero-vs-malformed-result distinction is handled correctly, confirm the LLM is genuinely never called on a cache hit (not just asserted via a loose mock).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/sources/custom-llm-source.ts
+      purpose: "fetch() rewired to try the recipe cache before falling back to a fresh LLM derivation"
+    - path: src/lib/profile-ingestion/extract.ts
+      purpose: "the streaming size-cap discipline this story's raw-HTML capping reuses"
+    - path: src/lib/store/path.ts
+      purpose: "getDefaultDataDir() -- reused for the recipe cache directory, not re-derived"
+
+design_decisions:
+  - decision: "Recipe cache is a plain JSON file per source in the data dir, never config.json."
+    rationale: "Recipes are derived/regenerable structural data, not user-authored settings -- binding recipe writes to config.json's schema-validate + encrypt-on-save path would mean every background recipe refresh re-validates and re-encrypts the whole config document for a pure performance cache. See design-discussion.md §5."
+  - decision: "extractWithRecipe() returns null (not []) on zero-or-malformed results, and null specifically triggers the LLM fallback."
+    rationale: "A recipe that legitimately finds zero listings this cycle (a real empty board) must be distinguishable from a recipe that's stale/broken -- conflating them would either silently under-report real zero-result scans as errors, or silently keep using a broken recipe forever without ever re-deriving it."
+
+risks:
+  - severity: medium
+    description: "A site that occasionally, legitimately shows zero listings (a real slow day on a niche board) could trigger an unnecessary LLM re-derivation, since this mechanism can't distinguish 'genuinely empty' from 'selector broke' when the listItemSelector itself returns zero matches."
+    mitigation: "Accepted for v1 -- an occasional extra LLM call on a genuinely-empty cycle is a low-cost false positive, far cheaper than the alternative failure mode (silently trusting a broken recipe indefinitely)."
+
+references:
+  - path: .pHive/epics/llm-custom-sources/docs/design-discussion.md
+    relevant_excerpt: "§4 extraction shape (raw HTML for recipes), §5 recipe caching"
+  - path: .pHive/epics/llm-custom-sources/docs/vertical-plan.md
+    relevant_excerpt: "Slice 2 -- Extraction-recipe caching"

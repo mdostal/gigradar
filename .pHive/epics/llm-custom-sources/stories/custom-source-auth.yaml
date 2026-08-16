@@ -1,0 +1,95 @@
+id: custom-source-auth
+epic: llm-custom-sources
+title: "Auth for custom sources: config-driven origins/login-URL fallback, real-chrome/session-backend reuse"
+status: done
+complexity: medium
+methodology: classic
+depends_on: [custom-source-core-mechanism]
+
+description: |
+  Vertical Plan Slice 3. Slices 1-2 only cover public, no-auth custom
+  sources. This slice lets a custom source require a real login, reusing
+  Capture Login / real-chrome.ts / browser-session.ts / session-backend.ts
+  WHOLESALE -- no new auth mechanism, only new WIRING so those existing,
+  already-built, already-tested primitives accept a dynamic, user-typed
+  sourceId instead of only the handful of static ones baked into
+  origins.ts.
+
+  1. `src/lib/sources/origins.ts`: `SOURCE_ORIGINS[sourceId]` and
+     `SOURCE_LOGIN_URLS[sourceId]` lookups (wherever consumed --
+     session-capture.ts's finishCapture(), assist-session.ts,
+     config-client.tsx's SOURCE_ORIGINS-gated Capture Login rendering) gain
+     a config-driven fallback when the static registry has no entry: read
+     `cfg.settings.allowedOrigins: string[]` / `cfg.settings.loginUrl:
+     string` from the source's own SourceConfig instead. Same "static
+     registry first, config-driven fallback second" shape
+     custom-source-core-mechanism's runner.ts change already established --
+     apply it consistently, do not invent a second shape.
+  2. `custom-llm-source.ts` branches on `cfg.settings.customAuth: "none" |
+     "browser-session"` (default "none" when absent):
+     - "none": Slice 1/2's existing headless chromium.launch() path,
+       unchanged.
+     - "browser-session": reuses real-chrome.ts's
+       spawnRealChrome()/attachToRealChrome() (never chromium.launch() --
+       same reasoning as every other browser-session-auth source) +
+       browser-session.ts's readStorageStateFile()/
+       filterStorageStateToAllowlist() (or session-backend.ts's
+       readSessionViaPortunus() when `cfg.settings.sessionBackend ===
+       "portunus"`) to load an already-captured session before navigating.
+       filterStorageStateToAllowlist() is safety-critical and MUST still
+       run, unconditionally, exactly as it does for every existing
+       browser-session adapter -- no custom-source carve-out.
+  3. `config-client.tsx`'s `CaptureLoginControl` rendering condition
+     (`source.id in SOURCE_ORIGINS`) extended to ALSO show for any source
+     with `kind === "custom-llm"` AND `settings.customAuth ===
+     "browser-session"` -- Capture Login must work identically for a custom
+     source as it already does for GoFractional/A.Team/Wellfound.
+
+acceptance_criteria:
+  - "Given a custom source with settings.customAuth unset or \"none\", behavior is byte-identical to custom-source-core-mechanism/custom-source-recipe-caching's existing tests -- this story changes nothing for the no-auth path."
+  - "Given a custom source with settings.customAuth:\"browser-session\" and settings.allowedOrigins/settings.loginUrl set (no static SOURCE_ORIGINS/SOURCE_LOGIN_URLS entry for its id), Capture Login successfully starts a real capture for it, using the config-driven fallback -- not the static registry."
+  - "Given a captured session for a custom source, fetch() loads it via real-chrome.ts + filterStorageStateToAllowlist() exactly as an existing browser-session adapter would -- verified by inspecting the actual object passed into the browser context, same test discipline browser-session.test.ts already uses."
+  - "Given every EXISTING browser-session-auth source (gofractional/ateam/wellfound), this story's origins.ts fallback change is a no-op -- their static registry entries are found first, the config-driven fallback path is never reached for them."
+
+steps:
+  - id: research
+    description: Re-read origins.ts's exact current lookup call sites (session-capture.ts, assist-session.ts, config-client.tsx) to identify every place needing the fallback, not just the obvious one.
+    agent: researcher
+  - id: implement
+    description: Add the config-driven fallback to origins.ts's lookup sites and wire custom-llm-source.ts's browser-session auth branch.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests for the fallback logic (mocked) and the custom-source browser-session fetch path, mirroring browser-session.test.ts's origin-scoping-is-applied-before-newContext() discipline.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm filterStorageStateToAllowlist() is never skipped for a custom source, and confirm the fallback never shadows an existing static registry entry for a built-in adapter.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/sources/origins.ts
+      purpose: "SOURCE_ORIGINS/SOURCE_LOGIN_URLS -- gains the config-driven fallback"
+    - path: src/lib/auth/real-chrome.ts
+      purpose: reused, unmodified, for the browser-session auth branch
+    - path: src/lib/auth/browser-session.ts
+      purpose: "filterStorageStateToAllowlist()/readStorageStateFile() -- reused, unmodified, safety-critical"
+    - path: src/app/config/config-client.tsx
+      purpose: "CaptureLoginControl's render-gate condition extended to custom sources"
+
+design_decisions:
+  - decision: "Config-driven fallback for origins/login-URL lookups, same shape as the runner.ts source-lookup fallback from custom-source-core-mechanism."
+    rationale: "The exact same class of problem (static registry keyed by known ids, doesn't cover user-typed ids) recurring in a second place -- reusing the identical shape keeps the codebase's mental model of \"how do custom sources plug into static registries\" singular, not two different patterns for the same problem."
+
+references:
+  - path: .pHive/epics/llm-custom-sources/docs/design-discussion.md
+    relevant_excerpt: "§6 auth for custom sources"
+  - path: .pHive/epics/llm-custom-sources/docs/vertical-plan.md
+    relevant_excerpt: "Slice 3 -- Auth for custom sources"
