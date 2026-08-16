@@ -1,7 +1,7 @@
 id: chat-guided-source-onboarding
 epic: ats-navigator
 title: "agent-chat tools: list_source_presets + approval-gated add_source, offers start_gmail_connect for email-notifying presets"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [source-presets]
