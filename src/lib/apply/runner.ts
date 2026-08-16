@@ -2,6 +2,7 @@ import type { Config, DraftContent, Gig, MatchResult } from "../types.js";
 import { getSource } from "../sources/source.js";
 import { VerificationChallengeError } from "../sources/verification-challenge.js";
 import { customLlmSource } from "../sources/custom-llm-source.js";
+import { gmailDigestSource } from "../sources/gmail-digest-source.js";
 import { gate } from "../matching/gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
 import { gigKey, recordScan, saveDraft } from "../store/index.js";
@@ -70,7 +71,12 @@ export async function runRadar(
     // in, e.g. "monster") — see design-discussion.md §3 for why this ONE
     // fallback line (not dynamic registerSource() calls, not codegen) is
     // the chosen mechanism, and custom-llm-source.ts's own header comment.
-    const src = getSource(sc.id) ?? (sc.kind === "custom-llm" ? customLlmSource : undefined);
+    // email-digest-ingestion epic extends the SAME fallback chain a
+    // second time for kind:"gmail-digest" — not a second, parallel
+    // mechanism.
+    const src =
+      getSource(sc.id) ??
+      (sc.kind === "custom-llm" ? customLlmSource : sc.kind === "gmail-digest" ? gmailDigestSource : undefined);
     if (!src) { errors.push({ sourceId: sc.id, message: "no such registered source" }); continue; }
     let gigs: Gig[] = [];
     try {

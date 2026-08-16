@@ -84,7 +84,7 @@ export const ApplyProfileConfigSchema = z.object({
 export const SourceConfigSchema = z.object({
   id: z.string(),
   enabled: z.boolean(),
-  kind: z.literal("custom-llm").optional(),
+  kind: z.enum(["custom-llm", "gmail-digest"]).optional(),
   settings: z.record(z.string(), z.unknown()).optional(),
 });
 

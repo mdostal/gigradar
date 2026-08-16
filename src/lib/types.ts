@@ -133,8 +133,12 @@ export interface SourceConfig {
    * custom-llm-source.ts) instead, which reads everything it needs
    * (`settings.url`, `settings.hint`, etc.) from THIS config entry. Absent
    * (every hand-written adapter) is today's behavior, byte-identical.
+   *
+   * `"gmail-digest"` (email-digest-ingestion epic): same fallback-routing
+   * mechanism, extended a second time — routes to `gmailDigestSource`
+   * (src/lib/sources/gmail-digest-source.ts) instead.
    */
-  kind?: "custom-llm";
+  kind?: "custom-llm" | "gmail-digest";
   /** Opaque per-source settings (session cookie ref, query, etc.). Never store raw secrets here in OSS — reference an env/keychain entry. */
   settings?: Record<string, unknown>;
 }

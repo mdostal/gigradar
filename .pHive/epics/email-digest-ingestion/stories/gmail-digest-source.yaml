@@ -1,7 +1,7 @@
 id: gmail-digest-source
 epic: email-digest-ingestion
 title: "gmail-digest-source.ts: fetch + LLM extraction of job-alert emails"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [gmail-oauth-provider-callback]
