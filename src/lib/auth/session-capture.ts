@@ -84,6 +84,14 @@ interface CaptureEntry {
   context: BrowserContext;
   realChrome: RealChromeHandle;
   sourceId: string;
+  /**
+   * Resolved ONCE, at startCapture() time, and reused here rather than
+   * re-derived from SOURCE_ORIGINS at finish time — see startCapture()'s
+   * own `allowedOrigins` parameter doc comment (llm-custom-sources epic,
+   * custom-source-auth story). `undefined` means "use SOURCE_ORIGINS[
+   * sourceId]", exactly today's behavior.
+   */
+  allowedOrigins: string[] | undefined;
   startedAt: number;
   timeoutHandle: ReturnType<typeof setTimeout>;
   /**
@@ -149,8 +157,17 @@ async function safeCloseBrowser(browser: Browser, realChrome: RealChromeHandle):
  * Throws (before ever spawning a browser) if the real Chrome binary isn't
  * installed at the expected macOS path — see real-chrome.ts's
  * spawnRealChrome().
+ *
+ * `allowedOrigins` (llm-custom-sources epic, custom-source-auth story):
+ * optional — when supplied (the caller already resolved it, e.g. via
+ * origins.ts's resolveAllowedOrigins() for a custom source with no static
+ * SOURCE_ORIGINS entry), it's stored on the capture entry and used by
+ * finishCapture() INSTEAD of re-deriving from SOURCE_ORIGINS[sourceId] at
+ * finish time — resolved once, reused, rather than a second lookup pass.
+ * Omitted (every existing caller) falls through to finishCapture()'s
+ * original SOURCE_ORIGINS[sourceId] behavior, unchanged.
  */
-export async function startCapture(sourceId: string, loginUrl: string): Promise<{ captureId: string }> {
+export async function startCapture(sourceId: string, loginUrl: string, allowedOrigins?: string[]): Promise<{ captureId: string }> {
   const realChrome = await spawnRealChrome();
 
   let browser: Browser;
@@ -224,6 +241,7 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
     context,
     realChrome,
     sourceId,
+    allowedOrigins,
     startedAt: Date.now(),
     timeoutHandle,
     disconnectedListener,
@@ -309,7 +327,10 @@ export async function finishCapture(captureId: string, sessionBackend: SessionBa
   try {
     const rawStorageState = (await entry.context.storageState()) as StorageState;
 
-    const allowedOrigins = SOURCE_ORIGINS[entry.sourceId];
+    // entry.allowedOrigins (resolved once, at startCapture() time — see
+    // that function's own doc comment) takes priority when present; falls
+    // back to the static registry otherwise, today's unchanged behavior.
+    const allowedOrigins = entry.allowedOrigins ?? SOURCE_ORIGINS[entry.sourceId];
     if (!allowedOrigins || allowedOrigins.length === 0) {
       throw new Error(
         `${MODULE_PREFIX}: no origin allowlist registered for source "${entry.sourceId}" (see src/lib/sources/origins.ts).`,

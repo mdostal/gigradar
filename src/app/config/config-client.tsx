@@ -37,6 +37,8 @@ interface SettingPair {
 interface DraftSource {
   id: string;
   enabled: boolean;
+  /** llm-custom-sources epic: true when this row is a config-only custom source (no hand-written adapter) -- maps to SourceConfig.kind: "custom-llm". A real "Add custom source" form lands in a later story; this checkbox is the minimal stopgap that makes the mechanism reachable from the UI at all. */
+  isCustom: boolean;
   settings: SettingPair[];
 }
 
@@ -185,8 +187,21 @@ function settingsToPairs(settings: Record<string, unknown> | undefined): Setting
   }));
 }
 
+/**
+ * Whether this row's Capture Login control should show: every existing
+ * `SOURCE_ORIGINS`-registered source (unchanged), OR a custom source that's
+ * explicitly declared `settings.customAuth: "browser-session"` (llm-custom-
+ * sources epic, custom-source-auth story) — reading straight from the raw
+ * `SettingPair[]` since a custom source's own draft settings haven't been
+ * parsed into a Record yet at render time.
+ */
+function showsCaptureLogin(source: DraftSource): boolean {
+  if (source.id in SOURCE_ORIGINS) return true;
+  return source.isCustom && source.settings.some((p) => p.key === "customAuth" && p.value === "browser-session");
+}
+
 function sourceToDraft(source: SourceConfig): DraftSource {
-  return { id: source.id, enabled: source.enabled, settings: settingsToPairs(source.settings) };
+  return { id: source.id, enabled: source.enabled, isCustom: source.kind === "custom-llm", settings: settingsToPairs(source.settings) };
 }
 
 function configToDraft(config: Config): DraftConfig {
@@ -283,7 +298,13 @@ function pairsToSettings(pairs: SettingPair[]): Record<string, unknown> | undefi
 
 function draftToSource(draft: DraftSource): SourceConfig {
   const settings = pairsToSettings(draft.settings);
-  return settings ? { id: draft.id, enabled: draft.enabled, settings } : { id: draft.id, enabled: draft.enabled };
+  const kind = draft.isCustom ? ("custom-llm" as const) : undefined;
+  return {
+    id: draft.id,
+    enabled: draft.enabled,
+    ...(kind && { kind }),
+    ...(settings && { settings }),
+  };
 }
 
 /**
@@ -1544,26 +1565,42 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
               <div className="flex items-end gap-3">
                 <label className="flex-1">
                   <span className={labelClass}>Source</span>
-                  <select
-                    value={source.id}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      setDraft({
-                        ...draft,
-                        sources: draft.sources.map((s, idx) => (idx === i ? { ...s, id } : s)),
-                      });
-                    }}
-                    className={inputClass}
-                  >
-                    <option value="" disabled>
-                      Select a source…
-                    </option>
-                    {KNOWN_SOURCES.map((known) => (
-                      <option key={known.id} value={known.id}>
-                        {known.label}
+                  {source.isCustom ? (
+                    <input
+                      type="text"
+                      value={source.id}
+                      placeholder="a name you choose, e.g. monster"
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setDraft({
+                          ...draft,
+                          sources: draft.sources.map((s, idx) => (idx === i ? { ...s, id } : s)),
+                        });
+                      }}
+                      className={inputClass}
+                    />
+                  ) : (
+                    <select
+                      value={source.id}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setDraft({
+                          ...draft,
+                          sources: draft.sources.map((s, idx) => (idx === i ? { ...s, id } : s)),
+                        });
+                      }}
+                      className={inputClass}
+                    >
+                      <option value="" disabled>
+                        Select a source…
                       </option>
-                    ))}
-                  </select>
+                      {KNOWN_SOURCES.map((known) => (
+                        <option key={known.id} value={known.id}>
+                          {known.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </label>
                 <CheckboxField
                   label="Enabled"
@@ -1572,6 +1609,16 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                     setDraft({
                       ...draft,
                       sources: draft.sources.map((s, idx) => (idx === i ? { ...s, enabled } : s)),
+                    });
+                  }}
+                />
+                <CheckboxField
+                  label="Custom (LLM)"
+                  checked={source.isCustom}
+                  onChange={(isCustom) => {
+                    setDraft({
+                      ...draft,
+                      sources: draft.sources.map((s, idx) => (idx === i ? { ...s, isCustom, id: isCustom ? s.id : "" } : s)),
                     });
                   }}
                 />
@@ -1595,7 +1642,7 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                   }}
                 />
               </div>
-              {source.id in SOURCE_ORIGINS && portunusAvailable && (
+              {showsCaptureLogin(source) && portunusAvailable && (
                 <SessionBackendPicker
                   pairs={source.settings}
                   radioGroupName={`session-backend-${i}`}
@@ -1607,7 +1654,7 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                   }}
                 />
               )}
-              {source.id in SOURCE_ORIGINS && (
+              {showsCaptureLogin(source) && (
                 <CaptureLoginControl
                   sourceId={source.id}
                   state={captureState[i] ?? { status: "idle" }}
@@ -1632,7 +1679,7 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
           <button
             type="button"
             onClick={() =>
-              setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, settings: [] }] })
+              setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, isCustom: false, settings: [] }] })
             }
             className="self-start text-sm font-medium text-slate-600 hover:underline"
           >

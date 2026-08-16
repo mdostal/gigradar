@@ -9,10 +9,24 @@ import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
-import { SOURCE_LOGIN_URLS } from "@/lib/sources/origins";
+import { resolveAllowedOrigins, resolveLoginUrl } from "@/lib/sources/origins";
 import type { ActionResult } from "@/lib/actions/result";
 import type { ExtractProfileInput } from "@/lib/profile-ingestion/extract";
-import type { Config, Tier } from "@/lib/types";
+import type { Config, SourceConfig, Tier } from "@/lib/types";
+
+/**
+ * Finds `sourceId`'s raw entry in `rawSources` and returns it as a
+ * (partial-safety) `SourceConfig` — reused by both `startCaptureAction()`
+ * (origins/login-URL fallback resolution) and `rawSessionBackendFor()`
+ * below, rather than each re-implementing the same "find by id" scan.
+ */
+function rawSourceConfigFor(rawSources: unknown, sourceId: string): SourceConfig {
+  const sources = Array.isArray(rawSources) ? rawSources : [];
+  const entry = sources.find(
+    (s): s is Record<string, unknown> => typeof s === "object" && s !== null && (s as Record<string, unknown>).id === sourceId,
+  );
+  return { id: sourceId, enabled: true, settings: (entry?.settings as Record<string, unknown> | undefined) ?? {} };
+}
 
 /**
  * Server Action wrapping `saveConfig()` (config-write-path) — the config
@@ -55,13 +69,17 @@ export async function saveConfigAction(edits: ConfigEdits): Promise<ActionResult
 // ---------------------------------------------------------------------------
 
 /**
- * Wraps `startCapture()`: looks up `sourceId`'s login URL from the shared
- * `SOURCE_LOGIN_URLS` registry (`src/lib/sources/origins.ts`) and launches a
- * capture. `startCapture()` itself never throws a generic message — its
- * errors already name the exact failure (missing Chromium binary, launch
- * failure, failed navigation) — so this action's `catch` just carries that
- * message through verbatim via `actionErr()`, never replacing it with a
- * generic "capture failed."
+ * Wraps `startCapture()`: resolves `sourceId`'s login URL and origin
+ * allowlist via `origins.ts`'s `resolveLoginUrl()`/`resolveAllowedOrigins()`
+ * — the static `SOURCE_LOGIN_URLS`/`SOURCE_ORIGINS` registries first (every
+ * existing browser-session-auth source, unchanged), a config-driven
+ * fallback (`settings.loginUrl`/`settings.allowedOrigins`) second, for a
+ * custom source with no static entry (llm-custom-sources epic,
+ * custom-source-auth story). `startCapture()` itself never throws a generic
+ * message — its errors already name the exact failure (missing Chromium
+ * binary, launch failure, failed navigation) — so this action's `catch`
+ * just carries that message through verbatim via `actionErr()`, never
+ * replacing it with a generic "capture failed."
  *
  * No `revalidatePath()` call here: starting a capture only creates in-memory
  * Playwright state (a live `Browser`/`BrowserContext` held in
@@ -75,15 +93,19 @@ export async function saveConfigAction(edits: ConfigEdits): Promise<ActionResult
  * anything the page reads actually changed.
  */
 export async function startCaptureAction(sourceId: string): Promise<ActionResult<{ captureId: string }>> {
-  const loginUrl = SOURCE_LOGIN_URLS[sourceId];
+  const raw = readRawConfig();
+  const cfg = rawSourceConfigFor(raw.sources, sourceId);
+
+  const loginUrl = resolveLoginUrl(sourceId, cfg);
   if (!loginUrl) {
     return actionErr(
-      new Error(`gigradar config: no login URL registered for source "${sourceId}" (see src/lib/sources/origins.ts).`),
+      new Error(`gigradar config: no login URL registered for source "${sourceId}" (see src/lib/sources/origins.ts, or set settings.loginUrl).`),
     );
   }
+  const allowedOrigins = resolveAllowedOrigins(sourceId, cfg);
 
   try {
-    const { captureId } = await startCapture(sourceId, loginUrl);
+    const { captureId } = await startCapture(sourceId, loginUrl, allowedOrigins);
     return actionOk({ captureId });
   } catch (e) {
     return actionErr(e);
@@ -141,11 +163,7 @@ function withSessionStatePath(
  * never lets the user pick a backend ad hoc.
  */
 function rawSessionBackendFor(rawSources: unknown, sourceId: string): "local" | "portunus" {
-  const sources = Array.isArray(rawSources) ? rawSources : [];
-  const entry = sources.find(
-    (s): s is Record<string, unknown> => typeof s === "object" && s !== null && (s as Record<string, unknown>).id === sourceId,
-  );
-  return sessionBackendFrom({ id: sourceId, enabled: true, settings: (entry?.settings as Record<string, unknown> | undefined) ?? {} });
+  return sessionBackendFrom(rawSourceConfigFor(rawSources, sourceId));
 }
 
 /**

@@ -26,6 +26,11 @@ vi.mock("../custom-source-recipe.js", () => ({
   deriveRecipeAndExtract: (...args: unknown[]) => deriveRecipeAndExtractMock(...args),
 }));
 
+const withBrowserSessionMock = vi.fn();
+vi.mock("../../auth/browser-session.js", () => ({
+  withBrowserSession: (...args: unknown[]) => withBrowserSessionMock(...args),
+}));
+
 import { customLlmSource } from "../custom-llm-source.js";
 
 const PROFILE: Profile = { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" };
@@ -56,6 +61,7 @@ beforeEach(() => {
   writeRecipeMock.mockReset();
   extractWithRecipeMock.mockReset();
   deriveRecipeAndExtractMock.mockReset();
+  withBrowserSessionMock.mockReset();
 });
 
 describe("customLlmSource.fetch: settings.url", () => {
@@ -169,5 +175,75 @@ describe("customLlmSource.fetch: headless chromium.launch(), closed on every exi
     await expect(customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key")).rejects.toThrow("simulated derivation failure");
 
     expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("customLlmSource.fetch: settings.customAuth === \"browser-session\"", () => {
+  function authedCfg(settings: Record<string, unknown> = {}): SourceConfig {
+    return customSourceCfg({
+      customAuth: "browser-session",
+      sessionStatePath: "/fake/monster-session.json",
+      allowedOrigins: ["monster.com"],
+      ...settings,
+    });
+  }
+
+  it("routes to withBrowserSession() instead of chromium.launch(), with the resolved allowedOrigins/sessionStatePath/sessionBackend", async () => {
+    withBrowserSessionMock.mockResolvedValue(FAKE_GIGS);
+
+    const gigs = await customLlmSource.fetch(authedCfg(), PROFILE, "fake-api-key");
+
+    expect(launchMock).not.toHaveBeenCalled();
+    expect(withBrowserSessionMock).toHaveBeenCalledTimes(1);
+    const [options] = withBrowserSessionMock.mock.calls[0] as [Record<string, unknown>, unknown];
+    expect(options.sourceId).toBe("monster");
+    expect(options.storageStatePathSetting).toBe("/fake/monster-session.json");
+    expect(options.allowedOrigins).toEqual(["monster.com"]);
+    expect(options.sessionBackend).toBe("local");
+    expect(options.url).toBe("https://example.com/jobs");
+    expect(gigs).toBe(FAKE_GIGS);
+  });
+
+  it("isAuthenticated always resolves true -- no source-specific auth-failure check exists for an arbitrary custom site", async () => {
+    withBrowserSessionMock.mockResolvedValue(FAKE_GIGS);
+
+    await customLlmSource.fetch(authedCfg(), PROFILE, "fake-api-key");
+
+    const [options] = withBrowserSessionMock.mock.calls[0] as [{ isAuthenticated: () => Promise<boolean> }, unknown];
+    await expect(options.isAuthenticated()).resolves.toBe(true);
+  });
+
+  it("passes sessionBackend:\"portunus\" through when settings.sessionBackend is portunus", async () => {
+    withBrowserSessionMock.mockResolvedValue(FAKE_GIGS);
+
+    await customLlmSource.fetch(authedCfg({ sessionBackend: "portunus" }), PROFILE, "fake-api-key");
+
+    const [options] = withBrowserSessionMock.mock.calls[0] as [Record<string, unknown>, unknown];
+    expect(options.sessionBackend).toBe("portunus");
+  });
+
+  it("throws a specific error (before calling withBrowserSession()) when settings.sessionStatePath is missing", async () => {
+    const cfg = customSourceCfg({ customAuth: "browser-session", allowedOrigins: ["monster.com"] });
+
+    await expect(customLlmSource.fetch(cfg, PROFILE, "fake-api-key")).rejects.toThrow(/missing settings\.sessionStatePath/);
+    expect(withBrowserSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("throws a specific error (before calling withBrowserSession()) when there's no allowedOrigins from either the static registry or settings", async () => {
+    const cfg = customSourceCfg({ customAuth: "browser-session", sessionStatePath: "/fake/monster-session.json" });
+
+    await expect(customLlmSource.fetch(cfg, PROFILE, "fake-api-key")).rejects.toThrow(/no origin allowlist registered/);
+    expect(withBrowserSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("the withBrowserSession() callback runs the SAME cache-then-derive extraction as the no-auth path", async () => {
+    withBrowserSessionMock.mockImplementation(async (_options: unknown, run: (page: unknown) => Promise<Gig[]>) => run({ fakePage: true }));
+    readRecipeMock.mockReturnValue(FAKE_RECIPE);
+    extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
+
+    const gigs = await customLlmSource.fetch(authedCfg(), PROFILE, "fake-api-key");
+
+    expect(extractWithRecipeMock).toHaveBeenCalledWith({ fakePage: true }, "monster", FAKE_RECIPE);
+    expect(gigs).toBe(FAKE_GIGS);
   });
 });
