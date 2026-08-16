@@ -1,7 +1,7 @@
 id: chat-loop-core
 epic: agent-chat
 title: "Core tool-use loop + read-only tools (list_gigs/get_gig/get_status_summary) + /chat page"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: []
