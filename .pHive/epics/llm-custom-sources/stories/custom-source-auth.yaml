@@ -1,7 +1,7 @@
 id: custom-source-auth
 epic: llm-custom-sources
 title: "Auth for custom sources: config-driven origins/login-URL fallback, real-chrome/session-backend reuse"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [custom-source-core-mechanism]

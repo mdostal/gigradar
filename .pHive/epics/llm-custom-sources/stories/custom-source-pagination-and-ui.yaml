@@ -1,7 +1,7 @@
 id: custom-source-pagination-and-ui
 epic: llm-custom-sources
 title: "Pagination + real /config 'Add custom source' UI with test-extraction preview"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [custom-source-recipe-caching, custom-source-auth]

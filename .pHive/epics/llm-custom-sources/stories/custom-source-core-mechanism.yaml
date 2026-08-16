@@ -1,7 +1,7 @@
 id: custom-source-core-mechanism
 epic: llm-custom-sources
 title: "Core custom-source mechanism: SourceConfig.kind, customLlmSource, runner.ts wiring (no auth, no recipe caching)"
-status: pending
+status: done
 complexity: high
 methodology: classic
 depends_on: []

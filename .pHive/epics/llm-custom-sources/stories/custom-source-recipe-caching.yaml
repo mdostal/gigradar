@@ -1,7 +1,7 @@
 id: custom-source-recipe-caching
 epic: llm-custom-sources
 title: "Extraction-recipe caching: selector-based fast path, LLM-derived fallback"
-status: pending
+status: done
 complexity: high
 methodology: classic
 depends_on: [custom-source-core-mechanism]
