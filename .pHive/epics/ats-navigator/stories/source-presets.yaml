@@ -1,0 +1,63 @@
+id: source-presets
+epic: ats-navigator
+title: "Curated source presets (Welcome to the Jungle, Zoho Recruit)"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1. A new `src/lib/sources/source-presets.ts` exporting
+  `SOURCE_PRESETS: SourcePreset[]` -- mirrors role-templates.ts's exact
+  shape (`id`/`label`/`description`/config), but each preset's "config" is
+  a `custom-llm-source`-shaped `SourceConfig["settings"]` object
+  (`{url, hint, customAuth?}`), NOT a `RoleAreaConfig`. Two presets ship:
+  "Welcome to the Jungle" (public, no customAuth) and "Zoho Recruit"
+  (customAuth left unset -- most careers pages are public; a user on a
+  login-gated one still has the existing Capture Login flow available via
+  the generic `custom-llm-source` `customAuth: "browser-session"` path,
+  they just don't get it pre-filled). Indeed is deliberately NOT a preset
+  here -- see design-discussion.md section 3/4.1's robots.txt finding
+  (explicit AI-bot + /viewjob + /applystart disallow) and section 5's open
+  question to the owner. This story does not wire the presets into any UI
+  -- that's Slices 2/3 (config-add-source-presets, chat-guided-source-onboarding).
+
+acceptance_criteria:
+  - "SOURCE_PRESETS exports exactly 2 entries: welcome-to-the-jungle, zoho-recruit."
+  - "Each preset's settings.url is a real, working example URL (a real company jobs page for WTTJ, a real Zoho Recruit careers page for Zoho) that a test can point custom-llm-source's own existing parsing/validation logic at without hand-waving."
+  - "Each preset's settings.hint is a genuine, specific description of that platform's typical listing layout (not filler) -- mirrors role-templates.ts's redKeywords quality bar: real content, not a placeholder."
+  - "No preset's settings.url contains a query string (?...) -- matches design-discussion.md's 'real per-listing/page URLs only, never a search URL' rule, verified by a test that greps for '?' in every preset's url."
+  - "A unit test (mirroring role-templates.test.ts's shape) verifies uniqueness of ids and non-empty label/description/settings.url/settings.hint for every preset."
+
+steps:
+  - id: research
+    description: Confirm custom-llm-source.ts's exact SourceConfig["settings"] shape (url/hint/customAuth/sessionStatePath/allowedOrigins) so the preset's settings object is directly assignable, not a guess.
+    agent: researcher
+  - id: implement
+    description: Write source-presets.ts with the SourcePreset interface + SOURCE_PRESETS array.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests per acceptance criteria.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no preset URL is a search page, confirm hints are genuine (not filler).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/config/role-templates.ts
+      purpose: "the exact preset-array shape and picker-friendly id/label convention this file mirrors, one layer over"
+    - path: src/lib/sources/custom-llm-source.ts
+      purpose: "the settings shape (url/hint/customAuth/sessionStatePath/allowedOrigins) a preset must produce"
+
+references:
+  - path: .pHive/epics/ats-navigator/docs/design-discussion.md
+    relevant_excerpt: "section 3 (real robots.txt research) and section 4.1 (per-platform strategy table)"

@@ -1,0 +1,55 @@
+id: config-add-source-presets
+epic: ats-navigator
+title: "Preset dropdown in /config's Add a source flow"
+status: pending
+complexity: low
+methodology: classic
+depends_on: [source-presets]
+
+description: |
+  Vertical Plan Slice 2. Adds a "Start from a preset" dropdown to
+  config-client.tsx's existing "Add a source" UI, reading SOURCE_PRESETS
+  (source-presets.ts). Picking a preset pre-fills a new custom-llm-source
+  SourceConfig entry (id defaults to the preset id, unique-ified if
+  already taken, settings copied from the preset) into the SAME
+  saveConfig()/ConfigEdits write path every other config edit already
+  uses -- no new Server Action, no new config-write mechanism. A manual
+  "custom URL" path (today's existing behavior) remains unchanged and
+  still available alongside the new dropdown.
+
+acceptance_criteria:
+  - "The Add a source form shows a preset dropdown populated from SOURCE_PRESETS, plus the existing manual-entry path unchanged."
+  - "Selecting a preset and saving produces a SourceConfig with kind: \"custom-llm\" and settings matching the preset's settings object exactly."
+  - "If the preset's default id already exists in the user's sources, the id is uniqued (e.g. a numeric suffix) rather than silently overwriting the existing source."
+  - "Saving goes through the existing saveConfig() action -- verified by a test asserting no new Server Action was introduced for this path."
+
+steps:
+  - id: implement
+    description: Add the preset dropdown + pre-fill logic to config-client.tsx and its Server Action.
+    agent: developer
+  - id: test
+    description: Tests for preset selection -> correct SourceConfig, and the id-collision uniquing behavior.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the manual-entry path is unchanged and no parallel config-write path was introduced.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "existing Add a source UI this story extends, not replaces"
+    - path: src/app/config/actions.ts
+      purpose: "existing saveConfig()-backed Server Action this story's write must reuse"
+    - path: .pHive/epics/ats-navigator/stories/source-presets.yaml
+      purpose: "produces SOURCE_PRESETS, this story's data source"
+
+references:
+  - path: .pHive/epics/ats-navigator/docs/vertical-plan.md
+    relevant_excerpt: "Slice 2: config-add-source-presets (UI, cheap)"

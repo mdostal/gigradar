@@ -1,0 +1,28 @@
+name: ats-navigator
+title: "Guided ATS onboarding (source presets + chat walkthrough) and ATS resume-compatibility scoring"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: source-presets
+    title: "Curated source presets (Welcome to the Jungle, Zoho Recruit) -- Indeed deliberately excluded, see design-discussion.md"
+    complexity: low
+    depends_on: []
+  - id: config-add-source-presets
+    title: "Preset dropdown in /config's Add a source flow"
+    complexity: low
+    depends_on: [source-presets]
+  - id: chat-guided-source-onboarding
+    title: "agent-chat tools: list_source_presets + approval-gated add_source"
+    complexity: medium
+    depends_on: [source-presets]
+  - id: ats-resume-score
+    title: "Deterministic parseability check + keyword-overlap score in prep packets"
+    complexity: medium
+    depends_on: []
