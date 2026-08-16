@@ -192,8 +192,10 @@
       <a class="btn primary" href="https://github.com/mdostal/gigradar/releases/latest">Download for macOS →</a>
       <a class="btn ghost" href="https://github.com/mdostal/gigradar">View on GitHub</a>
     </div>
-    <p class="platform-note">Signed .dmg, Apple Silicon. On another platform (or want to see the code first)?
-      <a href="#how-it-works">Run it from source</a> — same app, any OS Node/Playwright supports.</p>
+    <p class="platform-note">Unsigned .dmg, Apple Silicon — macOS Gatekeeper will say it's "damaged"; that's
+      normal for an unsigned build, not corruption. <a href="#how-it-works">One line fixes it, see step 1</a>.
+      On another platform (or want to see the code first)? <a href="#how-it-works">Run it from source</a> —
+      same app, any OS Node/Playwright supports.</p>
     <div class="shot-frame">
       <img src="assets/dashboard.png" alt="gigradar dashboard showing tracked gigs with green/yellow tier badges, source, company, rate, and status columns" loading="lazy" />
     </div>
@@ -274,9 +276,15 @@
         <div class="num">1</div>
         <div>
           <h4>Install</h4>
-          <p><a href="https://github.com/mdostal/gigradar/releases/latest">Download the signed .dmg</a> (macOS),
+          <p><a href="https://github.com/mdostal/gigradar/releases/latest">Download the .dmg</a> (macOS),
             or clone and run <code>npm install &amp;&amp; npm run dev</code> on any OS — either way, a local
             dashboard comes up at <code>127.0.0.1:3000</code>, never exposed beyond your machine.</p>
+          <p><strong>The .dmg is currently unsigned</strong> (no Apple Developer ID certificate yet —
+            real notarized signing is on the roadmap). macOS Gatekeeper will refuse to open it with a
+            &ldquo;gigradar.app is damaged and can&rsquo;t be opened&rdquo; dialog — that's Gatekeeper
+            rejecting the ad-hoc signature, not a corrupted download. After dragging it to
+            <code>/Applications</code>, run this once in Terminal, then launch normally:</p>
+          <p><code>xattr -cr /Applications/gigradar.app</code></p>
         </div>
       </div>
       <div class="step">
