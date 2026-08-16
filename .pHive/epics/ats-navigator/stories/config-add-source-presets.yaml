@@ -1,7 +1,7 @@
 id: config-add-source-presets
 epic: ats-navigator
 title: "Preset dropdown in /config's Add a source flow"
-status: pending
+status: done
 complexity: low
 methodology: classic
 depends_on: [source-presets]

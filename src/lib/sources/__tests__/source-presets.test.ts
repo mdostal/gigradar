@@ -14,7 +14,7 @@
 //   5. suggestsGmailDigest is true for indeed/zoho-recruit, false/unset
 //      for welcome-to-the-jungle.
 import { describe, expect, it } from "vitest";
-import { SOURCE_PRESETS } from "../source-presets.js";
+import { SOURCE_PRESETS, sourceConfigFromPreset } from "../source-presets.js";
 import { SourceConfigSchema } from "../../config/schema.js";
 
 describe("SOURCE_PRESETS", () => {
@@ -75,5 +75,34 @@ describe("SOURCE_PRESETS", () => {
     expect(indeed.suggestsGmailDigest).toBe(true);
     expect(zoho.suggestsGmailDigest).toBe(true);
     expect(wttj.suggestsGmailDigest).toBeFalsy();
+  });
+});
+
+describe("sourceConfigFromPreset", () => {
+  const zoho = SOURCE_PRESETS.find((p) => p.id === "zoho-recruit")!;
+
+  it("produces a SourceConfig with kind: custom-llm and settings matching the preset's settings exactly", () => {
+    const config = sourceConfigFromPreset(zoho, []);
+    expect(config).toEqual({ id: "zoho-recruit", enabled: true, kind: "custom-llm", settings: zoho.settings });
+  });
+
+  it("uses the preset's own id when it is not already taken", () => {
+    const config = sourceConfigFromPreset(zoho, ["indeed", "some-other-source"]);
+    expect(config.id).toBe("zoho-recruit");
+  });
+
+  it("uniques the id with an incrementing numeric suffix when the preset's id is already taken", () => {
+    const config = sourceConfigFromPreset(zoho, ["zoho-recruit"]);
+    expect(config.id).toBe("zoho-recruit-2");
+  });
+
+  it("keeps incrementing the suffix past multiple collisions", () => {
+    const config = sourceConfigFromPreset(zoho, ["zoho-recruit", "zoho-recruit-2", "zoho-recruit-3"]);
+    expect(config.id).toBe("zoho-recruit-4");
+  });
+
+  it("validates against SourceConfigSchema", () => {
+    const config = sourceConfigFromPreset(zoho, ["zoho-recruit"]);
+    expect(SourceConfigSchema.safeParse(config).success).toBe(true);
   });
 });

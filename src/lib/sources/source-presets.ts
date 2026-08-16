@@ -85,3 +85,24 @@ export const SOURCE_PRESETS: SourcePreset[] = [
     suggestsGmailDigest: true,
   },
 ];
+
+/**
+ * Builds a real, ready-to-save `SourceConfig` from a preset -- the ONE
+ * conversion both `/config`'s "Add from a preset" UI (config-add-source-
+ * presets story) and agent-chat's `add_source` tool (chat-guided-source-
+ * onboarding story) call, so there is exactly one preset-to-SourceConfig
+ * code path, not two. `existingIds` is whatever source ids the caller
+ * already has configured -- the returned SourceConfig's `id` is uniqued
+ * against that set (an incrementing numeric suffix) rather than silently
+ * colliding with/overwriting an already-configured source.
+ */
+export function sourceConfigFromPreset(preset: SourcePreset, existingIds: Iterable<string>): SourceConfig {
+  const taken = new Set(existingIds);
+  let id = preset.id;
+  let suffix = 2;
+  while (taken.has(id)) {
+    id = `${preset.id}-${suffix}`;
+    suffix += 1;
+  }
+  return { id, enabled: true, kind: "custom-llm", settings: preset.settings };
+}
