@@ -78,18 +78,22 @@ export function sessionBackendFrom(cfg: SourceConfig): SessionBackend {
 
 /**
  * Shells out to `portunus session store <site> <account> --ttl-seconds <n>
- * --stdin`, piping the ALREADY origin-scoped-filtered storageState JSON via
- * stdin — never a temp file, never a command-line argument. Throws a
- * specific error including Portunus's own stderr on any non-zero exit or
- * spawn failure.
+ * --stdin`, piping `value` (JSON.stringify'd) via stdin — never a temp
+ * file, never a command-line argument. Throws a specific error including
+ * Portunus's own stderr on any non-zero exit or spawn failure.
+ *
+ * Generalized (email-digest-ingestion epic, oauth2-generic-mechanism
+ * story) from a storageState-only function to any JSON-serializable `T` —
+ * the stdin/tempfile/error-surfacing plumbing itself doesn't care what
+ * shape it's moving, only the two typed wrappers below do.
  */
-export async function writeSessionViaPortunus(
+export async function writeSecretViaPortunus<T>(
   site: string,
   account: string,
-  storageState: StorageState,
+  value: T,
   ttlSeconds: number,
 ): Promise<void> {
-  const payload = JSON.stringify(storageState);
+  const payload = JSON.stringify(value);
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
@@ -125,18 +129,28 @@ export async function writeSessionViaPortunus(
 /**
  * Shells out to `portunus session load <site> <account>`, reads the 0600
  * tempfile path it prints on success, parses the envelope Portunus wraps
- * the stored value in, validates the `.session` field against the same
- * storageState shape check browser-session.ts's readStorageStateFile()
- * uses (reused, not duplicated — see isStorageStateShape()'s export), and
+ * the stored value in, validates the `.session` field against
+ * caller-supplied `validate` (a type guard — `isStorageStateShape()` for
+ * the session wrapper below, `isOAuthTokenSetShape()` for oauth2.ts), and
  * DELETES the tempfile immediately after reading regardless of outcome.
  *
  * Throws a specific error naming `site`/`account` on: a spawn failure, a
  * non-zero exit (e.g. nothing stored for that site/account — Portunus's
  * own "unknown secret" error is included verbatim), an unexpected envelope
- * shape, or a `.session` payload that doesn't match the expected
- * storageState shape.
+ * shape, or a `.session` payload that doesn't pass `validate`. `shapeLabel`
+ * (e.g. "storageState", "OAuth token set") names the expected shape in
+ * that last error message only — never logged, never part of any other
+ * error path.
+ *
+ * Generalized from `readSessionViaPortunus()` — see `writeSecretViaPortunus()`'s
+ * doc comment for why.
  */
-export async function readSessionViaPortunus(site: string, account: string): Promise<StorageState> {
+export async function readSecretViaPortunus<T>(
+  site: string,
+  account: string,
+  validate: (value: unknown) => value is T,
+  shapeLabel: string,
+): Promise<T> {
   const tempFilePath = await new Promise<string>((resolve, reject) => {
     const child = spawn("portunus", ["session", "load", site, account], { stdio: ["ignore", "pipe", "pipe"] });
 
@@ -187,9 +201,9 @@ export async function readSessionViaPortunus(site: string, account: string): Pro
     }
 
     const session = (envelope as Record<string, unknown>).session;
-    if (!isStorageStateShape(session)) {
+    if (!validate(session)) {
       throw new Error(
-        `${MODULE_PREFIX}: portunus session load for "${site}"/"${account}" returned a payload that does not match the expected storageState shape.`,
+        `${MODULE_PREFIX}: portunus session load for "${site}"/"${account}" returned a payload that does not match the expected ${shapeLabel} shape.`,
       );
     }
 
@@ -201,4 +215,19 @@ export async function readSessionViaPortunus(site: string, account: string): Pro
       // already gone -- nothing more to clean up.
     }
   }
+}
+
+/** Thin wrapper over `writeSecretViaPortunus()` for the storageState shape — see that function's doc comment. */
+export async function writeSessionViaPortunus(
+  site: string,
+  account: string,
+  storageState: StorageState,
+  ttlSeconds: number,
+): Promise<void> {
+  return writeSecretViaPortunus(site, account, storageState, ttlSeconds);
+}
+
+/** Thin wrapper over `readSecretViaPortunus()` for the storageState shape — see that function's doc comment. */
+export async function readSessionViaPortunus(site: string, account: string): Promise<StorageState> {
+  return readSecretViaPortunus(site, account, isStorageStateShape, "storageState");
 }

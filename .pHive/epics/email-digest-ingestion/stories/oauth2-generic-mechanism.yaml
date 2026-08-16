@@ -1,7 +1,7 @@
 id: oauth2-generic-mechanism
 epic: email-digest-ingestion
 title: "Generic OAuth2 module (PKCE, refresh) + generalized Portunus/vault secret storage"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: []
