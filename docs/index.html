@@ -88,6 +88,7 @@
   .btn.primary:hover { background: #4ee0ab; }
   .btn.ghost { border-color: var(--border); color: var(--text); background: var(--bg-elevated); }
   .btn.ghost:hover { border-color: #33456e; }
+  .platform-note { margin: 16px 0 0; color: var(--text-dim); font-size: 0.85rem; position: relative; }
 
   .shot-frame {
     margin: 56px auto 0; max-width: 960px;
@@ -154,6 +155,7 @@
       <a href="#how-it-works">How it works</a>
       <a href="#open-source">Open source</a>
       <a href="#support">Support</a>
+      <a href="https://github.com/mdostal/gigradar/releases/latest">Download</a>
       <a href="https://github.com/mdostal/gigradar">GitHub</a>
     </nav>
   </div>
@@ -187,9 +189,11 @@
       source, with a kill switch always one click away.
     </p>
     <div class="cta-row">
-      <a class="btn primary" href="https://github.com/mdostal/gigradar">View on GitHub</a>
-      <a class="btn ghost" href="#how-it-works">How it works</a>
+      <a class="btn primary" href="https://github.com/mdostal/gigradar/releases/latest">Download for macOS →</a>
+      <a class="btn ghost" href="https://github.com/mdostal/gigradar">View on GitHub</a>
     </div>
+    <p class="platform-note">Signed .dmg, Apple Silicon. On another platform (or want to see the code first)?
+      <a href="#how-it-works">Run it from source</a> — same app, any OS Node/Playwright supports.</p>
     <div class="shot-frame">
       <img src="assets/dashboard.png" alt="gigradar dashboard showing tracked gigs with green/yellow tier badges, source, company, rate, and status columns" loading="lazy" />
     </div>
@@ -269,9 +273,10 @@
       <div class="step">
         <div class="num">1</div>
         <div>
-          <h4>Clone and run</h4>
-          <p><code>npm install &amp;&amp; npm run dev</code> — a local dashboard comes up at
-            <code>127.0.0.1:3000</code>, never exposed beyond your machine.</p>
+          <h4>Install</h4>
+          <p><a href="https://github.com/mdostal/gigradar/releases/latest">Download the signed .dmg</a> (macOS),
+            or clone and run <code>npm install &amp;&amp; npm run dev</code> on any OS — either way, a local
+            dashboard comes up at <code>127.0.0.1:3000</code>, never exposed beyond your machine.</p>
         </div>
       </div>
       <div class="step">
