@@ -1,7 +1,7 @@
 id: prep-packet-ui
 epic: career-crm
 title: "Server Action + dashboard UI: Generate prep packet"
-status: pending
+status: done
 complexity: low
 methodology: classic
 depends_on: [prep-packet-mechanism]

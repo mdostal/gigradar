@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getGig, setStatus } from "@/lib/store";
+import { getGig, saveInterviewPrep, setStatus } from "@/lib/store";
 import type { GigStatus } from "@/lib/store";
 import { actionErr, actionOk, type ActionResult } from "@/lib/actions/result";
 import { stageApplication } from "@/lib/apply/runner";
+import { generatePrepPacket, type PrepPacketContent } from "@/lib/apply/prep";
 import { readEnvVar } from "@/lib/config/env-store";
 import { readRawConfig } from "@/lib/config/save";
 import { ConfigSchema } from "@/lib/config/schema";
@@ -129,4 +130,55 @@ export async function generateDraftAction(key: string): Promise<ActionResult<{ g
 
   revalidatePath("/drafts");
   return actionOk({ gigKey: key });
+}
+
+// ---------------------------------------------------------------------------
+// "Generate prep packet" (career-crm epic, prep-packet-ui story) — the
+// dashboard row action that calls generatePrepPacket() (src/lib/apply/prep.ts)
+// for ANY tracked gig (no tier restriction — unlike generateDraftAction
+// above, a prep packet is read-only analysis, not a real application
+// artifact, so there's no red-tier guardrail to enforce). Mirrors
+// generateDraftAction()'s exact apiKey/config-resolution discipline.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the gig + the current `Profile`/`ApplyProfileConfig` (via
+ * `readRawConfig()`, same non-resolving read `generateDraftAction()` uses
+ * and for the same reason — see that action's own doc comment) + the BYOK
+ * Anthropic key (via `readEnvVar()`, never `process.env`), calls
+ * `generatePrepPacket()`, persists via `saveInterviewPrep()`.
+ * `applyProfile` is optional here (unlike `generateDraftAction()`, which
+ * requires it) — a prep packet's fit/gap analysis is still meaningful from
+ * `Profile` alone.
+ */
+export async function generatePrepPacketAction(key: string): Promise<ActionResult<PrepPacketContent>> {
+  const gig = getGig(key);
+  if (!gig) {
+    return actionErr(new Error(`gigradar career-crm: no gig found for key "${key}".`));
+  }
+
+  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  if (!apiKey) {
+    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  }
+
+  const parsedConfig = ConfigSchema.safeParse(readRawConfig());
+  if (!parsedConfig.success) {
+    return actionErr(
+      new Error(
+        "gigradar config: your saved configuration is incomplete or invalid — check /config before generating a prep packet.",
+      ),
+    );
+  }
+
+  let content: PrepPacketContent;
+  try {
+    content = await generatePrepPacket(gig, parsedConfig.data.profile, parsedConfig.data.applyProfile, apiKey);
+  } catch (e) {
+    return actionErr(e);
+  }
+
+  saveInterviewPrep(key, content);
+  revalidatePath("/");
+  return actionOk(content);
 }
