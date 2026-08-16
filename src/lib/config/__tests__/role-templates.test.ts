@@ -1,5 +1,5 @@
 // Proves the `role-templates` story's two schema-drift/self-consistency
-// acceptance criteria for `../role-templates.ts`'s five starter templates:
+// acceptance criteria for `../role-templates.ts`'s starter templates:
 //   1. each template's `config` validates against the SAME `RoleAreaConfigSchema`
 //      `loadConfig()`/`saveConfig()` use (same pattern as
 //      `example-config.test.ts`'s config.example.json check) — schema drift
@@ -14,8 +14,8 @@ import { ROLE_TEMPLATES } from "../role-templates.js";
 import { RoleAreaConfigSchema } from "../schema.js";
 
 describe("ROLE_TEMPLATES", () => {
-  it("ships exactly five templates (the story's declared v1 set)", () => {
-    expect(ROLE_TEMPLATES).toHaveLength(5);
+  it("ships the original 5 fractional C-suite templates plus the broader, engagement-type-agnostic set added 2026-08-16", () => {
+    expect(ROLE_TEMPLATES).toHaveLength(13);
   });
 
   it("has a unique id per template", () => {

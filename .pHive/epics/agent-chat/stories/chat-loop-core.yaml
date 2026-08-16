@@ -1,0 +1,70 @@
+id: chat-loop-core
+epic: agent-chat
+title: "Core tool-use loop + read-only tools (list_gigs/get_gig/get_status_summary) + /chat page"
+status: done
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1. The second multi-turn LLM tool-use loop in this
+  codebase, reusing profile-assist-loop.ts's proven shape (globalThis-
+  pinned session map, MAX_TURNS cap, forced tool-use per turn) for a
+  different domain: gigradar's own data, not a live third-party page.
+
+  1. `src/lib/chat/agent-chat-loop.ts` (new): `advanceLoopTurn(sessionId,
+     apiKey): Promise<ChatLoopEvent>` -- one Anthropic Messages API call
+     per turn, `tool_choice: {type: "any"}`, three tools this slice:
+     `list_gigs` (wraps store/gigs.ts's listGigs()), `get_gig` (wraps
+     getGig()), `get_status_summary` (wraps status-strip.ts's
+     computeStatusStrip()). All three are read-only -- no pendingApproval
+     mechanism needed yet (added in chat-propose-approve). A gig's own
+     description/title returned by get_gig is BEGIN/END-delimited as
+     untrusted DATA in the tool_result fed back to the model, same
+     discipline every other LLM call site in this repo already follows.
+  2. `src/app/chat/actions.ts` (new): `startChatSessionAction(): Promise<ActionResult<{sessionId:string}>>`,
+     `sendChatMessageAction(sessionId, message): Promise<ActionResult<ChatLoopEvent>>`
+     -- resolves the BYOK Anthropic key via readEnvVar(), same
+     MISSING_API_KEY_ERROR convention every other LLM-calling action uses.
+  3. `src/app/chat/page.tsx` + `chat-client.tsx` (new): a real chat UI --
+     message history (user/assistant turns), a text input, tool-call
+     results rendered as distinct "the agent looked something up" cards
+     (never silently folded into assistant prose). New "Chat" nav link.
+
+acceptance_criteria:
+  - "Asking \"how many green-tier gigs do I have\" triggers a real list_gigs or get_status_summary call and the response reflects real data from the store, never a hallucinated number."
+  - "get_gig's returned description/title reaches the model wrapped in the same BEGIN/END untrusted-DATA framing every other LLM call site in this repo uses -- verified by inspecting the actual tool_result content sent, not just that some framing exists somewhere."
+  - "A conversation survives multiple turns (follow-up questions referencing earlier context) without losing history."
+  - "The loop stops cleanly at MAX_TURNS with a clear message, never an unhandled exception or an infinite loop."
+  - "No read-only tool call ever mutates gigs.db -- verified by asserting the store's row count/content is unchanged after a multi-turn read-only conversation."
+
+steps:
+  - id: research
+    description: Re-read profile-assist-loop.ts in full (the exact shape to mirror) and src/mcp/server.ts's tool-to-src/lib-function mapping before writing anything.
+    agent: researcher
+  - id: implement
+    description: Write agent-chat-loop.ts, the Server Actions, and the /chat page + UI.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests for the loop (mocked Anthropic client, real store via temp DB) and the Server Actions.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm zero mutation from read-only tools, confirm untrusted-data delimiting is real not just documented.
+    agent: reviewer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/profile-assist-loop.ts
+      purpose: "the exact multi-turn tool-use loop shape this story's agent-chat-loop.ts mirrors"
+    - path: src/mcp/server.ts
+      purpose: "the same 3 read-only tools, already thin-wrapped over src/lib -- this story's tools wrap the SAME underlying functions"
+
+references:
+  - path: .pHive/epics/agent-chat/docs/design-discussion.md
+    relevant_excerpt: "§2 the loop, §3 the tool surface (read-only half)"
+  - path: .pHive/epics/agent-chat/docs/vertical-plan.md
+    relevant_excerpt: "Slice 1"
