@@ -1,7 +1,7 @@
 id: gmail-connect-ui
 epic: email-digest-ingestion
 title: "/config UI: Connect Gmail, connected-state display, Disconnect"
-status: pending
+status: done
 complexity: low
 methodology: classic
 depends_on: [gmail-digest-source]

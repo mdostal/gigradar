@@ -6,6 +6,9 @@ import { approvedCount } from "@/lib/apply/autofire";
 import { checkCaptureReadiness, type CaptureReadiness } from "@/lib/auth/capture-guidance";
 import { cancelCapture, finishCapture, getCapturePage, startCapture } from "@/lib/auth/session-capture";
 import { sessionBackendFrom } from "@/lib/auth/session-backend";
+import { buildAuthorizationUrl, deleteTokenSet } from "@/lib/auth/oauth2";
+import { resolveOAuthClientCredentials } from "@/lib/auth/oauth-credentials";
+import { GMAIL_PROVIDER } from "@/lib/auth/oauth-providers/gmail";
 import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
@@ -496,4 +499,56 @@ export async function getAutoFireApprovedCountAction(sourceId: string, tier: Tie
   } catch (e) {
     return actionErr(e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Gmail OAuth connect/disconnect (email-digest-ingestion epic,
+// gmail-connect-ui story) — thin wrappers around oauth2.ts/
+// oauth-credentials.ts, same {ok,error} + revalidatePath() convention as
+// every other write-action in this file.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the Gmail source's client id via `resolveOAuthClientCredentials()`
+ * (throws a specific "not configured yet, see docs/gmail-oauth-setup.md"
+ * error, propagated as-is — never rephrased) and builds the real Google
+ * authorization URL. Returns the URL for the CLIENT to navigate to via a
+ * real top-level `window.location.href` assignment — Google's consent
+ * screen can't render inside a Server Action's response, so this can never
+ * be a redirect performed server-side.
+ *
+ * No `revalidatePath()`: building an authorization URL creates no
+ * persisted state (the pending-authorization entry lives in oauth2.ts's
+ * in-memory map) — same reasoning `startCaptureAction()` already
+ * documents for its own identical case.
+ */
+export async function startGmailOAuthAction(sourceId: string): Promise<ActionResult<{ authorizationUrl: string }>> {
+  try {
+    const { clientId } = resolveOAuthClientCredentials(sourceId, GMAIL_PROVIDER);
+    const { url } = buildAuthorizationUrl(GMAIL_PROVIDER, sourceId, clientId);
+    return actionOk({ authorizationUrl: url });
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Deletes the source's stored Gmail token set via whichever backend its
+ * `settings.sessionBackend` configures (`rawSourceConfigFor()` above,
+ * reused — same "find by id" scan `startCaptureAction()`'s origins
+ * fallback already uses). `deleteTokenSet()` is documented as idempotent/
+ * never-throwing for an already-disconnected source, but the whole action
+ * still follows this file's universal try/catch + `actionErr(e)` shape.
+ */
+export async function disconnectGmailAction(sourceId: string): Promise<ActionResult<null>> {
+  try {
+    const raw = readRawConfig();
+    const sc = rawSourceConfigFor(raw.sources, sourceId);
+    const backend = sessionBackendFrom(sc);
+    await deleteTokenSet(GMAIL_PROVIDER, sourceId, backend);
+  } catch (e) {
+    return actionErr(e);
+  }
+  revalidatePath("/config");
+  return actionOk(null);
 }

@@ -80,7 +80,7 @@ describe("GET /api/oauth/[provider]/callback", () => {
 
     expect(res.status).toBe(307);
     const location = res.headers.get("location")!;
-    expect(location).toContain("gmailConnected=1");
+    expect(location).toContain("gmailConnected=gmail-primary");
     expect(storeTokenSetMock).toHaveBeenCalledWith(
       expect.objectContaining({ id: "gmail" }),
       "gmail-primary",

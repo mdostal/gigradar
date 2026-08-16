@@ -58,7 +58,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const backend = sc ? sessionBackendFrom(sc) : "local";
     await storeTokenSet(provider, sourceId, tokenSet, backend);
 
-    configUrl.searchParams.set(`${provider.id}Connected`, "1");
+    // The sourceId itself (not just "1") -- so the UI can flip connected
+    // state on the exact row that requested it, not just show a generic
+    // page-level banner.
+    configUrl.searchParams.set(`${provider.id}Connected`, sourceId);
     return NextResponse.redirect(configUrl);
   } catch (e) {
     console.error(`gigradar oauth callback (${provider.id}):`, e instanceof Error ? e.message : e);
