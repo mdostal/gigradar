@@ -1,7 +1,7 @@
 id: gmail-oauth-provider-callback
 epic: email-digest-ingestion
 title: "Gmail OAuth provider + first app/api/ route (the real redirect callback)"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [oauth2-generic-mechanism]
