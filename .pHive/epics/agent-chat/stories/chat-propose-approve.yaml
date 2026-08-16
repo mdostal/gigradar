@@ -1,7 +1,7 @@
 id: chat-propose-approve
 epic: agent-chat
 title: "Propose/approve write tools: update_gig_status, generate_draft, generate_prep_packet, run_scan"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [chat-loop-core]

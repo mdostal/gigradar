@@ -9,7 +9,7 @@ export default function ChatPage() {
     <main className="mx-auto flex max-w-3xl flex-col p-6" style={{ height: "calc(100vh - 2rem)" }}>
       <h1 className="text-2xl font-bold tracking-tight text-slate-900">Chat</h1>
       <p className="text-sm text-slate-500">
-        Ask about your tracked gigs and pipeline status. Nothing here can change anything yet — read-only for now.
+        Ask about your tracked gigs and pipeline status, or ask it to update a status, draft an application, generate a prep packet, or run a scan — every one of those is proposed first and only runs after you click Approve.
       </p>
       <ChatClient />
     </main>

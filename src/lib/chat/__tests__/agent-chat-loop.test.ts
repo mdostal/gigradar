@@ -20,9 +20,36 @@ vi.mock("@anthropic-ai/sdk", () => {
   return { default: FakeAnthropic };
 });
 
+// The write-tool tests mock the actual LLM-calling generation functions
+// directly (stageApplication/generatePrepPacket/runRadar) rather than
+// threading fake tool-use responses through the SAME mocked Anthropic
+// client the chat loop itself uses -- this file's job is proving the
+// chat loop's approval-gating and dispatch is correct, not re-testing
+// generateDraftAction's/generatePrepPacketAction's own business rules
+// (already covered by their own test files).
+const stageApplicationMock = vi.fn();
+const runRadarMock = vi.fn();
+vi.mock("../../apply/runner.js", () => ({
+  stageApplication: (...args: unknown[]) => stageApplicationMock(...args),
+  runRadar: (...args: unknown[]) => runRadarMock(...args),
+}));
+
+const generatePrepPacketMock = vi.fn();
+vi.mock("../../apply/prep.js", () => ({
+  generatePrepPacket: (...args: unknown[]) => generatePrepPacketMock(...args),
+}));
+
 import { closeDb, getDb } from "../../store/db.js";
 import { recordScan } from "../../store/gigs.js";
-import { endChatSession, MAX_TURNS, sendMessage, startChatSession } from "../agent-chat-loop.js";
+import type { Config } from "../../types.js";
+import { endChatSession, MAX_TURNS, resolveApproval, sendMessage, startChatSession } from "../agent-chat-loop.js";
+
+const FAKE_CONFIG: Config = {
+  profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
+  needs: { engagementProfiles: [], freshStageOnly: false, remoteOnly: false },
+  sources: [],
+  applyProfile: { email: "jane@example.com" },
+};
 
 let tmpDir: string;
 let dbPath: string;
@@ -40,6 +67,9 @@ beforeEach(() => {
   process.env.GIGRADAR_DB_PATH = dbPath;
   db = getDb();
   mockCreate.mockReset();
+  stageApplicationMock.mockReset();
+  runRadarMock.mockReset();
+  generatePrepPacketMock.mockReset();
 });
 
 afterEach(() => {
@@ -228,5 +258,132 @@ describe("sendMessage: MAX_TURNS", () => {
     expect(result).toEqual({ type: "turn_limit_reached" });
     expect(mockCreate).toHaveBeenCalledTimes(MAX_TURNS);
     endChatSession("s8");
+  });
+});
+
+describe("write tools: propose then approve, no exceptions", () => {
+  it("update_gig_status produces a proposal, never mutates before approval", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1" });
+    mockCreate.mockResolvedValueOnce(fakeToolUseResponse("update_gig_status", { key, status: "applied" }));
+
+    startChatSession("w1");
+    const result = await sendMessage("w1", "fake-api-key", "mark this one applied");
+
+    expect(result).toEqual({
+      type: "proposal",
+      tool: "update_gig_status",
+      input: { key, status: "applied" },
+      description: `Mark gig "${key}" as "applied"`,
+    });
+    expect(db.prepare("SELECT status FROM gigs WHERE key = ?").get(key)).toEqual({ status: "new" });
+    endChatSession("w1");
+  });
+
+  it("sendMessage() throws if called again while a proposal is still pending", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1" });
+    mockCreate.mockResolvedValueOnce(fakeToolUseResponse("update_gig_status", { key, status: "applied" }));
+    startChatSession("w2");
+    await sendMessage("w2", "fake-api-key", "mark this one applied");
+
+    await expect(sendMessage("w2", "fake-api-key", "another message")).rejects.toThrow(/still awaiting approval/);
+    endChatSession("w2");
+  });
+
+  it("resolveApproval(approve:true) executes the REAL setStatus() and the loop continues to a final message", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1" });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("update_gig_status", { key, status: "applied" }))
+      .mockResolvedValueOnce(fakeTextResponse("Done, marked as applied."));
+
+    startChatSession("w3");
+    await sendMessage("w3", "fake-api-key", "mark this one applied");
+    const result = await resolveApproval("w3", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Done, marked as applied." });
+    expect(db.prepare("SELECT status FROM gigs WHERE key = ?").get(key)).toEqual({ status: "applied" });
+    endChatSession("w3");
+  });
+
+  it("resolveApproval(approve:false) never touches the store, and the loop continues", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1" });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("update_gig_status", { key, status: "applied" }))
+      .mockResolvedValueOnce(fakeTextResponse("Okay, not marking it applied."));
+
+    startChatSession("w4");
+    await sendMessage("w4", "fake-api-key", "mark this one applied");
+    const result = await resolveApproval("w4", "fake-api-key", false, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Okay, not marking it applied." });
+    expect(db.prepare("SELECT status FROM gigs WHERE key = ?").get(key)).toEqual({ status: "new" });
+    endChatSession("w4");
+  });
+
+  it("resolveApproval() throws when there is no pending approval", async () => {
+    startChatSession("w5");
+    await expect(resolveApproval("w5", "fake-api-key", true, FAKE_CONFIG)).rejects.toThrow(/no pending approval/);
+    endChatSession("w5");
+  });
+
+  it("generate_draft: approval calls the REAL stageApplication() with the gig/config/apiKey", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1", tier: "green" });
+    stageApplicationMock.mockResolvedValue({});
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("generate_draft", { key }))
+      .mockResolvedValueOnce(fakeTextResponse("Draft generated."));
+
+    startChatSession("w6");
+    await sendMessage("w6", "fake-api-key", "draft an application for this one");
+    await resolveApproval("w6", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(stageApplicationMock).toHaveBeenCalledWith(expect.objectContaining({ gig: expect.objectContaining({ sourceId: "src-a" }) }), FAKE_CONFIG, "fake-api-key");
+    endChatSession("w6");
+  });
+
+  it("generate_prep_packet: approval calls the REAL generatePrepPacket() and persists via saveInterviewPrep()", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1" });
+    generatePrepPacketMock.mockResolvedValue({ score: 77, rationale: "r", topStrengths: [], keyGaps: [], recommendation: "Pursue", predictedQuestions: [], starlaStories: [] });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("generate_prep_packet", { key }))
+      .mockResolvedValueOnce(fakeTextResponse("Prep packet ready."));
+
+    startChatSession("w7");
+    await sendMessage("w7", "fake-api-key", "generate a prep packet for this one");
+    const result = await resolveApproval("w7", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Prep packet ready." });
+    expect(generatePrepPacketMock).toHaveBeenCalled();
+    const stored = db.prepare("SELECT content FROM interview_prep WHERE gig_key = ?").get(key) as { content: string } | undefined;
+    expect(stored).toBeDefined();
+    expect(JSON.parse(stored!.content).score).toBe(77);
+    endChatSession("w7");
+  });
+
+  it("run_scan: approval calls the REAL runRadar() with the config and BYOK apiKey", async () => {
+    runRadarMock.mockResolvedValue({ results: [{}], passed: [{}], errors: [], newlyInsertedKeys: [] });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("run_scan", {}))
+      .mockResolvedValueOnce(fakeTextResponse("Scan done."));
+
+    startChatSession("w8");
+    await sendMessage("w8", "fake-api-key", "run a scan");
+    const result = await resolveApproval("w8", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Scan done." });
+    expect(runRadarMock).toHaveBeenCalledWith(FAKE_CONFIG, {}, { anthropicApiKey: "fake-api-key" });
+    endChatSession("w8");
+  });
+
+  it("a failed write tool (e.g. unknown gig key) surfaces as a tool error to the model, never throws out of resolveApproval()", async () => {
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("update_gig_status", { key: "does-not:exist", status: "applied" }))
+      .mockResolvedValueOnce(fakeTextResponse("That gig doesn't exist."));
+
+    startChatSession("w9");
+    await sendMessage("w9", "fake-api-key", "mark does-not:exist as applied");
+    const result = await resolveApproval("w9", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "That gig doesn't exist." });
+    endChatSession("w9");
   });
 });

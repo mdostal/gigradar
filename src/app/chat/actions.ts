@@ -11,8 +11,10 @@
 import crypto from "node:crypto";
 import { actionErr, actionOk } from "@/lib/actions/result";
 import type { ActionResult } from "@/lib/actions/result";
-import { endChatSession, sendMessage, startChatSession, type ChatLoopEvent } from "@/lib/chat/agent-chat-loop";
+import { endChatSession, resolveApproval, sendMessage, startChatSession, type ChatLoopEvent } from "@/lib/chat/agent-chat-loop";
 import { readEnvVar } from "@/lib/config/env-store";
+import { readRawConfig } from "@/lib/config/save";
+import { ConfigSchema } from "@/lib/config/schema";
 
 const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
 const MISSING_API_KEY_ERROR =
@@ -39,6 +41,35 @@ export async function sendChatMessageAction(sessionId: string, message: string):
 
   try {
     const event = await sendMessage(sessionId, apiKey, message);
+    return actionOk(event);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Resolves a pending write-tool proposal -- `approve: false` (Reject)
+ * never executes anything, `approve: true` runs the real underlying
+ * action. Config resolved the SAME non-resolving way
+ * generateDraftAction()/generatePrepPacketAction() (src/app/actions.ts)
+ * already do -- readRawConfig() + ConfigSchema.safeParse(), never
+ * loadConfig() (see those actions' own doc comments for why).
+ */
+export async function resolveChatApprovalAction(sessionId: string, approve: boolean): Promise<ActionResult<ChatLoopEvent>> {
+  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  if (!apiKey) {
+    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  }
+
+  const parsedConfig = ConfigSchema.safeParse(readRawConfig());
+  if (!parsedConfig.success) {
+    return actionErr(
+      new Error("gigradar config: your saved configuration is incomplete or invalid — check /config before approving this action."),
+    );
+  }
+
+  try {
+    const event = await resolveApproval(sessionId, apiKey, approve, parsedConfig.data);
     return actionOk(event);
   } catch (e) {
     return actionErr(e);
