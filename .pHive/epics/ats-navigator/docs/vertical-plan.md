@@ -54,25 +54,32 @@ onboarding turn.
 onboarding experience is real, end to end, via chat, including the Gmail
 half.
 
-## Slice 4: ats-resume-score (bidirectional)
+## Slice 4: ats-resume-score (bidirectional, re-grounded)
 
-Extends `generatePrepPacket()`/`PrepPacketContent` with:
-- a deterministic parseability check (multi-column/table/image-text/
-  header-contact-info/non-standard-heading detection against the
-  already-ingested resume) — forward direction, no LLM;
-- a keyword-overlap score against the specific gig's own description —
-  forward direction, one LLM call;
+Real finding during this slice's own research step changed the plan --
+see design-discussion.md §4.4: there is no persisted resume file/text or
+structural metadata anywhere in this codebase (`Profile` only ever holds
+`{name, roles, skills, timezone, homeBase}`; `extractProfile()` sends a
+resume PDF natively to Claude and persists only `{roles, skills,
+warnings}`). A "deterministic parseability check against the ingested
+resume" would have to fabricate structure that was never actually
+observed -- so it's deferred (design-discussion.md §5 open question 4),
+not shipped as a fake pass.
+
+What ships, using data this codebase actually has:
+- a keyword-overlap score: `profile.skills`/`profile.roles` vs. the
+  specific gig's own description — one LLM call;
 - `resumeTweaks`: a short, concrete, ATS-mechanical action list grounded
-  in the computed keyword gap ("add X, it appears N× in this listing") —
-  reverse direction, same LLM call as the keyword-overlap score, not a
-  second call.
+  in the computed keyword gap ("add X to your skills, it appears N× in
+  this listing") — reverse direction, the SAME LLM call as the
+  keyword-overlap score, not a second call.
 
 Surfaced in the existing prep-packet UI. No new page, no new LLM call
 site shape — an extension of a call site that already exists.
 
 **Working state after this slice:** every prep packet now also answers
-"will my resume even get past an automated filter for this specific
-listing, why/why not, and exactly what to change about it."
+"how well does my tracked skill/role profile match this specific
+listing's keywords, and exactly what to add."
 
 ## Explicitly deferred (not this epic, tracked as follow-ups)
 
@@ -80,3 +87,7 @@ listing, why/why not, and exactly what to change about it."
   automation needs its own live-verification pass (GoFractional
   precedent), not assumed to work because the fetch side does.
   design-discussion.md §5's remaining open item.
+- **Deterministic resume-file parseability checks** (multi-column/table/
+  image-text/header-contact-info detection) — needs a real decision on
+  whether/how gigradar persists resume content first (design-discussion.md
+  §5, item 4). Not silently faked against data that doesn't exist.
