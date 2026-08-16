@@ -1,0 +1,20 @@
+name: career-crm
+title: "Per-gig interview prep packets: fit/gap analysis + interview prep, grounded in gigradar's own Profile+Gig data"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: prep-packet-mechanism
+    title: "generatePrepPacket() + interview_prep storage table"
+    complexity: medium
+    depends_on: []
+  - id: prep-packet-ui
+    title: "Server Action + dashboard UI: Generate prep packet"
+    complexity: low
+    depends_on: [prep-packet-mechanism]
