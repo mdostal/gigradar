@@ -34,19 +34,28 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const launchMock = vi.fn();
-const executablePathMock = vi.fn();
+const spawnRealChromeMock = vi.fn();
+const attachToRealChromeMock = vi.fn();
+const closeRealChromeMock = vi.fn();
 
-vi.mock("playwright", () => ({
-  chromium: {
-    launch: (...args: unknown[]) => launchMock(...args),
-    executablePath: (...args: unknown[]) => executablePathMock(...args),
-  },
+vi.mock("../real-chrome.js", () => ({
+  spawnRealChrome: (...args: unknown[]) => spawnRealChromeMock(...args),
+  attachToRealChrome: (...args: unknown[]) => attachToRealChromeMock(...args),
+  closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
 }));
+
+const FAKE_REAL_CHROME_HANDLE = { process: { kill: vi.fn() }, cdpPort: 54732, userDataDir: "/fake/tmp/gigradar-real-chrome" };
 
 import { SOURCE_ORIGINS } from "../../sources/origins.js";
 import { VaultKeyLostError, decrypt, encrypt, isEncryptedEnvelope } from "../../security/vault.js";
-import { cancelCapture, finishCapture, IDLE_TIMEOUT_MS, startCapture, writeStorageStateAtomically } from "../session-capture.js";
+import { cancelCapture, finishCapture, getCapturePage, IDLE_TIMEOUT_MS, startCapture, writeStorageStateAtomically } from "../session-capture.js";
+
+/** finishCapture() defaults to the "local" backend -- this test suite exercises only that path (Portunus is covered separately in session-backend.test.ts). Narrows the discriminated result down to its local-path shape, or fails loudly if a test somehow ended up with the "portunus" branch. */
+async function finishCaptureLocal(captureId: string): Promise<{ path: string }> {
+  const result = await finishCapture(captureId);
+  if (result.backend !== "local") throw new Error(`expected the local backend, got "${result.backend}"`);
+  return result;
+}
 
 const SOURCE_ID = "gofractional";
 const LOGIN_URL = "https://www.gofractional.com/login";
@@ -62,10 +71,11 @@ function createFakePage(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** A fake BrowserContext: newPage()/storageState() resolve, close() is a tracked spy. */
+/** A fake BrowserContext: newPage()/storageState() resolve, close() is a tracked spy, pages() returns the same page newPage() resolved (mirrors real Playwright: the page created by newPage() shows up in pages() too) -- used by getCapturePage()'s tests. */
 function createFakeContext(page: unknown, storageStateResult: unknown) {
   return {
     newPage: vi.fn().mockResolvedValue(page),
+    pages: vi.fn().mockReturnValue([page]),
     storageState: vi.fn().mockResolvedValue(storageStateResult),
     close: vi.fn().mockResolvedValue(undefined),
   };
@@ -111,12 +121,13 @@ function createFakeBrowser(context: unknown) {
   };
 }
 
-/** Wires a fake page/context/browser together and registers them with launchMock. */
+/** Wires a fake page/context/browser together and registers them with spawnRealChromeMock/attachToRealChromeMock. */
 function setUpFakeBrowserChain(storageStateResult: unknown, pageOverrides: Record<string, unknown> = {}) {
   const page = createFakePage(pageOverrides);
   const context = createFakeContext(page, storageStateResult);
   const browser = createFakeBrowser(context);
-  launchMock.mockResolvedValue(browser);
+  spawnRealChromeMock.mockResolvedValue(FAKE_REAL_CHROME_HANDLE);
+  attachToRealChromeMock.mockResolvedValue(browser);
   return { page, context, browser };
 }
 
@@ -143,17 +154,9 @@ beforeEach(() => {
   tmpKeyDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-session-capture-test-key-"));
   process.env.XDG_DATA_HOME = tmpDataDir;
   process.env.XDG_CONFIG_HOME = tmpKeyDir;
-  launchMock.mockReset();
-  executablePathMock.mockReset();
-  executablePathMock.mockReturnValue("/fake/chromium/executable");
-  // checkChromiumAvailable() checks the fake executable path; everything
-  // else (temp dirs, destination files) should hit the real filesystem, so
-  // capture the real implementation before spying over it.
-  const realExistsSync = fs.existsSync.bind(fs);
-  vi.spyOn(fs, "existsSync").mockImplementation((p) => {
-    if (p === "/fake/chromium/executable") return true;
-    return realExistsSync(p);
-  });
+  spawnRealChromeMock.mockReset();
+  attachToRealChromeMock.mockReset();
+  closeRealChromeMock.mockReset();
 });
 
 afterEach(async () => {
@@ -210,7 +213,7 @@ describe("startCapture / finishCapture: happy path", () => {
     expect(typeof captureId).toBe("string");
     expect(captureId.length).toBeGreaterThan(0);
 
-    const { path: written } = await finishCapture(captureId);
+    const { path: written } = await finishCaptureLocal(captureId);
 
     expect(written).toBe(sessionFilePath(SOURCE_ID));
     expect(fs.existsSync(written)).toBe(true);
@@ -238,6 +241,11 @@ describe("startCapture / finishCapture: happy path", () => {
     // browser.close() forever against a real Browser.
     expect(browser.off).toHaveBeenCalledWith("disconnected", expect.any(Function));
     expect(browser.removeAllListeners).not.toHaveBeenCalled();
+
+    // The real, independently-spawned Chrome process + its temp
+    // --user-data-dir are torn down alongside the Playwright CDP connection
+    // — see real-chrome.ts's closeRealChrome().
+    expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
   });
 
   it("launches a FRESH context — no storageState passed into newContext()", async () => {
@@ -257,12 +265,46 @@ describe("startCapture / finishCapture: happy path", () => {
     expect(page.goto).toHaveBeenCalledWith(LOGIN_URL);
   });
 
-  it("checks Chromium availability before ever launching", async () => {
-    executablePathMock.mockReturnValue("/fake/chromium/executable");
-    vi.spyOn(fs, "existsSync").mockReturnValue(false);
+  it("propagates a spawnRealChrome() failure (e.g. real Chrome not installed) and never attempts to attach", async () => {
+    spawnRealChromeMock.mockRejectedValue(new Error("gigradar real-chrome: Google Chrome not found"));
 
-    await expect(startCapture(SOURCE_ID, LOGIN_URL)).rejects.toThrow(/npx playwright install chromium/);
-    expect(launchMock).not.toHaveBeenCalled();
+    await expect(startCapture(SOURCE_ID, LOGIN_URL)).rejects.toThrow(/Google Chrome not found/);
+    expect(attachToRealChromeMock).not.toHaveBeenCalled();
+  });
+
+  it("closes the spawned real Chrome if attaching over CDP fails", async () => {
+    spawnRealChromeMock.mockResolvedValue(FAKE_REAL_CHROME_HANDLE);
+    attachToRealChromeMock.mockRejectedValue(new Error("simulated connectOverCDP failure"));
+
+    await expect(startCapture(SOURCE_ID, LOGIN_URL)).rejects.toThrow(/failed to attach to the spawned Chrome/);
+    expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
+  });
+});
+
+describe("getCapturePage: used by capture-guidance.ts's checkCaptureReadiness() (oauth-session-capture-v2 epic)", () => {
+  it("returns the capture's current live page", async () => {
+    const { page } = setUpFakeBrowserChain(GOOD_STORAGE_STATE);
+
+    const { captureId } = await startCapture(SOURCE_ID, LOGIN_URL);
+
+    expect(getCapturePage(captureId)).toBe(page);
+  });
+
+  it("throws a specific 'not found or already expired' error for an unknown captureId, same wording finishCapture()/cancelCapture() use", () => {
+    expect(() => getCapturePage("not-a-real-capture-id")).toThrow(/not found or already expired/);
+  });
+
+  it("never touches the idle timeout, disconnect listener, or map entry -- purely a read", async () => {
+    const { browser } = setUpFakeBrowserChain(GOOD_STORAGE_STATE);
+    const { captureId } = await startCapture(SOURCE_ID, LOGIN_URL);
+
+    getCapturePage(captureId);
+    getCapturePage(captureId);
+
+    expect(browser.off).not.toHaveBeenCalled();
+    expect(browser.close).not.toHaveBeenCalled();
+    // The capture is still live afterward -- finishCapture() still finds it.
+    await expect(finishCaptureLocal(captureId)).resolves.toBeDefined();
   });
 });
 
@@ -284,7 +326,9 @@ describe("globalThis-pinning: survives a simulated module re-evaluation (the HMR
     expect(freshModule.finishCapture).not.toBe(finishCapture); // genuinely a distinct module instance
 
     // "New" module instance completes the SAME capture id.
-    const { path: written } = await freshModule.finishCapture(captureId);
+    const freshResult = await freshModule.finishCapture(captureId);
+    if (freshResult.backend !== "local") throw new Error(`expected the local backend, got "${freshResult.backend}"`);
+    const written = freshResult.path;
 
     expect(fs.existsSync(written)).toBe(true);
   });
@@ -421,7 +465,7 @@ describe("finishCapture: file permissions", () => {
     setUpFakeBrowserChain(GOOD_STORAGE_STATE);
     const { captureId } = await startCapture(SOURCE_ID, LOGIN_URL);
 
-    const { path: written } = await finishCapture(captureId);
+    const { path: written } = await finishCaptureLocal(captureId);
 
     const mode = fs.statSync(written).mode & 0o777;
     expect(mode).toBe(0o600);
@@ -475,15 +519,15 @@ describe("cancelCapture", () => {
 });
 
 describe("no debug capture, ever: launch()/newContext() calls carry no tracing/HAR/video/console-logging options", () => {
-  it("chromium.launch() is called with exactly { headless: false, channel: 'chrome' } — headed, real Chrome preferred, no debug keys", async () => {
+  it("acquires the browser via spawnRealChrome()/attachToRealChrome() — never playwright.chromium.launch() directly", async () => {
     setUpFakeBrowserChain(GOOD_STORAGE_STATE);
 
     await startCapture(SOURCE_ID, LOGIN_URL);
 
-    expect(launchMock).toHaveBeenCalledTimes(1);
-    const launchArgs = launchMock.mock.calls[0]?.[0];
-    expect(launchArgs).toEqual({ headless: false, channel: "chrome" });
-    expect(Object.keys(launchArgs).sort()).toEqual(["channel", "headless"]);
+    expect(spawnRealChromeMock).toHaveBeenCalledTimes(1);
+    expect(spawnRealChromeMock).toHaveBeenCalledWith();
+    expect(attachToRealChromeMock).toHaveBeenCalledTimes(1);
+    expect(attachToRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE.cdpPort);
   });
 
   it("browser.newContext() is called with no options at all — no recordHar/recordVideo/tracing-related keys", async () => {

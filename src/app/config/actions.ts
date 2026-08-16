@@ -3,14 +3,31 @@
 import { revalidatePath } from "next/cache";
 import { actionErr, actionOk } from "@/lib/actions/result";
 import { approvedCount } from "@/lib/apply/autofire";
-import { cancelCapture, finishCapture, startCapture } from "@/lib/auth/session-capture";
+import { checkCaptureReadiness, type CaptureReadiness } from "@/lib/auth/capture-guidance";
+import { cancelCapture, finishCapture, getCapturePage, startCapture } from "@/lib/auth/session-capture";
+import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
-import { SOURCE_LOGIN_URLS } from "@/lib/sources/origins";
+import { customLlmSource } from "@/lib/sources/custom-llm-source";
+import { resolveAllowedOrigins, resolveLoginUrl } from "@/lib/sources/origins";
 import type { ActionResult } from "@/lib/actions/result";
 import type { ExtractProfileInput } from "@/lib/profile-ingestion/extract";
-import type { Config, Tier } from "@/lib/types";
+import type { Config, Profile, SourceConfig, Tier } from "@/lib/types";
+
+/**
+ * Finds `sourceId`'s raw entry in `rawSources` and returns it as a
+ * (partial-safety) `SourceConfig` — reused by both `startCaptureAction()`
+ * (origins/login-URL fallback resolution) and `rawSessionBackendFor()`
+ * below, rather than each re-implementing the same "find by id" scan.
+ */
+function rawSourceConfigFor(rawSources: unknown, sourceId: string): SourceConfig {
+  const sources = Array.isArray(rawSources) ? rawSources : [];
+  const entry = sources.find(
+    (s): s is Record<string, unknown> => typeof s === "object" && s !== null && (s as Record<string, unknown>).id === sourceId,
+  );
+  return { id: sourceId, enabled: true, settings: (entry?.settings as Record<string, unknown> | undefined) ?? {} };
+}
 
 /**
  * Server Action wrapping `saveConfig()` (config-write-path) — the config
@@ -53,13 +70,17 @@ export async function saveConfigAction(edits: ConfigEdits): Promise<ActionResult
 // ---------------------------------------------------------------------------
 
 /**
- * Wraps `startCapture()`: looks up `sourceId`'s login URL from the shared
- * `SOURCE_LOGIN_URLS` registry (`src/lib/sources/origins.ts`) and launches a
- * capture. `startCapture()` itself never throws a generic message — its
- * errors already name the exact failure (missing Chromium binary, launch
- * failure, failed navigation) — so this action's `catch` just carries that
- * message through verbatim via `actionErr()`, never replacing it with a
- * generic "capture failed."
+ * Wraps `startCapture()`: resolves `sourceId`'s login URL and origin
+ * allowlist via `origins.ts`'s `resolveLoginUrl()`/`resolveAllowedOrigins()`
+ * — the static `SOURCE_LOGIN_URLS`/`SOURCE_ORIGINS` registries first (every
+ * existing browser-session-auth source, unchanged), a config-driven
+ * fallback (`settings.loginUrl`/`settings.allowedOrigins`) second, for a
+ * custom source with no static entry (llm-custom-sources epic,
+ * custom-source-auth story). `startCapture()` itself never throws a generic
+ * message — its errors already name the exact failure (missing Chromium
+ * binary, launch failure, failed navigation) — so this action's `catch`
+ * just carries that message through verbatim via `actionErr()`, never
+ * replacing it with a generic "capture failed."
  *
  * No `revalidatePath()` call here: starting a capture only creates in-memory
  * Playwright state (a live `Browser`/`BrowserContext` held in
@@ -73,15 +94,19 @@ export async function saveConfigAction(edits: ConfigEdits): Promise<ActionResult
  * anything the page reads actually changed.
  */
 export async function startCaptureAction(sourceId: string): Promise<ActionResult<{ captureId: string }>> {
-  const loginUrl = SOURCE_LOGIN_URLS[sourceId];
+  const raw = readRawConfig();
+  const cfg = rawSourceConfigFor(raw.sources, sourceId);
+
+  const loginUrl = resolveLoginUrl(sourceId, cfg);
   if (!loginUrl) {
     return actionErr(
-      new Error(`gigradar config: no login URL registered for source "${sourceId}" (see src/lib/sources/origins.ts).`),
+      new Error(`gigradar config: no login URL registered for source "${sourceId}" (see src/lib/sources/origins.ts, or set settings.loginUrl).`),
     );
   }
+  const allowedOrigins = resolveAllowedOrigins(sourceId, cfg);
 
   try {
-    const { captureId } = await startCapture(sourceId, loginUrl);
+    const { captureId } = await startCapture(sourceId, loginUrl, allowedOrigins);
     return actionOk({ captureId });
   } catch (e) {
     return actionErr(e);
@@ -130,12 +155,28 @@ function withSessionStatePath(
 }
 
 /**
- * Wraps `finishCapture(captureId)`. `sourceId` is supplied by the caller
- * (the client already knows it — it's the same id `startCaptureAction()`
- * was called with for this row) rather than derived from `captureId`,
- * since `finishCapture()`'s return value (`{ path }`) doesn't expose it.
+ * Finds `sourceId`'s raw entry in `rawSources` and resolves which session
+ * backend it's configured for via session-backend.ts's sessionBackendFrom()
+ * — "local" (the default, when the source has no entry yet or no
+ * settings.sessionBackend) or "portunus". This is deliberately a READ of
+ * whatever's already configured (set via the /config Settings editor, same
+ * convention as every other per-source setting) — Capture Login itself
+ * never lets the user pick a backend ad hoc.
+ */
+function rawSessionBackendFor(rawSources: unknown, sourceId: string): "local" | "portunus" {
+  return sessionBackendFrom(rawSourceConfigFor(rawSources, sourceId));
+}
+
+/**
+ * Wraps `finishCapture(captureId, sessionBackend)`. `sourceId` is supplied
+ * by the caller (the client already knows it — it's the same id
+ * `startCaptureAction()` was called with for this row) rather than derived
+ * from `captureId`, since `finishCapture()`'s return value doesn't expose
+ * it. `sessionBackend` is resolved from `sourceId`'s EXISTING config
+ * (`rawSessionBackendFor()` above) — set ahead of time via the /config
+ * Settings editor, never chosen ad hoc in this flow.
  *
- * On success: AUTO-WRITES the returned path into that source's
+ * On a `"local"` result: AUTO-WRITES the returned path into that source's
  * `SourceConfig.settings.sessionStatePath` — reads the current raw document
  * fresh via `readRawConfig()`, merges the update in via
  * `withSessionStatePath()` above (preserving every other field/source), and
@@ -146,33 +187,50 @@ function withSessionStatePath(
  * write actually succeeds, so a reload never serves a stale pre-capture
  * config.json from the Full Route Cache.
  *
+ * On a `"portunus"` result: nothing to persist into config.json — the
+ * session now lives in Portunus, keyed by `sourceId`, and
+ * `settings.sessionBackend` was already `"portunus"` (that's how this
+ * action knew to pass that backend to `finishCapture()` in the first
+ * place). No `saveConfig()`/`revalidatePath()` call — nothing on disk that
+ * `/config`'s render depends on changed.
+ *
  * On failure — either `finishCapture()` itself throwing (e.g. the
- * zero-cookies sanity check, or "capture not found or already expired") or
- * the subsequent `saveConfig()` call failing validation — the SPECIFIC
- * error message is returned verbatim via `actionErr()`, never a generic
- * "capture failed" string. A `finishCapture()` failure writes nothing (that
- * guarantee lives in `session-capture.ts` itself); a `saveConfig()` failure
- * after a successful `finishCapture()` leaves the just-captured session
- * file on disk (capture succeeded) but the config.json write did not go
- * through — surfaced as an explicit error rather than silently pretending
- * the whole operation succeeded.
+ * zero-cookies sanity check, "capture not found or already expired", or a
+ * Portunus write failure) or the subsequent `saveConfig()` call (local
+ * backend only) failing validation — the SPECIFIC error message is
+ * returned verbatim via `actionErr()`, never a generic "capture failed"
+ * string. A `finishCapture()` failure writes nothing (that guarantee lives
+ * in `session-capture.ts` itself); a `saveConfig()` failure after a
+ * successful LOCAL `finishCapture()` leaves the just-captured session file
+ * on disk (capture succeeded) but the config.json write did not go through
+ * — surfaced as an explicit error rather than silently pretending the whole
+ * operation succeeded.
  */
-export async function finishCaptureAction(captureId: string, sourceId: string): Promise<ActionResult<{ path: string }>> {
-  let path: string;
+export async function finishCaptureAction(
+  captureId: string,
+  sourceId: string,
+): Promise<ActionResult<{ backend: "local"; path: string } | { backend: "portunus" }>> {
+  const raw = readRawConfig();
+  const sessionBackend = rawSessionBackendFor(raw.sources, sourceId);
+
+  let result: Awaited<ReturnType<typeof finishCapture>>;
   try {
-    ({ path } = await finishCapture(captureId));
+    result = await finishCapture(captureId, sessionBackend);
   } catch (e) {
     return actionErr(e);
   }
 
-  const raw = readRawConfig();
-  const sources = withSessionStatePath(raw.sources, sourceId, path);
+  if (result.backend === "portunus") {
+    return actionOk({ backend: "portunus" });
+  }
+
+  const sources = withSessionStatePath(raw.sources, sourceId, result.path);
 
   const saveResult = saveConfig({ sources });
   if (!saveResult.ok) return actionErr(new Error(saveResult.error));
 
   revalidatePath("/config");
-  return actionOk({ path });
+  return actionOk({ backend: "local", path: result.path });
 }
 
 /**
@@ -191,6 +249,95 @@ export async function cancelCaptureAction(captureId: string): Promise<ActionResu
   try {
     await cancelCapture(captureId);
     return actionOk(null);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Wraps `checkCaptureReadiness()` (`src/lib/auth/capture-guidance.ts`,
+ * oauth-session-capture-v2 epic, llm-capture-readiness-check story) for the
+ * Capture Login waiting screen's optional "Check if I'm ready" button.
+ * ADVISORY ONLY: this action never calls `finishCapture()` and never
+ * mutates anything — no `saveConfig()`/`revalidatePath()` call, same as
+ * `cancelCaptureAction()` above. The "I'm done" button remains a fully
+ * independent, always-available action regardless of what this returns
+ * (see config-client.tsx's `CaptureLoginControl`).
+ *
+ * The Anthropic API key is resolved fresh, inside this handler, via
+ * `readEnvVar()` — same non-negotiable discipline
+ * `extractProfileFromResumeAction()` below already establishes (see that
+ * function's own doc comment for why). A missing key returns
+ * `MISSING_API_KEY_ERROR` before `getCapturePage()`/`checkCaptureReadiness()`
+ * ever run.
+ */
+export async function checkCaptureReadinessAction(captureId: string, sourceId: string): Promise<ActionResult<CaptureReadiness>> {
+  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  if (!apiKey) {
+    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  }
+
+  try {
+    const page = getCapturePage(captureId);
+    const readiness = await checkCaptureReadiness(page, sourceId, apiKey);
+    return actionOk(readiness);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Wraps `customLlmSource.fetch()` for the "Test extraction now" preview
+ * button (llm-custom-sources epic, custom-source-pagination-and-ui story):
+ * runs ONE real extraction against the entered URL/hint/auth settings and
+ * returns a summary — count + titles — to display before the user commits
+ * to saving. Writes NOTHING to `config.json` (same "preview, not a
+ * mutation" discipline `extractProfileFromResumeAction()` below already
+ * established) — no `saveConfig()`/`revalidatePath()` call of any kind.
+ *
+ * `sourceId` is threaded through so a successful extraction's derived
+ * recipe (custom-source-recipe-caching story) gets cached under the SAME
+ * id the user is about to save — the first real scheduled scan after
+ * saving then hits the cache immediately, rather than re-deriving. This is
+ * a real, intentional side effect (a recipe cache file, not config.json).
+ *
+ * The Anthropic API key is resolved fresh, inside this handler, via
+ * `readEnvVar()` — same discipline every other LLM-calling action in this
+ * file already follows.
+ */
+export async function testCustomSourceExtractionAction(
+  sourceId: string,
+  url: string,
+  hint: string | undefined,
+  customAuth: "none" | "browser-session",
+  sessionStatePath: string | undefined,
+): Promise<ActionResult<{ count: number; titles: string[] }>> {
+  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  if (!apiKey) {
+    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  }
+  if (!sourceId) {
+    return actionErr(new Error("gigradar config: give this custom source a name before testing extraction."));
+  }
+  if (!url) {
+    return actionErr(new Error("gigradar config: enter a URL before testing extraction."));
+  }
+
+  const testProfile: Profile = { name: "", roles: [], skills: [], timezone: "UTC" };
+  const cfg: SourceConfig = {
+    id: sourceId,
+    enabled: true,
+    kind: "custom-llm",
+    settings: {
+      url,
+      ...(hint && { hint }),
+      ...(customAuth === "browser-session" && { customAuth, ...(sessionStatePath && { sessionStatePath }) }),
+    },
+  };
+
+  try {
+    const gigs = await customLlmSource.fetch(cfg, testProfile, apiKey);
+    return actionOk({ count: gigs.length, titles: gigs.slice(0, 5).map((g) => g.title) });
   } catch (e) {
     return actionErr(e);
   }

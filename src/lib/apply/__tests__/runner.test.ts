@@ -5,6 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Config, Gig, RoleAreaConfig } from "../../types.js";
 import { registerSource } from "../../sources/source.js";
+import { VerificationChallengeError } from "../../sources/verification-challenge.js";
 import { closeDb, getDb, getGig, listGigs } from "../../store/index.js";
 import { runRadar } from "../runner.js";
 
@@ -41,6 +42,24 @@ registerSource({
   },
 });
 
+// A third registered double that throws VerificationChallengeError
+// (verification-copilot epic) -- proves runner.ts's errors[] entry
+// carries needsVerification/blockedUrl, distinct from a generic thrown
+// Error (the "flaky" double above), without needing a real
+// withBrowserSession() call or a real bot-detection page.
+let verificationBlockedShouldThrow = false;
+registerSource({
+  id: "verification-blocked",
+  label: "Verification-blocked (test double)",
+  auth: "browser-session",
+  async fetch(): Promise<Gig[]> {
+    if (verificationBlockedShouldThrow) {
+      throw new VerificationChallengeError("verification-blocked", "https://example.com/blocked-page");
+    }
+    return [];
+  },
+});
+
 let tmpDir: string;
 let dbPath: string;
 let db: DatabaseSync;
@@ -52,6 +71,7 @@ beforeEach(() => {
   nextGigs = [];
   flakyShouldThrow = false;
   flakyGigs = [];
+  verificationBlockedShouldThrow = false;
 });
 
 afterEach(() => {
@@ -173,6 +193,34 @@ describe("runRadar + store integration", () => {
     // unavailable just because this scan's fetch failed.
     expect(getGig("flaky:1", { db })?.unavailableSince).toBeNull();
     expect(getGig("flaky:2", { db })?.unavailableSince).toBeNull();
+  });
+
+  it("a VerificationChallengeError throw surfaces in errors[] with needsVerification:true and blockedUrl set (verification-copilot epic)", async () => {
+    const config = makeConfig();
+    config.sources = [{ id: "verification-blocked", enabled: true }];
+    verificationBlockedShouldThrow = true;
+
+    const result = await runRadar(config, { db });
+
+    expect(result.errors).toEqual([
+      {
+        sourceId: "verification-blocked",
+        message: 'gigradar: source "verification-blocked" hit a verification challenge at "https://example.com/blocked-page" — a human needs to clear it before this source can be scanned again.',
+        needsVerification: true,
+        blockedUrl: "https://example.com/blocked-page",
+      },
+    ]);
+  });
+
+  it("a plain thrown Error (not a VerificationChallengeError) never sets needsVerification/blockedUrl", async () => {
+    const config = makeConfig();
+    config.sources = [{ id: "flaky", enabled: true }];
+    flakyShouldThrow = true;
+
+    const result = await runRadar(config, { db });
+
+    expect(result.errors[0]?.needsVerification).toBeUndefined();
+    expect(result.errors[0]?.blockedUrl).toBeUndefined();
   });
 
   it("an unregistered source id surfaces in errors[] without touching the store", async () => {

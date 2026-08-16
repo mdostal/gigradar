@@ -80,10 +80,11 @@ export const ApplyProfileConfigSchema = z.object({
   rateAnchor: z.number().optional(),
 });
 
-/** Mirrors `SourceConfig` in src/lib/types.ts. `settings` is intentionally opaque — never raw secrets. */
+/** Mirrors `SourceConfig` in src/lib/types.ts. `settings` is intentionally opaque — never raw secrets. `kind` absent (every hand-written adapter) is today's behavior, byte-identical (llm-custom-sources epic). */
 export const SourceConfigSchema = z.object({
   id: z.string(),
   enabled: z.boolean(),
+  kind: z.literal("custom-llm").optional(),
   settings: z.record(z.string(), z.unknown()).optional(),
 });
 

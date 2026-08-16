@@ -46,6 +46,12 @@ vi.mock("playwright", () => ({
   },
 }));
 
+const readSessionViaPortunusMock = vi.fn();
+vi.mock("../session-backend.js", () => ({
+  PORTUNUS_SESSION_ACCOUNT: "gigradar",
+  readSessionViaPortunus: (...args: unknown[]) => readSessionViaPortunusMock(...args),
+}));
+
 // Imported AFTER the mock is registered (vi.mock is hoisted by vitest, so
 // this ordering is actually irrelevant, but keeping it below documents the
 // dependency clearly).
@@ -56,6 +62,7 @@ import {
   type StorageState,
 } from "../browser-session.js";
 import { VaultKeyLostError, VaultTamperError, decrypt, encrypt, isEncryptedEnvelope } from "../../security/vault.js";
+import { VerificationChallengeError } from "../../sources/verification-challenge.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = path.join(__dirname, "fixtures", "multi-origin-storage-state.json");
@@ -86,6 +93,7 @@ beforeEach(() => {
   process.env.XDG_DATA_HOME = tmpDir;
   launchMock.mockReset();
   executablePathMock.mockReset();
+  readSessionViaPortunusMock.mockReset();
   executablePathMock.mockReturnValue("/fake/chromium/executable");
   // Chromium "available" by default in every test except the dedicated
   // missing-binary tests below, which override this — but ONLY for the
@@ -133,10 +141,18 @@ function getOrCreateKeyForTest(): void {
   fs.writeFileSync(keyPath, crypto.randomBytes(32), { mode: 0o600 });
 }
 
-/** A fake Page whose every method is a spy; goto() is a no-op by default. */
+/**
+ * A fake Page whose every method is a spy; goto() is a no-op by default.
+ * `title()`/`locator("body").innerText()` default to empty strings so
+ * withBrowserSession()'s verification-challenge check (verification-
+ * copilot epic) is a no-op for every test that doesn't explicitly
+ * override them — isVerificationChallengeContent("") is always false.
+ */
 function createFakePage(overrides: Record<string, unknown> = {}) {
   return {
     goto: vi.fn().mockResolvedValue(undefined),
+    title: vi.fn().mockResolvedValue(""),
+    locator: vi.fn().mockReturnValue({ innerText: vi.fn().mockResolvedValue("") }),
     ...overrides,
   };
 }
@@ -773,6 +789,182 @@ describe("checkChromiumAvailable / withBrowserSession: Chromium binary availabil
     ).rejects.toThrow(/npx playwright install chromium/);
 
     expect(launchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("withBrowserSession: sessionBackend \"portunus\" (oauth-session-capture-v2 epic)", () => {
+  it('reads via readSessionViaPortunus(sourceId, PORTUNUS_SESSION_ACCOUNT) instead of a local file, and still applies the origin filter before newContext()', async () => {
+    readSessionViaPortunusMock.mockResolvedValue(FIXTURE);
+    const { browser } = setUpFakeBrowserChain();
+
+    await withBrowserSession(
+      {
+        sourceId: "test-source",
+        sessionBackend: "portunus",
+        allowedOrigins: TARGET_ALLOWLIST,
+        url: "https://app.targetsource.example/jobs",
+        isAuthenticated: async () => true,
+      },
+      async () => "ok",
+    );
+
+    expect(readSessionViaPortunusMock).toHaveBeenCalledWith("test-source", "gigradar");
+    const passedArg = browser.newContext.mock.calls[0]?.[0] as { storageState: StorageState };
+    expect(passedArg.storageState).toEqual(filterStorageStateToAllowlist(FIXTURE, TARGET_ALLOWLIST));
+  });
+
+  it("never touches the local storageState file / storageStatePathSetting when the backend is portunus", async () => {
+    readSessionViaPortunusMock.mockResolvedValue(FIXTURE);
+    setUpFakeBrowserChain();
+    const readFileSpy = vi.spyOn(fs, "readFileSync");
+
+    await withBrowserSession(
+      {
+        sourceId: "test-source",
+        // Deliberately omitted -- a portunus-backed source has no local path at all.
+        sessionBackend: "portunus",
+        allowedOrigins: TARGET_ALLOWLIST,
+        url: "https://app.targetsource.example/jobs",
+        isAuthenticated: async () => true,
+      },
+      async () => "ok",
+    );
+
+    expect(readFileSpy).not.toHaveBeenCalled();
+  });
+
+  it("propagates a readSessionViaPortunus() failure without ever launching a browser", async () => {
+    readSessionViaPortunusMock.mockRejectedValue(new Error("gigradar session-backend: portunus session load failed"));
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          sessionBackend: "portunus",
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated: async () => true,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(/portunus session load failed/);
+
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
+  it('throws a specific error when the backend is (or defaults to) "local" but no storageStatePathSetting was supplied', async () => {
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated: async () => true,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(/local session backend but no storageState path was supplied/);
+  });
+});
+
+describe("withBrowserSession: verification-challenge detection (verification-copilot epic)", () => {
+  it("throws VerificationChallengeError (carrying sourceId + url) when the page's title matches a known challenge phrase, and never calls isAuthenticated", async () => {
+    const storageStatePath = writeFixtureCopy();
+    const isAuthenticated = vi.fn().mockResolvedValue(true);
+    setUpFakeBrowserChain({ title: vi.fn().mockResolvedValue("Just a moment... | Cloudflare") });
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(VerificationChallengeError);
+
+    expect(isAuthenticated).not.toHaveBeenCalled();
+  });
+
+  it("the thrown error's sourceId/url fields match the call's own source/url", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({ title: vi.fn().mockResolvedValue("Checking your browser before accessing example.com.") });
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated: async () => true,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toMatchObject({ sourceId: "test-source", url: "https://app.targetsource.example/jobs" });
+  });
+
+  it("matches on visible body text too, not just the title", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({
+      title: vi.fn().mockResolvedValue("example.com"),
+      locator: vi.fn().mockReturnValue({ innerText: vi.fn().mockResolvedValue("Please verify you are human to continue.") }),
+    });
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated: async () => true,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(VerificationChallengeError);
+  });
+
+  it("an ordinary page (default fake page title/body) never throws VerificationChallengeError -- isAuthenticated runs normally", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain();
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated: async () => true,
+        },
+        async () => "ok",
+      ),
+    ).resolves.toBe("ok");
+  });
+
+  it("still cleanly closes the context/browser (finally blocks) when this new throw path fires", async () => {
+    const storageStatePath = writeFixtureCopy();
+    const { context, browser } = setUpFakeBrowserChain({ title: vi.fn().mockResolvedValue("Performing Security Verification") });
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          isAuthenticated: async () => true,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(VerificationChallengeError);
+
+    expect(context.close).toHaveBeenCalledTimes(1);
+    expect(browser.close).toHaveBeenCalledTimes(1);
   });
 });
 

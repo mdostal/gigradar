@@ -2,9 +2,12 @@
 // remember it" flow that produces exactly the kind of storageState file
 // browser-session.ts's withBrowserSession() already knows how to consume
 // (see .pHive/epics/session-capture-ui/stories/session-capture-mechanism.yaml).
-// This module never modifies browser-session.ts; it only reuses two of its
-// exports (filterStorageStateToAllowlist(), checkChromiumAvailable()) and
-// its StorageState type shapes.
+// This module never modifies browser-session.ts; it only reuses its
+// filterStorageStateToAllowlist() export and its StorageState type shapes.
+// The browser itself is acquired via real-chrome.ts's
+// spawnRealChrome()/attachToRealChrome() (never
+// playwright.chromium.launch()/browser-session.ts's launchHeadedBrowser() --
+// see real-chrome.ts's header comment for why).
 //
 // THE EPIC'S SINGLE HIGHEST-NOVELTY PIECE: holding a live Playwright
 // Browser/BrowserContext handle in server memory across separate Next.js
@@ -35,10 +38,9 @@
 // below is called with no options at all — no `recordHar`, no
 // `recordVideo`, no `context.tracing.start()`, no
 // `page.on("console"|"request"|"response", ...)` anywhere in this file.
-// chromium.launch() goes through browser-session.ts's launchHeadedBrowser()
-// (headed, preferring real Chrome over bundled Chromium for Google OAuth
-// compatibility — see that function's docstring); that helper carries the
-// same no-debug-option discipline.
+// The browser itself comes from real-chrome.ts's spawnRealChrome() (a real,
+// independently-launched Chrome, headed, attached over CDP) which carries
+// the same no-debug-option discipline.
 //
 // SANITY-CHECK BEFORE WRITE, NEVER WRITE-THEN-HOPE.
 // filterStorageStateToAllowlist() was only ever proven against
@@ -58,17 +60,19 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { Browser, BrowserContext } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { hasAnyEncryptedFile } from "../config/load.js";
 import { encrypt, getOrCreateKey } from "../security/vault.js";
 import { SOURCE_ORIGINS } from "../sources/origins.js";
 import { getDefaultDataDir } from "../store/path.js";
+import { filterStorageStateToAllowlist, type StorageState } from "./browser-session.js";
+import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
 import {
-  checkChromiumAvailable,
-  filterStorageStateToAllowlist,
-  launchHeadedBrowser,
-  type StorageState,
-} from "./browser-session.js";
+  PORTUNUS_SESSION_ACCOUNT,
+  PORTUNUS_SESSION_TTL_SECONDS,
+  writeSessionViaPortunus,
+  type SessionBackend,
+} from "./session-backend.js";
 
 const MODULE_PREFIX = "gigradar session-capture";
 
@@ -78,7 +82,16 @@ export const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 interface CaptureEntry {
   browser: Browser;
   context: BrowserContext;
+  realChrome: RealChromeHandle;
   sourceId: string;
+  /**
+   * Resolved ONCE, at startCapture() time, and reused here rather than
+   * re-derived from SOURCE_ORIGINS at finish time — see startCapture()'s
+   * own `allowedOrigins` parameter doc comment (llm-custom-sources epic,
+   * custom-source-auth story). `undefined` means "use SOURCE_ORIGINS[
+   * sourceId]", exactly today's behavior.
+   */
+  allowedOrigins: string[] | undefined;
   startedAt: number;
   timeoutHandle: ReturnType<typeof setTimeout>;
   /**
@@ -108,13 +121,23 @@ interface CaptureEntry {
 const captures: Map<string, CaptureEntry> = ((globalThis as any).__gigradarCaptures ??=
   new Map<string, CaptureEntry>());
 
-/** Closes `browser`, swallowing any error — used on cleanup paths where the browser may already be closed/closing (e.g. the user closed the window directly, racing our own cleanup). Never this call's own failure. */
-async function safeCloseBrowser(browser: Browser): Promise<void> {
+/**
+ * Closes both halves of a capture's browser resources — Playwright's CDP
+ * connection (`browser`) AND the real, independently-spawned Chrome process
+ * + its temp `--user-data-dir` (`realChrome`, via real-chrome.ts's
+ * closeRealChrome()) — swallowing any error from the Playwright side (the
+ * connection may already be closed/closing, e.g. the user closed the window
+ * directly, racing our own cleanup). closeRealChrome() itself already
+ * swallows its own errors (see that function's doc comment), so this is
+ * never this call's own failure either way.
+ */
+async function safeCloseBrowser(browser: Browser, realChrome: RealChromeHandle): Promise<void> {
   try {
     await browser.close();
   } catch {
     // already closed/closing — nothing more to do.
   }
+  closeRealChrome(realChrome);
 }
 
 /**
@@ -131,22 +154,40 @@ async function safeCloseBrowser(browser: Browser): Promise<void> {
  * (see this story's accepted v1 risk: no cross-capture process sweep beyond
  * this per-capture bound).
  *
- * Throws (before ever launching a browser) if the Chromium binary itself
- * isn't installed — see `checkChromiumAvailable()`.
+ * Throws (before ever spawning a browser) if the real Chrome binary isn't
+ * installed at the expected macOS path — see real-chrome.ts's
+ * spawnRealChrome().
+ *
+ * `allowedOrigins` (llm-custom-sources epic, custom-source-auth story):
+ * optional — when supplied (the caller already resolved it, e.g. via
+ * origins.ts's resolveAllowedOrigins() for a custom source with no static
+ * SOURCE_ORIGINS entry), it's stored on the capture entry and used by
+ * finishCapture() INSTEAD of re-deriving from SOURCE_ORIGINS[sourceId] at
+ * finish time — resolved once, reused, rather than a second lookup pass.
+ * Omitted (every existing caller) falls through to finishCapture()'s
+ * original SOURCE_ORIGINS[sourceId] behavior, unchanged.
  */
-export async function startCapture(sourceId: string, loginUrl: string): Promise<{ captureId: string }> {
-  checkChromiumAvailable();
+export async function startCapture(sourceId: string, loginUrl: string, allowedOrigins?: string[]): Promise<{ captureId: string }> {
+  const realChrome = await spawnRealChrome();
 
-  const browser: Browser = await launchHeadedBrowser(`source "${sourceId}"`);
+  let browser: Browser;
+  try {
+    browser = await attachToRealChrome(realChrome.cdpPort);
+  } catch (e) {
+    closeRealChrome(realChrome);
+    throw new Error(
+      `${MODULE_PREFIX}: failed to attach to the spawned Chrome for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 
   let context: BrowserContext;
   try {
     // No storageState passed in, no other options: a fresh context that
     // creates a session via a real login. Same "no debug capture"
-    // constraint as launch() above.
+    // constraint as spawnRealChrome() above.
     context = await browser.newContext();
   } catch (e) {
-    await safeCloseBrowser(browser);
+    await safeCloseBrowser(browser, realChrome);
     throw new Error(
       `${MODULE_PREFIX}: failed to open a browser context for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
     );
@@ -156,7 +197,7 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
     const page = await context.newPage();
     await page.goto(loginUrl);
   } catch (e) {
-    await safeCloseBrowser(browser);
+    await safeCloseBrowser(browser, realChrome);
     throw new Error(
       `${MODULE_PREFIX}: failed to open the login page for source "${sourceId}" at "${loginUrl}": ${e instanceof Error ? e.message : String(e)}`,
     );
@@ -172,6 +213,11 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
     if (!entry) return; // already cleaned up via finishCapture()/cancelCapture()/the idle timeout
     clearTimeout(entry.timeoutHandle);
     captures.delete(captureId);
+    // The real Chrome process may already be gone (this is often WHY we
+    // disconnected — the user closed the window directly), but the temp
+    // --user-data-dir still needs removing — see closeRealChrome()'s doc
+    // comment on why it's always safe to call.
+    closeRealChrome(entry.realChrome);
   };
   browser.on("disconnected", disconnectedListener);
 
@@ -187,23 +233,68 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
     // "disconnected" listener (which close() itself depends on) intact.
     entry.browser.off("disconnected", entry.disconnectedListener);
     void entry.browser.close().catch(() => {});
+    closeRealChrome(entry.realChrome);
   }, IDLE_TIMEOUT_MS);
 
-  captures.set(captureId, { browser, context, sourceId, startedAt: Date.now(), timeoutHandle, disconnectedListener });
+  captures.set(captureId, {
+    browser,
+    context,
+    realChrome,
+    sourceId,
+    allowedOrigins,
+    startedAt: Date.now(),
+    timeoutHandle,
+    disconnectedListener,
+  });
 
   return { captureId };
 }
+
+/**
+ * Looks up the live `Page` for `captureId` — used by capture-guidance.ts's
+ * `checkCaptureReadiness()` (oauth-session-capture-v2 epic,
+ * llm-capture-readiness-check story) to read the in-flight capture
+ * window's CURRENT page, whatever the human has navigated to since
+ * `startCapture()`. Read-only: this function itself never touches the idle
+ * timeout, the disconnect listener, or the map entry — a readiness check
+ * is advisory, not a lifecycle event (see finishCapture()/cancelCapture()
+ * for the actual lifecycle-ending operations).
+ *
+ * Throws a specific "capture not found or already expired" error if
+ * `captureId` isn't a live entry, same wording finishCapture()/
+ * cancelCapture() already use for this exact case.
+ */
+export function getCapturePage(captureId: string): Page {
+  const entry = captures.get(captureId);
+  if (!entry) {
+    throw new Error(`${MODULE_PREFIX}: capture not found or already expired (id "${captureId}").`);
+  }
+  const page = entry.context.pages()[0];
+  if (!page) {
+    throw new Error(`${MODULE_PREFIX}: capture "${captureId}" has no open page.`);
+  }
+  return page;
+}
+
+/** finishCapture()'s result — discriminated on which backend the session was persisted to. Never both, never a silent fallback from one to the other (oauth-session-capture-v2 epic, portunus-session-backend story). */
+export type FinishCaptureResult =
+  | { backend: "local"; path: string }
+  | { backend: "portunus"; site: string; account: string };
 
 /**
  * Completes capture `captureId`: reads the live context's storage state,
  * scopes it to `SOURCE_ORIGINS[entry.sourceId]` via
  * `filterStorageStateToAllowlist()` (reused, unmodified, from
  * browser-session.ts), and — only if that scoped result actually contains
- * at least one cookie for the source's own origin(s) — writes it atomically
- * and ENCRYPTED (temp file + rename, mode 0600, via
- * writeStorageStateAtomically() below) to
- * `<getDefaultDataDir()>/<sourceId>-session.json`, overwriting any prior
- * capture for that source.
+ * at least one cookie for the source's own origin(s) — persists it to
+ * exactly ONE backend, chosen by `sessionBackend` (default `"local"`,
+ * byte-identical to this function's pre-Portunus behavior):
+ *   - `"local"`: writes it atomically and ENCRYPTED (temp file + rename,
+ *     mode 0600, via writeStorageStateAtomically() below) to
+ *     `<getDefaultDataDir()>/<sourceId>-session.json`, overwriting any
+ *     prior capture for that source.
+ *   - `"portunus"`: writes it via session-backend.ts's
+ *     writeSessionViaPortunus() — stdin only, never a local file.
  *
  * Throws a specific "capture not found or already expired" error if
  * `captureId` isn't a live entry (already timed out, disconnected, finished,
@@ -219,7 +310,7 @@ export async function startCapture(sourceId: string, loginUrl: string): Promise<
  * failure alike — once `finishCapture()` has been called for an id, that
  * capture is over either way.
  */
-export async function finishCapture(captureId: string): Promise<{ path: string }> {
+export async function finishCapture(captureId: string, sessionBackend: SessionBackend = "local"): Promise<FinishCaptureResult> {
   const entry = captures.get(captureId);
   if (!entry) {
     throw new Error(`${MODULE_PREFIX}: capture not found or already expired (id "${captureId}").`);
@@ -236,7 +327,10 @@ export async function finishCapture(captureId: string): Promise<{ path: string }
   try {
     const rawStorageState = (await entry.context.storageState()) as StorageState;
 
-    const allowedOrigins = SOURCE_ORIGINS[entry.sourceId];
+    // entry.allowedOrigins (resolved once, at startCapture() time — see
+    // that function's own doc comment) takes priority when present; falls
+    // back to the static registry otherwise, today's unchanged behavior.
+    const allowedOrigins = entry.allowedOrigins ?? SOURCE_ORIGINS[entry.sourceId];
     if (!allowedOrigins || allowedOrigins.length === 0) {
       throw new Error(
         `${MODULE_PREFIX}: no origin allowlist registered for source "${entry.sourceId}" (see src/lib/sources/origins.ts).`,
@@ -254,11 +348,16 @@ export async function finishCapture(captureId: string): Promise<{ path: string }
       );
     }
 
+    if (sessionBackend === "portunus") {
+      await writeSessionViaPortunus(entry.sourceId, PORTUNUS_SESSION_ACCOUNT, filtered, PORTUNUS_SESSION_TTL_SECONDS);
+      return { backend: "portunus", site: entry.sourceId, account: PORTUNUS_SESSION_ACCOUNT };
+    }
+
     const destPath = path.join(getDefaultDataDir(), `${entry.sourceId}-session.json`);
     writeStorageStateAtomically(destPath, filtered);
-    return { path: destPath };
+    return { backend: "local", path: destPath };
   } finally {
-    await safeCloseBrowser(entry.browser);
+    await safeCloseBrowser(entry.browser, entry.realChrome);
   }
 }
 
@@ -279,7 +378,7 @@ export async function cancelCapture(captureId: string): Promise<void> {
   entry.browser.off("disconnected", entry.disconnectedListener);
   captures.delete(captureId);
 
-  await safeCloseBrowser(entry.browser);
+  await safeCloseBrowser(entry.browser, entry.realChrome);
 }
 
 /**

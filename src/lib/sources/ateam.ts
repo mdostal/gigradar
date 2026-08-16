@@ -3,6 +3,7 @@ import type { Source } from "./source.js";
 import type { Gig, SourceConfig } from "../types.js";
 import { registerSource } from "./source.js";
 import { withBrowserSession } from "../auth/browser-session.js";
+import { sessionBackendFrom } from "../auth/session-backend.js";
 import { SOURCE_ORIGINS } from "./origins.js";
 
 /**
@@ -264,6 +265,7 @@ async function scrapeListings(page: Page): Promise<ATeamRawListing[]> {
   });
 }
 
+/** Required only for the "local" (default) session backend -- see sessionBackendFrom(). A "portunus"-backed source needs no local path at all. */
 function sessionStatePathFrom(cfg: SourceConfig): string {
   const configured = cfg.settings?.sessionStatePath;
   if (typeof configured !== "string" || configured.length === 0) {
@@ -280,12 +282,14 @@ export const ateamSource: Source = {
   label: "A.Team",
   auth: "browser-session",
   async fetch(cfg: SourceConfig): Promise<Gig[]> {
-    const sessionStatePath = sessionStatePathFrom(cfg);
+    const sessionBackend = sessionBackendFrom(cfg);
+    const sessionStatePath = sessionBackend === "local" ? sessionStatePathFrom(cfg) : undefined;
 
     const listings = await withBrowserSession(
       {
         sourceId: "ateam",
         storageStatePathSetting: sessionStatePath,
+        sessionBackend,
         allowedOrigins: [...ALLOWED_ORIGINS],
         url: MISSION_CONTROL_URL,
         isAuthenticated: isAuthenticatedATeam,

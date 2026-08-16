@@ -1,0 +1,99 @@
+id: portunus-session-backend
+epic: oauth-session-capture-v2
+title: "Portunus as an optional, owner-selectable session-vault backend"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [real-chrome-spawn-attach]
+status: done
+
+description: |
+  Vertical Plan Slice 2. Live-confirmed this session: Portunus's CLI
+  already has a purpose-built `portunus session store/load/inspect/
+  list/remove` subcommand family (site+account keyed, TTL-aware,
+  stdin-only value input, 0600-tempfile output on load) that maps
+  directly onto gigradar's existing per-source `<sourceId>-session.json`
+  storageState files. This story offers it as an OWNER-SELECTABLE
+  alternative to the existing local AES-256-GCM vault
+  (src/lib/security/vault.ts) -- never a forced migration, and
+  gracefully absent (not broken) for OSS users without Portunus.
+
+  1. `src/lib/auth/session-backend.ts` -- new module:
+     - `isPortunusAvailable()`: a real, live `portunus --version`
+       child-process check, cached per-process. Never assumed.
+     - `writeSessionViaPortunus(site, account, storageStateJson,
+       ttlSeconds)`: shells out to `portunus session store <site>
+       <account> --ttl-seconds <n> --stdin`, piping the ALREADY
+       origin-scoped-filtered JSON via stdin -- never a temp file,
+       never a command-line argument.
+     - `readSessionViaPortunus(site, account)`: shells out to `portunus
+       session load <site> <account>`, reads the resulting 0600
+       tempfile path it prints, parses it, and DELETES the tempfile
+       immediately after reading -- Portunus hands back a path (not a
+       value) specifically so the caller controls its lifetime; leaving
+       it on disk after use would reintroduce the exposure Portunus's
+       own design avoids.
+  2. New `sources[].settings.sessionBackend` config field: `"local"` |
+     `"portunus"`, defaulting to `"local"` (today's behavior, byte-
+     identical) when absent.
+  3. `finishCapture()` (session-capture.ts) and `readStorageStateFile()`
+     (browser-session.ts) branch on the resolved sessionBackend to call
+     either the existing local-vault path (default, unchanged) or the
+     new Portunus functions -- NEVER both, NEVER a silent fallback from
+     one to the other on failure (a Portunus write/read failure is a
+     real, surfaced error).
+  4. `/config`'s Capture Login control shows a backend picker ONLY when
+     isPortunusAvailable() is true -- hidden, not just disabled, for
+     the vast majority of OSS users who don't have Portunus installed.
+
+acceptance_criteria:
+  - "Given Portunus is NOT installed (the common OSS case), the Capture Login flow is byte-identical to before this story -- no backend picker shown, local vault used, zero behavior change."
+  - "Given Portunus IS installed and the owner selects it as a source's backend, a real capture writes the session via `portunus session store` and a subsequent read via `readStorageStateFile()` successfully retrieves it via `portunus session load` -- live-verified against a real portunus install."
+  - "Given a Portunus write or read fails (e.g. portunus errors), the failure surfaces as a real, specific error -- never a silent fallback to the local vault that would leave the owner unsure which backend actually holds their session."
+  - "Given a successful readSessionViaPortunus() call, the 0600 tempfile portunus session load wrote is deleted immediately after this function reads it -- verified via a filesystem check post-call."
+
+steps:
+  - id: research
+    description: Confirm portunus session store/load's exact current CLI flags and output shape (already checked --help this session; confirm no drift against the installed portunus version before writing code against it).
+    agent: researcher
+  - id: implement
+    description: Write session-backend.ts, the sessionBackend config field, and the finishCapture()/readStorageStateFile() branching.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests for session-backend.ts with a mocked portunus child-process (available/unavailable, write success/failure, read success/failure, tempfile cleanup). Real end-to-end verification against a real portunus install.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm zero behavior change when Portunus is absent, and that no session content ever touches argv/logs on the Portunus path.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: finishCapture() gains the sessionBackend branch
+    - path: src/lib/auth/browser-session.ts
+      purpose: readStorageStateFile() gains the matching read-side branch
+    - path: src/lib/security/vault.ts
+      purpose: the existing local backend -- unchanged, stays the default
+
+design_decisions:
+  - decision: Portunus is hidden (not disabled) in the UI when unavailable, and the config field defaults to "local".
+    rationale: "gigradar's core/user-layer boundary (CLAUDE.md): nothing in OSS core may assume the owner's own private tooling (Portunus) is universally available. A visible-but-disabled control would still leak that Portunus exists as a concept to every OSS user; hidden entirely is the correct posture."
+
+risks:
+  - severity: medium
+    description: A Portunus CLI version drift could change store/load's flags or output shape silently.
+    mitigation: "isPortunusAvailable()'s version check plus specific, actionable error surfacing on any unexpected CLI output shape -- never a best-effort parse that could silently misinterpret a changed output format."
+
+references:
+  - path: .pHive/epics/oauth-session-capture-v2/docs/design-discussion.md
+    relevant_excerpt: "§5 Portunus as an optional backend"
+  - path: .pHive/epics/oauth-session-capture-v2/docs/vertical-plan.md
+    relevant_excerpt: "Slice 2 -- Portunus as an optional session-vault backend"

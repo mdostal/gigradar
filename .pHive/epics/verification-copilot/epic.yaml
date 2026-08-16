@@ -1,0 +1,15 @@
+name: verification-copilot
+title: In-UI human-verification co-pilot surface — detect blocks distinctly, give a real way to clear them
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+
+stories:
+  - id: verification-challenge-detection
+    title: "Shared verification-challenge detection wired into withBrowserSession(), routed to a distinct issue"
+    complexity: medium
+    depends_on: []
+  - id: verification-copilot-browser-action
+    title: "Co-pilot browser action: open a real, human-drivable Chrome on a blocked source's issue"
+    complexity: medium
+    depends_on: [verification-challenge-detection]

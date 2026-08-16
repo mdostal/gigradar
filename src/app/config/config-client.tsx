@@ -9,12 +9,14 @@ import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
 import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
 import {
   cancelCaptureAction,
+  checkCaptureReadinessAction,
   extractProfileFromResumeAction,
   finishCaptureAction,
   getAutoFireApprovedCountAction,
   saveConfigAction,
   setAnthropicApiKeyAction,
   startCaptureAction,
+  testCustomSourceExtractionAction,
 } from "./actions";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,8 @@ interface SettingPair {
 interface DraftSource {
   id: string;
   enabled: boolean;
+  /** llm-custom-sources epic: true when this row is a config-only custom source (no hand-written adapter) -- maps to SourceConfig.kind: "custom-llm". A real "Add custom source" form lands in a later story; this checkbox is the minimal stopgap that makes the mechanism reachable from the UI at all. */
+  isCustom: boolean;
   settings: SettingPair[];
 }
 
@@ -184,8 +188,21 @@ function settingsToPairs(settings: Record<string, unknown> | undefined): Setting
   }));
 }
 
+/**
+ * Whether this row's Capture Login control should show: every existing
+ * `SOURCE_ORIGINS`-registered source (unchanged), OR a custom source that's
+ * explicitly declared `settings.customAuth: "browser-session"` (llm-custom-
+ * sources epic, custom-source-auth story) — reading straight from the raw
+ * `SettingPair[]` since a custom source's own draft settings haven't been
+ * parsed into a Record yet at render time.
+ */
+function showsCaptureLogin(source: DraftSource): boolean {
+  if (source.id in SOURCE_ORIGINS) return true;
+  return source.isCustom && source.settings.some((p) => p.key === "customAuth" && p.value === "browser-session");
+}
+
 function sourceToDraft(source: SourceConfig): DraftSource {
-  return { id: source.id, enabled: source.enabled, settings: settingsToPairs(source.settings) };
+  return { id: source.id, enabled: source.enabled, isCustom: source.kind === "custom-llm", settings: settingsToPairs(source.settings) };
 }
 
 function configToDraft(config: Config): DraftConfig {
@@ -282,7 +299,13 @@ function pairsToSettings(pairs: SettingPair[]): Record<string, unknown> | undefi
 
 function draftToSource(draft: DraftSource): SourceConfig {
   const settings = pairsToSettings(draft.settings);
-  return settings ? { id: draft.id, enabled: draft.enabled, settings } : { id: draft.id, enabled: draft.enabled };
+  const kind = draft.isCustom ? ("custom-llm" as const) : undefined;
+  return {
+    id: draft.id,
+    enabled: draft.enabled,
+    ...(kind && { kind }),
+    ...(settings && { settings }),
+  };
 }
 
 /**
@@ -427,6 +450,19 @@ type CaptureUIState =
   | { status: "finishing"; captureId: string; sourceId: string }
   | { status: "cancelling"; captureId: string; sourceId: string }
   | { status: "success"; path: string }
+  | { status: "success-portunus" }
+  | { status: "error"; message: string };
+
+/**
+ * "Check if I'm ready" state (oauth-session-capture-v2 epic,
+ * llm-capture-readiness-check story) — deliberately its own type/state map,
+ * separate from `CaptureUIState` above (see `readinessState`'s own comment
+ * for why).
+ */
+type ReadinessUIState =
+  | { status: "idle" }
+  | { status: "checking" }
+  | { status: "done"; ready: boolean; note: string }
   | { status: "error"; message: string };
 
 /**
@@ -460,15 +496,21 @@ function CaptureLoginControl({
   onStart,
   onFinish,
   onCancel,
+  readiness,
+  onCheckReadiness,
 }: {
   sourceId: string;
   state: CaptureUIState;
   onStart: () => void;
   onFinish: () => void;
   onCancel: () => void;
+  /** Undefined-safe: "Check if I'm ready" is optional UI, not part of CaptureUIState's own lifecycle — see this file's readinessState comment. */
+  readiness?: ReadinessUIState;
+  onCheckReadiness?: () => void;
 }) {
   if (state.status === "waiting" || state.status === "finishing" || state.status === "cancelling") {
     const busy = state.status !== "waiting";
+    const checking = readiness?.status === "checking";
     return (
       <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
         <p>
@@ -481,7 +523,23 @@ function CaptureLoginControl({
           <button type="button" onClick={onCancel} disabled={busy} className={captureButtonClass}>
             {state.status === "cancelling" ? "Cancelling…" : "Cancel"}
           </button>
+          {onCheckReadiness && (
+            <button type="button" onClick={onCheckReadiness} disabled={busy || checking} className={captureButtonClass}>
+              {checking ? "Checking…" : "Check if I'm ready"}
+            </button>
+          )}
         </div>
+        {readiness?.status === "done" && (
+          <p role="status" className={`mt-2 text-xs ${readiness.ready ? "text-green-700" : "text-amber-800"}`}>
+            {readiness.ready ? "✓ " : ""}
+            {readiness.note}
+          </p>
+        )}
+        {readiness?.status === "error" && (
+          <p role="alert" className="mt-2 text-xs text-red-700">
+            {readiness.message}
+          </p>
+        )}
       </div>
     );
   }
@@ -499,6 +557,11 @@ function CaptureLoginControl({
       {state.status === "success" && (
         <p role="status" className="mt-1 text-xs text-green-700">
           Captured — saved to {state.path} and written to this source&rsquo;s settings.
+        </p>
+      )}
+      {state.status === "success-portunus" && (
+        <p role="status" className="mt-1 text-xs text-green-700">
+          Captured — stored in Portunus for {sourceId}.
         </p>
       )}
       {state.status === "error" && (
@@ -673,6 +736,58 @@ function SettingsEditor({
         >
           + Add setting
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `sources[].settings.sessionBackend` picker (oauth-session-capture-v2
+ * epic, portunus-session-backend story) — shown ONLY next to a
+ * `browser-session`-auth source, and only by the caller passing
+ * `portunusAvailable: true` (this component itself doesn't check
+ * availability — see /config's Server Component, which reads the real
+ * isPortunusAvailable() once for the whole page). Reuses the SAME
+ * `SettingPair[]`/`upsertSettingPair()` plumbing every other setting goes
+ * through, rather than a separate write path — "Local" REMOVES the
+ * `sessionBackend` key entirely (byte-identical to before this feature
+ * existed, matching sessionBackendFrom()'s own "absent means local"
+ * default) instead of writing an explicit `"local"` value.
+ */
+function SessionBackendPicker({
+  pairs,
+  onChange,
+  radioGroupName,
+}: {
+  pairs: SettingPair[];
+  onChange: (next: SettingPair[]) => void;
+  radioGroupName: string;
+}) {
+  const current = pairs.find((p) => p.key === "sessionBackend")?.value === "portunus" ? "portunus" : "local";
+  return (
+    <div className="mt-2">
+      <span className={labelClass}>Session vault</span>
+      <div className="mt-1 flex gap-4 text-sm text-slate-700">
+        <label className="flex items-center gap-1.5">
+          <input
+            type="radio"
+            name={radioGroupName}
+            checked={current === "local"}
+            onChange={() => onChange(pairs.filter((p) => p.key !== "sessionBackend"))}
+            className="h-4 w-4"
+          />
+          Local (encrypted file)
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input
+            type="radio"
+            name={radioGroupName}
+            checked={current === "portunus"}
+            onChange={() => onChange(upsertSettingPair(pairs, "sessionBackend", "portunus"))}
+            className="h-4 w-4"
+          />
+          Portunus
+        </label>
       </div>
     </div>
   );
@@ -1029,7 +1144,7 @@ function AutoFireRulesEditor({
  * on Save — the same `{ok,error}` Server Action convention
  * `updateGigStatusAction` established (src/app/actions.ts).
  */
-export function ConfigClient({ initial }: { initial: Config }) {
+export function ConfigClient({ initial, portunusAvailable }: { initial: Config; portunusAvailable: boolean }) {
   const [draft, setDraft] = useState<DraftConfig>(() => configToDraft(initial));
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -1086,6 +1201,20 @@ export function ConfigClient({ initial }: { initial: Config }) {
       setRowCapture(i, { status: "error", message: result.error });
       return;
     }
+    if (result.data.backend === "portunus") {
+      // The session now lives in Portunus, keyed by this source's id — there
+      // is no local path to fold into settings (settings.sessionBackend is
+      // already "portunus", which is how finishCaptureAction() knew to use
+      // this backend in the first place).
+      setRowCapture(i, { status: "success-portunus" });
+      return;
+    }
+
+    // Captured narrower into a local (rather than reading result.data.path
+    // again below) since TypeScript's discriminant narrowing above doesn't
+    // carry through into the setDraft() closure.
+    const path = result.data.path;
+
     // Fold the captured path into this row's draft settings too, not just
     // on disk — otherwise a later "Save config" click (which resubmits the
     // WHOLE `sources` section) would silently overwrite the just-auto-written
@@ -1094,10 +1223,10 @@ export function ConfigClient({ initial }: { initial: Config }) {
     setDraft((prev) => ({
       ...prev,
       sources: prev.sources.map((s, idx) =>
-        idx === i ? { ...s, settings: upsertSettingPair(s.settings, "sessionStatePath", result.data.path) } : s,
+        idx === i ? { ...s, settings: upsertSettingPair(s.settings, "sessionStatePath", path) } : s,
       ),
     }));
-    setRowCapture(i, { status: "success", path: result.data.path });
+    setRowCapture(i, { status: "success", path });
   }
 
   async function handleCancelCapture(i: number, captureId: string, sourceId: string) {
@@ -1108,6 +1237,48 @@ export function ConfigClient({ initial }: { initial: Config }) {
       return;
     }
     setRowCapture(i, { status: "idle" });
+  }
+
+  // "Check if I'm ready" readiness state (oauth-session-capture-v2 epic,
+  // llm-capture-readiness-check story) — deliberately its OWN state map,
+  // separate from `captureState` above: a readiness check is advisory and
+  // fully independent of the waiting/finishing/cancelling lifecycle (see
+  // this story's design_decisions — it must never gate or auto-trigger
+  // "I'm done"), so it never touches `captureState` itself.
+  const [readinessState, setReadinessState] = useState<Record<number, ReadinessUIState>>({});
+
+  async function handleCheckReadiness(i: number, captureId: string, sourceId: string) {
+    setReadinessState((prev) => ({ ...prev, [i]: { status: "checking" } }));
+    const result = await checkCaptureReadinessAction(captureId, sourceId);
+    if (!result.ok) {
+      setReadinessState((prev) => ({ ...prev, [i]: { status: "error", message: result.error } }));
+      return;
+    }
+    setReadinessState((prev) => ({ ...prev, [i]: { status: "done", ready: result.data.ready, note: result.data.note } }));
+  }
+
+  // "Test extraction now" preview (llm-custom-sources epic,
+  // custom-source-pagination-and-ui story) — own state, own row-keyed map,
+  // same convention as readinessState above. Writes nothing to config.json
+  // (see testCustomSourceExtractionAction's own doc comment).
+  const [testExtractionState, setTestExtractionState] = useState<
+    Record<number, { status: "idle" } | { status: "testing" } | { status: "done"; count: number; titles: string[] } | { status: "error"; message: string }>
+  >({});
+
+  async function handleTestExtraction(i: number, source: DraftSource) {
+    setTestExtractionState((prev) => ({ ...prev, [i]: { status: "testing" } }));
+    const settings = pairsToSettings(source.settings) ?? {};
+    const url = typeof settings.url === "string" ? settings.url : "";
+    const hint = typeof settings.hint === "string" ? settings.hint : undefined;
+    const customAuth = settings.customAuth === "browser-session" ? "browser-session" : "none";
+    const sessionStatePath = typeof settings.sessionStatePath === "string" ? settings.sessionStatePath : undefined;
+
+    const result = await testCustomSourceExtractionAction(source.id, url, hint, customAuth, sessionStatePath);
+    if (!result.ok) {
+      setTestExtractionState((prev) => ({ ...prev, [i]: { status: "error", message: result.error } }));
+      return;
+    }
+    setTestExtractionState((prev) => ({ ...prev, [i]: { status: "done", count: result.data.count, titles: result.data.titles } }));
   }
 
   // -- Anthropic API key ("resume-link-ui" story) --------------------------
@@ -1419,26 +1590,42 @@ export function ConfigClient({ initial }: { initial: Config }) {
               <div className="flex items-end gap-3">
                 <label className="flex-1">
                   <span className={labelClass}>Source</span>
-                  <select
-                    value={source.id}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      setDraft({
-                        ...draft,
-                        sources: draft.sources.map((s, idx) => (idx === i ? { ...s, id } : s)),
-                      });
-                    }}
-                    className={inputClass}
-                  >
-                    <option value="" disabled>
-                      Select a source…
-                    </option>
-                    {KNOWN_SOURCES.map((known) => (
-                      <option key={known.id} value={known.id}>
-                        {known.label}
+                  {source.isCustom ? (
+                    <input
+                      type="text"
+                      value={source.id}
+                      placeholder="a name you choose, e.g. monster"
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setDraft({
+                          ...draft,
+                          sources: draft.sources.map((s, idx) => (idx === i ? { ...s, id } : s)),
+                        });
+                      }}
+                      className={inputClass}
+                    />
+                  ) : (
+                    <select
+                      value={source.id}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setDraft({
+                          ...draft,
+                          sources: draft.sources.map((s, idx) => (idx === i ? { ...s, id } : s)),
+                        });
+                      }}
+                      className={inputClass}
+                    >
+                      <option value="" disabled>
+                        Select a source…
                       </option>
-                    ))}
-                  </select>
+                      {KNOWN_SOURCES.map((known) => (
+                        <option key={known.id} value={known.id}>
+                          {known.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </label>
                 <CheckboxField
                   label="Enabled"
@@ -1447,6 +1634,16 @@ export function ConfigClient({ initial }: { initial: Config }) {
                     setDraft({
                       ...draft,
                       sources: draft.sources.map((s, idx) => (idx === i ? { ...s, enabled } : s)),
+                    });
+                  }}
+                />
+                <CheckboxField
+                  label="Custom (LLM)"
+                  checked={source.isCustom}
+                  onChange={(isCustom) => {
+                    setDraft({
+                      ...draft,
+                      sources: draft.sources.map((s, idx) => (idx === i ? { ...s, isCustom, id: isCustom ? s.id : "" } : s)),
                     });
                   }}
                 />
@@ -1470,7 +1667,42 @@ export function ConfigClient({ initial }: { initial: Config }) {
                   }}
                 />
               </div>
-              {source.id in SOURCE_ORIGINS && (
+              {source.isCustom && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleTestExtraction(i, source)}
+                    disabled={testExtractionState[i]?.status === "testing"}
+                    className={captureButtonClass}
+                  >
+                    {testExtractionState[i]?.status === "testing" ? "Testing…" : "Test extraction now"}
+                  </button>
+                  {testExtractionState[i]?.status === "done" && (
+                    <p role="status" className="mt-1 text-xs text-green-700">
+                      {testExtractionState[i]?.count} listing(s) found
+                      {(testExtractionState[i]?.titles?.length ?? 0) > 0 && <>: {testExtractionState[i]?.titles.join(", ")}</>}
+                    </p>
+                  )}
+                  {testExtractionState[i]?.status === "error" && (
+                    <p role="alert" className="mt-1 text-xs text-red-700">
+                      {testExtractionState[i]?.message}
+                    </p>
+                  )}
+                </div>
+              )}
+              {showsCaptureLogin(source) && portunusAvailable && (
+                <SessionBackendPicker
+                  pairs={source.settings}
+                  radioGroupName={`session-backend-${i}`}
+                  onChange={(settings) => {
+                    setDraft({
+                      ...draft,
+                      sources: draft.sources.map((s, idx) => (idx === i ? { ...s, settings } : s)),
+                    });
+                  }}
+                />
+              )}
+              {showsCaptureLogin(source) && (
                 <CaptureLoginControl
                   sourceId={source.id}
                   state={captureState[i] ?? { status: "idle" }}
@@ -1483,6 +1715,11 @@ export function ConfigClient({ initial }: { initial: Config }) {
                     const rowState = captureState[i];
                     if (rowState?.status === "waiting") handleCancelCapture(i, rowState.captureId, rowState.sourceId);
                   }}
+                  readiness={readinessState[i] ?? { status: "idle" }}
+                  onCheckReadiness={() => {
+                    const rowState = captureState[i];
+                    if (rowState?.status === "waiting") handleCheckReadiness(i, rowState.captureId, rowState.sourceId);
+                  }}
                 />
               )}
             </div>
@@ -1490,7 +1727,7 @@ export function ConfigClient({ initial }: { initial: Config }) {
           <button
             type="button"
             onClick={() =>
-              setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, settings: [] }] })
+              setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, isCustom: false, settings: [] }] })
             }
             className="self-start text-sm font-medium text-slate-600 hover:underline"
           >

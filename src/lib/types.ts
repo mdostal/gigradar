@@ -124,8 +124,17 @@ export interface ApplyProfileConfig {
 
 /** A source the user has enabled (a job platform / board / feed). */
 export interface SourceConfig {
-  id: string;                 // matches a registered Source.id
+  id: string;                 // matches a registered Source.id, OR any user-chosen id when kind is set
   enabled: boolean;
+  /**
+   * llm-custom-sources epic: when set to `"custom-llm"`, `id` is NOT looked
+   * up in the static `registerSource()` registry at all — `runner.ts`
+   * routes it to the single generic `customLlmSource` (src/lib/sources/
+   * custom-llm-source.ts) instead, which reads everything it needs
+   * (`settings.url`, `settings.hint`, etc.) from THIS config entry. Absent
+   * (every hand-written adapter) is today's behavior, byte-identical.
+   */
+  kind?: "custom-llm";
   /** Opaque per-source settings (session cookie ref, query, etc.). Never store raw secrets here in OSS — reference an env/keychain entry. */
   settings?: Record<string, unknown>;
 }

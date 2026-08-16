@@ -1,5 +1,7 @@
 import type { Config, DraftContent, Gig, MatchResult } from "../types.js";
 import { getSource } from "../sources/source.js";
+import { VerificationChallengeError } from "../sources/verification-challenge.js";
+import { customLlmSource } from "../sources/custom-llm-source.js";
 import { gate } from "../matching/gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
 import { gigKey, recordScan, saveDraft } from "../store/index.js";
@@ -24,14 +26,31 @@ import { generateDraft } from "./draft.js";
  *
  * `storeOpts` forwards straight to recordScan() (db/now overrides) — tests
  * use it to point at a temp database instead of the process-wide default.
+ *
+ * `runOpts.anthropicApiKey` (llm-custom-sources epic): forwarded as
+ * `fetch()`'s optional 3rd argument to EVERY source uniformly — every
+ * hand-written adapter ignores it (see source.ts's `fetch()` doc comment);
+ * only `kind: "custom-llm"` sources (routed to `customLlmSource` below)
+ * read it. Resolved by the CALLER (CLI `main()`/the scheduler), never
+ * module-scope — same discipline `stageApplication()`'s own `apiKey`
+ * parameter already established.
  */
 export async function runRadar(
   config: Config,
   storeOpts: RecordScanOptions = {},
+  runOpts: { anthropicApiKey?: string } = {},
 ): Promise<{
   results: MatchResult[];
   passed: MatchResult[];
-  errors: { sourceId: string; message: string }[];
+  /**
+   * `needsVerification`/`blockedUrl` (verification-copilot epic): set ONLY
+   * when the caught error was a `VerificationChallengeError` — checked
+   * HERE, where the real thrown error object is still available, before
+   * it's flattened to a plain message string below. A caller (the
+   * scheduler's raiseIssue() loop) reads these to route this failure to a
+   * distinctly-titled issue instead of the generic "Source fetch failed."
+   */
+  errors: { sourceId: string; message: string; needsVerification?: boolean; blockedUrl?: string }[];
   /**
    * Store keys (gigKey(sourceId, externalId)) that were BRAND NEW this run
    * — recordScan()'s own `upserted[].inserted` signal, surfaced here so a
@@ -42,20 +61,29 @@ export async function runRadar(
   newlyInsertedKeys: string[];
 }> {
   const results: MatchResult[] = [];
-  const errors: { sourceId: string; message: string }[] = [];
+  const errors: { sourceId: string; message: string; needsVerification?: boolean; blockedUrl?: string }[] = [];
   const batches: SourceScanBatch[] = [];
 
   for (const sc of config.sources.filter((s) => s.enabled)) {
-    const src = getSource(sc.id);
+    // llm-custom-sources epic: a kind:"custom-llm" source is NEVER in the
+    // static registerSource() registry (its id is whatever the owner typed
+    // in, e.g. "monster") — see design-discussion.md §3 for why this ONE
+    // fallback line (not dynamic registerSource() calls, not codegen) is
+    // the chosen mechanism, and custom-llm-source.ts's own header comment.
+    const src = getSource(sc.id) ?? (sc.kind === "custom-llm" ? customLlmSource : undefined);
     if (!src) { errors.push({ sourceId: sc.id, message: "no such registered source" }); continue; }
     let gigs: Gig[] = [];
     try {
-      gigs = await src.fetch(sc, config.profile);
+      gigs = await src.fetch(sc, config.profile, runOpts.anthropicApiKey);
     } catch (e) {
       // A source that needs login throws — report it, don't fake zero results.
       // Crucially: do NOT push a batch for it either, so recordScan can tell
       // "errored" apart from "ran, found zero" (see store/gigs.ts recordScan doc).
-      errors.push({ sourceId: sc.id, message: e instanceof Error ? e.message : String(e) });
+      if (e instanceof VerificationChallengeError) {
+        errors.push({ sourceId: sc.id, message: e.message, needsVerification: true, blockedUrl: e.url });
+      } else {
+        errors.push({ sourceId: sc.id, message: e instanceof Error ? e.message : String(e) });
+      }
       continue;
     }
 
@@ -190,7 +218,7 @@ async function main(): Promise<void> {
   ]);
 
   const config = loadConfig();
-  const { passed, errors } = await runRadar(config);
+  const { passed, errors } = await runRadar(config, {}, { anthropicApiKey: process.env.ANTHROPIC_API_KEY });
 
   if (errors.length > 0) {
     console.error(`gigradar: ${errors.length} source(s) errored:`);

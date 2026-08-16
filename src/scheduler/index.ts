@@ -423,7 +423,11 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
         .filter((s) => !cycleConfig.sources.some((c) => c.id === s.id))
         .map((s) => s.id);
 
-      const result = await runRadarFn(cycleConfig);
+      // llm-custom-sources epic: resolved fresh each cycle, same
+      // process.env.ANTHROPIC_API_KEY convention runAutoDraft() below
+      // already uses for this exact long-running CLI/scheduler context
+      // (never readEnvVar() -- that's the Server Action convention).
+      const result = await runRadarFn(cycleConfig, {}, { anthropicApiKey: process.env.ANTHROPIC_API_KEY });
 
       const erroredIds = new Set(result.errors.map((e) => e.sourceId));
       for (const source of cycleConfig.sources as SourceConfig[]) {
@@ -439,14 +443,31 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
       // SEE it without tailing logs. Deduped by raiseIssue() itself on
       // (source, title) -- a source failing every cycle raises exactly
       // once until resolved, not once per cycle.
+      //
+      // verification-copilot epic: a VerificationChallengeError (flagged
+      // via result.errors[].needsVerification -- see runner.ts's own doc
+      // comment) routes to its OWN distinctly-titled issue instead of the
+      // generic "Source fetch failed" -- a DIFFERENT (source, title)
+      // dedupe key, so the two issue types never collide/mask each other
+      // for the same source.
       for (const e of result.errors) {
-        await raiseIssue({
-          severity: "warning",
-          source: `runRadar:${e.sourceId}`,
-          title: "Source fetch failed",
-          message: e.message,
-          context: { sourceId: e.sourceId },
-        });
+        if (e.needsVerification) {
+          await raiseIssue({
+            severity: "warning",
+            source: `runRadar:${e.sourceId}`,
+            title: "Needs human verification",
+            message: e.message,
+            context: { sourceId: e.sourceId, blockedUrl: e.blockedUrl },
+          });
+        } else {
+          await raiseIssue({
+            severity: "warning",
+            source: `runRadar:${e.sourceId}`,
+            title: "Source fetch failed",
+            message: e.message,
+            context: { sourceId: e.sourceId },
+          });
+        }
       }
 
       // auto-draft-on-scan epic: opt-in, off by default (config.autoDraftOnScan
