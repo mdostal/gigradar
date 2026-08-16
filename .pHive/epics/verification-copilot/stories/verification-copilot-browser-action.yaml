@@ -1,0 +1,101 @@
+id: verification-copilot-browser-action
+epic: verification-copilot
+title: "Co-pilot browser action: open a real, human-drivable Chrome on a blocked source's issue"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [verification-challenge-detection]
+
+description: |
+  Vertical Plan Slice 2. Slice 1 makes a verification block a distinct,
+  visible issue in /issues. This story gives the owner a real, one-click
+  way to go clear it, instead of having to manually reconstruct which
+  source/URL/session to open a browser against.
+
+  1. `src/lib/auth/verification-copilot-session.ts` (new): SAME globalThis-
+     pinned-map idiom `session-capture.ts`/`assist-session.ts` already
+     established (survives Next.js dev HMR).
+     - `openCopilotSession(sourceId: string, url: string): Promise<{
+       sessionId: string }>` -- spawnRealChrome() + attachToRealChrome()
+       (real-chrome.ts, unmodified), loads the source's already-captured
+       storageState via readStorageStateFile() + filterStorageStateToAllowlist()
+       (browser-session.ts, unmodified, safety-critical origin-scoping
+       never skipped), builds a context with that scoped storageState,
+       navigates to `url`. Throws a specific error if the source has no
+       captured session yet (nothing to load -- same "capture a login
+       first" guidance Capture Login itself already gives).
+     - `getCopilotPage(sessionId): Page`, `closeCopilotSession(sessionId):
+       Promise<void>` (closes the real Chrome via closeRealChrome(), same
+       as session-capture.ts's own cleanup).
+     - Same IDLE_TIMEOUT_MS sweep session-capture.ts/assist-session.ts
+       already use, for the same reason (a human may close the window
+       directly without clicking anything in the app).
+  2. `/issues` (`src/app/issues/actions.ts` + `issues-client.tsx`): an
+     issue whose `title === "Needs human verification"` renders an "Open
+     browser to help clear it" button (new Server Action wrapping
+     `openCopilotSession(context.sourceId, context.blockedUrl)`). Once
+     open, the issue row shows "I'm done" (closes the session, calls the
+     EXISTING `resolveIssue()`) and an optional "Check if it looks
+     cleared" button wrapping `checkCaptureReadiness()` (capture-
+     guidance.ts, reused as-is -- its prompt is already generic enough to
+     cover "still showing a verification challenge") -- advisory only,
+     same "never auto-triggers the resolving action" discipline
+     capture-guidance.ts's own UI already established for Capture Login.
+
+acceptance_criteria:
+  - "Given an issue with title \"Needs human verification\" and context.sourceId/blockedUrl, clicking \"Open browser to help clear it\" calls openCopilotSession() with that exact sourceId/url."
+  - "Given the source has no captured session file yet, openCopilotSession() throws a specific, actionable error naming the source -- never silently opens a blank/unauthenticated window."
+  - "Given the loaded storageState, filterStorageStateToAllowlist() is applied before it reaches the browser context -- verified by inspecting the actual object passed into newContext(), same test discipline browser-session.test.ts already uses."
+  - "Clicking \"I'm done\" closes the real Chrome process (closeRealChrome() called) AND resolves the issue via the existing resolveIssue() -- never one without the other."
+  - "\"Check if it looks cleared\" never itself closes the session or resolves the issue -- purely advisory, mirroring capture-guidance.ts's own established UI discipline for this exact pattern."
+  - "An issue with any OTHER title renders no co-pilot button at all -- this UI is scoped specifically to verification-challenge issues, not a generic 'open a browser' affordance for every issue."
+
+steps:
+  - id: research
+    description: Re-read session-capture.ts's globalThis-pinned-map + idle-timeout pattern and capture-guidance.ts's checkCaptureReadiness() call shape to reuse both exactly, not approximate them.
+    agent: researcher
+  - id: implement
+    description: Write verification-copilot-session.ts and the /issues Server Actions + UI additions.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests (mocked real-chrome.ts, mocked browser-session.ts primitives, mocked checkCaptureReadiness()) for the session lifecycle and the issue-row gating logic.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm filterStorageStateToAllowlist() is never skipped, confirm the real Chrome process is genuinely closed on every exit path (idle timeout, explicit "I'm done", disconnect), confirm the co-pilot UI is scoped to the right issue title only.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch, then open the epic-wide PR (both stories).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: "the exact globalThis-pinned-map + idle-timeout + disconnect-listener idiom this story's session module reuses"
+    - path: src/lib/auth/real-chrome.ts
+      purpose: "spawnRealChrome()/attachToRealChrome()/closeRealChrome() -- reused unmodified"
+    - path: src/lib/auth/browser-session.ts
+      purpose: "readStorageStateFile()/filterStorageStateToAllowlist() -- reused unmodified, safety-critical"
+    - path: src/lib/auth/capture-guidance.ts
+      purpose: "checkCaptureReadiness() -- reused as-is for the 'check if cleared' button"
+    - path: src/app/issues/issues-client.tsx
+      purpose: "gains the co-pilot button, gated on issue title"
+
+design_decisions:
+  - decision: "Reuse real-chrome.ts + browser-session.ts's primitives directly rather than a new browser-acquisition mechanism."
+    rationale: "Same reasoning custom-llm-source.ts's auth branch already used this session: real-chrome.ts is for the moment a human needs to interact live with a real, non-fingerprinted browser -- exactly this case -- and browser-session.ts's origin-scoping is safety-critical and must never fork into a second copy."
+
+risks:
+  - severity: medium
+    description: "A source with a stale/expired captured session would open the co-pilot browser already logged out, confusing the human (they'd see a login page, not the actual block)."
+    mitigation: "Accepted for v1 -- the human can tell the difference immediately and re-run Capture Login first; not silently misleading, just an extra manual step."
+
+references:
+  - path: .pHive/epics/verification-copilot/docs/design-discussion.md
+    relevant_excerpt: "§3 co-pilot browser launch design decision"
+  - path: .pHive/epics/verification-copilot/docs/vertical-plan.md
+    relevant_excerpt: "Slice 2 -- The co-pilot browser action"
