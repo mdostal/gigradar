@@ -1,7 +1,7 @@
 id: verification-copilot-browser-action
 epic: verification-copilot
 title: "Co-pilot browser action: open a real, human-drivable Chrome on a blocked source's issue"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [verification-challenge-detection]
