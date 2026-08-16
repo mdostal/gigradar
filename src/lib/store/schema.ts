@@ -62,6 +62,20 @@ CREATE TABLE IF NOT EXISTS application_drafts (
   submitted_at TEXT                -- ISO datetime, set when status -> 'submitted'
 ) STRICT;
 
+-- LLM-generated per-gig interview prep packets (career-crm epic,
+-- prep-packet-mechanism story) -- fit/gap analysis + interview prep,
+-- mirrors application_drafts's exact shape: one row per gig, keyed by the
+-- SAME gig_key gigs.key uses, real FK enforcement. Insert-or-replace on
+-- regeneration -- a stale prep packet is fully replaced, never appended
+-- alongside the new one. No status column (unlike application_drafts) --
+-- a prep packet has no approval/submission lifecycle of its own, it's
+-- purely reference content the user reads.
+CREATE TABLE IF NOT EXISTS interview_prep (
+  gig_key      TEXT PRIMARY KEY REFERENCES gigs(key),
+  content      TEXT NOT NULL,      -- JSON-stringified PrepPacketContent
+  generated_at TEXT NOT NULL       -- ISO datetime, set on every saveInterviewPrep() (including regeneration)
+) STRICT;
+
 -- Append-only audit trail of every evaluateAutoFire() decision, fire or not
 -- (graduated-auto-fire-trust epic). One gig can accumulate many rows over
 -- time (re-evaluated each cycle until it fires or leaves rotation) -- no

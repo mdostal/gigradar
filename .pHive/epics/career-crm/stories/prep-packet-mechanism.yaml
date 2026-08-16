@@ -1,0 +1,82 @@
+id: prep-packet-mechanism
+epic: career-crm
+title: "generatePrepPacket() + interview_prep storage table"
+status: done
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1. The real "judgment" tooling the owner asked for
+  ("the judgement, the resume match, the match of the job to skillset"),
+  ported as prompt content from personal-site's match-score/interview-prep
+  logic (see design-discussion.md §1 and §5) onto this repo's own
+  forced-tool-use mechanism -- NOT personal-site's raw-JSON.parse/Vercel-AI-SDK
+  mechanism, and NOT personal-site's hardcoded-profile-string "resume
+  match" (gigradar's own structured Profile is the input instead).
+
+  1. `src/lib/store/schema.ts`: new `interview_prep` table, mirroring
+     `application_drafts`'s exact shape -- `gig_key TEXT PRIMARY KEY
+     REFERENCES gigs(key)`, `content TEXT NOT NULL` (JSON-stringified
+     PrepPacketContent), `generated_at TEXT NOT NULL`.
+  2. `src/lib/store/prep.ts` (new, mirrors `drafts.ts`): `saveInterviewPrep(gigKey,
+     content, opts)` (insert-or-replace, same as `saveDraft()`),
+     `getInterviewPrep(gigKey, opts)`, `listInterviewPrep(opts)`. Same
+     `DbOption` pattern every other store module uses for test isolation.
+  3. `src/lib/apply/prep.ts` (new): `PrepPacketContent` type --
+     `{score: number, rationale: string, topStrengths: string[], keyGaps:
+     string[], recommendation: string, predictedQuestions: string[],
+     starlaStories: string[]}`. `generatePrepPacket(gig: Gig, profile:
+     Profile, applyProfile: ApplyProfileConfig | undefined, apiKey:
+     string): Promise<PrepPacketContent>` -- ONE forced tool-use Anthropic
+     call. `Gig.description` is the untrusted DATA, BEGIN/END-delimited,
+     same framing `profile-suggest.ts`'s `buildPageSnapshotBlock()`
+     established. `apiKey` constructed into an Anthropic client strictly
+     inside this function, never module-scope.
+
+acceptance_criteria:
+  - "generatePrepPacket() returns all 7 PrepPacketContent fields from a mocked Anthropic tool_use response, never falling back to raw JSON.parse()."
+  - "The prompt includes the real Gig.title/company/description AND the real Profile.roles/skills -- verified by inspecting the actual request content blocks sent to the mocked Anthropic client, not just that SOME prompt was sent."
+  - "Gig.description is wrapped in the same BEGIN/END untrusted-DATA delimiters as profile-suggest.ts's own framing -- verified by inspecting the actual prompt text."
+  - "saveInterviewPrep() for a gig_key that already has a prep packet REPLACES it wholesale (insert-or-replace), same as saveDraft()'s own documented behavior."
+  - "saveInterviewPrep() for a nonexistent gig_key throws (FK enforcement via PRAGMA foreign_keys=ON) -- same test discipline store.test.ts already uses for application_drafts."
+  - "listInterviewPrep() returns real persisted rows, newest-generated-first, matching listDrafts()'s own ordering convention."
+
+steps:
+  - id: research
+    description: Re-read drafts.ts/schema.ts's application_drafts shape and profile-suggest.ts's BEGIN/END-delimited forced-tool-use call shape to mirror both exactly.
+    agent: researcher
+  - id: implement
+    description: Write schema.ts's new table, prep.ts (store), and apply/prep.ts (LLM call).
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests for the store module (real temp SQLite, FK enforcement) and generatePrepPacket() (mocked Anthropic client).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no-fabricated-data discipline for keyGaps/predictedQuestions (grounded in real gig/profile content, not invented), confirm apiKey is never module-scope.
+    agent: reviewer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/drafts.ts
+      purpose: "the exact store-module shape this story's prep.ts mirrors"
+    - path: src/lib/apply/profile-suggest.ts
+      purpose: "the BEGIN/END-delimited forced-tool-use call shape this story's generatePrepPacket() mirrors"
+
+design_decisions:
+  - decision: "One combined LLM call (fit-analysis + interview-prep together), not two separate calls like personal-site's match-score/interview-prep chat mode."
+    rationale: "Cheaper (one call), and predicted questions naturally cohere with the same gaps the fit analysis surfaces when generated together. See design-discussion.md §5."
+  - decision: "keyGaps/predictedQuestions are LLM SYNTHESIS (analysis), not verbatim extraction -- the no-fabricated-data rule applies to FACTS about the gig/profile (never invent a rate, a skill the profile doesn't list, a requirement the posting doesn't state), not to the LLM's own reasoning about those facts."
+    rationale: "Distinguishes this call site from every other LLM-extraction path in this repo (which extracts facts verbatim) -- this one is asked to reason, and reasoning is the entire point of a 'judgment' tool. Stated explicitly so a future reviewer doesn't misapply the wrong rule."
+
+references:
+  - path: .pHive/epics/career-crm/docs/design-discussion.md
+    relevant_excerpt: "§5 the LLM call, §6 scale"
+  - path: .pHive/epics/career-crm/docs/vertical-plan.md
+    relevant_excerpt: "Slice 1"
+  - path: .pHive/epics/career-crm/docs/extraction-reference.md
+    relevant_excerpt: "the original match-score/interview-prep prompt content this story ports"

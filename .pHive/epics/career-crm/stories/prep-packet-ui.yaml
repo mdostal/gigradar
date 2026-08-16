@@ -1,0 +1,60 @@
+id: prep-packet-ui
+epic: career-crm
+title: "Server Action + dashboard UI: Generate prep packet"
+status: done
+complexity: low
+methodology: classic
+depends_on: [prep-packet-mechanism]
+
+description: |
+  Vertical Plan Slice 2. Makes Slice 1's mechanism reachable from the UI.
+
+  1. `generatePrepPacketAction(gigKey: string): Promise<ActionResult<PrepPacketContent>>`
+     (`src/app/actions.ts`, mirrors the existing draft-generation action's
+     shape exactly): resolves the gig via the store, the current
+     `Profile`/`ApplyProfileConfig` via `readRawConfig()`, the BYOK
+     Anthropic key via `readEnvVar()`, calls `generatePrepPacket()`,
+     persists via `saveInterviewPrep()`, `revalidatePath("/")`.
+  2. Dashboard UI: a "Generate prep packet" button per gig (same placement
+     convention as the existing "Generate draft" button), and a display of
+     the persisted content once generated (score, rationale, strengths,
+     gaps, recommendation, predicted questions, STARLA stories).
+
+acceptance_criteria:
+  - "Clicking \"Generate prep packet\" for a real tracked gig calls generatePrepPacketAction() with that gig's real key."
+  - "A successful generation persists via saveInterviewPrep() and the UI displays the persisted content without a page reload (revalidatePath)."
+  - "generatePrepPacketAction() returns a specific error (never a generic crash) when no Anthropic API key is configured -- same MISSING_API_KEY_ERROR convention every other LLM-calling action in this repo already uses."
+  - "Regenerating for a gig that already has a prep packet replaces the displayed content with the new one, never appending/duplicating."
+
+steps:
+  - id: research
+    description: Re-read the existing \"Generate draft\" Server Action + dashboard button wiring to match its conventions exactly.
+    agent: researcher
+  - id: implement
+    description: Write generatePrepPacketAction() and the dashboard UI additions.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Server Action unit tests (mocked generatePrepPacket()/store functions).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the missing-API-key error path, confirm regeneration replaces rather than duplicates.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch, open the epic-wide PR (both stories).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/actions.ts
+      purpose: "gains generatePrepPacketAction(), mirrors the existing draft-generation action"
+    - path: src/app/dashboard-client.tsx
+      purpose: "gains the Generate prep packet button + content display"
+
+references:
+  - path: .pHive/epics/career-crm/docs/vertical-plan.md
+    relevant_excerpt: "Slice 2"

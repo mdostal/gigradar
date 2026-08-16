@@ -1,6 +1,7 @@
 // Types for the SQLite-backed Gig store. One place; everything in
 // src/lib/store imports from here (mirrors the convention in ../types.ts).
 import type { AutoFireRuleConfig, DraftContent, Gig } from "../types.js";
+import type { PrepPacketContent } from "../apply/prep.js";
 
 /**
  * Where a gig sits in your pipeline. Store-managed — sources/gate never set
@@ -94,6 +95,16 @@ export interface StoredDraft {
 
 export interface DraftFilter {
   status?: DraftStatus;
+}
+
+/** An `interview_prep` row as persisted by the store (store/prep.ts). */
+export interface StoredInterviewPrep {
+  /** `${sourceId}:${externalId}` — same value as the linked gig's own key (gigKey()). */
+  gigKey: string;
+  /** Parsed from the row's JSON-stringified `content` column. */
+  content: PrepPacketContent;
+  /** ISO datetime — set on every saveInterviewPrep() call, including a regeneration. */
+  generatedAt: string;
 }
 
 /** An `autofire_decisions` row as persisted by the store (store/drafts.ts's recordAutoFireDecision()). */

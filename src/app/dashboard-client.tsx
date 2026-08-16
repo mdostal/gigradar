@@ -13,7 +13,8 @@ import {
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { GigStatus, StoredGig } from "@/lib/store";
-import { generateDraftAction, updateGigStatusAction } from "./actions";
+import type { PrepPacketContent } from "@/lib/apply/prep";
+import { generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
 import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, type SeenWindow } from "./dashboard-filter";
 import { compareByField, type SortField } from "./dashboard-sort";
@@ -219,6 +220,16 @@ export function DashboardClient({
   const [generatingKeys, setGeneratingKeys] = useState<ReadonlySet<string>>(new Set());
   const [draftErrorByKey, setDraftErrorByKey] = useState<Record<string, string>>({});
 
+  // "Generate prep packet" (career-crm epic, prep-packet-ui story) — own
+  // state, own row-keyed maps, same convention as the draft-generation
+  // state above. No canGenerateDraft()-style tier gate: a prep packet is
+  // read-only analysis, not a real application artifact, so it's available
+  // for every gig regardless of tier.
+  const [, startPrepTransition] = useTransition();
+  const [generatingPrepKeys, setGeneratingPrepKeys] = useState<ReadonlySet<string>>(new Set());
+  const [prepErrorByKey, setPrepErrorByKey] = useState<Record<string, string>>({});
+  const [prepByKey, setPrepByKey] = useState<Record<string, PrepPacketContent>>({});
+
   const sources = useMemo(() => distinctSources(gigs), [gigs]);
 
   function handleStatusChange(key: string, status: GigStatus) {
@@ -263,6 +274,34 @@ export function DashboardClient({
         return;
       }
       router.push("/drafts");
+    });
+  }
+
+  /**
+   * "Generate prep packet" click handler — same shape as
+   * handleGenerateDraft() above, but stays on the dashboard (no
+   * navigation) and displays the returned content inline once generated,
+   * rather than routing to a review page.
+   */
+  function handleGeneratePrep(key: string) {
+    setPrepErrorByKey((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setGeneratingPrepKeys((prev) => new Set(prev).add(key));
+    startPrepTransition(async () => {
+      const result = await generatePrepPacketAction(key);
+      setGeneratingPrepKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      if (!result.ok) {
+        setPrepErrorByKey((prev) => ({ ...prev, [key]: result.error }));
+        return;
+      }
+      setPrepByKey((prev) => ({ ...prev, [key]: result.data }));
     });
   }
 
@@ -415,6 +454,63 @@ export function DashboardClient({
             </button>
             {draftErrorByKey[gig.key] && (
               <p className="mt-1 max-w-[16rem] text-xs text-red-600">{draftErrorByKey[gig.key]}</p>
+            )}
+          </>
+        );
+      },
+      meta: { filterKind: "none" },
+    },
+    {
+      id: "prep",
+      header: "Prep",
+      enableSorting: false,
+      enableColumnFilter: false,
+      cell: ({ row }) => {
+        const gig = row.original;
+        const packet = prepByKey[gig.key];
+        return (
+          <>
+            <button
+              type="button"
+              disabled={generatingPrepKeys.has(gig.key)}
+              onClick={() => handleGeneratePrep(gig.key)}
+              className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {generatingPrepKeys.has(gig.key) ? "Generating…" : packet ? "Regenerate prep packet" : "Generate prep packet"}
+            </button>
+            {prepErrorByKey[gig.key] && <p className="mt-1 max-w-[16rem] text-xs text-red-600">{prepErrorByKey[gig.key]}</p>}
+            {packet && (
+              <div className="mt-1 max-w-[20rem] text-xs text-slate-700">
+                <p className="font-medium">
+                  Fit score: {packet.score}/100 — {packet.recommendation}
+                </p>
+                <details className="mt-1">
+                  <summary className="cursor-pointer text-slate-500 hover:underline">Full prep packet</summary>
+                  <div className="mt-1 flex flex-col gap-1">
+                    <p>{packet.rationale}</p>
+                    {packet.topStrengths.length > 0 && (
+                      <p>
+                        <span className="font-medium">Top strengths:</span> {packet.topStrengths.join("; ")}
+                      </p>
+                    )}
+                    {packet.keyGaps.length > 0 && (
+                      <p>
+                        <span className="font-medium">Key gaps:</span> {packet.keyGaps.join("; ")}
+                      </p>
+                    )}
+                    {packet.predictedQuestions.length > 0 && (
+                      <p>
+                        <span className="font-medium">Predicted questions:</span> {packet.predictedQuestions.join("; ")}
+                      </p>
+                    )}
+                    {packet.starlaStories.length > 0 && (
+                      <p>
+                        <span className="font-medium">STARLA story prompts:</span> {packet.starlaStories.join("; ")}
+                      </p>
+                    )}
+                  </div>
+                </details>
+              </div>
             )}
           </>
         );
