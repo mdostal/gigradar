@@ -1,7 +1,7 @@
 id: resume-store
 epic: career-documents
 title: "Encrypted-at-rest resume storage (save/load/delete)"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: []

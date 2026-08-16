@@ -120,6 +120,8 @@ export interface ApplyProfileConfig {
   bio?: string;
   /** The single number to anchor when a form asks for a rate. */
   rateAnchor?: number;
+  /** career-documents epic: a path reference to an encrypted-at-rest resume file (see src/lib/documents/resume-store.ts). Omitted = no resume on file, not an error. */
+  resumePath?: string;
 }
 
 /** A source the user has enabled (a job platform / board / feed). */

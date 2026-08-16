@@ -78,6 +78,8 @@ export const ApplyProfileConfigSchema = z.object({
   headline: z.string().optional(),
   bio: z.string().optional(),
   rateAnchor: z.number().optional(),
+  /** career-documents epic, resume-store story: a path reference to an encrypted-at-rest resume file (resume-store.ts's getResumePath()), same "path in config, real bytes on disk" convention as SourceConfig.settings.sessionStatePath. Omitted = no resume on file, not an error. */
+  resumePath: z.string().optional(),
 });
 
 /** Mirrors `SourceConfig` in src/lib/types.ts. `settings` is intentionally opaque — never raw secrets. `kind` absent (every hand-written adapter) is today's behavior, byte-identical (llm-custom-sources epic). */
