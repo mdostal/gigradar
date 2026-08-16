@@ -1,0 +1,75 @@
+id: gmail-connect-ui
+epic: email-digest-ingestion
+title: "/config UI: Connect Gmail, connected-state display, Disconnect"
+status: pending
+complexity: low
+methodology: classic
+depends_on: [gmail-digest-source]
+
+description: |
+  Vertical Plan Slice 4. The last mile -- everything before this story is
+  reachable only by hand-editing config.json.
+
+  1. `src/app/config/actions.ts` gains:
+     - `startGmailOAuthAction(sourceId): Promise<ActionResult<{
+       authorizationUrl: string }>>` -- wraps `buildAuthorizationUrl()`,
+       the client redirects the browser to the returned URL (a real
+       top-level navigation, not a fetch -- Google's consent screen
+       cannot render inside a Server Action response).
+     - `disconnectGmailAction(sourceId): Promise<ActionResult<null>>` --
+       deletes the stored token set from whichever backend is configured
+       (local vault file removal / Portunus delete), never leaves a
+       stale, silently-unusable token behind.
+  2. `src/app/config/config-client.tsx` gains a "Connect Gmail" button on
+     a `kind: "gmail-digest"` source row (mirrors the existing "Custom
+     (LLM)"/"Capture Login" button conventions), reading
+     `?gmailConnected=1`/`?gmailError=...` from the callback redirect
+     (§ gmail-oauth-provider-callback story) on mount to show a one-time
+     success/error banner, then clearing the query param. Connected state
+     shows a masked indicator ("Connected" + last-connected date, NEVER
+     any part of the token) and a "Disconnect" button. The read-only-
+     scope disclosure ("gigradar can only read your inbox, never send or
+     modify anything") is shown directly in the connect flow, not buried
+     in docs.
+
+acceptance_criteria:
+  - "Clicking \"Connect Gmail\" navigates the browser to a real Google authorization URL built by startGmailOAuthAction() -- never a fetch/XHR, a real top-level redirect."
+  - "After a successful callback redirect, /config shows connected state and a one-time success banner that does not reappear on a subsequent normal page load."
+  - "Disconnect removes the stored token set from the CONFIGURED backend (local or Portunus, whichever settings.sessionBackend says) and the UI immediately reflects disconnected state."
+  - "The read-only-scope disclosure text is visible in the connect flow itself, not only in docs/gmail-oauth-setup.md."
+  - "No raw token value ever appears in any client-rendered HTML/JSON, at any point in this flow -- verified by inspecting the actual Server Action return values, not just the visible UI."
+
+steps:
+  - id: research
+    description: Re-read config-client.tsx's existing \"Custom (LLM)\"/\"Capture Login\" button + Server Action wiring conventions to match exactly.
+    agent: researcher
+  - id: implement
+    description: Write the two Server Actions and the UI additions.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Server Action unit tests (mocked oauth2.ts/session-backend.ts) for connect-url generation and disconnect's backend-aware deletion.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the one-time banner logic doesn't leak the query param into a bookmarked/shared /config URL, confirm disconnect is genuinely backend-aware.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch, open the epic-wide PR (all 4 stories).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "gains the Connect Gmail button, gated on kind: \"gmail-digest\""
+    - path: src/app/config/actions.ts
+      purpose: "gains startGmailOAuthAction()/disconnectGmailAction()"
+
+references:
+  - path: .pHive/epics/email-digest-ingestion/docs/design-discussion.md
+    relevant_excerpt: "§6 safety, §8 where owner input is unavoidable"
+  - path: .pHive/epics/email-digest-ingestion/docs/vertical-plan.md
+    relevant_excerpt: "Slice 4"

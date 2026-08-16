@@ -1,0 +1,85 @@
+id: gmail-oauth-provider-callback
+epic: email-digest-ingestion
+title: "Gmail OAuth provider + first app/api/ route (the real redirect callback)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [oauth2-generic-mechanism]
+
+description: |
+  Vertical Plan Slice 2. The first concrete OAuthProvider config, and
+  gigradar's first real HTTP route handler -- Server Actions cannot
+  receive a top-level browser GET redirect with `?code=...&state=...`,
+  so this is a genuine, motivated exception to the Server-Action-only
+  convention, not a broader shift.
+
+  1. `src/lib/auth/oauth-providers/gmail.ts` (new): the `OAuthProvider`
+     config for Gmail -- `authorizeUrl:
+     "https://accounts.google.com/o/oauth2/v2/auth"`, `tokenUrl:
+     "https://oauth2.googleapis.com/token"`, `scope:
+     "https://www.googleapis.com/auth/gmail.readonly"` (read-only,
+     least-privilege, stated explicitly), `clientIdSetting`/
+     `clientSecretSetting` naming the SourceConfig.settings keys a Gmail
+     source's config carries (`env:GMAIL_OAUTH_CLIENT_ID`/
+     `env:GMAIL_OAUTH_CLIENT_SECRET`, same convention as every other
+     secret).
+  2. `src/app/api/oauth/[provider]/callback/route.ts` (new, first
+     app/api/ route in the repo): `GET` handler. Reads `code`/`state`
+     from the URL, looks up the provider by the `[provider]` route param
+     (only "gmail" registered for now -- an unknown provider id is a 404,
+     not a crash), calls `exchangeCodeForTokens()`, stores the resulting
+     token set via the generalized Portunus/vault path keyed by the
+     sourceId recovered from the pending-state map, then issues a
+     redirect (302) back to `/config?gmailConnected=1` (or
+     `?gmailError=<short-code>` on failure -- never the raw error message
+     in the query string, that goes to server logs only).
+  3. `docs/gmail-oauth-setup.md` (new, mirrors docs/mcp-setup.md's
+     copy-pasteable convention): step-by-step Google Cloud Console walk-
+     through -- create a project, configure the OAuth consent screen,
+     create an OAuth 2.0 Client ID (Web application type), register the
+     EXACT redirect URI `http://127.0.0.1:3000/api/oauth/gmail/callback`,
+     where to paste the resulting client id/secret into config.json (as
+     `env:` references) and .env.
+
+acceptance_criteria:
+  - "GET /api/oauth/gmail/callback with a valid code+state completes the exchange and redirects to /config?gmailConnected=1."
+  - "GET /api/oauth/gmail/callback with an unknown/expired state redirects to /config?gmailError=... and never calls the token endpoint."
+  - "GET /api/oauth/notaprovider/callback returns 404, not a 500 or an unhandled exception."
+  - "The stored token set after a successful callback is readable via getValidAccessToken() for the same sourceId -- an integration-level test, not just unit-testing the route in isolation."
+  - "docs/gmail-oauth-setup.md names the exact, correct redirect URI and scope -- cross-checked against the actual route path and provider config, not typed independently."
+
+steps:
+  - id: research
+    description: Confirm the real Gmail/Google OAuth2 endpoint URLs and token-response shape against Google's current documentation before hardcoding them.
+    agent: researcher
+  - id: implement
+    description: Write the Gmail provider config, the callback route, and the setup doc.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Route handler tests (mocked oauth2.ts functions) covering success, bad state, and unknown provider.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no raw error detail leaks into the redirect query string, confirm the setup doc's redirect URI matches the actual route exactly.
+    agent: reviewer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/oauth2.ts
+      purpose: "buildAuthorizationUrl()/exchangeCodeForTokens()/getValidAccessToken() -- reused unmodified"
+    - path: docs/mcp-setup.md
+      purpose: "the copy-pasteable external-setup doc convention this story's new doc mirrors"
+
+risks:
+  - severity: low
+    description: "Google's OAuth2 endpoint URLs or token response shape could differ from what's assumed without live verification."
+    mitigation: "Research step pins the real, current Google OAuth2 documentation before implementation; the live handshake itself is verified with the owner per design-discussion.md §8, not assumed correct from docs alone."
+
+references:
+  - path: .pHive/epics/email-digest-ingestion/docs/design-discussion.md
+    relevant_excerpt: "§4 the OAuth2 flow, §8 where owner input is unavoidable"
+  - path: .pHive/epics/email-digest-ingestion/docs/vertical-plan.md
+    relevant_excerpt: "Slice 2"

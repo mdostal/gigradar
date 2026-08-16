@@ -1,0 +1,79 @@
+id: gmail-digest-source
+epic: email-digest-ingestion
+title: "gmail-digest-source.ts: fetch + LLM extraction of job-alert emails"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [gmail-oauth-provider-callback]
+
+description: |
+  Vertical Plan Slice 3. The actual `Source` implementation -- everything
+  before this story was plumbing with no gigradar-visible feature yet.
+
+  1. `Source.auth` (src/lib/sources/source.ts) gains a new value:
+     `"oauth"`, alongside the existing `"none" | "api-key" |
+     "browser-session"`.
+  2. `SourceConfig.kind` (src/lib/types.ts, src/lib/config/schema.ts)
+     widens from `z.literal("custom-llm").optional()` to
+     `z.enum(["custom-llm", "gmail-digest"]).optional()`.
+  3. `src/lib/sources/gmail-digest-source.ts` (new): `gmailDigestSource:
+     Source`, `auth: "oauth"`, `fetch(cfg, profile, apiKey)`:
+     - `getValidAccessToken(GMAIL_PROVIDER, cfg.id, sessionBackendFrom(cfg))`.
+     - Gmail `messages.list` REST call (`GET
+       https://gmail.googleapis.com/gmail/v1/users/me/messages?q=...`),
+       `q` built from `cfg.settings.digestSenders` (string[], user-
+       editable, DEFAULT list covering LinkedIn/Indeed/ZipRecruiter job-
+       alert sender addresses) as an `from:x OR from:y OR ...` query.
+     - For each matched message: `messages.get?format=full`, decode the
+       body (base64url per Gmail's API), strip to plain text/simplified
+       HTML.
+     - BEGIN/END-delimited untrusted-DATA LLM call (same framing as
+       custom-source-recipe.ts's deriveRecipeAndExtract()), forced tool-
+       use, returns `Gig[]` per email (one digest email can list multiple
+       jobs). `externalId`/`url` come from the real per-listing link found
+       IN the email body -- never fabricated, never the email's own
+       message id used as a stand-in.
+     - No recipe caching (design-discussion.md §5) -- every email is a
+       fresh LLM call, an accepted v1 tradeoff given naturally-bounded
+       digest volume.
+  4. `runner.ts`'s fallback chain extends: `getSource(sc.id) ??
+     (sc.kind === "custom-llm" ? customLlmSource : sc.kind ===
+     "gmail-digest" ? gmailDigestSource : undefined)`.
+
+acceptance_criteria:
+  - "fetch() with a mocked Gmail API returning 2 digest emails (one with 3 listings, one with 1) returns 4 Gig objects total, each with a real url/externalId sourced from the email body."
+  - "A listing whose email body has no discoverable real URL is dropped, never assigned a fabricated one -- same no-fabricated-data discipline as every other LLM extraction path."
+  - "digestSenders defaults to a real, sensible sender allowlist when settings.digestSenders is unset, and a user-supplied list overrides it entirely (not merged)."
+  - "A getValidAccessToken() failure (e.g. revoked grant) throws a specific, actionable error -- caught by runner.ts's existing error-handling path like every other source's auth failure."
+  - "runner.ts routes a kind:\"gmail-digest\" SourceConfig to gmailDigestSource exactly like kind:\"custom-llm\" already routes to customLlmSource -- verified with a real registered-vs-fallback test, not just reading the code."
+
+steps:
+  - id: research
+    description: Confirm the real Gmail messages.list/messages.get response shapes (query params, base64url body encoding, headers for subject/from) against Google's current API docs.
+    agent: researcher
+  - id: implement
+    description: Write gmail-digest-source.ts and the runner.ts/type/schema wiring.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests with mocked fetch (Gmail API) and mocked Anthropic client, covering multi-listing emails, missing-URL drops, and the default/override sender list.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no-fabricated-data discipline is actually enforced (not just documented), confirm the fallback chain change didn't regress the existing custom-llm-source routing test.
+    agent: reviewer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/sources/custom-source-recipe.ts
+      purpose: "the BEGIN/END-delimited LLM-extraction pattern this story reuses in shape"
+    - path: src/lib/apply/runner.ts
+      purpose: "the fallback-routing chain, extended a third time"
+
+references:
+  - path: .pHive/epics/email-digest-ingestion/docs/design-discussion.md
+    relevant_excerpt: "§5 Gmail digest fetching + extraction"
+  - path: .pHive/epics/email-digest-ingestion/docs/vertical-plan.md
+    relevant_excerpt: "Slice 3"

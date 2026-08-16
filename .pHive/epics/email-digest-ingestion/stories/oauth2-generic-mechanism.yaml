@@ -1,0 +1,101 @@
+id: oauth2-generic-mechanism
+epic: email-digest-ingestion
+title: "Generic OAuth2 module (PKCE, refresh) + generalized Portunus/vault secret storage"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1. Builds the provider-agnostic seam everything
+  else in this epic plugs into — no Gmail-specific code here.
+
+  1. `src/lib/auth/oauth2.ts` (new):
+     - `OAuthProvider` type: `{ id: string, authorizeUrl: string,
+       tokenUrl: string, scope: string, clientIdSetting: string,
+       clientSecretSetting: string }` (the last two are keys into
+       SourceConfig.settings, resolved via readRawConfig() +
+       resolveEnvString(), same "env:VAR_NAME" convention as every other
+       secret).
+     - `buildAuthorizationUrl(provider, sourceId): { url: string, state:
+       string }` — generates a PKCE code_verifier (crypto.randomBytes,
+       base64url) + code_challenge (SHA-256, base64url), a random `state`
+       token, holds `{codeVerifier, sourceId}` in a globalThis-pinned Map
+       keyed by `state` (same HMR-survival idiom as session-capture.ts),
+       builds the real authorize URL with client_id/redirect_uri (fixed
+       `http://127.0.0.1:3000/api/oauth/{provider.id}/callback`)/scope/
+       state/code_challenge/access_type=offline/prompt=consent.
+     - `exchangeCodeForTokens(provider, code, state): Promise<OAuthTokenSet>`
+       — validates `state` against the pending map (throws a specific
+       error on an unknown/expired state, deletes the entry either way,
+       CSRF protection), POSTs to `provider.tokenUrl` with the code +
+       code_verifier + client_id/secret, returns `{accessToken,
+       refreshToken, expiresAt, scope}`.
+     - `getValidAccessToken(provider, sourceId, storageBackend):
+       Promise<string>` — reads the stored OAuthTokenSet (via the
+       generalized Portunus/vault path below), returns `.accessToken`
+       as-is if `expiresAt` is more than 60s away, otherwise POSTs a
+       `grant_type=refresh_token` request to `provider.tokenUrl`,
+       re-stores the refreshed set, returns the new access token.
+  2. `src/lib/auth/session-backend.ts` (modified, NOT rewritten):
+     generalize `writeSessionViaPortunus`/`readSessionViaPortunus` into
+     `writeSecretViaPortunus<T>(site, account, value: T, ttlSeconds)`/
+     `readSecretViaPortunus<T>(site, account, validate: (v: unknown) => v
+     is T): Promise<T>` — same spawn/stdin/tempfile-cleanup/envelope-
+     parsing plumbing, now shape-agnostic. `writeSessionViaPortunus`/
+     `readSessionViaPortunus` become one-line wrappers
+     (`writeSecretViaPortunus(site, account, storageState, ttl)`,
+     `readSecretViaPortunus(site, account, isStorageStateShape)`) —
+     EVERY EXISTING TEST for these two functions must keep passing
+     unmodified (this is a mechanical refactor, not new behavior for the
+     storageState path).
+  3. `isOAuthTokenSetShape(value: unknown): value is OAuthTokenSet` (new,
+     mirrors `isStorageStateShape()`'s exact validation-function shape)
+     for the local-vault path (JSON.stringify -> encrypt() -> write,
+     read -> decrypt() -> JSON.parse -> validate).
+
+acceptance_criteria:
+  - "buildAuthorizationUrl() produces a URL containing a real PKCE S256 code_challenge derived from a real code_verifier that exchangeCodeForTokens() can later use to complete the exchange -- verified end to end against a mocked token endpoint, not just URL-string-shape checks."
+  - "exchangeCodeForTokens() with an unknown or already-consumed `state` throws a specific error and never calls the token endpoint."
+  - "getValidAccessToken() returns the cached access token without any network call when it has more than 60s left before expiry."
+  - "getValidAccessToken() refreshes and re-stores when the token is expired (or about to expire), and the refreshed token set replaces the old one in storage (verified by reading storage back)."
+  - "writeSessionViaPortunus()/readSessionViaPortunus()'s EXISTING test suite (session-backend.test.ts) passes unmodified after the generalization -- byte-identical behavior for the storageState path."
+  - "A NEW OAuthTokenSet round-trips correctly through both the local-vault path and the generalized Portunus path (mocked child_process), including the local-vault path's JSON.stringify/encrypt/decrypt/JSON.parse round trip."
+  - "No OAuth token (access or refresh) is ever logged, returned from a function whose result could reach a Server Action boundary unfiltered, or included in a thrown error message."
+
+steps:
+  - id: research
+    description: Re-read session-backend.ts's Portunus plumbing and vault.ts's encrypt/decrypt in full before touching either.
+    agent: researcher
+  - id: implement
+    description: Write oauth2.ts and generalize session-backend.ts.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests for PKCE generation, state validation, token refresh timing, and the generalized Portunus/vault round trip (mocked child_process, mocked fetch).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the existing session-backend.test.ts suite is untouched and still green, confirm no token value ever appears in a log/error string.
+    agent: reviewer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-backend.ts
+      purpose: "generalized in place -- Portunus plumbing reused, not duplicated"
+    - path: src/lib/security/vault.ts
+      purpose: "already-generic encrypt()/decrypt() -- local backend reuses as-is"
+    - path: src/lib/config/load.ts
+      purpose: "resolveEnvString() -- same env:VAR_NAME convention for client id/secret"
+
+design_decisions:
+  - decision: "Generalize session-backend.ts's Portunus functions with a generic type param + validator, rather than duplicating the plumbing in a new oauth-token-store.ts."
+    rationale: "The user's own framing (\"a good deal of these logins\") signals more OAuth-shaped secrets are coming; the stdin/tempfile/envelope plumbing is real, hard-won operational knowledge worth writing once. See design-discussion.md §3."
+
+references:
+  - path: .pHive/epics/email-digest-ingestion/docs/design-discussion.md
+    relevant_excerpt: "§3 generalize-vs-duplicate decision, §4 the OAuth2 flow"
+  - path: .pHive/epics/email-digest-ingestion/docs/vertical-plan.md
+    relevant_excerpt: "Slice 1"
