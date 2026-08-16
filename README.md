@@ -27,6 +27,27 @@ your sources ──fetch──▶ normalize to Gig ──gate()──▶ pass? �
 4. **Assisted apply** — stages a per-gig application draft keyed to your profile for **your review**. It does not blast auto-submissions.
 5. **Schedule** — runs on a cron; each run is logged and observable.
 
+## Install
+
+**macOS:** [download the `.dmg`](https://github.com/mdostal/gigradar/releases/latest) and drag it to `/Applications`.
+
+The `.dmg` is currently **unsigned** — there's no Apple Developer ID certificate behind it yet (real notarized signing is on the roadmap; see `docs/ARCHITECTURE.md`). macOS Gatekeeper will refuse to open it with a "gigradar.app is damaged and can't be opened" dialog. That's Gatekeeper rejecting the ad-hoc signature, **not** a corrupted download. Fix it with one command after installing, then launch normally:
+
+```
+xattr -cr /Applications/gigradar.app
+```
+
+**Any OS, from source:**
+
+```
+git clone https://github.com/mdostal/gigradar.git
+cd gigradar
+npm install
+npm run dev
+```
+
+Either way, a local dashboard comes up at `127.0.0.1:3000` — never exposed beyond your machine.
+
 ## Add a source (the whole extension story)
 
 ```ts

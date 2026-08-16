@@ -67,7 +67,22 @@ jobs:
           # between version bumps), so the real ref is the source of truth.
           tagName: ${{ github.ref_name }}
           releaseName: "gigradar ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install this version."
+          # The .dmg is unsigned (no Apple Developer ID certificate yet --
+          # see docs/ARCHITECTURE.md's tauri-installer roadmap entry), so
+          # every release body carries the Gatekeeper workaround -- this
+          # is the ONE place a fresh release's notes are authored, so it's
+          # the single source of truth GitHub itself shows before anyone
+          # even downloads the asset. Mirrored in README.md's Install
+          # section and docs/index.html's Install step for the other two
+          # places someone might land first.
+          releaseBody: |
+            **The `.dmg` is unsigned** — no Apple Developer ID certificate yet. macOS Gatekeeper will refuse to open it with a "gigradar.app is damaged and can't be opened" dialog. That's Gatekeeper rejecting the ad-hoc signature, not a corrupted download.
+
+            After dragging it to `/Applications`, run this once, then launch normally:
+
+            ```
+            xattr -cr /Applications/gigradar.app
+            ```
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-dev.') }}
 
