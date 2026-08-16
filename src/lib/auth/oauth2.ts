@@ -126,14 +126,21 @@ export function buildAuthorizationUrl(
  * calls the token endpoint in that case), deletes the entry either way
  * (single-use — a `state` cannot be replayed), then exchanges `code` for a
  * real token set via a plain `fetch()` POST to `provider.tokenUrl`.
- * `clientId`/`clientSecret` resolved by the caller, never module-scope.
+ *
+ * `resolveCredentials(sourceId)` is called ONLY after `state` has been
+ * validated and `sourceId` recovered from it — this is the one point in
+ * the whole flow where the caller (the callback route) genuinely cannot
+ * know `sourceId` up front (it only exists inside the pending-
+ * authorization entry `state` unlocks), so credential resolution is
+ * threaded through as a callback rather than a raw parameter. Still
+ * resolved fresh per call, never module-scope — same discipline every
+ * other BYOK secret in this repo follows.
  */
 export async function exchangeCodeForTokens(
   provider: OAuthProvider,
   code: string,
   state: string,
-  clientId: string,
-  clientSecret: string,
+  resolveCredentials: (sourceId: string) => { clientId: string; clientSecret: string },
 ): Promise<{ sourceId: string; tokenSet: OAuthTokenSet }> {
   const pending = pendingAuthorizations.get(state);
   pendingAuthorizations.delete(state);
@@ -141,6 +148,8 @@ export async function exchangeCodeForTokens(
   if (!pending || pending.providerId !== provider.id || Date.now() - pending.createdAt > PENDING_AUTH_TTL_MS) {
     throw new Error(`${MODULE_PREFIX}: unknown or expired authorization state for provider "${provider.id}".`);
   }
+
+  const { clientId, clientSecret } = resolveCredentials(pending.sourceId);
 
   const body = new URLSearchParams({
     grant_type: "authorization_code",

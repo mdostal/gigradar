@@ -88,7 +88,7 @@ describe("buildAuthorizationUrl / exchangeCodeForTokens: happy path", () => {
 
     const fetchMock = mockTokenEndpoint({ access_token: "at-1", refresh_token: "rt-1", expires_in: 3600, scope: FAKE_PROVIDER.scope });
 
-    const { sourceId, tokenSet } = await exchangeCodeForTokens(FAKE_PROVIDER, "auth-code-xyz", state, "client-id-123", "client-secret-456");
+    const { sourceId, tokenSet } = await exchangeCodeForTokens(FAKE_PROVIDER, "auth-code-xyz", state, () => ({ clientId: "client-id-123", clientSecret: "client-secret-456" }));
 
     expect(sourceId).toBe("gmail-primary");
     expect(tokenSet.accessToken).toBe("at-1");
@@ -108,7 +108,7 @@ describe("exchangeCodeForTokens: state validation", () => {
   it("rejects an unknown state without ever calling the token endpoint", async () => {
     const fetchMock = mockTokenEndpoint({});
 
-    await expect(exchangeCodeForTokens(FAKE_PROVIDER, "code", "not-a-real-state", "id", "secret")).rejects.toThrow(
+    await expect(exchangeCodeForTokens(FAKE_PROVIDER, "code", "not-a-real-state", () => ({ clientId: "id", clientSecret: "secret" }))).rejects.toThrow(
       /unknown or expired authorization state/,
     );
     expect(fetchMock).not.toHaveBeenCalled();
@@ -118,10 +118,10 @@ describe("exchangeCodeForTokens: state validation", () => {
     const { state } = buildAuthorizationUrl(FAKE_PROVIDER, "gmail-primary", "client-id");
     mockTokenEndpoint({ access_token: "at-1", refresh_token: "rt-1", expires_in: 3600, scope: FAKE_PROVIDER.scope });
 
-    await exchangeCodeForTokens(FAKE_PROVIDER, "code", state, "client-id", "secret");
+    await exchangeCodeForTokens(FAKE_PROVIDER, "code", state, () => ({ clientId: "client-id", clientSecret: "secret" }));
 
     const fetchMock = mockTokenEndpoint({});
-    await expect(exchangeCodeForTokens(FAKE_PROVIDER, "code", state, "client-id", "secret")).rejects.toThrow(
+    await expect(exchangeCodeForTokens(FAKE_PROVIDER, "code", state, () => ({ clientId: "client-id", clientSecret: "secret" }))).rejects.toThrow(
       /unknown or expired authorization state/,
     );
     expect(fetchMock).not.toHaveBeenCalled();
@@ -225,6 +225,6 @@ describe("token error handling never leaks a secret value", () => {
     mockTokenEndpoint({ error: "invalid_grant", access_token_never_actually_present: "should-not-leak" }, false, 400);
     const { state } = buildAuthorizationUrl(FAKE_PROVIDER, "gmail-primary", "client-id");
 
-    await expect(exchangeCodeForTokens(FAKE_PROVIDER, "code", state, "client-id", "secret")).rejects.toThrow(/failed \(400\)/);
+    await expect(exchangeCodeForTokens(FAKE_PROVIDER, "code", state, () => ({ clientId: "client-id", clientSecret: "secret" }))).rejects.toThrow(/failed \(400\)/);
   });
 });
