@@ -495,7 +495,7 @@ than assume this one generalizes.
 - [x] `config.json` loader (`src/lib/config/`, zod-validated, XDG data directory) — `local-secrets-config-storage` epic.
 - [x] `.env` secrets loading + `env:` reference resolution, gitignore verification, example templates (`src/lib/config/`, `config.example.json`, `.env.example`) — `local-secrets-config-storage` epic.
 - [x] `fractionaljobs`/`fractionus`/`fractionalfinders` real `Source` adapters (`src/lib/sources/fractionaljobs.ts`, `fractionus.ts`, `fractionalfinders.ts`, all `auth: "none"`) — `adapter-batch-public-boards` epic, `public-fetch-adapters` story. Each mirrors `builtin.ts`'s exact shape: a bare `fetch()` with only `{accept: "text/html"}` (no User-Agent spoofing — live-verified identical either way), regex-over-HTML parsing of `/jobs/<slug>` cards, and the same two-tier throw/return-`[]` split (throw on a genuine page-shape failure — container missing, or cards present but none parse; return `[]` on a page that loads fine with legitimately zero current listings, e.g. FractionalFinders' small board). `rate`/`weeklyHours` are left `undefined` on all three — none of these boards reliably publish them. Live-verified: 63/53/8 real per-listing URLs returned respectively (see each file's own header comment and this story's fixture-based tests, `src/lib/sources/__tests__/fractionaljobs.test.ts`/`fractionus.test.ts`/`fractionalfinders.test.ts`).
-- [ ] Remaining real `Source` adapters: gun.io.
+- [x] Remaining sites, including gun.io, no longer need a hand-written `Source` adapter at all — the `llm-custom-sources` epic below lets an owner add ANY site (gun.io included) purely through config. gun.io itself has not been live-verified through this mechanism yet (that requires the owner's own account if it turns out to be login-gated); the mechanism covers it without any new code either way.
 - [x] Auth/session manager mechanism — `src/lib/auth/browser-session.ts` (origin-scoped, headed-Chromium, storageState-backed) — `browser-session-auth` epic. Real session-based adapters that consume it are separate, later stories in the same epic.
 - [x] `go-fractional` real `Source` adapter (`src/lib/sources/gofractional.ts`, `auth: "browser-session"`) — `browser-session-auth` epic, `gofractional-adapter` story. Live-verified against the real `https://www.gofractional.com/jobs` board via the hive's valid session: real listings, real `/job/{slug}` per-listing URLs, DOM-scraped (no accessible JSON API observed).
 - [x] `a.team` real `Source` adapter (`src/lib/sources/ateam.ts`, `auth: "browser-session"`) — `browser-session-auth` epic, `ateam-adapter` story — **shipped with live verification explicitly deferred.** Code and fixture-based unit tests (`src/lib/sources/__tests__/ateam.test.ts`) are complete and pass: origin-scoped allowlist (`a.team`, `platform.a.team` only), a source-specific auth-failure predicate matching A.Team's REAL, live-observed sign-in-page shape (title exactly "Sign In", body containing both "Continue with Google" and "Continue with Github" — confirmed live during this epic's planning, see `.pHive/epics/browser-session-auth/docs/research-brief.md` §7), and throw-on-failure. UNLIKE `gofractional.ts`, the Mission Control board's listing/DOM structure was **never live-observed** — the stored A.Team session was confirmed logged out during planning, in both headless and headed modes, against both `mat.json` and the broader `gf.json` (a data/credential problem, not a mechanism problem). The scraping logic and its fixture are therefore **structure-derived, not live-captured** (see `ateam.ts`'s and `ateam.test.ts`'s file-level comments for the exact assumptions — URL shape, field names, selectors — that need re-verification).
@@ -524,6 +524,12 @@ than assume this one generalizes.
 - [x] True 1-click macOS installer + real auto-update (`tauri-installer` epic, 4 stories) — a third runtime mode alongside browser/Electron: a real, double-clickable `.app`/`.dmg` (`src-tauri/`). `tauri-bare-packaged-app`: the Tauri shell spawns a bundled, PINNED Node sidecar (never Node-SEA/`pkg`-compiled — native-binding robustness for `node:sqlite`/Playwright, a deliberate deviation from Tauri's own official sidecar tutorial, documented in `src-tauri/src/lib.rs`) running gigradar's `.next/standalone` server, polls for real TCP readiness, and only then opens a window — same "no window before the server is confirmed up" discipline as "Two runtime modes" below. `tauri-chromium-sidecar`: Playwright's Chromium bundled too, zero code changes needed in `browser-session.ts` (`PLAYWRIGHT_BROWSERS_PATH` transparently respected, live-verified). `tauri-ci-release-pipeline`: `.github/workflows/tauri-release.yml` — pushing a `vX.Y.Z` (prod) or `vX.Y.Z-dev.N` (dev channel) tag builds and publishes a real signed `.dmg` to GitHub Releases via `tauri-action`. `tauri-real-auto-update`: `tauri-plugin-updater` wired entirely from the Rust side (`src-tauri/src/updater.rs`) — a native tray menu ("Check for Updates", "Update channel: Dev/Prod", "Quit"), checking on launch and on demand. Channel preference is a small sibling file next to gigradar's own data dir (installer-level state, not `Config`), defaulting to prod. Prod's endpoint uses GitHub's own "latest release" alias (only resolves non-prerelease tags); dev's endpoint is a `latest.json` kept current on a dedicated `dev-manifest` branch the release workflow overwrites, since GitHub has no "latest prerelease" equivalent — the actual signed update bundle stays a normal, permanent release asset, only that pointer needs to be overwritable. Live-verified end to end: a real installed build detected and applied a real published update, channel preference intact across the update-triggered restart. Signed with a local test keypair (`npx tauri signer generate`) for now — the real production signing key is a later, owner-gated step (Portunus-vaulted).
 - [x] App icon picker (`icon-picker` story) — `Config.appIcon` (optional, defaults to `"iso-radar"`), an id into `src/lib/app-icons.ts`'s `APP_ICONS` registry (the original hand-drawn `"classic"` mark plus 10 Gemini-generated candidates). Drives the web app's favicon (`layout.tsx`'s `generateMetadata()`, reading raw config server-side) and a small nav-header mark, plus the desktop app's bundle icon (`src-tauri/icons/`, regenerated from the same source via `npx tauri icon`). A visual picker grid lives in `/config`'s new "Appearance" section, with a link to vote/suggest more on GitHub Discussions.
 - [x] Dashboard table rebuilt on TanStack Table (`src/app/dashboard-client.tsx`) — replaces the prior hand-rolled `<table>` + top filter panel. Every column now has both a sort control and its own filter control in the header: independent title/company text filters (previously one combined search box), tier/source/status filters, a min-rate threshold, a max-weekly-hours threshold, and a seen-within-window preset (24h/7d/30d) — the last three genuinely new. Sorting reuses `dashboard-sort.ts`'s `compareByField()` domain logic (tier/status rank, nullable-last, stable) unchanged via a thin `sortingFn` adapter.
+- [x] LLM+Playwright profile-assist, 3 autonomy modes (`profile-assist` epic) — `src/lib/apply/profile-suggest.ts` (single-shot suggest) and `src/lib/apply/profile-assist-loop.ts` (multi-turn `guided`/`full-auto` tool-use loop, ref-validated click/fill), at `/profile-assist`. See "LLM+Playwright profile-assist" below.
+- [x] MCP server (`agent-integration` epic) — `src/mcp/server.ts` (`npm run mcp`), 5 tools over stdio. See "Agent integration: MCP server" below and [`docs/mcp-setup.md`](./mcp-setup.md).
+- [x] Real-Chrome spawn-then-attach + Portunus session backend + LLM capture-readiness check (`oauth-session-capture-v2` epic) — `src/lib/auth/real-chrome.ts`, `src/lib/auth/session-backend.ts`, `src/lib/auth/capture-guidance.ts`. Fixes Google OAuth rejecting Capture Login under `chromium.launch()`'s automation fingerprints. See "Real-Chrome sessions + Portunus backend" below.
+- [x] Custom, config-only LLM-driven `Source` adapters (`llm-custom-sources` epic) — `SourceConfig.kind: "custom-llm"`, `src/lib/sources/custom-llm-source.ts`, `src/lib/sources/custom-source-recipe.ts` (cached-selector-recipe fast path, LLM-derivation fallback), a "Custom (LLM)" toggle + "Test extraction now" in `/config`. The core/user-layer boundary fix this doc's own opening rule has been pointing at since the first epic — an owner adds ANY site with zero edits to this repo. See "Custom LLM sources" below.
+- [x] Verification-challenge detection + in-UI human co-pilot (`verification-copilot` epic) — `src/lib/sources/verification-challenge.ts`'s `VerificationChallengeError` (wired into `withBrowserSession()`), a distinct `"Needs human verification"` issue, and `src/lib/auth/verification-copilot-session.ts` powering "Open browser to help clear it" in `/issues`. See "Verification-challenge co-pilot" below.
+- [x] Opt-in auto-draft-on-scan (`auto-draft-on-scan` epic) — `Config.autoDraftOnScan`, capped per cycle, wired into the scheduler right after a successful scan cycle; reuses `assisted-apply-drafting`'s `generateDraft()`/`stageApplication()` foundation unchanged. See "Scheduler" below.
 
 ## Running the dashboard
 
@@ -1234,6 +1240,23 @@ backoff state.
 `tsx`, with the same `NODE_OPTIONS=--experimental-sqlite` every other script
 that touches the store already carries.
 
+### Auto-draft-on-scan (`auto-draft-on-scan` epic)
+
+Opt-in via `config.autoDraftOnScan` (off by default). After a cycle's
+`runRadarFn()` returns its passed matches, auto-generates a real draft
+(`stageApplication()`, unmodified) for new green-tier matches only —
+capped at `AUTO_DRAFT_CAP` (5) per cycle. Never throws: a missing
+prerequisite or a per-gig failure is logged and the function returns
+normally either way, so auto-drafting can never fail the scan cycle
+itself. Two prerequisites are checked ONCE per cycle rather than
+discovered per-gig (`ANTHROPIC_API_KEY` set, `config.applyProfile` set) —
+either missing logs exactly one clear line naming which and skips
+auto-drafting entirely for that cycle, instead of repeating the same error
+once per eligible gig forever. Eligibility also requires no existing draft
+for the gig (any status — `draft`/`approved`/`rejected`/`submitted` all
+exclude it), so auto-drafting never silently overwrites a decision the
+user already made.
+
 ### Keeping it running: the macOS `launchd` template
 
 `npm run scheduler` itself deliberately does not attempt OS-level process
@@ -1267,6 +1290,267 @@ for both a malformed cron expression and a genuine top-level throw.
 `saveConfig()`-is-never-called regression described above. No live network
 dependency in the automated suite, matching this project's established
 convention — same as `src/lib/apply/__tests__/runner.test.ts`.
+
+## Real-Chrome sessions + Portunus backend (`oauth-session-capture-v2` epic)
+
+`browser-session.ts`'s `chromium.launch()`-based Capture Login (above) fails
+Google's OAuth flow outright — Google's sign-in specifically detects
+`chromium.launch()`'s automation fingerprints (`navigator.webdriver=true`,
+`--enable-automation`) independent of which Chrome binary is launched. This
+epic adds a second, deliberately separate acquisition path for exactly the
+moment a human needs to interact live with a real, non-fingerprinted
+browser (login/capture, and later the verification co-pilot below) — it does
+not replace `withBrowserSession()`'s fetch-time replay mechanism, which
+still works fine for an already-captured session.
+
+### `src/lib/auth/real-chrome.ts`
+
+`spawnRealChrome()` never calls `playwright.chromium.launch()`. It spawns a
+real, independent Google Chrome process directly via `child_process.spawn()`
+(macOS only, first pass — throws a specific, actionable error naming the
+exact binary path checked on any other platform, never a silent fallback to
+Playwright's bundled Chromium, which would reintroduce the exact
+fingerprinting problem this module exists to fix), with a fresh, isolated
+`--user-data-dir` (a temp directory, never the caller's real personal Chrome
+profile) and a fresh local-only `--remote-debugging-port` (bound to
+`127.0.0.1`, chosen per-call via a real free-port probe, never fixed or
+guessable). It polls Chrome's own `/json/version` CDP endpoint until ready,
+then `attachToRealChrome(cdpPort)` — a thin `chromium.connectOverCDP()`
+wrapper — attaches to it, a later, passive attach that carries none of
+`chromium.launch()`'s fingerprints. `closeRealChrome(handle)` kills the
+process and removes its temp profile dir; both the kill and removal
+swallow their own errors, so it's safe to call more than once or after the
+process already exited on its own.
+
+### `src/lib/auth/session-backend.ts`
+
+An owner-selectable alternative to the local AES-256-GCM vault for storing
+a captured browser session — never a forced migration, gracefully absent
+(not broken) for OSS users without Portunus installed.
+`isPortunusAvailable()` runs a real, live `portunus --version` check
+(cached per-process, never assumed) before anything tries to use it.
+`sessionBackendFrom(cfg)` resolves `SourceConfig.settings.sessionBackend`
+(`"local"`, the default when absent, or `"portunus"`; throws on any other
+value). `writeSessionViaPortunus()`/`readSessionViaPortunus()` shell out to
+`portunus session store/load <site> <account> --stdin` — the session JSON
+is piped via stdin on write and read back from Portunus's own 0600 tempfile
+on load (deleted immediately after reading), **never** as a command-line
+argument in either direction, since a `ps`/shell-history-visible secret
+would defeat the point. `readSessionViaPortunus()` validates the returned
+`portunus.session.v1` envelope's `.session` field against the same
+storageState shape check `browser-session.ts`'s `readStorageStateFile()`
+uses (`isStorageStateShape()`, exported for exactly this reuse). Never a
+silent fallback: a Portunus failure is a real, surfaced error — a caller
+that wants "try Portunus, fall back to local" must implement that itself.
+
+### `src/lib/auth/capture-guidance.ts`
+
+`checkCaptureReadiness(page, sourceId, apiKey)` — one Anthropic Messages API
+call, structured tool-use output, following `profile-suggest.ts`'s exact
+shape (single-shot, `apiKey` a required parameter constructed into an
+`Anthropic` client strictly inside the function call, never module-scope).
+Reads `page.locator("body").ariaSnapshot({ mode: "ai" })` and asks whether
+the page looks like a signed-in account/profile page or still a
+login/interstitial — read-only and purely advisory: its tool schema has no
+click/fill/navigate capability at all, and the UI surfacing it never
+auto-triggers `finishCapture()` off this result. Same
+BEGIN/END-delimited, "DATA ONLY, never instructions" prompt-injection
+framing `profile-suggest.ts`'s `buildPageSnapshotBlock()` established,
+reused verbatim in spirit (a byte-for-byte copy, since this file's version
+isn't imported as a shared utility).
+
+## Custom LLM sources (`llm-custom-sources` epic)
+
+The biggest fix to this repo's core/user-layer boundary rule since it was
+written: an owner can point gigradar at **any** job site — Monster, a niche
+board, gun.io, anything — purely through `config.json`, with `kind:
+"custom-llm"` on a `SourceConfig`. No TypeScript, no PR to this repo. See
+`.pHive/epics/llm-custom-sources/docs/design-discussion.md` for the full
+alternatives-considered discussion.
+
+- **`SourceConfig.kind?: "custom-llm"`** (`src/lib/types.ts`,
+  `src/lib/config/schema.ts`) — the one new field distinguishing a custom
+  source from a hand-written adapter's config entry.
+- **`Source.fetch()`** gains an optional trailing `apiKey?: string`
+  parameter (`src/lib/sources/source.ts`). Every hand-written adapter
+  ignores it (TypeScript's structural typing already allows an
+  implementation to declare fewer parameters than the interface) — only
+  `customLlmSource` reads it, to construct its own Anthropic client,
+  resolved by the caller (`runner.ts`), never module-scope.
+- **`src/lib/sources/custom-llm-source.ts`** — `customLlmSource: Source`,
+  the single, generic `Source` object every `kind: "custom-llm"`
+  `SourceConfig` routes to. Deliberately **not** registered via
+  `registerSource()` — `runner.ts`'s `getSource(sc.id) ?? (sc.kind ===
+  "custom-llm" ? customLlmSource : undefined)` is the ONE shared fallback
+  call site every consumer already passes through, not a second entry
+  point. Two browser-acquisition paths, chosen by
+  `settings.customAuth`: `"none"` (default) is a plain headless
+  `chromium.launch()` — cheaper for an unattended scheduler loop, and
+  nothing here has been shown to need a visible window; `"browser-session"`
+  reuses `withBrowserSession()` (the SAME fetch-time mechanism
+  `gofractional.ts`/`ateam.ts`/`wellfound.ts` already use for an
+  authenticated read — origin-scoped storageState replay, local vault OR
+  Portunus via `sessionBackendFrom()`) — **not** `real-chrome.ts`, a
+  deliberate refinement over the design doc's initial guess:
+  `real-chrome.ts`'s spawn-then-attach is specifically for the
+  login/capture moment (a live OAuth handshake), while replaying an
+  already-captured session at fetch time is exactly what
+  `withBrowserSession()` already does for every other browser-session
+  adapter.
+- **`src/lib/sources/custom-source-recipe.ts`** — the cost/latency-avoidance
+  design (design-discussion.md §5): re-deriving page structure via an LLM
+  call on every single scheduler cycle would be slow and expensive for a
+  site whose layout is stable between scans. `CustomSourceRecipe` is a
+  reusable, cacheable CSS-selector recipe (`listItemSelector`,
+  `titleSelector`, `urlSelector`, optional `companySelector`/
+  `nextPageSelector`) — keyed on real DOM structure, deliberately NOT
+  aria-snapshot refs (`[ref=eN]`, only valid within one snapshot call, not
+  stable across page loads). `readRecipe()`/`writeRecipe()` persist it as
+  plain JSON at `<getDefaultDataDir()>/custom-source-recipes/<sourceId>.json`
+  — a fundamentally different, non-sensitive, regenerable tier from
+  `config.json`'s user-authored/schema-validated/encrypted settings, so a
+  background recipe refresh never re-validates or re-encrypts the whole
+  config document. `extractWithRecipe(page, sourceId, recipe)` is a pure
+  Playwright selector walk — **zero LLM calls** — returning `null` (not
+  `[]`) when the recipe looks stale (the selector matches zero elements, or
+  every matched item is missing both title and url), which signals the
+  caller to fall back to `deriveRecipeAndExtract(page, sourceId, hint,
+  apiKey)`: reads `page.content()` (raw HTML, capped at
+  `MAX_HTML_CHARS=150_000`, truncated never erroring), and asks the BYOK
+  LLM for both today's listings AND a fresh recipe in one structured tool-use
+  call, overwriting the cache. Same BEGIN/END-delimited untrusted-DATA
+  framing as every other LLM-page-reading module in this repo. `followPagination()`
+  clicks `recipe.nextPageSelector` and re-extracts via the same cached
+  recipe (never a fresh LLM call) up to `MAX_PAGES=5` times, deduping by
+  `externalId` — a no-op when the recipe has none. The scope of the fast
+  path is a deliberate, accepted tradeoff: `extractWithRecipe()` only
+  recovers `title`/`url`/`company` via pure selector matching; richer
+  fields (`rate`, `remote`, `employmentType`, `postedAt`) require parsing
+  free text into structured values, which stays LLM-only.
+- **`src/lib/sources/origins.ts`** gains `resolveAllowedOrigins(sourceId,
+  cfg)`/`resolveLoginUrl(sourceId, cfg)` — the static `SOURCE_ORIGINS`/
+  `SOURCE_LOGIN_URLS` registries are checked first (every existing
+  browser-session-auth adapter, unchanged), falling back to
+  `cfg.settings.allowedOrigins`/`cfg.settings.loginUrl` second, since a
+  custom source's owner-typed id is never in either static registry. Same
+  "registry first, config-driven fallback second" shape as `runner.ts`'s
+  own `customLlmSource` fallback above — deliberately the identical
+  pattern, not a second invented one. Returns `undefined` (never throws)
+  when neither has an answer; callers already have their own specific "no
+  origin allowlist registered" error for that case.
+- **The `/config` UI** (`src/app/config/config-client.tsx`) gets a "Custom
+  (LLM)" checkbox per source row (setting `isCustom`/`kind: "custom-llm"`)
+  and a "Test extraction now" button (`testCustomSourceExtractionAction`,
+  `src/app/config/actions.ts`) that runs the real extraction path against
+  the configured URL and previews the result before the user commits to
+  scheduling it.
+
+**No-fabricated-data discipline, same as every other module in this repo**:
+every LLM-derived field mirrors `Gig`'s own optionality — a field the page
+doesn't show stays unset in both the recipe-derivation tool schema and the
+extraction prompt's own instructions, never guessed.
+
+## Verification-challenge co-pilot (`verification-copilot` epic)
+
+A Cloudflare/bot-detection "verification" interstitial hitting a
+browser-session-auth source used to surface as an indistinguishable generic
+fetch failure. This epic makes it a distinct, actionable signal, then gives
+the owner a real, one-click way to go clear it.
+
+### Detection (`src/lib/sources/verification-challenge.ts`)
+
+`isVerificationChallengeContent(text)` — deliberately conservative, matching
+only specific known phrases ("performing security verification", "checking
+your browser", "verify you are human", or "just a moment" co-occurring with
+"cloudflare" — the real interstitial's actual observed content), never a
+broad "this looks suspicious" heuristic; a false positive here would
+degrade the whole signal this epic exists to make trustworthy, while a
+false negative just falls through to whatever generic failure the caller's
+own `isAuthenticated` check already produces — no worse than before. Wired
+into `browser-session.ts`'s `withBrowserSession()` — the ONE place every
+browser-session-auth adapter already goes through — right after
+`page.goto(url)` and before the source's own `isAuthenticated` check: a
+match throws `VerificationChallengeError`, a distinguishable error type
+(checked via `instanceof`, never message-string parsing) carrying
+`sourceId`/`url` as named fields.
+
+`runner.ts`'s per-source `errors[]` entries gain optional
+`needsVerification`/`blockedUrl` fields, set only when the caught error is
+a `VerificationChallengeError`. `scheduler/index.ts`'s issue-raising branches
+on `e.needsVerification` to raise a DISTINCT `"Needs human verification"`
+issue (via `raiseIssue()`, see "Severity-tiered issue signaling" in the
+roadmap below) carrying `{sourceId, blockedUrl}` in `context`, instead of
+the generic `"Source fetch failed"` issue every other error still raises.
+
+### The co-pilot session (`src/lib/auth/verification-copilot-session.ts`)
+
+Same `globalThis`-pinned-map + idle-timeout idiom as `session-capture.ts`/
+`assist-session.ts` (survives Next.js dev HMR; one session per `sourceId` at
+a time). `openCopilotSession(sourceId, url, storageStatePathSetting)` spawns
+a real, human-drivable Chrome via `real-chrome.ts` (unmodified — this is
+exactly the "human needs to interact live with a real, non-fingerprinted
+browser" moment that module exists for), loads the source's already-captured
+session via `readStorageStateFile()` + `filterStorageStateToAllowlist()`
+(`browser-session.ts`, unmodified — origin-scoping stays safety-critical
+and is never skipped for this path either), and navigates to the exact
+blocked `url` from the raised issue's `context`, so the human sees exactly
+the state that failed. `getCopilotPage(sessionId)`/`closeCopilotSession(sessionId)`
+round out the lifecycle; `closeCopilotSession()` is idempotent.
+
+### `/issues` UI
+
+An issue titled `"Needs human verification"` renders "Open browser to help
+clear it" (`openCopilotSessionAction`, `src/app/issues/actions.ts`,
+resolving the source's raw `sessionStatePath` setting from config first).
+Once open: "Check if it looks cleared" (`checkCopilotReadinessAction`,
+wrapping `checkCaptureReadiness()` above against the co-pilot session's live
+page) is purely advisory — it never itself closes the session or resolves
+the issue, same discipline Capture Login's own readiness check already
+established. "I'm done" (`finishCopilotSessionAction`) always closes the
+browser session AND resolves the issue together, in one action — never one
+without the other.
+
+## LLM+Playwright profile-assist (`profile-assist` epic)
+
+Populates `Profile.roles`/`Profile.skills`/apply-profile fields with the
+help of a real LLM driving a real Playwright page, at `/profile-assist`
+(`src/app/profile-assist/`) — three autonomy modes, all sharing the same
+underlying mechanisms rather than three forked implementations:
+
+- **`src/lib/apply/profile-suggest.ts`**'s `suggestProfileFields()` —
+  single-shot, read-only: one Anthropic call over
+  `page.locator("body").ariaSnapshot({ mode: "ai" })`, forced structured
+  tool-use output, the BEGIN/END-delimited untrusted-DATA prompt-injection
+  framing every later LLM-page-reading module in this repo reuses
+  (`capture-guidance.ts`, `custom-llm-source.ts`,
+  `custom-source-recipe.ts` all trace back to this pattern).
+- **`src/lib/apply/profile-assist-loop.ts`** — this repo's first
+  multi-turn LLM tool-use loop, driving a real, live Playwright `Page`
+  across many turns via `read`/`click`/`fill`/`ask_human`/`done` tools.
+  **Ref-based targeting, not CSS selectors**: the AI-mode aria snapshot
+  annotates elements with `[ref=eN]`, and `page.locator("aria-ref=eN")`
+  resolves them back to real locators — the same mechanism Playwright's own
+  official MCP server uses. Before executing any `click`/`fill`, the
+  proposed ref is validated against the refs actually present in the most
+  recent `read()` result — a ref that wasn't just read is rejected as a
+  tool error, never silently executed, so even a successfully-injected
+  instruction can only ever act on real, currently-visible elements. `mode:
+  "guided" | "full-auto"` (`advanceLoopTurn()`) share this ONE
+  implementation rather than a forked second copy — guided mode stops for
+  human approval before a mutating action, full-auto doesn't. A hard
+  per-session turn cap (`MAX_TURNS = 40`) bounds a runaway loop's cost.
+  Same `globalThis`-pinned session-state idiom as `session-capture.ts`.
+
+## Agent integration: MCP server (`agent-integration` epic)
+
+`src/mcp/server.ts` (`npm run mcp`) exposes gigradar over the Model Context
+Protocol via stdio — 5 tools: `list_gigs`, `get_gig`, `update_gig_status`,
+`get_status_summary`, `run_scan`. Every tool except `run_scan` reads via
+`readRawConfig()` (never `loadConfig()`, same resolved-secret discipline as
+the `/config` UI); only `run_scan` calls `loadConfig()`, since a real scan
+needs real resolved credentials. See
+[`docs/mcp-setup.md`](./mcp-setup.md) for copy-pasteable client config for
+both Claude Desktop and Claude Code — not duplicated here.
 
 ## Owner's private overlay (Mathew)
 
