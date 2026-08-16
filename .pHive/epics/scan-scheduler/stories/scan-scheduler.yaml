@@ -1,7 +1,7 @@
 id: scan-scheduler
 epic: scan-scheduler
 title: "src/scheduler/index.ts + backoff.ts: real cron-driven scans with per-source resilience"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: []
