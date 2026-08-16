@@ -102,6 +102,7 @@ const PACKET: PrepPacketContent = {
   recommendation: "Pursue.",
   predictedQuestions: ["How have you scaled a team?"],
   starlaStories: ["S: ... T: ... A: ... R: ... L: ... A: ..."],
+  atsScore: { keywordOverlapScore: 70, matchedKeywords: ["Backend"], missingKeywords: ["Kubernetes"], resumeTweaks: ["Add 'Kubernetes' to your skills."] },
 };
 
 describe("generatePrepPacketAction: missing API key", () => {
