@@ -1,7 +1,7 @@
 id: source-presets
 epic: ats-navigator
 title: "Curated source presets (Indeed, Welcome to the Jungle, Zoho Recruit)"
-status: pending
+status: done
 complexity: low
 methodology: classic
 depends_on: []
