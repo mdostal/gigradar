@@ -1,0 +1,28 @@
+name: email-digest-ingestion
+title: "Generic OAuth2 mechanism + Gmail job-alert digest ingestion"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: oauth2-generic-mechanism
+    title: "Generic OAuth2 module (PKCE, refresh) + generalized Portunus/vault secret storage"
+    complexity: medium
+    depends_on: []
+  - id: gmail-oauth-provider-callback
+    title: "Gmail OAuth provider + first app/api/ route (the real redirect callback)"
+    complexity: medium
+    depends_on: [oauth2-generic-mechanism]
+  - id: gmail-digest-source
+    title: "gmail-digest-source.ts: fetch + LLM extraction of job-alert emails"
+    complexity: medium
+    depends_on: [gmail-oauth-provider-callback]
+  - id: gmail-connect-ui
+    title: "/config UI: Connect Gmail, connected-state display, Disconnect"
+    complexity: low
+    depends_on: [gmail-digest-source]

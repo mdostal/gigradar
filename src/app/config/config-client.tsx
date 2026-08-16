@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, type FormEvent, useState, useTransition } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useState, useTransition } from "react";
 import { APP_ICONS, DEFAULT_APP_ICON_ID } from "@/lib/app-icons";
 import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
 import type { ConfigEdits } from "@/lib/config/save";
@@ -10,12 +10,14 @@ import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from 
 import {
   cancelCaptureAction,
   checkCaptureReadinessAction,
+  disconnectGmailAction,
   extractProfileFromResumeAction,
   finishCaptureAction,
   getAutoFireApprovedCountAction,
   saveConfigAction,
   setAnthropicApiKeyAction,
   startCaptureAction,
+  startGmailOAuthAction,
   testCustomSourceExtractionAction,
 } from "./actions";
 
@@ -40,6 +42,8 @@ interface DraftSource {
   enabled: boolean;
   /** llm-custom-sources epic: true when this row is a config-only custom source (no hand-written adapter) -- maps to SourceConfig.kind: "custom-llm". A real "Add custom source" form lands in a later story; this checkbox is the minimal stopgap that makes the mechanism reachable from the UI at all. */
   isCustom: boolean;
+  /** email-digest-ingestion epic: true when this row is a Gmail job-alert digest source -- maps to SourceConfig.kind: "gmail-digest". Mutually exclusive with isCustom, same "one kind at a time" rule. */
+  isGmailDigest: boolean;
   settings: SettingPair[];
 }
 
@@ -202,7 +206,13 @@ function showsCaptureLogin(source: DraftSource): boolean {
 }
 
 function sourceToDraft(source: SourceConfig): DraftSource {
-  return { id: source.id, enabled: source.enabled, isCustom: source.kind === "custom-llm", settings: settingsToPairs(source.settings) };
+  return {
+    id: source.id,
+    enabled: source.enabled,
+    isCustom: source.kind === "custom-llm",
+    isGmailDigest: source.kind === "gmail-digest",
+    settings: settingsToPairs(source.settings),
+  };
 }
 
 function configToDraft(config: Config): DraftConfig {
@@ -299,7 +309,7 @@ function pairsToSettings(pairs: SettingPair[]): Record<string, unknown> | undefi
 
 function draftToSource(draft: DraftSource): SourceConfig {
   const settings = pairsToSettings(draft.settings);
-  const kind = draft.isCustom ? ("custom-llm" as const) : undefined;
+  const kind = draft.isCustom ? ("custom-llm" as const) : draft.isGmailDigest ? ("gmail-digest" as const) : undefined;
   return {
     id: draft.id,
     enabled: draft.enabled,
@@ -1150,6 +1160,40 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
+  // Gmail OAuth callback banner (email-digest-ingestion epic,
+  // gmail-connect-ui story) -- the /api/oauth/gmail/callback route
+  // redirects back here with ?gmailConnected=1 or ?gmailError=<code>. Read
+  // ONCE on mount, then strip the query param via history.replaceState so
+  // a page refresh doesn't re-show the banner. Deliberately plain
+  // window.location (not next/navigation's useSearchParams()) -- this page
+  // has no Suspense boundary around it and a one-time mount read doesn't
+  // need App Router's search-params plumbing.
+  const [gmailBanner, setGmailBanner] = useState<{ kind: "connected"; sourceId: string } | { kind: "error"; code: string } | null>(null);
+  // Which gmail-digest sourceIds appear connected -- CLIENT-SIDE ONLY, a
+  // known v1 gap: there's no checkGmailConnectionAction to ask the server
+  // "is this actually still connected" on load, so a page refresh loses
+  // this UI state even though the real stored token is untouched. The
+  // Connect/Disconnect buttons still work correctly either way; this only
+  // affects whether the row LOOKS connected after a refresh.
+  const [gmailConnectedSourceIds, setGmailConnectedSourceIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connectedSourceId = params.get("gmailConnected");
+    const errorCode = params.get("gmailError");
+    if (!connectedSourceId && !errorCode) return;
+
+    if (connectedSourceId) {
+      setGmailBanner({ kind: "connected", sourceId: connectedSourceId });
+      setGmailConnectedSourceIds((prev) => new Set(prev).add(connectedSourceId));
+    } else {
+      setGmailBanner({ kind: "error", code: errorCode! });
+    }
+    params.delete("gmailConnected");
+    params.delete("gmailError");
+    const newSearch = params.toString();
+    window.history.replaceState(null, "", newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname);
+  }, []);
+
   // "Start from a template" (role-templates story) — pure client-side draft
   // state, no Server Action involved. Applying OVERWRITES whatever's
   // currently in coreTitles/keywords/redKeywords with no confirmation
@@ -1281,6 +1325,40 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
     setTestExtractionState((prev) => ({ ...prev, [i]: { status: "done", count: result.data.count, titles: result.data.titles } }));
   }
 
+  // Connect/Disconnect Gmail (email-digest-ingestion epic,
+  // gmail-connect-ui story) -- own state, own row-keyed map, same
+  // convention as testExtractionState above.
+  const [gmailConnectState, setGmailConnectState] = useState<
+    Record<number, { status: "idle" } | { status: "connecting" } | { status: "disconnecting" } | { status: "error"; message: string }>
+  >({});
+
+  async function handleConnectGmail(i: number, sourceId: string) {
+    setGmailConnectState((prev) => ({ ...prev, [i]: { status: "connecting" } }));
+    const result = await startGmailOAuthAction(sourceId);
+    if (!result.ok) {
+      setGmailConnectState((prev) => ({ ...prev, [i]: { status: "error", message: result.error } }));
+      return;
+    }
+    // A real top-level navigation -- Google's consent screen can't render
+    // inside a Server Action's response.
+    window.location.href = result.data.authorizationUrl;
+  }
+
+  async function handleDisconnectGmail(i: number, sourceId: string) {
+    setGmailConnectState((prev) => ({ ...prev, [i]: { status: "disconnecting" } }));
+    const result = await disconnectGmailAction(sourceId);
+    if (!result.ok) {
+      setGmailConnectState((prev) => ({ ...prev, [i]: { status: "error", message: result.error } }));
+      return;
+    }
+    setGmailConnectedSourceIds((prev) => {
+      const next = new Set(prev);
+      next.delete(sourceId);
+      return next;
+    });
+    setGmailConnectState((prev) => ({ ...prev, [i]: { status: "idle" } }));
+  }
+
   // -- Anthropic API key ("resume-link-ui" story) --------------------------
   // Writes straight to .env via setAnthropicApiKeyAction, independent of
   // draft/Save — see design_decisions in
@@ -1369,6 +1447,16 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
       {savedAt && !error && (
         <div role="status" className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-800">
           Saved.
+        </div>
+      )}
+      {gmailBanner?.kind === "connected" && (
+        <div role="status" className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-800">
+          Gmail connected.
+        </div>
+      )}
+      {gmailBanner?.kind === "error" && (
+        <div role="alert" className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          Gmail connection failed ({gmailBanner.code}). See docs/gmail-oauth-setup.md, or try again.
         </div>
       )}
 
@@ -1590,7 +1678,7 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
               <div className="flex items-end gap-3">
                 <label className="flex-1">
                   <span className={labelClass}>Source</span>
-                  {source.isCustom ? (
+                  {source.isCustom || source.isGmailDigest ? (
                     <input
                       type="text"
                       value={source.id}
@@ -1647,6 +1735,18 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                     });
                   }}
                 />
+                <CheckboxField
+                  label="Gmail digest"
+                  checked={source.isGmailDigest}
+                  onChange={(isGmailDigest) => {
+                    setDraft({
+                      ...draft,
+                      sources: draft.sources.map((s, idx) =>
+                        idx === i ? { ...s, isGmailDigest, isCustom: isGmailDigest ? false : s.isCustom, id: isGmailDigest ? s.id : "" } : s,
+                      ),
+                    });
+                  }}
+                />
                 <button
                   type="button"
                   onClick={() => setDraft({ ...draft, sources: draft.sources.filter((_, idx) => idx !== i) })}
@@ -1690,6 +1790,40 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                   )}
                 </div>
               )}
+              {source.isGmailDigest && (
+                <div className="mt-2">
+                  <p className="text-xs text-slate-500">gigradar can only read your Gmail inbox — it can never send, delete, or modify anything.</p>
+                  {gmailConnectedSourceIds.has(source.id) ? (
+                    <button
+                      type="button"
+                      onClick={() => handleDisconnectGmail(i, source.id)}
+                      disabled={gmailConnectState[i]?.status === "disconnecting"}
+                      className={`${captureButtonClass} mt-1`}
+                    >
+                      {gmailConnectState[i]?.status === "disconnecting" ? "Disconnecting…" : "Disconnect"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleConnectGmail(i, source.id)}
+                      disabled={gmailConnectState[i]?.status === "connecting" || !source.id}
+                      className={`${captureButtonClass} mt-1`}
+                    >
+                      {gmailConnectState[i]?.status === "connecting" ? "Connecting…" : "Connect Gmail"}
+                    </button>
+                  )}
+                  {gmailConnectedSourceIds.has(source.id) && (
+                    <p role="status" className="mt-1 text-xs text-green-700">
+                      Connected
+                    </p>
+                  )}
+                  {gmailConnectState[i]?.status === "error" && (
+                    <p role="alert" className="mt-1 text-xs text-red-700">
+                      {gmailConnectState[i]?.message}
+                    </p>
+                  )}
+                </div>
+              )}
               {showsCaptureLogin(source) && portunusAvailable && (
                 <SessionBackendPicker
                   pairs={source.settings}
@@ -1727,7 +1861,7 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
           <button
             type="button"
             onClick={() =>
-              setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, isCustom: false, settings: [] }] })
+              setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, isCustom: false, isGmailDigest: false, settings: [] }] })
             }
             className="self-start text-sm font-medium text-slate-600 hover:underline"
           >

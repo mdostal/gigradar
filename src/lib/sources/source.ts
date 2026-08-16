@@ -16,7 +16,7 @@ export interface Source {
    * Does this source need an authenticated browser session / API key?
    * The runner surfaces this so the user knows what to turn on.
    */
-  auth: "none" | "api-key" | "browser-session";
+  auth: "none" | "api-key" | "browser-session" | "oauth";
   /**
    * Fetch current listings and normalize them to Gig[].
    * MUST return real per-listing urls (never a search page) and set `stage`
