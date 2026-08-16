@@ -24,7 +24,7 @@ import { BackoffTracker } from "../backoff.js";
 type RunRadarResult = {
   results: MatchResult[];
   passed: MatchResult[];
-  errors: { sourceId: string; message: string }[];
+  errors: { sourceId: string; message: string; needsVerification?: boolean; blockedUrl?: string }[];
   newlyInsertedKeys: string[];
 };
 
@@ -705,5 +705,60 @@ describe("startScheduler: runCycle raises an issue per source error (notificatio
 
     const { listIssues } = await import("../../lib/notify/issues.js");
     expect(listIssues({ open: true })).toHaveLength(1);
+  });
+
+  it("a VerificationChallengeError-flagged error (needsVerification:true) raises a DISTINCT \"Needs human verification\" issue, not \"Source fetch failed\" (verification-copilot epic)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: [],
+      passed: [],
+      errors: [{
+        sourceId: "gofractional",
+        message: 'gigradar: source "gofractional" hit a verification challenge at "https://www.gofractional.com/job/123" — a human needs to clear it before this source can be scanned again.',
+        needsVerification: true,
+        blockedUrl: "https://www.gofractional.com/job/123",
+      }],
+      newlyInsertedKeys: [],
+    }));
+    const config = makeConfig({ schedule: "*/1 * * * * *" });
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    const { listIssues } = await import("../../lib/notify/issues.js");
+    const open = listIssues({ open: true });
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({
+      severity: "warning",
+      source: "runRadar:gofractional",
+      title: "Needs human verification",
+      context: { sourceId: "gofractional", blockedUrl: "https://www.gofractional.com/job/123" },
+    });
+  });
+
+  it("a verification-challenge issue and a generic fetch-failure issue for the SAME source never collide -- both can be open at once (distinct dedupe keys)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let call = 0;
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => {
+      call += 1;
+      return {
+        results: [],
+        passed: [],
+        errors:
+          call === 1
+            ? [{ sourceId: "gofractional", message: "some generic network failure", needsVerification: undefined, blockedUrl: undefined }]
+            : [{ sourceId: "gofractional", message: "blocked", needsVerification: true, blockedUrl: "https://www.gofractional.com/job/123" }],
+        newlyInsertedKeys: [],
+      };
+    });
+    const config = makeConfig({ schedule: "*/1 * * * * *" });
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+    await (handle.getJob() as Cron).trigger();
+
+    const { listIssues } = await import("../../lib/notify/issues.js");
+    const open = listIssues({ open: true });
+    expect(open.map((i) => i.title).sort()).toEqual(["Needs human verification", "Source fetch failed"]);
   });
 });
