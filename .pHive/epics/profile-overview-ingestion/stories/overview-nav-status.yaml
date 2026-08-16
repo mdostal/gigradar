@@ -1,7 +1,7 @@
 id: overview-nav-status
 epic: profile-overview-ingestion
 title: "Shared nav + dashboard status strip (sources, profile completeness, last scan)"
-status: pending
+status: done
 complexity: low
 methodology: classic
 depends_on: []
