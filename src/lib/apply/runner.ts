@@ -1,5 +1,6 @@
 import type { Config, DraftContent, Gig, MatchResult } from "../types.js";
 import { getSource } from "../sources/source.js";
+import { VerificationChallengeError } from "../sources/verification-challenge.js";
 import { customLlmSource } from "../sources/custom-llm-source.js";
 import { gate } from "../matching/gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
@@ -41,7 +42,15 @@ export async function runRadar(
 ): Promise<{
   results: MatchResult[];
   passed: MatchResult[];
-  errors: { sourceId: string; message: string }[];
+  /**
+   * `needsVerification`/`blockedUrl` (verification-copilot epic): set ONLY
+   * when the caught error was a `VerificationChallengeError` — checked
+   * HERE, where the real thrown error object is still available, before
+   * it's flattened to a plain message string below. A caller (the
+   * scheduler's raiseIssue() loop) reads these to route this failure to a
+   * distinctly-titled issue instead of the generic "Source fetch failed."
+   */
+  errors: { sourceId: string; message: string; needsVerification?: boolean; blockedUrl?: string }[];
   /**
    * Store keys (gigKey(sourceId, externalId)) that were BRAND NEW this run
    * — recordScan()'s own `upserted[].inserted` signal, surfaced here so a
@@ -52,7 +61,7 @@ export async function runRadar(
   newlyInsertedKeys: string[];
 }> {
   const results: MatchResult[] = [];
-  const errors: { sourceId: string; message: string }[] = [];
+  const errors: { sourceId: string; message: string; needsVerification?: boolean; blockedUrl?: string }[] = [];
   const batches: SourceScanBatch[] = [];
 
   for (const sc of config.sources.filter((s) => s.enabled)) {
@@ -70,7 +79,11 @@ export async function runRadar(
       // A source that needs login throws — report it, don't fake zero results.
       // Crucially: do NOT push a batch for it either, so recordScan can tell
       // "errored" apart from "ran, found zero" (see store/gigs.ts recordScan doc).
-      errors.push({ sourceId: sc.id, message: e instanceof Error ? e.message : String(e) });
+      if (e instanceof VerificationChallengeError) {
+        errors.push({ sourceId: sc.id, message: e.message, needsVerification: true, blockedUrl: e.url });
+      } else {
+        errors.push({ sourceId: sc.id, message: e instanceof Error ? e.message : String(e) });
+      }
       continue;
     }
 

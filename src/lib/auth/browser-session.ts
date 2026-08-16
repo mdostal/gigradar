@@ -52,6 +52,7 @@ import { hasAnyEncryptedFile, resolveEnvString } from "../config/load.js";
 import { decrypt, getOrCreateKey, isEncryptedEnvelope, VaultTamperError } from "../security/vault.js";
 import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
 import { writeStorageStateAtomically } from "./session-capture.js";
+import { isVerificationChallengeContent, VerificationChallengeError } from "../sources/verification-challenge.js";
 
 const MODULE_PREFIX = "gigradar browser-session";
 
@@ -404,6 +405,19 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
     try {
       const page = await context.newPage();
       await page.goto(url);
+
+      // verification-copilot epic: a cheap page-content signal (title +
+      // visible body text), checked BEFORE the caller's own isAuthenticated
+      // predicate — a verification challenge is a distinct failure mode
+      // from "session expired," and the caller's own auth check may not
+      // recognize it as anything other than a generic auth failure. See
+      // verification-challenge.ts's own header comment for why this is
+      // wired here (the one shared call site) rather than per-adapter.
+      const title = await page.title();
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+      if (isVerificationChallengeContent(`${title}\n${bodyText.slice(0, 2000)}`)) {
+        throw new VerificationChallengeError(sourceId, url);
+      }
 
       const authenticated = await isAuthenticated(page);
       if (!authenticated) {

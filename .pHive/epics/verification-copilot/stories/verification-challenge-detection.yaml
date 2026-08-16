@@ -1,0 +1,106 @@
+id: verification-challenge-detection
+epic: verification-copilot
+title: "Shared verification-challenge detection wired into withBrowserSession(), routed to a distinct issue"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1. Today, a Cloudflare/bot-detection "verification"
+  interstitial has exactly ONE piece of awareness in this codebase --
+  gofractional.ts's own file-level comment documenting that it deliberately
+  never navigates to the gated pages. There is no shared detector, no
+  distinct issue type, and every OTHER adapter has zero awareness. This
+  story builds the shared detector and wires it into the ONE place every
+  browser-session-auth adapter (plus custom-llm-source.ts's browser-session
+  branch) already goes through, so it's covered once, forever -- no future
+  adapter needs its own copy.
+
+  1. `src/lib/sources/verification-challenge.ts` (new):
+     - `isVerificationChallengeContent(text: string): boolean` -- matches
+       known signal phrases case-insensitively: "performing security
+       verification", "just a moment" (paired with "cloudflare" appearing
+       anywhere in the same text, to avoid an unrelated false-positive
+       phrase match), "checking your browser", "verify you are human".
+       Returns false on anything else -- deliberately conservative
+       (specific known phrases, not a broad heuristic), matching this
+       repo's own "flag it, don't fail" caution about NOT declaring a
+       target permanently broken on a guess.
+     - `class VerificationChallengeError extends Error` -- carries
+       `sourceId: string` and `url: string` as named fields (not just
+       baked into the message), so callers can build issue context/UI
+       without string-parsing.
+  2. `src/lib/auth/browser-session.ts`'s `withBrowserSession()`: after
+     `page.goto(url)`, BEFORE calling the caller's own `isAuthenticated`
+     predicate, read a cheap page-content signal (page title +
+     `document.body.innerText` truncated -- reuse whatever the cheapest
+     real Playwright API is, do not introduce a second full-HTML read
+     alongside gofractional.ts's own existing checks) and run it through
+     `isVerificationChallengeContent()`. On a match, throw
+     `VerificationChallengeError` (never call `isAuthenticated` at all in
+     that case) -- the browser/context are still cleanly closed via the
+     EXISTING finally-block cleanup, no new cleanup path.
+  3. `src/lib/apply/runner.ts`'s per-source catch block (or the
+     scheduler's `raiseIssue()` loop over `result.errors` -- pick whichever
+     is the more natural single point during implementation, but only ONE
+     of them should own this, not both) checks `e instanceof
+     VerificationChallengeError` and raises with `title: "Needs human
+     verification"`, `severity: "warning"`, `context: {sourceId,
+     blockedUrl: e.url}` -- a DIFFERENT `(source, title)` dedupe key than
+     the existing generic `"Source fetch failed"`, so the two issue types
+     never collide/mask each other for the same source.
+
+acceptance_criteria:
+  - "Given a mocked page whose title/body matches a known verification-challenge phrase, withBrowserSession() throws VerificationChallengeError (carrying sourceId + url) instead of ever calling the caller's isAuthenticated predicate."
+  - "Given a mocked page that does NOT match any known phrase, withBrowserSession() behavior is completely unchanged from today -- isAuthenticated still runs normally."
+  - "Given a VerificationChallengeError propagates out of a source's fetch(), the resulting raised issue has title \"Needs human verification\" and context.blockedUrl set -- distinct from, and never confused with, the existing generic \"Source fetch failed\" issue for the same source."
+  - "Given the SAME source hits a verification challenge on two consecutive scan cycles, only ONE open issue exists (raiseIssue()'s own existing dedupe-by-(source,title), unchanged)."
+  - "isVerificationChallengeContent() returns false for ordinary page content (e.g. a real GoFractional /jobs listing page, a real sign-in page) -- never a false positive on normal content in the existing test fixtures."
+
+steps:
+  - id: research
+    description: Confirm the cheapest real Playwright API for reading page title + a bounded amount of body text (do not introduce a second full-page.content() read when withBrowserSession() doesn't already have one); re-read withBrowserSession()'s current exact body to find the precise insertion point.
+    agent: researcher
+  - id: implement
+    description: Write verification-challenge.ts and wire the detect-and-throw into withBrowserSession(), plus the distinct-issue routing.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests (mocked Page) for the detector's phrase-matching, the throw-before-isAuthenticated ordering, the dedupe-key distinctness, and no-false-positive-on-real-fixture-content.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the detector is conservative (specific phrases, not broad heuristics) and that cleanup (context/browser close) still fires on this new throw path exactly as it does for every other withBrowserSession() throw.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/browser-session.ts
+      purpose: "withBrowserSession() -- the ONE shared insertion point every browser-session-auth adapter (and custom-llm-source.ts's auth branch) already goes through"
+    - path: src/lib/notify/issues.ts
+      purpose: "raiseIssue()'s exact signature/dedupe-key behavior this story's new issue title relies on"
+    - path: src/lib/sources/gofractional.ts
+      purpose: "the ONLY existing prior awareness of this failure mode (avoidance, not detection) -- the precedent this story generalizes"
+    - path: src/scheduler/index.ts
+      purpose: "the existing generic 'Source fetch failed' raiseIssue() call this story's new issue type must stay distinct from"
+
+design_decisions:
+  - decision: "Detection lives in withBrowserSession() (one shared call site), not duplicated per-adapter."
+    rationale: "Matches this session's own established shape for cross-cutting fixes (runner.ts's custom-source fallback, origins.ts's config-driven fallback) -- one core touch point, zero future per-adapter work."
+  - decision: "Conservative, specific-phrase matching -- never a broad 'looks suspicious' heuristic."
+    rationale: "A false positive here would misclassify a real, ordinary page as a verification block, degrading the signal this whole epic exists to make trustworthy."
+
+references:
+  - path: .pHive/epics/verification-copilot/docs/design-discussion.md
+    relevant_excerpt: "§3 detection + distinct issue shape design decisions"
+  - path: .pHive/epics/verification-copilot/docs/vertical-plan.md
+    relevant_excerpt: "Slice 1 -- Detection + distinct issue routing"
+  - path: .pHive/epics/graduated-auto-fire-trust/stories/gofractional-submit-adapter.yaml
+    relevant_excerpt: "pause_note -- the live-verified Cloudflare blocker this whole epic traces back to"
