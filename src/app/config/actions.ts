@@ -9,10 +9,11 @@ import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
+import { customLlmSource } from "@/lib/sources/custom-llm-source";
 import { resolveAllowedOrigins, resolveLoginUrl } from "@/lib/sources/origins";
 import type { ActionResult } from "@/lib/actions/result";
 import type { ExtractProfileInput } from "@/lib/profile-ingestion/extract";
-import type { Config, SourceConfig, Tier } from "@/lib/types";
+import type { Config, Profile, SourceConfig, Tier } from "@/lib/types";
 
 /**
  * Finds `sourceId`'s raw entry in `rawSources` and returns it as a
@@ -280,6 +281,63 @@ export async function checkCaptureReadinessAction(captureId: string, sourceId: s
     const page = getCapturePage(captureId);
     const readiness = await checkCaptureReadiness(page, sourceId, apiKey);
     return actionOk(readiness);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Wraps `customLlmSource.fetch()` for the "Test extraction now" preview
+ * button (llm-custom-sources epic, custom-source-pagination-and-ui story):
+ * runs ONE real extraction against the entered URL/hint/auth settings and
+ * returns a summary — count + titles — to display before the user commits
+ * to saving. Writes NOTHING to `config.json` (same "preview, not a
+ * mutation" discipline `extractProfileFromResumeAction()` below already
+ * established) — no `saveConfig()`/`revalidatePath()` call of any kind.
+ *
+ * `sourceId` is threaded through so a successful extraction's derived
+ * recipe (custom-source-recipe-caching story) gets cached under the SAME
+ * id the user is about to save — the first real scheduled scan after
+ * saving then hits the cache immediately, rather than re-deriving. This is
+ * a real, intentional side effect (a recipe cache file, not config.json).
+ *
+ * The Anthropic API key is resolved fresh, inside this handler, via
+ * `readEnvVar()` — same discipline every other LLM-calling action in this
+ * file already follows.
+ */
+export async function testCustomSourceExtractionAction(
+  sourceId: string,
+  url: string,
+  hint: string | undefined,
+  customAuth: "none" | "browser-session",
+  sessionStatePath: string | undefined,
+): Promise<ActionResult<{ count: number; titles: string[] }>> {
+  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  if (!apiKey) {
+    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  }
+  if (!sourceId) {
+    return actionErr(new Error("gigradar config: give this custom source a name before testing extraction."));
+  }
+  if (!url) {
+    return actionErr(new Error("gigradar config: enter a URL before testing extraction."));
+  }
+
+  const testProfile: Profile = { name: "", roles: [], skills: [], timezone: "UTC" };
+  const cfg: SourceConfig = {
+    id: sourceId,
+    enabled: true,
+    kind: "custom-llm",
+    settings: {
+      url,
+      ...(hint && { hint }),
+      ...(customAuth === "browser-session" && { customAuth, ...(sessionStatePath && { sessionStatePath }) }),
+    },
+  };
+
+  try {
+    const gigs = await customLlmSource.fetch(cfg, testProfile, apiKey);
+    return actionOk({ count: gigs.length, titles: gigs.slice(0, 5).map((g) => g.title) });
   } catch (e) {
     return actionErr(e);
   }

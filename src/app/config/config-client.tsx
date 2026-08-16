@@ -16,6 +16,7 @@ import {
   saveConfigAction,
   setAnthropicApiKeyAction,
   startCaptureAction,
+  testCustomSourceExtractionAction,
 } from "./actions";
 
 // ---------------------------------------------------------------------------
@@ -1256,6 +1257,30 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
     setReadinessState((prev) => ({ ...prev, [i]: { status: "done", ready: result.data.ready, note: result.data.note } }));
   }
 
+  // "Test extraction now" preview (llm-custom-sources epic,
+  // custom-source-pagination-and-ui story) — own state, own row-keyed map,
+  // same convention as readinessState above. Writes nothing to config.json
+  // (see testCustomSourceExtractionAction's own doc comment).
+  const [testExtractionState, setTestExtractionState] = useState<
+    Record<number, { status: "idle" } | { status: "testing" } | { status: "done"; count: number; titles: string[] } | { status: "error"; message: string }>
+  >({});
+
+  async function handleTestExtraction(i: number, source: DraftSource) {
+    setTestExtractionState((prev) => ({ ...prev, [i]: { status: "testing" } }));
+    const settings = pairsToSettings(source.settings) ?? {};
+    const url = typeof settings.url === "string" ? settings.url : "";
+    const hint = typeof settings.hint === "string" ? settings.hint : undefined;
+    const customAuth = settings.customAuth === "browser-session" ? "browser-session" : "none";
+    const sessionStatePath = typeof settings.sessionStatePath === "string" ? settings.sessionStatePath : undefined;
+
+    const result = await testCustomSourceExtractionAction(source.id, url, hint, customAuth, sessionStatePath);
+    if (!result.ok) {
+      setTestExtractionState((prev) => ({ ...prev, [i]: { status: "error", message: result.error } }));
+      return;
+    }
+    setTestExtractionState((prev) => ({ ...prev, [i]: { status: "done", count: result.data.count, titles: result.data.titles } }));
+  }
+
   // -- Anthropic API key ("resume-link-ui" story) --------------------------
   // Writes straight to .env via setAnthropicApiKeyAction, independent of
   // draft/Save — see design_decisions in
@@ -1642,6 +1667,29 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                   }}
                 />
               </div>
+              {source.isCustom && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleTestExtraction(i, source)}
+                    disabled={testExtractionState[i]?.status === "testing"}
+                    className={captureButtonClass}
+                  >
+                    {testExtractionState[i]?.status === "testing" ? "Testing…" : "Test extraction now"}
+                  </button>
+                  {testExtractionState[i]?.status === "done" && (
+                    <p role="status" className="mt-1 text-xs text-green-700">
+                      {testExtractionState[i]?.count} listing(s) found
+                      {(testExtractionState[i]?.titles?.length ?? 0) > 0 && <>: {testExtractionState[i]?.titles.join(", ")}</>}
+                    </p>
+                  )}
+                  {testExtractionState[i]?.status === "error" && (
+                    <p role="alert" className="mt-1 text-xs text-red-700">
+                      {testExtractionState[i]?.message}
+                    </p>
+                  )}
+                </div>
+              )}
               {showsCaptureLogin(source) && portunusAvailable && (
                 <SessionBackendPicker
                   pairs={source.settings}

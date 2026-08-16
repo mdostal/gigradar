@@ -52,7 +52,7 @@
 import { chromium, type Page } from "playwright";
 import type { Source } from "./source.js";
 import type { Gig, Profile, SourceConfig } from "../types.js";
-import { deriveRecipeAndExtract, extractWithRecipe, readRecipe, writeRecipe } from "./custom-source-recipe.js";
+import { deriveRecipeAndExtract, extractWithRecipe, followPagination, readRecipe, writeRecipe } from "./custom-source-recipe.js";
 import { withBrowserSession } from "../auth/browser-session.js";
 import { sessionBackendFrom } from "../auth/session-backend.js";
 import { resolveAllowedOrigins } from "./origins.js";
@@ -98,12 +98,17 @@ function sessionStatePathFrom(cfg: SourceConfig): string {
  * only required on the fallback path — checked there, not earlier, so a
  * source with a still-valid cached recipe keeps working even if the key is
  * temporarily unset/invalid.
+ *
+ * Either path's first-page result is then run through
+ * `followPagination()` (custom-source-recipe-pagination story) — a no-op
+ * when the recipe has no `nextPageSelector`, so this is additive and never
+ * changes single-page-source behavior.
  */
 async function extractViaRecipeOrDerive(page: Page, cfg: SourceConfig, hint: string | undefined, apiKey: string | undefined): Promise<Gig[]> {
   const cached = readRecipe(cfg.id);
   if (cached) {
     const viaRecipe = await extractWithRecipe(page, cfg.id, cached);
-    if (viaRecipe) return viaRecipe;
+    if (viaRecipe) return followPagination(page, cfg.id, cached, viaRecipe);
   }
 
   if (!apiKey) {
@@ -115,7 +120,7 @@ async function extractViaRecipeOrDerive(page: Page, cfg: SourceConfig, hint: str
 
   const { gigs, recipe } = await deriveRecipeAndExtract(page, cfg.id, hint, apiKey);
   writeRecipe(cfg.id, recipe);
-  return gigs;
+  return followPagination(page, cfg.id, recipe, gigs);
 }
 
 /**

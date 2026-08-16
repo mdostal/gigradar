@@ -19,11 +19,13 @@ const readRecipeMock = vi.fn();
 const writeRecipeMock = vi.fn();
 const extractWithRecipeMock = vi.fn();
 const deriveRecipeAndExtractMock = vi.fn();
+const followPaginationMock = vi.fn();
 vi.mock("../custom-source-recipe.js", () => ({
   readRecipe: (...args: unknown[]) => readRecipeMock(...args),
   writeRecipe: (...args: unknown[]) => writeRecipeMock(...args),
   extractWithRecipe: (...args: unknown[]) => extractWithRecipeMock(...args),
   deriveRecipeAndExtract: (...args: unknown[]) => deriveRecipeAndExtractMock(...args),
+  followPagination: (...args: unknown[]) => followPaginationMock(...args),
 }));
 
 const withBrowserSessionMock = vi.fn();
@@ -62,6 +64,12 @@ beforeEach(() => {
   extractWithRecipeMock.mockReset();
   deriveRecipeAndExtractMock.mockReset();
   withBrowserSessionMock.mockReset();
+  followPaginationMock.mockReset();
+  // Default: pass the first-page gigs through unchanged -- most tests here
+  // aren't exercising pagination itself (that's custom-source-recipe.test.ts's
+  // job); this file only needs to prove followPagination() is CALLED with
+  // the right args, not re-test its own internal logic.
+  followPaginationMock.mockImplementation((_page: unknown, _sourceId: string, _recipe: unknown, gigs: unknown) => Promise.resolve(gigs));
 });
 
 describe("customLlmSource.fetch: settings.url", () => {
@@ -175,6 +183,34 @@ describe("customLlmSource.fetch: headless chromium.launch(), closed on every exi
     await expect(customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key")).rejects.toThrow("simulated derivation failure");
 
     expect(browser.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("customLlmSource.fetch: pagination is delegated to followPagination()", () => {
+  it("calls followPagination() with the recipe + first-page gigs on a cache hit, and returns its result", async () => {
+    setUpFakeBrowser();
+    readRecipeMock.mockReturnValue(FAKE_RECIPE);
+    extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
+    const paginatedGigs: Gig[] = [
+      ...FAKE_GIGS,
+      { sourceId: "monster", externalId: "https://example.com/2", title: "Page 2 listing", url: "https://example.com/2" },
+    ];
+    followPaginationMock.mockResolvedValue(paginatedGigs);
+
+    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key");
+
+    expect(followPaginationMock).toHaveBeenCalledWith(expect.anything(), "monster", FAKE_RECIPE, FAKE_GIGS);
+    expect(gigs).toBe(paginatedGigs);
+  });
+
+  it("calls followPagination() with the freshly-derived recipe + gigs on a cache-miss LLM derivation", async () => {
+    setUpFakeBrowser();
+    readRecipeMock.mockReturnValue(undefined);
+    deriveRecipeAndExtractMock.mockResolvedValue({ gigs: FAKE_GIGS, recipe: FAKE_RECIPE });
+
+    await customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key");
+
+    expect(followPaginationMock).toHaveBeenCalledWith(expect.anything(), "monster", FAKE_RECIPE, FAKE_GIGS);
   });
 });
 

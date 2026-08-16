@@ -27,6 +27,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 import {
   deriveRecipeAndExtract,
   extractWithRecipe,
+  followPagination,
   readRecipe,
   writeRecipe,
   type CustomSourceRecipe,
@@ -277,5 +278,119 @@ describe("deriveRecipeAndExtract: single-shot LLM call, raw HTML", () => {
     const htmlBlock = blocks.find((b) => b.includes("BEGIN PAGE HTML")) ?? "";
     expect(htmlBlock.length).toBeLessThan(hugeHtml.length);
     expect(htmlBlock).toContain("truncated");
+  });
+});
+
+const PAGINATED_RECIPE: CustomSourceRecipe = {
+  listItemSelector: ".job-card",
+  titleSelector: "h3",
+  urlSelector: "a",
+  nextPageSelector: ".next",
+  derivedAt: "2026-01-01T00:00:00.000Z",
+};
+
+describe("followPagination", () => {
+  /** A fake Page whose page.locator(PAGINATED_RECIPE.listItemSelector) returns pagesOfItems[currentPage]'s items (real extractWithRecipe() runs against these -- not mocked), and whose "next" link's isVisible()/click() advance currentPage. `hasNextOnLastConfiguredPage` controls whether the very last configured page still reports a visible "next" link (used to test the MAX_PAGES cap independently of ever running out of configured pages). */
+  function makeFakePaginationPage(pagesOfItems: Array<{ title: string; href: string }[]>, opts: { hasNextOnLastConfiguredPage?: boolean } = {}) {
+    let currentPage = 0;
+    const nextLinkClick = vi.fn().mockImplementation(async () => {
+      currentPage += 1;
+    });
+    const waitForLoadState = vi.fn().mockResolvedValue(undefined);
+
+    function makeItem(entry: { title: string; href: string }) {
+      return {
+        locator: vi.fn((selector: string) => {
+          if (selector === PAGINATED_RECIPE.titleSelector) {
+            return { first: () => ({ textContent: vi.fn().mockResolvedValue(entry.title), getAttribute: vi.fn() }) };
+          }
+          if (selector === PAGINATED_RECIPE.urlSelector) {
+            return { first: () => ({ getAttribute: vi.fn().mockResolvedValue(entry.href), textContent: vi.fn() }) };
+          }
+          throw new Error(`unexpected item selector in test double: ${selector}`);
+        }),
+      };
+    }
+
+    const page = {
+      locator: vi.fn((selector: string) => {
+        if (selector === PAGINATED_RECIPE.listItemSelector) {
+          const items = (pagesOfItems[currentPage] ?? []).map(makeItem);
+          return { all: vi.fn().mockResolvedValue(items) };
+        }
+        if (selector === PAGINATED_RECIPE.nextPageSelector) {
+          const isLastConfiguredPage = currentPage >= pagesOfItems.length - 1;
+          const hasNext = isLastConfiguredPage ? (opts.hasNextOnLastConfiguredPage ?? false) : true;
+          return { first: () => ({ isVisible: vi.fn().mockResolvedValue(hasNext), click: nextLinkClick }) };
+        }
+        throw new Error(`unexpected page selector in test double: ${selector}`);
+      }),
+      waitForLoadState,
+    };
+
+    return { page, nextLinkClick, waitForLoadState };
+  }
+
+  it("returns firstPageGigs unchanged (no navigation at all) when the recipe has no nextPageSelector", async () => {
+    const recipeNoPagination: CustomSourceRecipe = { listItemSelector: ".job-card", titleSelector: "h3", urlSelector: "a", derivedAt: PAGINATED_RECIPE.derivedAt };
+    const { page, nextLinkClick } = makeFakePaginationPage([[{ title: "A", href: "https://example.com/a" }]]);
+    const firstPageGigs = [{ sourceId: "monster", externalId: "https://example.com/a", title: "A", url: "https://example.com/a" }];
+
+    const result = await followPagination(page as never, "monster", recipeNoPagination, firstPageGigs);
+
+    expect(result).toBe(firstPageGigs);
+    expect(nextLinkClick).not.toHaveBeenCalled();
+  });
+
+  it("follows pagination across multiple pages and merges results, deduped by externalId", async () => {
+    const { page } = makeFakePaginationPage([
+      [], // page 1's items are irrelevant here -- firstPageGigs is passed in directly, page 1 is never re-extracted
+      [{ title: "B", href: "https://example.com/b" }],
+      [{ title: "C", href: "https://example.com/c" }, { title: "A", href: "https://example.com/a" }], // "A" duplicates firstPageGigs
+    ]);
+    const firstPageGigs = [{ sourceId: "monster", externalId: "https://example.com/a", title: "A", url: "https://example.com/a" }];
+
+    const result = await followPagination(page as never, "monster", PAGINATED_RECIPE, firstPageGigs);
+
+    expect(result.map((g) => g.externalId).sort()).toEqual(["https://example.com/a", "https://example.com/b", "https://example.com/c"]);
+  });
+
+  it("stops when the next-page control is no longer visible", async () => {
+    const { page, nextLinkClick } = makeFakePaginationPage([[], [{ title: "B", href: "https://example.com/b" }]], { hasNextOnLastConfiguredPage: false });
+    const firstPageGigs = [{ sourceId: "monster", externalId: "https://example.com/a", title: "A", url: "https://example.com/a" }];
+
+    const result = await followPagination(page as never, "monster", PAGINATED_RECIPE, firstPageGigs);
+
+    expect(nextLinkClick).toHaveBeenCalledTimes(1); // followed to page 2, then stopped -- never tried a 3rd click
+    expect(result.map((g) => g.externalId).sort()).toEqual(["https://example.com/a", "https://example.com/b"]);
+  });
+
+  it("stops (without throwing) when a subsequent page's extraction returns null (recipe no longer matches)", async () => {
+    const { page } = makeFakePaginationPage([[], []], { hasNextOnLastConfiguredPage: true });
+    const firstPageGigs = [{ sourceId: "monster", externalId: "https://example.com/a", title: "A", url: "https://example.com/a" }];
+
+    const result = await followPagination(page as never, "monster", PAGINATED_RECIPE, firstPageGigs);
+
+    expect(result).toEqual(firstPageGigs);
+  });
+
+  it("stops (without throwing) when clicking the next-page control fails", async () => {
+    const { page, nextLinkClick } = makeFakePaginationPage([[], [{ title: "B", href: "https://example.com/b" }]], { hasNextOnLastConfiguredPage: true });
+    nextLinkClick.mockRejectedValueOnce(new Error("simulated click failure"));
+    const firstPageGigs = [{ sourceId: "monster", externalId: "https://example.com/a", title: "A", url: "https://example.com/a" }];
+
+    await expect(followPagination(page as never, "monster", PAGINATED_RECIPE, firstPageGigs)).resolves.toEqual(firstPageGigs);
+  });
+
+  it("stops at the MAX_PAGES cap even if the next-page control stays visible forever", async () => {
+    const manyPages = Array.from({ length: 20 }, (_, i) => [{ title: `Page ${i}`, href: `https://example.com/${i}` }]);
+    const { page, nextLinkClick } = makeFakePaginationPage(manyPages, { hasNextOnLastConfiguredPage: true });
+    const firstPageGigs = [{ sourceId: "monster", externalId: "https://example.com/first", title: "First", url: "https://example.com/first" }];
+
+    const result = await followPagination(page as never, "monster", PAGINATED_RECIPE, firstPageGigs);
+
+    // 1 initial page (firstPageGigs, passed in) + 4 followed pages = 5 total, MAX_PAGES.
+    expect(nextLinkClick).toHaveBeenCalledTimes(4);
+    expect(result.length).toBe(5);
   });
 });

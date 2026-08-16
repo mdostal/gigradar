@@ -175,6 +175,51 @@ export async function extractWithRecipe(page: Page, sourceId: string, recipe: Cu
   return gigs.length === 0 ? null : gigs;
 }
 
+/** Defensive cap on how many pages a single fetch() call will paginate through — a real per-page browser navigation is expensive, and this is a background scan, not an exhaustive crawl. Mirrors braintrust.ts's MAX_PAGES_PER_ROLE/wellfound.ts's "first page(s) only, never unbounded" precedent, sized down for real per-page navigation cost rather than a cheap JSON API call. Reaching the cap stops pagination silently (returns what's been collected) -- never an error, since running out of budget partway through a real board is expected, ordinary behavior, not a failure. */
+const MAX_PAGES = 5;
+
+/**
+ * If `recipe.nextPageSelector` is set, clicks it and re-extracts via
+ * `extractWithRecipe()` (the SAME recipe, never a fresh LLM call) up to
+ * `MAX_PAGES` times, merging results with `firstPageGigs` and deduping by
+ * `externalId` (a listing plausibly repeated across pages). Returns
+ * `firstPageGigs` unchanged when the recipe has no `nextPageSelector` —
+ * pagination is additive, never required.
+ *
+ * Stops (returning whatever's been collected so far, never throwing) the
+ * moment the next-page control is absent/not visible, a click on it fails,
+ * or a subsequent page's `extractWithRecipe()` call returns `null` (that
+ * page no longer matches the recipe — likely the end of real results, not
+ * a hard error worth aborting the whole fetch over).
+ */
+export async function followPagination(page: Page, sourceId: string, recipe: CustomSourceRecipe, firstPageGigs: Gig[]): Promise<Gig[]> {
+  if (!recipe.nextPageSelector) return firstPageGigs;
+
+  const byExternalId = new Map<string, Gig>();
+  for (const g of firstPageGigs) byExternalId.set(g.externalId, g);
+
+  for (let pagesFollowed = 1; pagesFollowed < MAX_PAGES; pagesFollowed++) {
+    const nextLink = page.locator(recipe.nextPageSelector);
+    const visible = await nextLink.first().isVisible().catch(() => false);
+    if (!visible) break;
+
+    try {
+      await nextLink.first().click();
+      await page.waitForLoadState("load").catch(() => {});
+    } catch {
+      break;
+    }
+
+    const pageGigs = await extractWithRecipe(page, sourceId, recipe);
+    if (!pageGigs) break;
+    for (const g of pageGigs) {
+      if (!byExternalId.has(g.externalId)) byExternalId.set(g.externalId, g);
+    }
+  }
+
+  return [...byExternalId.values()];
+}
+
 /**
  * Reads `page`'s raw, size-capped HTML and asks the BYOK LLM for BOTH
  * today's listings AND a reusable selector recipe in one structured call.
