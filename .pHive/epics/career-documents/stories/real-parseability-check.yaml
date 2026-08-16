@@ -1,0 +1,74 @@
+id: real-parseability-check
+epic: career-documents
+title: "Export buildResumeContentBlock(), wire the real persisted resume into generatePrepPacket()'s atsScore"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [resume-store]
+
+description: |
+  Vertical Plan Slice 4 -- the payoff slice, resolving ats-navigator's
+  deliberately-deferred "no data to check" gap for real. Exports
+  buildResumeContentBlock() from profile-ingestion/extract.ts (currently
+  module-private) -- the SAME native-PDF-to-Claude content-block builder
+  extractProfile() already uses, reused not reimplemented, so this story
+  introduces NO new PDF-parsing mechanism or dependency. In
+  generatePrepPacket() (src/lib/apply/prep.ts): when the caller's Config
+  has applyProfile.resumePath set, load it via resume-store.ts's
+  loadResume(), build a resume content block via the now-exported
+  buildResumeContentBlock(), and include it in the SAME single existing
+  LLM call (not a second call) alongside the applicant/gig data blocks.
+  Extend the prompt instructions to ask Claude to assess REAL,
+  observable format/parseability issues from the actual resume file
+  (multi-column layout, tables, text embedded in images, contact info in
+  a header/footer, non-standard section headings) -- grounded in what it
+  can actually see this time, not fabricated. AtsScore gains
+  parseabilityIssues: string[], empty/omitted when no resumePath is set
+  (graceful degradation -- ats-navigator's keyword-overlap half already
+  works standalone and must keep working for a user with no resume on
+  file).
+
+acceptance_criteria:
+  - "AtsScore gains parseabilityIssues: string[]."
+  - "When applyProfile.resumePath is set and loadResume() succeeds, the resume PDF is embedded as a real content block in generatePrepPacket()'s call -- verified by a test asserting the mocked Anthropic call's messages include a document/PDF-typed content block, not just text."
+  - "When applyProfile.resumePath is unset (or loadResume() returns undefined -- file missing/deleted), generatePrepPacket() runs exactly as it does today: no resume content block, parseabilityIssues comes back an empty array, no error thrown -- verified by a regression test asserting existing ats-navigator behavior (keywordOverlapScore/matchedKeywords/missingKeywords/resumeTweaks) is completely unaffected."
+  - "Still exactly ONE Anthropic API call per generatePrepPacket() invocation, resume or no resume -- verified by a test asserting mockCreate is called exactly once even when a resume is embedded."
+  - "Each parseabilityIssues entry names a specific, plain-language problem (not a vague 'formatting could be better') -- verified by review, matching this repo's explainable/no-black-box convention."
+  - "buildResumeContentBlock() is IMPORTED from extract.ts, not reimplemented -- verified by grep/review."
+
+steps:
+  - id: research
+    description: Confirm buildResumeContentBlock()'s exact current signature/return type in extract.ts before exporting it, and confirm resume-store.ts's loadResume() return shape matches what it expects as input.
+    agent: researcher
+  - id: implement
+    description: Export buildResumeContentBlock() from extract.ts, wire it + resume-store.ts's loadResume() into generatePrepPacket(), extend AtsScore/prompt/parsing.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Tests per acceptance criteria, including the graceful-degradation regression test for the no-resume case.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm graceful degradation is real (not just tested for the happy path), confirm single-call discipline, confirm buildResumeContentBlock() reuse.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/profile-ingestion/extract.ts
+      purpose: "buildResumeContentBlock() -- exported by this story, the exact native-PDF-embedding mechanism reused"
+    - path: src/lib/apply/prep.ts
+      purpose: "generatePrepPacket()/AtsScore -- ats-navigator's existing keyword-overlap half this story adds parseabilityIssues alongside, in the same call"
+    - path: .pHive/epics/career-documents/stories/resume-store.yaml
+      purpose: "produces loadResume(), this story's other dependency"
+
+references:
+  - path: .pHive/epics/career-documents/docs/design-discussion.md
+    relevant_excerpt: "section 2.4 (the real parseability check, finally unlocked)"
+  - path: .pHive/epics/ats-navigator/docs/design-discussion.md
+    relevant_excerpt: "section 4.4 and open question 4 -- the exact gap this story closes"

@@ -1,0 +1,28 @@
+name: career-documents
+title: "Persistent career documents: resume storage, links, and a real ATS parseability check"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: resume-store
+    title: "Encrypted-at-rest resume storage (save/load/delete), mirrors session-capture.ts's file+path-reference pattern"
+    complexity: medium
+    depends_on: []
+  - id: persist-resume-on-upload
+    title: "Extend resume upload to persist + a Resume section in /config"
+    complexity: low
+    depends_on: [resume-store]
+  - id: persisted-links
+    title: "ApplyProfileConfig.links + list editor + buildApplicantDataBlock() reuse across draft/prep"
+    complexity: low
+    depends_on: []
+  - id: real-parseability-check
+    title: "Export buildResumeContentBlock(), wire the real persisted resume into generatePrepPacket()'s atsScore"
+    complexity: medium
+    depends_on: [resume-store]

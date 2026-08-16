@@ -1,0 +1,70 @@
+id: resume-store
+epic: career-documents
+title: "Encrypted-at-rest resume storage (save/load/delete)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1. New src/lib/documents/resume-store.ts:
+  saveResume(data: Buffer, mediaType: string): {path: string} /
+  loadResume(path: string): {data: Buffer, mediaType: string} | undefined /
+  deleteResume(path: string): void. Mirrors session-capture.ts's
+  writeStorageStateAtomically() BYTE-FOR-BYTE: atomic temp-file+rename
+  (never a direct write to destPath), mode 0600, encrypt()-at-rest via
+  vault.ts's SAME shared key every other encrypted file (config.json,
+  session-state files) already uses, via getOrCreateKey(hasAnyEncryptedFile)
+  from config/load.js -- reused, not reimplemented. On-disk shape:
+  encrypt(JSON.stringify({mediaType, dataBase64})) written to
+  path.join(getDefaultDataDir(), "resume.enc") -- ONE resume, not
+  versioned (design-discussion.md section 3 open question 1, deliberately
+  deferred). loadResume() reverses this: decrypt(), JSON.parse(),
+  Buffer.from(dataBase64, "base64"). deleteResume() removes the file,
+  never throws if it's already gone (idempotent, matching
+  cancelCapture()'s own "already gone is fine" precedent). This story
+  ships the MECHANISM ONLY -- no upload-flow wiring, no UI. That's Slice 2
+  (persist-resume-on-upload).
+
+acceptance_criteria:
+  - "saveResume() writes an encrypted file to getDefaultDataDir()/resume.enc via the exact atomic temp-file+rename+mode-0600 discipline writeStorageStateAtomically() uses -- verified by a test asserting no plaintext resume bytes are ever readable directly off disk (read the raw file, assert it does NOT contain the original PDF bytes/text)."
+  - "loadResume() round-trips saveResume()'s output exactly: the returned {data, mediaType} deep-equals what was originally saved, byte-for-byte (verified with real binary PDF-like fixture bytes, not just ASCII text)."
+  - "loadResume() on a path that doesn't exist returns undefined, never throws."
+  - "deleteResume() on an already-deleted/nonexistent path is a silent no-op, never throws."
+  - "ApplyProfileConfigSchema gains resumePath: z.string().optional() -- verified by a schema test parsing a Config with and without the field."
+  - "Uses getOrCreateKey(hasAnyEncryptedFile) from config/load.js, NOT a second key-detection implementation -- verified by grep/review."
+
+steps:
+  - id: research
+    description: Re-confirm session-capture.ts's writeStorageStateAtomically() exact implementation (temp path naming, chmod ordering, cleanup-on-failure) so resume-store.ts mirrors it precisely, not approximately.
+    agent: researcher
+  - id: implement
+    description: Write resume-store.ts (saveResume/loadResume/deleteResume) and extend ApplyProfileConfigSchema.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Tests per acceptance criteria, using an isolated temp XDG_DATA_HOME per test (same convention every other encrypted-file test in this repo already uses).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no plaintext resume bytes ever touch disk, confirm atomic-write discipline matches writeStorageStateAtomically() exactly, confirm getOrCreateKey() reuse.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: "writeStorageStateAtomically() -- the exact atomic-write+encrypt+mode-0600 pattern this story mirrors"
+    - path: src/lib/security/vault.ts
+      purpose: "encrypt()/decrypt()/getOrCreateKey() -- reused as-is, string-in/string-out, JSON-envelope on disk"
+    - path: src/lib/config/load.ts
+      purpose: "hasAnyEncryptedFile() -- the shared first-run/key-lost detection every encrypted-file writer already calls"
+
+references:
+  - path: .pHive/epics/career-documents/docs/design-discussion.md
+    relevant_excerpt: "section 2.1 (resume storage mechanism) and section 1's real research grounding"
