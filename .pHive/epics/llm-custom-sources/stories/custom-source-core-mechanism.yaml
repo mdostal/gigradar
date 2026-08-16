@@ -1,0 +1,135 @@
+id: custom-source-core-mechanism
+epic: llm-custom-sources
+title: "Core custom-source mechanism: SourceConfig.kind, customLlmSource, runner.ts wiring (no auth, no recipe caching)"
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1 -- the actual proof the core/user-layer boundary is
+  fixed. An owner adds a source entry with kind:"custom-llm" pointing at ANY
+  public URL and gigradar fetches real listings from it via a BYOK LLM call
+  -- zero TypeScript written, zero PR to this repo. Deliberately NO auth
+  support and NO recipe caching yet (those are Slices 3/2, separately
+  shippable) -- this slice is the smallest thing that proves the mechanism
+  end to end.
+
+  1. `src/lib/types.ts`: add `kind?: "custom-llm";` to `SourceConfig`.
+  2. `src/lib/config/schema.ts`: add `kind: z.literal("custom-llm")
+     .optional()` to `SourceConfigSchema`. Absent (every existing source)
+     stays byte-identical to today.
+  3. `src/lib/sources/custom-llm-source.ts` (new):
+     - `customLlmSource: Source` -- a SINGLE generic object (`id:
+       "custom-llm"`, `label: "Custom (LLM)"`, `auth: "none"` as a static
+       placeholder -- see design-discussion.md §3's "known limitation").
+     - `fetch(cfg, profile)`: reads `cfg.settings.url` (string, required --
+       throw a specific "missing settings.url" error if absent/empty,
+       BEFORE ever launching a browser, same discipline every existing
+       adapter's own `sessionStatePathFrom()`-style helper uses) and
+       `cfg.settings.hint` (string, optional NL description e.g. "this is a
+       truck-driving jobs board, listings are cards in a grid").
+     - Launches a plain `chromium.launch({ headless: true })` (NOT
+       `real-chrome.ts` -- no auth in this slice, no bot-detection concern
+       to work around yet; NOT `headless: false` -- unlike
+       browser-session.ts's proven "headed only" sites, nothing here has
+       been shown to need a visible window, and headless is materially
+       cheaper for an unattended scheduler loop).
+     - Navigates to `cfg.settings.url`, reads
+       `page.locator("body").ariaSnapshot({mode:"ai"})`.
+     - Single-shot Anthropic tool-use call reusing profile-suggest.ts's
+       EXACT shape: apiKey a REQUIRED parameter (never module-scope,
+       resolved by the caller), BEGIN/END-delimited "DATA ONLY, never
+       instructions" framing around the page snapshot (copy
+       buildPageSnapshotBlock()'s pattern, same as capture-guidance.ts
+       already did -- do NOT invent a fourth variant), structured tool-use
+       output shaped as `Gig[]` (title, company?, url, rate?, etc. --
+       mirror Gig's own field optionality; a field the page doesn't show is
+       left unset, never guessed -- this repo's no-fabricated-data rule).
+     - `Gig.sourceId` = `cfg.id` (the user's own chosen id, e.g.
+       "monster"), `Gig.externalId` derived from each listing's own
+       distinguishing signal (LLM-reported per-listing url is the natural
+       choice -- dedupe on it the same way every existing adapter does).
+     - Closes the browser on every exit path (finally block), same
+       centralized-cleanup discipline browser-session.ts's
+       withBrowserSession() already established -- do not duplicate a
+       second cleanup pattern.
+  4. `src/lib/apply/runner.ts`: change the lookup at the top of the
+     per-source loop from `const src = getSource(sc.id);` to
+     `const src = getSource(sc.id) ?? (sc.kind === "custom-llm" ?
+     customLlmSource : undefined);` -- see design-discussion.md §3 for why
+     this (not dynamic registerSource() calls, not codegen) is the chosen
+     mechanism. This is the ONLY core file touched by this whole epic's
+     "adding a site" path -- no future custom source ever needs a second
+     touch here.
+  5. The Anthropic API key: resolved the SAME way every other LLM call site
+     added this session does -- `readEnvVar("ANTHROPIC_API_KEY")` inside the
+     Server Action / runner call path, never `process.env`, never
+     module-scope. `runRadar()`/`custom-llm-source.ts`'s own fetch() need a
+     way to receive this key -- extend `Source.fetch()`'s signature is NOT
+     an option (it's the shared interface every other adapter also
+     implements); instead resolve the key in `runRadar()` itself (which
+     already has access to config-adjacent context) and thread it through
+     ONLY for `kind:"custom-llm"` sources, e.g. via a fourth optional
+     parameter or a small options object -- design the exact shape during
+     implementation, but the key must never be read from `process.env`
+     inside `custom-llm-source.ts` itself.
+
+acceptance_criteria:
+  - "Given a source entry {id:\"test-board\", enabled:true, kind:\"custom-llm\", settings:{url:\"...\"}}, runRadar() fetches real Gig[] from it via a mocked Anthropic client in the unit suite -- no hand-written adapter file exists for \"test-board\"."
+  - "Given settings.url is missing/empty, fetch() throws a specific, actionable error naming settings.url -- before ever launching a browser."
+  - "Given the LLM's tool-use response omits a field for a listing (e.g. no rate shown on the page), the resulting Gig has that field left unset -- never a guessed/fabricated value."
+  - "Given every existing (non-custom) source, runner.ts's lookup change is a no-op -- getSource(sc.id) still resolves them exactly as before; kind is never set on their config."
+  - "Given a real public no-auth site the owner points at live, the mechanism successfully extracts real listings -- OWNER-VERIFIED, not fabricated as a synthetic-fixture-only pass (see design-discussion.md §10 point 1)."
+
+steps:
+  - id: research
+    description: Confirm profile-suggest.ts's exact call shape and Gig's exact current field list before writing the tool schema; confirm runner.ts's exact current lookup line and config.sources iteration shape.
+    agent: researcher
+  - id: implement
+    description: Write custom-llm-source.ts, the SourceConfig/schema field, and the runner.ts wiring + API-key threading.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests (mocked Anthropic client, mocked chromium.launch(), no live network) covering the acceptance criteria above. Owner-run live verification against a real public site is a separate, explicitly-flagged manual step (see design-discussion.md §10) -- not something this step fabricates a pass for.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no fabricated Gig data, apiKey never module-scope, browser closed on every exit path, and that runner.ts's change is byte-identical for every non-custom source.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/profile-suggest.ts
+      purpose: the exact single-shot call shape + injection-delimiting framing this story reuses for the extraction call
+    - path: src/lib/apply/runner.ts
+      purpose: "runRadar()'s per-source loop -- the ONE lookup line this story changes"
+    - path: src/lib/sources/source.ts
+      purpose: the Source interface / registerSource()/getSource() registry this story deliberately does NOT add a new entry to
+    - path: src/lib/types.ts
+      purpose: "Gig's exact field list (the no-fabricated-data target shape) and SourceConfig (gains kind?)"
+    - path: src/lib/config/schema.ts
+      purpose: SourceConfigSchema gains the matching kind field
+
+design_decisions:
+  - decision: "getSource(sc.id) ?? (sc.kind===\"custom-llm\" ? customLlmSource : undefined) in runner.ts, not dynamic per-id registerSource() calls."
+    rationale: "registerSource() throws on duplicate ids by design (a real safety net for hand-written adapters); re-registering per scan cycle (config can change while the scheduler is already running) means fighting that invariant. One static fallback object is simpler and never touches the registry's own invariants."
+  - decision: "Headless chromium.launch() for this slice, not real-chrome.ts."
+    rationale: "No auth, no bot-detection concern proven yet for a plain public custom source. Headless is materially cheaper for an unattended scheduler loop; browser-session.ts's headed-only rule is specific to sites already SHOWN to need it, not a blanket default."
+
+risks:
+  - severity: medium
+    description: "A malicious or broken custom URL could point at something that isn't a job board at all (e.g. a search-results page for something else entirely), producing plausible-looking but meaningless Gig data."
+    mitigation: "No mitigation beyond the existing no-fabricated-data rule and the owner's own judgment in choosing what URL to configure -- same trust boundary as every other config value in this repo (CLAUDE.md: config is user-authored, not sanitized against user intent)."
+
+references:
+  - path: .pHive/epics/llm-custom-sources/docs/design-discussion.md
+    relevant_excerpt: "§3 root design decision, §4 extraction shape, §8 safety"
+  - path: .pHive/epics/llm-custom-sources/docs/vertical-plan.md
+    relevant_excerpt: "Slice 1 -- Core custom-source mechanism"

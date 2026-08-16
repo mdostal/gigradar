@@ -1,0 +1,78 @@
+id: custom-source-pagination-and-ui
+epic: llm-custom-sources
+title: "Pagination + real /config 'Add custom source' UI with test-extraction preview"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [custom-source-recipe-caching, custom-source-auth]
+
+description: |
+  Vertical Plan Slice 4 -- the last mile that makes this genuinely
+  usable, not just mechanically possible. Slices 1-3 already work end to
+  end via the raw Settings key/value editor; this slice adds real pagination
+  (most boards have more than one results page) and a proper add-source form
+  instead of hand-typing settings keys.
+
+  1. `CustomSourceRecipe` (custom-source-recipe.ts) gains an optional
+     `nextPageSelector: string` field, derived by the LLM alongside the rest
+     of the recipe (deriveRecipeAndExtract()'s tool schema gains this
+     field).
+  2. `custom-llm-source.ts`'s fetch loop follows `nextPageSelector` (click,
+     wait for navigation/load, re-extract via the SAME recipe) up to a fixed
+     page cap (mirror wellfound.ts's existing "first page(s) only, never
+     unbounded" precedent -- pick and document a specific cap, do not crawl
+     indefinitely).
+  3. `/config` (config-client.tsx): a real "Add custom source" control --
+     URL field, optional NL hint field, auth-type picker (none /
+     browser-session), and an optional "Test extraction now" button that
+     runs a single fetch() against the entered URL (via a new Server Action)
+     and shows the resulting listing count + first few titles BEFORE the
+     user saves -- catches an obviously-wrong URL/hint early rather than
+     only discovering it on the next scheduled scan.
+
+acceptance_criteria:
+  - "Given a mocked multi-page site (recipe includes nextPageSelector), fetch() follows it and returns deduped listings across all followed pages, capped at the documented page limit."
+  - "Given a site whose recipe has no nextPageSelector (single-page board), behavior is unchanged from custom-source-recipe-caching -- pagination is additive, never required."
+  - "Given the /config 'Add custom source' form, submitting it produces a SourceConfig entry with kind:\"custom-llm\" and the entered settings -- byte-equivalent to what a hand-typed Settings-editor entry from Slice 1 would have produced."
+  - "Given \"Test extraction now\" is clicked, it runs a real (or mocked-in-tests) extraction against the entered URL and displays a result WITHOUT saving anything to config.json -- purely a preview, same \"writes nothing until Save\" discipline the existing resume/link extraction preview already established (extractProfileFromResumeAction)."
+
+steps:
+  - id: research
+    description: Re-read wellfound.ts's page-cap precedent and extractProfileFromResumeAction's "preview without saving" pattern to reuse both exactly.
+    agent: researcher
+  - id: implement
+    description: Add pagination to custom-source-recipe.ts/custom-llm-source.ts and build the /config Add-custom-source form + test-extraction Server Action.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests for pagination (mocked multi-page navigation, page-cap enforcement) and the new Server Action/UI logic.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the page cap is a real, documented, enforced limit (not accidentally unbounded), and confirm the test-extraction preview never writes to config.json.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch, then open the epic-wide PR into dev (all 4 stories).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/sources/wellfound.ts
+      purpose: "the existing 'bounded pages, never unbounded' precedent this story's page cap follows"
+    - path: src/app/config/actions.ts
+      purpose: "extractProfileFromResumeAction's 'preview without saving' pattern reused for Test extraction now"
+    - path: src/app/config/config-client.tsx
+      purpose: "gains the real Add-custom-source form"
+
+design_decisions:
+  - decision: "Test-extraction preview writes nothing to config.json -- purely a Server Action returning a result to display."
+    rationale: "Matches this app's own established convention (extractProfileFromResumeAction) that nothing persists until the user's own explicit Save action -- a preview that silently saved would surprise the user and risk config.json churn from exploratory testing."
+
+references:
+  - path: .pHive/epics/llm-custom-sources/docs/design-discussion.md
+    relevant_excerpt: "§7 pagination and dedup"
+  - path: .pHive/epics/llm-custom-sources/docs/vertical-plan.md
+    relevant_excerpt: "Slice 4 -- Pagination + real /config UI"
