@@ -12,16 +12,36 @@ and see if we can navigate that around -- we're basically giving away a
 free version of what all the companies are doing to screw people without
 jobs atm."
 
+Follow-up round (same session, after seeing §3's robots.txt findings
+below): "yeah, i don't give a shit about indeed and their robots -- and
+HALF of these things will go with a gmail addition for scanning your
+email as well -- but the career site also had a reverse to see if you
+match their job description and then prep and what to do to tweak etc --
+so we need bi directional ATS scanning and pulling in all the components
+and features of that career section as the etc." This resolves three
+things this document originally left open (see §5's history): Indeed is
+IN, explicitly owner-overridden (§3 Indeed, revised); Gmail connection is
+part of onboarding, not a separate ask (§4.2, revised); and "and etc."
+does NOT mean more job boards — it means the full candidate-portal
+feature set (match score + concrete tweak/prep guidance, bidirectional)
+that these platforms already offer, which is what §4.4/Ask B actually is
+(revised, expanded).
+
 Two related but architecturally distinct asks, both under one theme
 ("help candidates navigate ATS-driven hiring systems"):
 
 - **A. Guided onboarding + auto-apply readiness** for common job
-  platforms (Indeed, Welcome to the Jungle, Zoho Recruit, more TBD) —
-  source/apply layer.
-- **B. ATS resume-compatibility scoring** — give a user visibility into
-  how their OWN resume would fare against the keyword/format screening
-  real ATS platforms run, so they can fix it before applying — profile
-  layer, orthogonal to which job board a listing came from.
+  platforms (Indeed, Welcome to the Jungle, Zoho Recruit — owner-confirmed
+  closed list, not open-ended; see §3's "and etc." resolution) —
+  source/apply layer, plus wiring each platform's onboarding to the
+  existing Gmail-digest-ingestion mechanism where relevant.
+- **B. Bidirectional ATS scanning** — not just a score: how well does the
+  user's resume match a SPECIFIC job's posted text (forward direction,
+  parseability + keyword overlap), AND, given a gap, concrete tweaks to
+  close it (reverse direction — what to actually change) — the same
+  "match + prep + what to tweak" feature shape real ATS candidate portals
+  already offer, given away free and fully explainable instead of gated
+  behind the hiring platform's own black box.
 
 **Framing for B, stated up front because it shapes every design choice
 below:** this is a "beat the ATS" resume-coaching feature in the same
@@ -97,19 +117,26 @@ plus company-page paths. A separate section adds broader restrictions
 specifically for AI bots (GPTBot, anthropic-ai, ClaudeBot, etc.),
 including `/jobs` and `/career/`.
 
-**This is materially different from LinkedIn's posture.** LinkedIn's
-adapter has one documented, deliberate robots.txt exception because its
-public guest search page is the only viable path and the decision was
-made explicitly, in the open, with the tradeoff written down. Indeed
-disallows exactly the two paths this feature would need most — the
-per-listing detail page (`/viewjob`) and the apply flow itself
-(`/applystart`) — and separately calls out AI bots by name. Building a
-scraping `Source` or a `SubmitAdapter` against Indeed would require the
-**same kind of deliberate, explicit, owner-approved exception** LinkedIn
-got, not a default. This design does **not** propose one; it treats
-Indeed as **explicitly out of scope for real automation** unless and
-until the owner decides otherwise with this finding in front of them
-(see Open Questions).
+**Owner-overridden, explicitly, with this finding in front of them**
+("i don't give a shit about indeed and their robots") — same posture
+`linkedin.ts`'s own documented robots.txt exception already established
+in this codebase: a deliberate, informed decision, not an oversight. One
+real distinction worth recording here (not a rationalization, an actual
+fact about how the fetch happens): the disallow rules and the AI-bot
+section both target automated CRAWLERS identifying by `User-Agent`
+string (`GPTBot`, `ClaudeBot`, etc.) — gigradar's fetch path is a real,
+headed Chrome instance (`real-chrome.ts`, already used for Capture
+Login), presenting a normal browser User-Agent, driven on behalf of one
+real user's own account/search, at the volume one person's job search
+produces — a materially different activity from a mass AI-training
+crawler, even though the underlying automation library is the same. Given
+Indeed's likely-aggressive bot detection (a large site actively fighting
+scraping, more so than LinkedIn's guest pages), this still goes through
+`custom-llm-source` + Capture Login (`customAuth: "browser-session"`)
+rather than a naive unauthenticated `fetch()`, and the FETCH side
+shipping does not imply a `SubmitAdapter` ships automatically — that
+still needs its own live-verification pass (§4.3), mirroring GoFractional's
+own "fetch works, submit is paused" precedent.
 
 ### Welcome to the Jungle (welcometothejungle.com)
 
@@ -139,14 +166,15 @@ list with a title/location/apply link per row") gets 90% of the value for
 a fraction of the maintenance burden, and degrades gracefully per-company
 via the existing recipe-caching mechanism.
 
-### "and etc."
+### "and etc." — resolved
 
-The owner's own phrase leaves the platform list open-ended. This design
-does **not** silently expand it — see Open Questions. What ships now is
-the mechanism (presets + generic custom-llm-source + real per-platform
-research before any bespoke adapter), not a fixed platform list; adding
-the next platform later is a config/preset change, not new core code,
-which is the whole point of the core/user-layer boundary.
+Originally left open as "which other job boards?" — owner clarified it
+means the FEATURE SET, not more platforms: "pulling in all the
+components and features of that career section as the etc" refers to the
+candidate-portal match/prep/tweak experience real ATS sites offer
+alongside their listings (§4.4/Ask B, expanded below), not a longer
+platform list. The platform list is now a closed, owner-confirmed set of
+three: Indeed, Welcome to the Jungle, Zoho Recruit.
 
 ## 4. Design decisions
 
@@ -154,10 +182,10 @@ which is the whole point of the core/user-layer boundary.
 
 | Platform | Strategy | Why |
 |---|---|---|
-| Indeed | **Neither adapter nor preset, for now.** Registered as a KNOWN, documented gap. | robots.txt explicitly disallows the listing-detail and apply paths, and singles out AI bots. Needs an explicit, owner-approved exception (LinkedIn precedent) before any code is written — not a default this epic makes for the owner. |
-| Welcome to the Jungle | **Source preset** pre-filling a `custom-llm-source` config (public, `customAuth` unset), pointed at a specific company/listing page the user supplies — never a search URL. | robots.txt allows listing pages; no AI-bot carve-out; matches the existing "real per-listing URLs only" rule with zero exception needed. Bespoke adapter is a possible LATER upgrade if the generic mechanism proves unreliable for this specific site — not started here, since the generic mechanism is cheaper to ship and maintain first. |
+| Indeed | **Source preset**, `customAuth: "browser-session"` by default (Capture Login) given its likely-aggressive bot detection — owner-overridden robots.txt exception, see §3. | Large, robots.txt-hostile, likely bot-detection-sensitive — the generic mechanism first, same "preset before bespoke adapter" reasoning as WTTJ; a hand-written `indeed.ts` adapter is a possible later upgrade if the generic extraction proves unreliable, not started here. |
+| Welcome to the Jungle | **Source preset** pre-filling a `custom-llm-source` config (public, `customAuth` unset), pointed at a specific company/listing page the user supplies — never a search URL. | robots.txt allows listing pages; no AI-bot carve-out; matches the existing "real per-listing URLs only" rule with zero exception needed. |
 | Zoho Recruit | **Source preset** pre-filling a `custom-llm-source` config, `customAuth` left to the user (most Zoho Recruit careers pages are public; a minority may be login-gated, in which case the existing Capture Login flow already covers it). | Self-hosted-per-company ATS — the generic mechanism's whole reason to exist, no bespoke adapter would ever "finish." |
-| More platforms | Out of scope this epic — see Open Questions. | Owner's own "etc." is a real open question, not an invitation to guess. |
+| More platforms | Out of scope — owner-confirmed closed list of three (§3 "and etc." — resolved). | Not an open question anymore. |
 
 Presets live alongside `role-templates.ts`'s pattern: a new, small,
 curated array (`SOURCE_PRESETS` or similar) of `{id, label, description,
@@ -183,59 +211,88 @@ Real decision, not an assumed answer: **both, but the chat is primary.**
   addition — a dropdown of the same `SOURCE_PRESETS` array feeding the
   same `custom-llm-source` config shape the chat tool writes, so there is
   exactly one source-config-construction code path either way.
+- **Gmail wiring, folded into the SAME onboarding step, not a separate
+  ask** ("HALF of these things will go with a gmail addition for scanning
+  your email as well"): after `add_source` proposes and the user approves
+  a new preset-based source, the chat's next turn checks whether that
+  source's preset carries a `suggestsGmailDigest: true` flag (Zoho
+  Recruit and Indeed both do — both notify application status/interview
+  invites by email; WTTJ does not carry the flag by default since its
+  candidate messaging is mostly in-platform) and, if so, offers to run
+  the EXISTING `start_gmail_connect` tool (already shipped in the
+  agent-chat epic's Slice 3, `chat-sessions-screenshots` story) for that
+  account — same approval-gated mechanism, not a new one. This reuses the
+  ALREADY-BUILT `email-digest-ingestion` epic wholesale; no new email
+  parsing logic.
 
 ### 4.3 Auto-fire wiring
 
 No second mechanism. Any `SubmitAdapter` this epic registers plugs into
 the existing `AutoFireRuleConfig`/`evaluateAutoFire()` gate unmodified.
-Given §3's findings, this epic does **not** ship a `SubmitAdapter` for
-any of the three named platforms yet — Indeed is out of scope (§4.1),
-and WTTJ/Zoho Recruit go through the generic `custom-llm-source` fetch
-path first; a submit adapter for either is real, separate, live-verify-
-required work for a later slice/epic, mirroring GoFractional's own
-"fetch works, submit is paused pending live verification" precedent
-rather than assuming submit automation will just work because fetch did.
+This epic does **not** ship a `SubmitAdapter` for any of the three
+platforms yet, even with Indeed back in scope for FETCH — a submit
+adapter for any of the three is real, separate, live-verify-required
+work for a later epic, mirroring GoFractional's own "fetch works, submit
+is paused pending live verification" precedent rather than assuming
+submit automation will just work because fetch did.
 
-### 4.4 ATS resume-compatibility scoring (Ask B)
+### 4.4 Bidirectional ATS scanning (Ask B, expanded)
 
 Extends `generatePrepPacket()`'s existing single-shot LLM call rather
-than adding a new page or a new LLM call site:
+than adding a new page or a new LLM call site — but now explicitly
+**bidirectional**, per the owner's clarification: not just a diagnosis,
+a forward score AND a reverse, concrete action plan to close the gap
+(the same "match → prep → what to tweak" shape a real ATS candidate
+portal offers, given away free and fully explainable):
 
-- **Deterministic parseability checks (no LLM, no black box):**
-  well-documented, public facts about how real ATS parsers choke —
-  multi-column layouts, tables, text embedded in images, headers/footers
-  containing contact info, non-standard section headings, unusual fonts —
-  run against whatever the existing resume-ingestion path
-  (`profile-ingestion/extract.ts`) already extracted. Pure functions,
-  fully explainable, each flag names the specific problem
-  ("your contact info is in a header — many ATS parsers skip headers
-  entirely"), matching this codebase's "explainable, never a black box"
-  gate philosophy (`README.md` §The one principle) — gigradar's whole
-  differentiator from the vendors it's leveling the playing field
-  against is exactly that it doesn't hide its reasoning either.
-- **Keyword-overlap score:** the user's resume text vs. the SPECIFIC
-  gig's own `description` (already scraped, already in hand) — real
-  content both sides already own, not a scrape of any vendor's internal
-  model. Reuses the same BEGIN/END untrusted-DATA framing every other
-  LLM call site in this repo applies to scraped gig text.
-- Both feed into a new `atsScore` section of `PrepPacketContent` (or a
-  sibling field), surfaced in the existing prep-packet UI — not a new
-  page, not a new drafting flow.
+- **Forward direction — deterministic parseability checks** (no LLM, no
+  black box): well-documented, public facts about how real ATS parsers
+  choke — multi-column layouts, tables, text embedded in images,
+  headers/footers containing contact info, non-standard section
+  headings, unusual fonts — run against whatever the existing
+  resume-ingestion path (`profile-ingestion/extract.ts`) already
+  extracted. Pure functions, fully explainable, each flag names the
+  specific problem ("your contact info is in a header — many ATS parsers
+  skip headers entirely"), matching this codebase's "explainable, never a
+  black box" gate philosophy (`README.md` §The one principle).
+- **Forward direction — keyword-overlap score:** the user's resume text
+  vs. the SPECIFIC gig's own `description` (already scraped, already in
+  hand) — real content both sides already own, not a scrape of any
+  vendor's internal model. Reuses the same BEGIN/END untrusted-DATA
+  framing every other LLM call site in this repo applies to scraped gig
+  text.
+- **Reverse direction — concrete tweaks (NEW, this is the "bi
+  directional" half):** given the forward score's gaps, a short,
+  specific, actionable list of exactly what to change — not vague advice.
+  Distinct from `PrepPacketContent`'s existing `keyGaps`/`recommendation`
+  fields, which are holistic/interview-prep-oriented; `resumeTweaks` is
+  narrowly ATS-mechanical: e.g. "add 'Kubernetes' — it appears 3× in this
+  listing, 0× in your resume" or "your 'Skills' section heading is
+  non-standard ('Toolbox') — ATS parsers look for 'Skills'/'Technical
+  Skills'; rename it." Generated by the SAME LLM call as the
+  keyword-overlap score (one call, not two), grounded in the actual
+  computed keyword gap, not free-associated.
+- All three (`parseabilityIssues`, `keywordOverlapScore` +
+  `matchedKeywords`/`missingKeywords`, `resumeTweaks`) feed into a new
+  `atsScore` section of `PrepPacketContent`, surfaced in the existing
+  prep-packet UI — not a new page, not a new drafting flow.
 
-## 5. Open Questions (owner input needed before/while executing)
+## 5. Open Questions — resolved this session
 
-1. **"and etc." — which other platforms actually matter?** This design
-   deliberately does not guess a 4th/5th platform. Name them and they get
-   the same real-robots.txt-first research treatment before any code.
-2. **Indeed: pursue a LinkedIn-style deliberate exception, or leave it
-   out entirely?** §3's finding (explicit AI-bot + apply-flow disallow)
-   is a real, live fact in front of the owner now, not a soft guess —
-   this design's default is "leave it out" unless explicitly overridden.
-3. **WTTJ/Zoho Recruit `SubmitAdapter`s** — real submission automation
-   for either needs the same "live-verify with the owner watching before
-   calling it done" pass GoFractional's own attempt got (and got paused
-   by). Not started in this epic; flagged as the natural next epic once
-   the fetch-side presets are live and trusted.
+Originally three open questions; the owner's follow-up round (§0)
+resolved all three directly:
+
+1. ~~"and etc." — which other platforms actually matter?~~ **Resolved:**
+   not more platforms — the full candidate-portal feature set (§4.4,
+   above). Platform list is closed at three.
+2. ~~Indeed: pursue a LinkedIn-style exception, or leave it out?~~
+   **Resolved:** in, explicitly owner-overridden (§3 Indeed).
+3. **Still open, deliberately not resolved by the owner's follow-up:**
+   WTTJ/Zoho Recruit/Indeed `SubmitAdapter`s (real submission automation)
+   need their own live-verification pass before shipping, mirroring
+   GoFractional's own paused precedent — not started in this epic,
+   flagged as the natural next epic once the fetch-side presets are live
+   and trusted.
 
 ## 6. Scale assessment
 

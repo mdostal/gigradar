@@ -11,7 +11,7 @@ git_flow:
 
 stories:
   - id: source-presets
-    title: "Curated source presets (Welcome to the Jungle, Zoho Recruit) -- Indeed deliberately excluded, see design-discussion.md"
+    title: "Curated source presets (Indeed, Welcome to the Jungle, Zoho Recruit) -- owner-confirmed closed list, see design-discussion.md"
     complexity: low
     depends_on: []
   - id: config-add-source-presets
@@ -19,10 +19,10 @@ stories:
     complexity: low
     depends_on: [source-presets]
   - id: chat-guided-source-onboarding
-    title: "agent-chat tools: list_source_presets + approval-gated add_source"
+    title: "agent-chat tools: list_source_presets + approval-gated add_source, offers start_gmail_connect for email-notifying presets"
     complexity: medium
     depends_on: [source-presets]
   - id: ats-resume-score
-    title: "Deterministic parseability check + keyword-overlap score in prep packets"
+    title: "Bidirectional ATS scanning: parseability + keyword-overlap score + concrete resume tweaks in prep packets"
     complexity: medium
     depends_on: []

@@ -1,6 +1,6 @@
 id: chat-guided-source-onboarding
 epic: ats-navigator
-title: "agent-chat tools: list_source_presets + approval-gated add_source"
+title: "agent-chat tools: list_source_presets + approval-gated add_source, offers start_gmail_connect for email-notifying presets"
 status: pending
 complexity: medium
 methodology: classic
@@ -21,6 +21,19 @@ description: |
     via the SAME saveConfig()-backed path config-add-source-presets.yaml's
     UI uses -- one write implementation, two front doors (chat and UI),
     not two.
+  Additionally: once an `add_source` proposal for a preset with
+  `suggestsGmailDigest: true` (Indeed, Zoho Recruit) is APPROVED, the
+  loop's next assistant turn should naturally offer to connect Gmail for
+  that account using the ALREADY-SHIPPED `start_gmail_connect` tool
+  (agent-chat epic, `chat-sessions-screenshots` story) -- this is prompt/
+  system-message guidance for the model (a hint in the tool's own result
+  text, e.g. "... this platform typically also emails application
+  updates -- want to connect Gmail for it too?"), NOT a new forced
+  tool-chaining mechanism; `start_gmail_connect` remains its own
+  independent approval-gated tool call the model chooses to make, same as
+  today. Folds "HALF of these things will go with a gmail addition" into
+  the SAME onboarding conversation rather than a separate flow.
+
   This is the "walk people through it" experience the owner asked for,
   delivered via infrastructure that shipped this same session rather than
   a new wizard.
@@ -31,13 +44,15 @@ acceptance_criteria:
   - "Approving an add_source proposal writes a SourceConfig identical in shape to what config-add-source-presets.yaml's UI path produces for the same preset -- verified by a test comparing both paths' output for the same presetId."
   - "Rejecting an add_source proposal never touches config.json."
   - "add_source with an unknown presetId and no raw {url, hint} pair surfaces a clean tool error naming the presetId, not a thrown exception out of resolveApproval()."
+  - "The tool_result text returned after approving an add_source for a suggestsGmailDigest:true preset mentions Gmail/start_gmail_connect; the tool_result for a preset without that flag does not -- verified by a test asserting the text differs between the two cases."
+  - "start_gmail_connect itself is NOT called automatically by add_source's approval -- it remains a separate, independently approval-gated tool call, verified by a test asserting no Gmail-related mutation happens as a side effect of approving add_source alone."
 
 steps:
   - id: research
-    description: Re-confirm agent-chat-loop.ts's exact WRITE_TOOLS/pendingApproval/executeWriteTool/describeProposal mechanism (added this same session, chat-propose-approve story) so the new tool follows it byte-for-byte, not a re-derivation.
+    description: Re-confirm agent-chat-loop.ts's exact WRITE_TOOLS/pendingApproval/executeWriteTool/describeProposal mechanism (added this same session, chat-propose-approve story) and start_gmail_connect's existing tool shape (chat-sessions-screenshots story) so the new tool follows both byte-for-byte, not a re-derivation.
     agent: researcher
   - id: implement
-    description: Add list_source_presets (read-only) and add_source (write, approval-gated) to agent-chat-loop.ts, reusing config-add-source-presets.yaml's SourceConfig-construction + saveConfig() write logic rather than a second implementation.
+    description: Add list_source_presets (read-only) and add_source (write, approval-gated) to agent-chat-loop.ts, reusing config-add-source-presets.yaml's SourceConfig-construction + saveConfig() write logic rather than a second implementation. Add the Gmail-offer hint to add_source's post-approval tool_result text for suggestsGmailDigest:true presets.
     agent: developer
     depends_on: [research]
   - id: test

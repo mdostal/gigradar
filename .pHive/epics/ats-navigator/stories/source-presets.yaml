@@ -1,6 +1,6 @@
 id: source-presets
 epic: ats-navigator
-title: "Curated source presets (Welcome to the Jungle, Zoho Recruit)"
+title: "Curated source presets (Indeed, Welcome to the Jungle, Zoho Recruit)"
 status: pending
 complexity: low
 methodology: classic
@@ -11,22 +11,35 @@ description: |
   `SOURCE_PRESETS: SourcePreset[]` -- mirrors role-templates.ts's exact
   shape (`id`/`label`/`description`/config), but each preset's "config" is
   a `custom-llm-source`-shaped `SourceConfig["settings"]` object
-  (`{url, hint, customAuth?}`), NOT a `RoleAreaConfig`. Two presets ship:
-  "Welcome to the Jungle" (public, no customAuth) and "Zoho Recruit"
-  (customAuth left unset -- most careers pages are public; a user on a
-  login-gated one still has the existing Capture Login flow available via
-  the generic `custom-llm-source` `customAuth: "browser-session"` path,
-  they just don't get it pre-filled). Indeed is deliberately NOT a preset
-  here -- see design-discussion.md section 3/4.1's robots.txt finding
-  (explicit AI-bot + /viewjob + /applystart disallow) and section 5's open
-  question to the owner. This story does not wire the presets into any UI
-  -- that's Slices 2/3 (config-add-source-presets, chat-guided-source-onboarding).
+  (`{url, hint, customAuth?}`) PLUS a `suggestsGmailDigest?: boolean`
+  flag consumed by Slice 3's chat onboarding. Three presets ship (owner-
+  confirmed closed list, design-discussion.md section 3 "and etc." --
+  resolved):
+  - "Indeed": `customAuth: "browser-session"` by default (Capture Login)
+    given its likely-aggressive bot detection; `suggestsGmailDigest: true`
+    (Indeed emails application-status updates). This preset's inclusion is
+    an EXPLICIT, owner-overridden robots.txt exception -- see
+    design-discussion.md section 3 Indeed for the real robots.txt finding
+    and the owner's direct override ("i don't give a shit about indeed
+    and their robots"). Do not soften or second-guess this in
+    implementation; it is a resolved decision, not an open question.
+  - "Welcome to the Jungle": public, no customAuth, `suggestsGmailDigest`
+    unset/false (in-platform messaging, not primarily email).
+  - "Zoho Recruit": customAuth left unset (most careers pages are public;
+    a login-gated one still has the existing Capture Login flow available
+    via `customAuth: "browser-session"`, just not pre-filled by this
+    preset), `suggestsGmailDigest: true` (application-status emails are
+    Zoho Recruit's default candidate-notification channel).
+  This story does not wire the presets into any UI -- that's Slices 2/3
+  (config-add-source-presets, chat-guided-source-onboarding).
 
 acceptance_criteria:
-  - "SOURCE_PRESETS exports exactly 2 entries: welcome-to-the-jungle, zoho-recruit."
-  - "Each preset's settings.url is a real, working example URL (a real company jobs page for WTTJ, a real Zoho Recruit careers page for Zoho) that a test can point custom-llm-source's own existing parsing/validation logic at without hand-waving."
+  - "SOURCE_PRESETS exports exactly 3 entries: indeed, welcome-to-the-jungle, zoho-recruit."
+  - "Each preset's settings.url is a real, working example URL (a real Indeed job-search or company page, a real company jobs page for WTTJ, a real Zoho Recruit careers page for Zoho) that a test can point custom-llm-source's own existing parsing/validation logic at without hand-waving."
   - "Each preset's settings.hint is a genuine, specific description of that platform's typical listing layout (not filler) -- mirrors role-templates.ts's redKeywords quality bar: real content, not a placeholder."
   - "No preset's settings.url contains a query string (?...) -- matches design-discussion.md's 'real per-listing/page URLs only, never a search URL' rule, verified by a test that greps for '?' in every preset's url."
+  - "The indeed preset's settings.customAuth is \"browser-session\"; zoho-recruit and welcome-to-the-jungle leave customAuth unset."
+  - "indeed.suggestsGmailDigest and zoho-recruit.suggestsGmailDigest are both true; welcome-to-the-jungle's is false or unset."
   - "A unit test (mirroring role-templates.test.ts's shape) verifies uniqueness of ids and non-empty label/description/settings.url/settings.hint for every preset."
 
 steps:
@@ -34,7 +47,7 @@ steps:
     description: Confirm custom-llm-source.ts's exact SourceConfig["settings"] shape (url/hint/customAuth/sessionStatePath/allowedOrigins) so the preset's settings object is directly assignable, not a guess.
     agent: researcher
   - id: implement
-    description: Write source-presets.ts with the SourcePreset interface + SOURCE_PRESETS array.
+    description: Write source-presets.ts with the SourcePreset interface + SOURCE_PRESETS array (3 entries, including suggestsGmailDigest).
     agent: developer
     depends_on: [research]
   - id: test
@@ -42,7 +55,7 @@ steps:
     agent: tester
     depends_on: [implement]
   - id: review
-    description: Confirm no preset URL is a search page, confirm hints are genuine (not filler).
+    description: Confirm no preset URL is a search page, confirm hints are genuine (not filler), confirm the Indeed preset is present and not silently dropped.
     agent: reviewer
     depends_on: [test]
   - id: integrate
@@ -60,4 +73,4 @@ context:
 
 references:
   - path: .pHive/epics/ats-navigator/docs/design-discussion.md
-    relevant_excerpt: "section 3 (real robots.txt research) and section 4.1 (per-platform strategy table)"
+    relevant_excerpt: "section 3 (real robots.txt research, including Indeed's owner-overridden exception) and section 4.1 (per-platform strategy table)"

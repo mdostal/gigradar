@@ -1,6 +1,6 @@
 id: ats-resume-score
 epic: ats-navigator
-title: "Deterministic parseability check + keyword-overlap score in prep packets"
+title: "Bidirectional ATS scanning: parseability + keyword-overlap score + concrete resume tweaks in prep packets"
 status: pending
 complexity: medium
 methodology: classic
@@ -9,10 +9,12 @@ depends_on: []
 description: |
   Vertical Plan Slice 4 (independent of Slices 1-3). Extends
   generatePrepPacket()/PrepPacketContent (src/lib/apply/prep.ts,
-  career-crm epic) with an ATS-compatibility pass, framed explicitly as
-  candidate-side resume coaching (design-discussion.md section 0's
-  framing), NOT reverse-engineering any vendor's proprietary scoring:
+  career-crm epic) with a BIDIRECTIONAL ATS-compatibility pass, framed
+  explicitly as candidate-side resume coaching (design-discussion.md
+  section 0's framing), NOT reverse-engineering any vendor's proprietary
+  scoring:
 
+  FORWARD direction (diagnose):
   1. DETERMINISTIC parseability checks (no LLM call) run against whatever
      structure profile-ingestion/extract.ts's existing resume-ingestion
      path already extracted: multi-column layout, tables, text embedded
@@ -28,16 +30,32 @@ description: |
      site in this repo applies to scraped gig text (buildGigDataBlock()
      precedent).
 
-  Both surface as a new atsScore section on PrepPacketContent, rendered
-  in the EXISTING prep-packet UI -- no new page, no new drafting flow, no
-  new LLM-call-site shape.
+  REVERSE direction (prescribe -- the "bi directional" half the owner
+  explicitly asked for, "the career site also had a reverse to see if
+  you match... and then prep and what to do to tweak"):
+  3. `resumeTweaks`: a short, concrete, ATS-MECHANICAL action list
+     grounded in the SAME computed keyword gap from step 2 (not a
+     separate free-associated LLM call) -- e.g. "add 'Kubernetes', it
+     appears 3x in this listing and 0x in your resume" or "rename your
+     'Toolbox' section heading to 'Skills' -- ATS parsers look for
+     standard heading names." Distinct from PrepPacketContent's existing
+     keyGaps/recommendation fields (holistic/interview-prep-oriented,
+     unchanged by this story) -- resumeTweaks is narrowly about what an
+     automated PARSER would miss or misread, not interview readiness.
+
+  All three surface as a new atsScore section on PrepPacketContent,
+  rendered in the EXISTING prep-packet UI -- no new page, no new drafting
+  flow, no new LLM-call-site shape (steps 2 and 3 are ONE LLM call, not
+  two).
 
 acceptance_criteria:
-  - "PrepPacketContent gains an atsScore field: {parseabilityIssues: string[], keywordOverlapScore: number, matchedKeywords: string[], missingKeywords: string[]} (or equivalent -- exact shape decided during implementation, but every field must be individually explainable, no bare aggregate score without the reasons behind it)."
+  - "PrepPacketContent gains an atsScore field: {parseabilityIssues: string[], keywordOverlapScore: number, matchedKeywords: string[], missingKeywords: string[], resumeTweaks: string[]} (or equivalent -- exact shape decided during implementation, but every field must be individually explainable, no bare aggregate score without the reasons behind it)."
   - "parseabilityIssues are computed by a PURE function with zero LLM calls, unit-testable with synthetic malformed-resume-structure fixtures (multi-column, table, image-text, header-contact-info cases each get their own test)."
   - "A resume with none of the known problem patterns produces an empty parseabilityIssues array, not a false positive."
-  - "keywordOverlapScore's LLM call wraps the gig's scraped description in the SAME BEGIN/END untrusted-DATA delimiting buildGigDataBlock()/buildGigResultBlock() already use elsewhere in this repo -- verified by a test asserting the delimiter text is present in the constructed prompt."
-  - "The existing prep-packet UI renders the new atsScore section without breaking any existing rendering of score/rationale/topStrengths/keyGaps/recommendation."
+  - "keywordOverlapScore and resumeTweaks come from the SAME single LLM call (not two separate calls) -- verified by a test asserting exactly one mocked LLM call covers both fields."
+  - "Every entry in resumeTweaks names a SPECIFIC, concrete action (a keyword to add, a heading to rename, a section to restructure) grounded in missingKeywords -- not generic advice like 'improve your resume'; verified by a test asserting each tweak references a concrete missingKeywords entry or a concrete parseability issue."
+  - "keywordOverlapScore/resumeTweaks's LLM call wraps the gig's scraped description in the SAME BEGIN/END untrusted-DATA delimiting buildGigDataBlock()/buildGigResultBlock() already use elsewhere in this repo -- verified by a test asserting the delimiter text is present in the constructed prompt."
+  - "The existing prep-packet UI renders the new atsScore section (including resumeTweaks as an actionable checklist) without breaking any existing rendering of score/rationale/topStrengths/keyGaps/recommendation."
   - "apiKey is resolved by the CALLER (Server Action), never inside prep.ts's own function bodies -- same discipline every other LLM-calling function in this repo follows, verified by grep/review, not just a test."
 
 steps:
@@ -45,15 +63,15 @@ steps:
     description: Confirm profile-ingestion/extract.ts's exact resume-ingestion output shape (what structural metadata, if any, survives extraction today) to know whether parseability checks run against raw file bytes, extracted text, or an intermediate structure -- a real finding, not an assumption.
     agent: researcher
   - id: implement
-    description: Add the parseability pure-function pass and the keyword-overlap LLM extension to prep.ts, extend PrepPacketContent, wire into the existing prep-packet UI.
+    description: Add the parseability pure-function pass and the single combined keyword-overlap + resumeTweaks LLM extension to prep.ts, extend PrepPacketContent, wire into the existing prep-packet UI as an actionable checklist.
     agent: developer
     depends_on: [research]
   - id: test
-    description: Tests per acceptance criteria, including synthetic malformed-resume fixtures for every parseability check.
+    description: Tests per acceptance criteria, including synthetic malformed-resume fixtures for every parseability check and a check that resumeTweaks are concrete, not generic.
     agent: tester
     depends_on: [implement]
   - id: review
-    description: Confirm every flag is individually explainable (no unexplained aggregate score), confirm untrusted-DATA delimiting is present, confirm apiKey discipline.
+    description: Confirm every flag is individually explainable (no unexplained aggregate score), confirm resumeTweaks are concrete and grounded (not vague), confirm untrusted-DATA delimiting is present, confirm apiKey discipline, confirm exactly one LLM call covers both forward-score and reverse-tweaks.
     agent: reviewer
     depends_on: [test]
   - id: integrate
@@ -71,4 +89,4 @@ context:
 
 references:
   - path: .pHive/epics/ats-navigator/docs/design-discussion.md
-    relevant_excerpt: "section 4.4 (ATS resume-compatibility scoring) -- the framing paragraph in section 0 is load-bearing, read it first"
+    relevant_excerpt: "section 4.4 (bidirectional ATS scanning, expanded) -- the framing paragraph in section 0 is load-bearing, read it first"
