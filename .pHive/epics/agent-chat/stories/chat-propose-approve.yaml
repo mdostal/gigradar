@@ -1,0 +1,50 @@
+id: chat-propose-approve
+epic: agent-chat
+title: "Propose/approve write tools: update_gig_status, generate_draft, generate_prep_packet, run_scan"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [chat-loop-core]
+
+description: |
+  Vertical Plan Slice 2. Adds `pendingApproval` to agent-chat-loop.ts,
+  mirroring profile-assist-loop.ts's exact pause/resume mechanism: a
+  mutating tool call sets pendingApproval and the loop returns without
+  executing; a separate resolveApprovalAction(sessionId, approve) later
+  executes (or rejects) it and feeds the result back into history so the
+  loop continues. Four new tools: update_gig_status (wraps setStatus()),
+  generate_draft (wraps stageApplication()), generate_prep_packet (wraps
+  generatePrepPacket() + saveInterviewPrep()), run_scan (wraps
+  runRadar()). Chat UI gains a "the agent wants to: ___ [Approve]
+  [Reject]" card -- never executes without an explicit click, no
+  exceptions.
+
+acceptance_criteria:
+  - "A request that implies a mutation (\"mark this one as applied\") produces a pending-approval card naming the exact action and target, never an immediate write."
+  - "Clicking Reject never touches the store/drafts/prep-packets tables -- the model is told the action was rejected and the conversation continues from there."
+  - "Clicking Approve executes the REAL underlying function (setStatus()/stageApplication()/generatePrepPacket()/runRadar()) and the result is reflected in a follow-up message, not silently dropped."
+  - "run_scan's approval card makes clear this is a real, potentially slow, network-bound action before the click, not a surprise after."
+  - "Every one of the 4 new tools is approval-gated -- no fast path, verified per-tool."
+
+steps:
+  - id: implement
+    description: Extend agent-chat-loop.ts with pendingApproval + the 4 write tools, resolveApprovalAction, and the UI's approval card.
+    agent: developer
+  - id: test
+    description: Unit tests proving each write tool is approval-gated (never executes pre-approval) and executes correctly post-approval, mirroring profile-assist-loop.test.ts's own approval-gate test shape.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no write tool has a bypass path.
+    agent: reviewer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/profile-assist-loop.ts
+      purpose: "resolveApproval()'s exact pause/resume mechanism, reused"
+
+references:
+  - path: .pHive/epics/agent-chat/docs/design-discussion.md
+    relevant_excerpt: "§3 the tool surface (write half)"

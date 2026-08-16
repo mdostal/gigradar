@@ -1,0 +1,54 @@
+id: chat-sessions-screenshots
+epic: agent-chat
+title: "Source-connection tools (Capture Login, Gmail) + live screenshots"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [chat-propose-approve]
+
+description: |
+  Vertical Plan Slice 3. Approval-gated source-connection tools:
+  start_capture_login/finish_capture_login/cancel_capture_login (wraps
+  session-capture.ts), start_gmail_connect/disconnect_gmail (wraps the
+  email-digest-ingestion Server Actions). Plus take_screenshot -- the ONE
+  auto-executing (read-only) tool this slice adds, capturing the current
+  page of whichever live session (capture-login / verification-copilot /
+  profile-assist) is open via page.screenshot(), returned as an image
+  content block the chat UI renders inline. Throws a specific "no active
+  session" error rather than returning a stale/wrong image when nothing
+  is open.
+
+acceptance_criteria:
+  - "start_capture_login is approval-gated like every other mutating tool -- opening a real browser window never happens without an explicit click."
+  - "take_screenshot against an active session returns a real image reflecting the CURRENT page state, rendered inline in the chat, not a placeholder."
+  - "take_screenshot with no active session throws a specific, actionable error, never a stale or wrong-session image."
+  - "Gmail connect/disconnect via chat produce the same real outcomes (a real redirect URL / a real deleted token set) as the existing /config UI buttons -- this is a new front door onto the same mechanism, not a second implementation."
+
+steps:
+  - id: implement
+    description: Add the 5 new tools + take_screenshot, and inline image rendering in the chat UI.
+    agent: developer
+  - id: test
+    description: Unit tests for each new tool (mocked session functions) and take_screenshot's no-active-session error path.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm approval-gating on every mutating tool, confirm take_screenshot never leaks a stale/wrong session's image.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, push, open the epic-wide PR (all 3 stories).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: "startCapture/getCapturePage/finishCapture/cancelCapture -- reused as-is"
+    - path: src/app/config/actions.ts
+      purpose: "startGmailOAuthAction/disconnectGmailAction -- reused as-is"
+
+references:
+  - path: .pHive/epics/agent-chat/docs/design-discussion.md
+    relevant_excerpt: "§4 screenshots"
