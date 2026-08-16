@@ -30,6 +30,12 @@ const FULL_PACKET: PrepPacketContent = {
   recommendation: "Pursue -- strong fit despite the one gap.",
   predictedQuestions: ["How have you scaled a backend team at a Series A company?"],
   starlaStories: ["S: Series A startup needed... T: ... A: ... R: ... L: ... A: ..."],
+  atsScore: {
+    keywordOverlapScore: 65,
+    matchedKeywords: ["Team Leadership"],
+    missingKeywords: ["Kubernetes"],
+    resumeTweaks: ["Add 'Kubernetes' to your skills -- it's explicitly required in this listing."],
+  },
 };
 
 beforeEach(() => {
@@ -38,12 +44,19 @@ beforeEach(() => {
   mockCreate.mockResolvedValue(fakePrepToolResponse(FULL_PACKET));
 });
 
+// The real report_prep_packet tool schema is FLAT (keywordOverlapScore etc.
+// are top-level input fields, same level as score/rationale) -- only
+// generatePrepPacket()'s RETURN type nests them under atsScore. This
+// helper mirrors the tool's real flat shape, exactly like the actual
+// Anthropic tool_use.input the parsing code in prep.ts reads.
 function fakePrepToolResponse(content: PrepPacketContent) {
+  const { atsScore, ...rest } = content;
+  const flatInput = { ...rest, ...atsScore };
   return {
     id: "msg_test",
     type: "message",
     role: "assistant",
-    content: [{ type: "tool_use", id: "toolu_test", name: "report_prep_packet", input: content }],
+    content: [{ type: "tool_use", id: "toolu_test", name: "report_prep_packet", input: flatInput }],
     model: "claude-opus-5",
     stop_reason: "tool_use",
     stop_sequence: null,
@@ -78,7 +91,7 @@ const REAL_GIG: Gig = {
 };
 
 describe("generatePrepPacket: structured output", () => {
-  it("returns all 7 PrepPacketContent fields parsed from the mocked tool_use response", async () => {
+  it("returns all PrepPacketContent fields, including atsScore, parsed from the mocked tool_use response", async () => {
     const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
     expect(result).toEqual(FULL_PACKET);
   });
@@ -159,5 +172,48 @@ describe("generatePrepPacket: prompt grounding — real profile + gig data, gig 
     expect(gigDataBlock?.indexOf("BEGIN GIG LISTING DATA")).toBeLessThan(
       gigDataBlock?.indexOf(adversarialGig.description as string) ?? -1,
     );
+  });
+});
+
+describe("generatePrepPacket: atsScore (ats-navigator epic, bidirectional keyword matching)", () => {
+  it("keywordOverlapScore and resumeTweaks are parsed from the SAME single mocked LLM call as the rest of the packet", async () => {
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(result.atsScore).toEqual(FULL_PACKET.atsScore);
+  });
+
+  it("every resumeTweaks entry references a concrete missingKeywords entry, not generic advice", async () => {
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    for (const tweak of result.atsScore.resumeTweaks) {
+      const referencesAMissingKeyword = result.atsScore.missingKeywords.some((kw) => tweak.includes(kw));
+      expect(referencesAMissingKeyword).toBe(true);
+    }
+  });
+
+  it("defaults atsScore fields to safe empty values when the tool_use response omits them (never throws)", async () => {
+    const { score, rationale, topStrengths, keyGaps, recommendation, predictedQuestions, starlaStories } = FULL_PACKET;
+    mockCreate.mockResolvedValueOnce({
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "toolu_test",
+          name: "report_prep_packet",
+          input: { score, rationale, topStrengths, keyGaps, recommendation, predictedQuestions, starlaStories },
+        },
+      ],
+      model: "claude-opus-5",
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 10 },
+    });
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    expect(result.atsScore).toEqual({ keywordOverlapScore: 0, matchedKeywords: [], missingKeywords: [], resumeTweaks: [] });
   });
 });

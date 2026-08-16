@@ -1,0 +1,95 @@
+id: ats-resume-score
+epic: ats-navigator
+title: "Bidirectional ATS scanning: keyword-overlap score + concrete resume tweaks in prep packets"
+status: done
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 4 (independent of Slices 1-3). Extends
+  generatePrepPacket()/PrepPacketContent (src/lib/apply/prep.ts,
+  career-crm epic) with a BIDIRECTIONAL ATS-compatibility pass, framed
+  explicitly as candidate-side resume coaching (design-discussion.md
+  section 0's framing), NOT reverse-engineering any vendor's proprietary
+  scoring.
+
+  RE-GROUNDED SCOPE (real research finding, not the original guess --
+  see design-discussion.md section 4.4 and open question 4): the
+  original plan assumed a deterministic parseability check would run
+  "against whatever the resume-ingestion path already extracted." That
+  data does not exist anywhere in this codebase. extractProfile()
+  (profile-ingestion/extract.ts) sends a resume PDF NATIVELY to Claude
+  as a document content block -- deliberately never locally text-
+  extracted -- and its result is only {roles, skills, warnings}. Profile
+  itself only ever stores {name, roles, skills, timezone, homeBase}. No
+  resume file, text, or structural metadata (columns, tables, fonts,
+  header placement) is persisted anywhere. A "deterministic parseability
+  check" against that would have to FABRICATE structure that was never
+  actually observed, which this repo's own no-fabricated-data rule
+  forbids -- so it is explicitly deferred, not faked. Do not add one in
+  this story; if asked to "just add it back," point to design-discussion.md
+  section 5 open question 4 (ephemeral per-call upload vs. new persistent
+  storage -- a real decision, not implied by anything already built).
+
+  What ships, using data this codebase actually has:
+  1. Keyword-overlap score: profile.skills + profile.roles (already
+     structured, already persisted, already the exact fields
+     generatePrepPacket()'s existing call reads via
+     buildApplicantDataBlock()) vs. THIS gig's own scraped description
+     (already in hand) -- one LLM call, reusing generatePrepPacket()'s
+     existing single-shot shape and the SAME BEGIN/END untrusted-DATA
+     framing every other LLM call site in this repo applies to scraped
+     gig text (buildGigDataBlock() precedent).
+  2. `resumeTweaks` (the "bi directional" half the owner explicitly
+     asked for, "the career site also had a reverse to see if you
+     match... and then prep and what to do to tweak"): a short, concrete,
+     ATS-MECHANICAL action list grounded in the SAME computed keyword gap
+     from step 1 (not a separate free-associated LLM call) -- e.g. "add
+     'Kubernetes' to your skills -- it appears 3x in this listing, 0x in
+     your profile." Distinct from PrepPacketContent's existing
+     keyGaps/recommendation fields (holistic/interview-prep-oriented,
+     unchanged by this story) -- resumeTweaks is narrowly about closing
+     the keyword gap, not interview readiness.
+
+  Both surface as a new atsScore section on PrepPacketContent, rendered
+  in the EXISTING prep-packet UI -- no new page, no new drafting flow, no
+  new LLM-call-site shape (steps 1 and 2 are ONE LLM call, not two).
+
+acceptance_criteria:
+  - "PrepPacketContent gains an atsScore field: {keywordOverlapScore: number, matchedKeywords: string[], missingKeywords: string[], resumeTweaks: string[]} (or equivalent -- exact shape decided during implementation, but every field must be individually explainable, no bare aggregate score without the reasons behind it)."
+  - "keywordOverlapScore and resumeTweaks come from the SAME single LLM call (not two separate calls) -- verified by a test asserting exactly one mocked LLM call covers both fields, same as generatePrepPacket()'s existing single-call shape."
+  - "Every entry in resumeTweaks names a SPECIFIC, concrete action (a keyword to add, where it appears in the listing) grounded in missingKeywords -- not generic advice like 'improve your profile'; verified by a test asserting each tweak references a concrete missingKeywords entry."
+  - "The LLM call wraps the gig's scraped description in the SAME BEGIN/END untrusted-DATA delimiting buildGigDataBlock() already uses -- verified by a test asserting the delimiter text is present in the constructed prompt (reuse buildGigDataBlock() directly, don't reimplement it)."
+  - "The existing prep-packet UI renders the new atsScore section (including resumeTweaks as an actionable checklist) without breaking any existing rendering of score/rationale/topStrengths/keyGaps/recommendation."
+  - "apiKey is resolved by the CALLER (Server Action), never inside prep.ts's own function bodies -- same discipline every other LLM-calling function in this repo follows, verified by grep/review, not just a test."
+  - "No parseabilityIssues field, no resume-file-structure claim of any kind ships in this story -- the atsScore section is honest about running on profile.skills/roles, not a resume file, e.g. UI copy says \"vs. your tracked skills/roles\" not \"vs. your resume.\""
+
+steps:
+  - id: implement
+    description: Add the combined keyword-overlap + resumeTweaks LLM extension to prep.ts (extending the existing single call, reusing buildApplicantDataBlock()/buildGigDataBlock()), extend PrepPacketContent with atsScore, wire into the existing prep-packet UI as an actionable checklist with honest "vs. your tracked skills/roles" copy.
+    agent: developer
+  - id: test
+    description: Tests per acceptance criteria, including a check that resumeTweaks are concrete (reference a real missingKeywords entry), not generic.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm every field is individually explainable (no unexplained aggregate score), confirm resumeTweaks are concrete and grounded (not vague), confirm untrusted-DATA delimiting is present via buildGigDataBlock() reuse, confirm apiKey discipline, confirm exactly one LLM call, confirm no resume-file-structure claim anywhere in the UI copy.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/prep.ts
+      purpose: "generatePrepPacket()/PrepPacketContent, the existing single-shot LLM call shape this story extends rather than replaces"
+    - path: src/lib/apply/draft.ts
+      purpose: "buildApplicantDataBlock()/buildGigDataBlock() -- reused directly, not reimplemented, same as prep.ts already does"
+
+references:
+  - path: .pHive/epics/ats-navigator/docs/design-discussion.md
+    relevant_excerpt: "section 4.4 (bidirectional ATS scanning, re-grounded) and open question 4 -- the framing paragraph in section 0 is load-bearing, read it first"

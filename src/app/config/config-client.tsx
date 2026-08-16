@@ -6,6 +6,7 @@ import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
 import type { ConfigEdits } from "@/lib/config/save";
 import { mergeDedupe } from "@/lib/profile-ingestion/merge";
 import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
+import { SOURCE_PRESETS, sourceConfigFromPreset } from "@/lib/sources/source-presets";
 import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
 import {
   cancelCaptureAction,
@@ -1215,6 +1216,29 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
     }));
   }
 
+  // ats-navigator epic, config-add-source-presets story — a preset picker
+  // for the "Add source" flow, same pure-client-side "select id, click
+  // Apply" shape as handleApplyTemplate() above, one layer over: this
+  // APPENDS a new DraftSource (never overwrites an existing one) built by
+  // sourceConfigFromPreset() (source-presets.ts) — the SAME preset-to-
+  // SourceConfig conversion agent-chat's add_source tool uses (chat-
+  // guided-source-onboarding story), one implementation not two — then
+  // through sourceToDraft(), the SAME SourceConfig->DraftSource conversion
+  // every saved source already goes through on load.
+  const [selectedSourcePresetId, setSelectedSourcePresetId] = useState<string>(SOURCE_PRESETS[0]?.id ?? "");
+
+  function handleAddSourceFromPreset() {
+    const preset = SOURCE_PRESETS.find((p) => p.id === selectedSourcePresetId);
+    if (!preset) return;
+    setDraft((prev) => {
+      const source = sourceConfigFromPreset(
+        preset,
+        prev.sources.map((s) => s.id),
+      );
+      return { ...prev, sources: [...prev.sources, sourceToDraft(source)] };
+    });
+  }
+
   // Session-capture state, keyed by source row index — deliberately separate
   // from `draft`/`isPending` above: capture actions are independent,
   // per-row, user-driven flows that don't submit the whole form. See the
@@ -1858,6 +1882,25 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
               )}
             </div>
           ))}
+          <div className="flex items-end gap-2">
+            <label className="flex-1">
+              <span className={labelClass}>Add from a preset</span>
+              <select
+                value={selectedSourcePresetId}
+                onChange={(e) => setSelectedSourcePresetId(e.target.value)}
+                className={inputClass}
+              >
+                {SOURCE_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={handleAddSourceFromPreset} className={captureButtonClass}>
+              Add
+            </button>
+          </div>
           <button
             type="button"
             onClick={() =>
@@ -1865,7 +1908,7 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
             }
             className="self-start text-sm font-medium text-slate-600 hover:underline"
           >
-            + Add source
+            + Add source (blank)
           </button>
         </div>
       </section>

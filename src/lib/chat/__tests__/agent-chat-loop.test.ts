@@ -73,7 +73,7 @@ vi.mock("../../auth/oauth-providers/gmail.js", () => ({
 
 import { closeDb, getDb } from "../../store/db.js";
 import { recordScan } from "../../store/gigs.js";
-import type { Config } from "../../types.js";
+import type { Config, SourceConfig } from "../../types.js";
 import { endChatSession, MAX_TURNS, resolveApproval, sendMessage, startChatSession } from "../agent-chat-loop.js";
 
 const FAKE_CONFIG: Config = {
@@ -635,5 +635,203 @@ describe("take_screenshot: read-only, auto-executes against the chat-owned captu
     expect(messagesJson).toContain('"type":"image"');
     expect(messagesJson).toContain(Buffer.from("fake-png-bytes").toString("base64"));
     endChatSession("s10");
+  });
+});
+
+describe("list_source_presets: read-only, auto-executes", () => {
+  it("never appears as a pendingApproval and returns SOURCE_PRESETS' id/label/description", async () => {
+    const { SOURCE_PRESETS } = await import("../../sources/source-presets.js");
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("list_source_presets", {}))
+      .mockResolvedValueOnce(fakeTextResponse("Here's what's available."));
+
+    startChatSession("p1");
+    const result = await sendMessage("p1", "fake-api-key", "what job sites can you add?");
+
+    expect(result).toEqual({ type: "message", text: "Here's what's available." });
+    const secondCall = mockCreate.mock.calls[1]?.[0] as Anthropic.MessageCreateParams;
+    const messagesJson = JSON.stringify(secondCall.messages);
+    for (const preset of SOURCE_PRESETS) {
+      expect(messagesJson).toContain(preset.id);
+      expect(messagesJson).toContain(preset.label);
+    }
+    endChatSession("p1");
+  });
+});
+
+describe("add_source: propose then approve, no exceptions", () => {
+  let originalXdgDataHome: string | undefined;
+  let originalXdgConfigHome: string | undefined;
+  let xdgDataDir: string;
+  let xdgConfigDir: string;
+
+  beforeEach(() => {
+    xdgDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-agent-chat-loop-test-addsource-data-"));
+    xdgConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-agent-chat-loop-test-addsource-config-"));
+    originalXdgDataHome = process.env.XDG_DATA_HOME;
+    originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_DATA_HOME = xdgDataDir;
+    process.env.XDG_CONFIG_HOME = xdgConfigDir;
+  });
+
+  afterEach(() => {
+    if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = originalXdgDataHome;
+    if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+    fs.rmSync(xdgDataDir, { recursive: true, force: true });
+    fs.rmSync(xdgConfigDir, { recursive: true, force: true });
+  });
+
+  async function seedBaseConfig() {
+    const { saveConfig } = await import("../../config/save.js");
+    const result = saveConfig({
+      profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
+      needs: {
+        engagementProfiles: [
+          { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+        ],
+        freshStageOnly: false,
+        remoteOnly: false,
+      },
+      sources: [],
+    });
+    expect(result.ok).toBe(true);
+  }
+
+  it("with a presetId produces a proposal, never mutates config.json before approval", async () => {
+    await seedBaseConfig();
+    mockCreate.mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "zoho-recruit" }));
+
+    startChatSession("as1");
+    const result = await sendMessage("as1", "fake-api-key", "add zoho recruit");
+
+    expect(result).toEqual({
+      type: "proposal",
+      tool: "add_source",
+      input: { presetId: "zoho-recruit" },
+      description: 'Add source from the "zoho-recruit" preset',
+    });
+    const { readRawConfig } = await import("../../config/save.js");
+    const raw = readRawConfig() as { sources?: unknown[] };
+    expect(raw.sources ?? []).toEqual([]);
+    endChatSession("as1");
+  });
+
+  it("approving a presetId proposal writes a SourceConfig matching sourceConfigFromPreset()'s own output", async () => {
+    await seedBaseConfig();
+    const { SOURCE_PRESETS, sourceConfigFromPreset } = await import("../../sources/source-presets.js");
+    const zoho = SOURCE_PRESETS.find((p) => p.id === "zoho-recruit")!;
+
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "zoho-recruit" }))
+      .mockResolvedValueOnce(fakeTextResponse("Added it."));
+
+    startChatSession("as2");
+    await sendMessage("as2", "fake-api-key", "add zoho recruit");
+    const result = await resolveApproval("as2", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Added it." });
+    const { readRawConfig } = await import("../../config/save.js");
+    const raw = readRawConfig() as { sources?: SourceConfig[] };
+    expect(raw.sources).toEqual([sourceConfigFromPreset(zoho, [])]);
+    endChatSession("as2");
+  });
+
+  it("approving a suggestsGmailDigest:true preset mentions Gmail/start_gmail_connect in the tool_result text; a preset without the flag does not", async () => {
+    await seedBaseConfig();
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "zoho-recruit" }))
+      .mockResolvedValueOnce(fakeTextResponse("Added zoho-recruit."));
+    startChatSession("as3");
+    await sendMessage("as3", "fake-api-key", "add zoho recruit");
+    await resolveApproval("as3", "fake-api-key", true, FAKE_CONFIG);
+    const gmailCall = mockCreate.mock.calls[1]?.[0] as Anthropic.MessageCreateParams;
+    expect(JSON.stringify(gmailCall.messages)).toContain("start_gmail_connect");
+    endChatSession("as3");
+
+    await seedBaseConfig();
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "welcome-to-the-jungle" }))
+      .mockResolvedValueOnce(fakeTextResponse("Added welcome-to-the-jungle."));
+    startChatSession("as4");
+    await sendMessage("as4", "fake-api-key", "add welcome to the jungle");
+    await resolveApproval("as4", "fake-api-key", true, FAKE_CONFIG);
+    const noGmailCall = mockCreate.mock.calls[mockCreate.mock.calls.length - 1]?.[0] as Anthropic.MessageCreateParams;
+    expect(JSON.stringify(noGmailCall.messages)).not.toContain("start_gmail_connect");
+    endChatSession("as4");
+  });
+
+  it("start_gmail_connect is NOT called automatically as a side effect of approving add_source", async () => {
+    await seedBaseConfig();
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "indeed" }))
+      .mockResolvedValueOnce(fakeTextResponse("Added indeed."));
+    startChatSession("as5");
+    await sendMessage("as5", "fake-api-key", "add indeed");
+    await resolveApproval("as5", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(buildAuthorizationUrlMock).not.toHaveBeenCalled();
+    endChatSession("as5");
+  });
+
+  it("with a raw sourceId+url (no preset) writes a custom-llm SourceConfig with a uniqued id on collision", async () => {
+    const { saveConfig } = await import("../../config/save.js");
+    saveConfig({
+      profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
+      needs: {
+        engagementProfiles: [
+          { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+        ],
+        freshStageOnly: false,
+        remoteOnly: false,
+      },
+      sources: [{ id: "monster", enabled: true }],
+    });
+
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("add_source", { sourceId: "monster", url: "https://example.test/monster/jobs", hint: "a list of cards" }))
+      .mockResolvedValueOnce(fakeTextResponse("Added it."));
+
+    startChatSession("as6");
+    await sendMessage("as6", "fake-api-key", "add monster at https://example.test/monster/jobs");
+    await resolveApproval("as6", "fake-api-key", true, FAKE_CONFIG);
+
+    const { readRawConfig } = await import("../../config/save.js");
+    const raw = readRawConfig() as { sources?: SourceConfig[] };
+    const added = raw.sources?.find((s) => s.id === "monster-2");
+    expect(added).toEqual({ id: "monster-2", enabled: true, kind: "custom-llm", settings: { url: "https://example.test/monster/jobs", hint: "a list of cards" } });
+    endChatSession("as6");
+  });
+
+  it("rejecting an add_source proposal never touches config.json", async () => {
+    await seedBaseConfig();
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "indeed" }))
+      .mockResolvedValueOnce(fakeTextResponse("Okay, not adding it."));
+
+    startChatSession("as7");
+    await sendMessage("as7", "fake-api-key", "add indeed");
+    const result = await resolveApproval("as7", "fake-api-key", false, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Okay, not adding it." });
+    const { readRawConfig } = await import("../../config/save.js");
+    const raw = readRawConfig() as { sources?: unknown[] };
+    expect(raw.sources ?? []).toEqual([]);
+    endChatSession("as7");
+  });
+
+  it("an unknown presetId surfaces as a clean tool error, not a thrown exception out of resolveApproval()", async () => {
+    await seedBaseConfig();
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "does-not-exist" }))
+      .mockResolvedValueOnce(fakeTextResponse("I don't recognize that preset."));
+
+    startChatSession("as8");
+    await sendMessage("as8", "fake-api-key", "add does-not-exist");
+    const result = await resolveApproval("as8", "fake-api-key", true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "I don't recognize that preset." });
+    endChatSession("as8");
   });
 });
