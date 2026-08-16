@@ -31,12 +31,22 @@ vi.mock("playwright", () => ({
 
 import { runRadar } from "../runner.js";
 
-function fakeExtractToolResponse(listings: unknown[]) {
+function fakeRecipeToolResponse(listings: unknown[]) {
   return {
     id: "msg_test",
     type: "message",
     role: "assistant",
-    content: [{ type: "tool_use", id: "toolu_test", name: "extract_listings", input: { listings } }],
+    content: [
+      {
+        type: "tool_use",
+        id: "toolu_test",
+        name: "report_extraction_recipe",
+        input: {
+          listings,
+          recipe: { listItemSelector: ".job-card", titleSelector: "h3", urlSelector: "a" },
+        },
+      },
+    ],
     model: "claude-opus-5",
     stop_reason: "tool_use",
     stop_sequence: null,
@@ -45,27 +55,38 @@ function fakeExtractToolResponse(listings: unknown[]) {
 }
 
 function setUpFakeBrowser() {
-  const ariaSnapshot = vi.fn().mockResolvedValue("- generic [ref=e1]:\n  - text \"fake page\"");
-  const page = { goto: vi.fn().mockResolvedValue(undefined), locator: vi.fn().mockReturnValue({ ariaSnapshot }) };
+  const page = { goto: vi.fn().mockResolvedValue(undefined), content: vi.fn().mockResolvedValue("<html><body></body></html>") };
   const browser = { newPage: vi.fn().mockResolvedValue(page), close: vi.fn().mockResolvedValue(undefined) };
   launchMock.mockResolvedValue(browser);
 }
 
 let tmpDir: string;
+let dataDir: string;
 let dbPath: string;
 let db: DatabaseSync;
+let originalXdgDataHome: string | undefined;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-runner-custom-source-test-"));
   dbPath = path.join(tmpDir, "gigs.db");
   db = getDb({ path: dbPath });
+  // customLlmSource.fetch() reads/writes an extraction-recipe cache under
+  // getDefaultDataDir() (XDG_DATA_HOME) -- isolate it the same way every
+  // other test that touches that directory does, so this suite never reads
+  // or writes the real user's actual ~/.local/share/gigradar/.
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-runner-custom-source-test-data-"));
+  originalXdgDataHome = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = dataDir;
   mockCreate.mockReset();
   launchMock.mockReset();
 });
 
 afterEach(() => {
   closeDb();
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
 function makeConfig(): Config {
@@ -86,7 +107,7 @@ function makeConfig(): Config {
 describe("runRadar(): kind:\"custom-llm\" routing fallback", () => {
   it("fetches real gigs for an id with NO registerSource() call at all, purely via config", async () => {
     setUpFakeBrowser();
-    mockCreate.mockResolvedValueOnce(fakeExtractToolResponse([{ title: "Fractional CFO", url: "https://example.com/jobs/1" }]));
+    mockCreate.mockResolvedValueOnce(fakeRecipeToolResponse([{ title: "Fractional CFO", url: "https://example.com/jobs/1" }]));
 
     const result = await runRadar(makeConfig(), { db }, { anthropicApiKey: "fake-api-key" });
 
@@ -96,17 +117,17 @@ describe("runRadar(): kind:\"custom-llm\" routing fallback", () => {
     expect(result.results[0]?.gig.sourceId).toBe("monster");
   });
 
-  it("forwards runOpts.anthropicApiKey through to the custom source's Anthropic client construction", async () => {
+  it("forwards runOpts.anthropicApiKey through to the custom source's extraction call", async () => {
     setUpFakeBrowser();
+    mockCreate.mockResolvedValueOnce(fakeRecipeToolResponse([]));
 
-    await runRadar(makeConfig(), { db }, { anthropicApiKey: "the-real-key" });
+    const result = await runRadar(makeConfig(), { db }, { anthropicApiKey: "the-real-key" });
 
-    // fetch() threw (missing key check passes, but we can still observe the
-    // key reached the client construction via the mocked constructor call).
-    expect(mockCreate).toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(result.errors).toEqual([]);
   });
 
-  it("reports a per-source error (never a thrown exception out of runRadar itself) when no API key is supplied for a custom source", async () => {
+  it("reports a per-source error (never a thrown exception out of runRadar itself) when no API key is supplied for a custom source with no cached recipe yet", async () => {
     setUpFakeBrowser();
 
     const result = await runRadar(makeConfig(), { db }, {});
@@ -114,7 +135,6 @@ describe("runRadar(): kind:\"custom-llm\" routing fallback", () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]?.sourceId).toBe("monster");
     expect(result.errors[0]?.message).toContain("no Anthropic API key was supplied");
-    expect(launchMock).not.toHaveBeenCalled();
   });
 
   it("every EXISTING (non-custom) source lookup is unaffected -- an unregistered plain id with no kind still reports 'no such registered source'", async () => {
