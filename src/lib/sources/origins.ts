@@ -17,6 +17,8 @@
  * subdomain matching each list is filtered through before any cookie
  * reaches a browser context.
  */
+import type { SourceConfig } from "../types.js";
+
 export const SOURCE_ORIGINS: Record<string, readonly string[]> = {
   gofractional: ["gofractional.com"],
   ateam: ["a.team", "platform.a.team"],
@@ -152,3 +154,37 @@ export const KNOWN_SOURCES: readonly { id: string; label: string; auth: "none" |
   // builtin.ts/braintrust.ts.
   { id: "linkedin", label: "LinkedIn", auth: "none" },
 ];
+
+/**
+ * llm-custom-sources epic, custom-source-auth story: the SAME class of
+ * problem as runner.ts's `getSource(sc.id) ?? customLlmSource` fallback
+ * (custom-source-core-mechanism story) — `SOURCE_ORIGINS`/
+ * `SOURCE_LOGIN_URLS` are static registries keyed by known adapter ids, and
+ * a custom source's owner-typed id is never in them. Static registry first
+ * (every existing browser-session-auth source is found here, unchanged),
+ * config-driven fallback second (`cfg.settings.allowedOrigins`) —
+ * deliberately the identical shape, not a second invented pattern.
+ *
+ * Returns `undefined` (never throws) when neither the registry nor the
+ * config has an answer — callers already have their own specific
+ * "no origin allowlist registered" error for that case.
+ */
+export function resolveAllowedOrigins(sourceId: string, cfg: SourceConfig): string[] | undefined {
+  const fromRegistry = SOURCE_ORIGINS[sourceId];
+  if (fromRegistry) return [...fromRegistry];
+
+  const configured = cfg.settings?.allowedOrigins;
+  if (Array.isArray(configured) && configured.length > 0 && configured.every((o) => typeof o === "string")) {
+    return configured;
+  }
+  return undefined;
+}
+
+/** Same config-driven fallback shape as resolveAllowedOrigins() above, for the login URL Capture Login navigates to. */
+export function resolveLoginUrl(sourceId: string, cfg: SourceConfig): string | undefined {
+  const fromRegistry = SOURCE_LOGIN_URLS[sourceId];
+  if (fromRegistry) return fromRegistry;
+
+  const configured = cfg.settings?.loginUrl;
+  return typeof configured === "string" && configured.length > 0 ? configured : undefined;
+}
