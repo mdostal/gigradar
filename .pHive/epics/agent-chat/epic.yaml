@@ -1,0 +1,24 @@
+name: agent-chat
+title: "In-app agent chat bar: propose/approve tool-use over gigs, drafts, prep packets, scans, and source connections, with live screenshots"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: chat-loop-core
+    title: "Core tool-use loop + read-only tools (list_gigs/get_gig/get_status_summary) + /chat page"
+    complexity: medium
+    depends_on: []
+  - id: chat-propose-approve
+    title: "Propose/approve write tools: update_gig_status, generate_draft, generate_prep_packet, run_scan"
+    complexity: medium
+    depends_on: [chat-loop-core]
+  - id: chat-sessions-screenshots
+    title: "Source-connection tools (Capture Login, Gmail) + live screenshots"
+    complexity: medium
+    depends_on: [chat-propose-approve]
