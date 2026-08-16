@@ -1,10 +1,15 @@
-// Five starter `RoleAreaConfig` templates for the config UI's "Start from a
+// Starter `RoleAreaConfig` templates for the config UI's "Start from a
 // template" picker (`role-templates` story, `role-templates` epic). Each
-// template is a real, thoughtful starting point for a common fractional
-// C-suite role — NOT owner-specific criteria (see docs/ARCHITECTURE.md's
-// core/user-layer boundary: this file lives in `src/lib`, so it must stay
-// generic; a real person's exact titles/keywords belong in their own
-// config.json, never here).
+// template is a real, thoughtful starting point — NOT owner-specific
+// criteria (see docs/ARCHITECTURE.md's core/user-layer boundary: this
+// file lives in `src/lib`, so it must stay generic; a real person's exact
+// titles/keywords belong in their own config.json, never here). The
+// original 5 are fractional C-suite (this session's own owner's search);
+// broader, engagement-type-agnostic templates were added 2026-08-16 after
+// UAT feedback that a fresh install's ONLY defaults looking like one
+// person's executive fractional search isn't representative of most
+// people's job search (FTE-focused, individual-contributor/manager level,
+// on mainstream boards).
 //
 // Content must respect `../matching/tiering.ts`'s precedence rules:
 //   - `coreTitles` are checked against the gig TITLE only, and WIN GREEN even
@@ -100,6 +105,127 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
       // are both commonly abbreviated "CPO" too, but name supply-chain/
       // purchasing and HR roles respectively — not product.
       redKeywords: ["chief procurement officer", "chief people officer"],
+    },
+  },
+  // 2026-08-16: broader, engagement-type-agnostic starter templates,
+  // requested explicitly ("add a bunch of generic ones, keep my specific
+  // fractional C-suite for me and friends") after UAT feedback that the
+  // original 5 (all fractional C-suite) don't represent most people's
+  // job search — most people are looking at FTE/full-time roles on
+  // mainstream boards (LinkedIn, Monster, Dice), not executive fractional
+  // work. These are individual-contributor/manager-level, no seniority or
+  // engagement-type assumption baked into the titles themselves — the
+  // SAME role-area classification works for an FTE listing, a fractional
+  // one, or a part-time one; engagement type/rate is a completely
+  // separate axis (Needs.engagementProfiles), never mixed into
+  // RoleAreaConfig here.
+  {
+    id: "software-engineer",
+    label: "Software Engineer",
+    config: {
+      coreTitles: ["software engineer", "senior software engineer", "staff software engineer", "backend engineer", "frontend engineer", "full stack engineer"],
+      keywords: ["software development", "programming", "system design", "software architecture"],
+      // Real traps: "Sales Engineer" is customer-facing technical sales,
+      // not development. "Field Service Engineer" is on-site hardware/
+      // networking support, not software. Both share "engineer" but name
+      // a different discipline entirely.
+      redKeywords: ["sales engineer", "field service engineer"],
+    },
+  },
+  {
+    id: "product-manager",
+    label: "Product Manager",
+    config: {
+      coreTitles: ["product manager", "senior product manager", "associate product manager", "technical product manager"],
+      keywords: ["product management", "product strategy", "product roadmap", "user research"],
+      // Real trap: "Program Manager" is the classic "PM" abbreviation
+      // collision — a completely different discipline (cross-team
+      // execution/coordination, not product ownership) that's easy to
+      // mismatch on the shared initials alone.
+      redKeywords: ["program manager"],
+    },
+  },
+  {
+    id: "data-analytics",
+    label: "Data & Analytics",
+    config: {
+      coreTitles: ["data analyst", "data scientist", "analytics manager", "business intelligence analyst"],
+      keywords: ["data analysis", "sql", "analytics", "reporting", "dashboards"],
+      // Real trap: "Data Entry" superficially shares the "data" keyword
+      // but is a low-skill clerical role, not analysis/science.
+      redKeywords: ["data entry"],
+    },
+  },
+  {
+    id: "sales-account-exec",
+    label: "Sales / Account Executive",
+    config: {
+      coreTitles: ["account executive", "sales representative", "business development representative", "enterprise account executive"],
+      keywords: ["sales", "business development", "quota", "pipeline", "prospecting"],
+      // Real trap: "Sales Operations" is an analytics/process role
+      // supporting a sales team, not a quota-carrying sales role itself.
+      redKeywords: ["sales operations"],
+    },
+  },
+  {
+    id: "marketing-professional",
+    label: "Marketing Professional",
+    config: {
+      coreTitles: ["marketing manager", "digital marketing manager", "content marketing manager", "growth marketing manager"],
+      keywords: ["marketing", "brand strategy", "campaigns", "content strategy"],
+      // Real trap: "Marketing Operations" is a process/tooling/analytics
+      // role supporting the marketing org, not day-to-day brand/campaign
+      // marketing itself — same "X Operations" adjacent-discipline shape
+      // as this file's own sales/HR-ops traps below.
+      redKeywords: ["marketing operations"],
+    },
+  },
+  {
+    id: "customer-success",
+    label: "Customer Success / Support",
+    config: {
+      coreTitles: ["customer success manager", "customer success specialist", "support specialist", "technical support engineer"],
+      keywords: ["customer success", "onboarding", "retention", "customer support"],
+      // Real trap: "Help Desk Technician"/"IT Support Specialist" both
+      // use "support" but serve INTERNAL employees (fixing their own
+      // company's computers), not paying customers — a different
+      // audience and function entirely, commonly conflated on title
+      // keyword alone.
+      redKeywords: ["help desk technician", "it support specialist"],
+    },
+  },
+  {
+    id: "operations-manager",
+    label: "Operations Manager",
+    config: {
+      coreTitles: ["operations manager", "operations coordinator", "program operations manager"],
+      keywords: ["operations", "process improvement", "logistics", "vendor management"],
+      // Real trap: "HR Operations Manager"/"People Operations Manager"
+      // share the "Operations" shape but name an HR-specific function
+      // (benefits, payroll, employee lifecycle), not general business
+      // operations — same "Operations"-abbreviation-collision pattern as
+      // this file's fractional-COO template's own redKeywords.
+      redKeywords: ["hr operations manager", "people operations manager"],
+    },
+  },
+  {
+    id: "general-part-time",
+    label: "Part-Time / Hourly Work",
+    config: {
+      // Deliberately broad, not domain-specific — this template is about
+      // catching listings that EXPLICITLY signal flexible/hourly work in
+      // their own title, across any field, as a general-purpose starting
+      // point. Pair with a part-time-shaped EngagementProfile (Needs
+      // section) for the rate/hours side of this — role-area templates
+      // here only ever classify WHAT the work is, never how many hours.
+      coreTitles: ["part-time", "part time", "hourly", "flexible schedule"],
+      keywords: ["part-time", "flexible hours", "contract", "freelance"],
+      // Real trap: an unpaid "Volunteer" listing often uses the exact
+      // same "flexible schedule" language as a genuine paid part-time
+      // role, but names a fundamentally different (unpaid) arrangement —
+      // a real mismatch for anyone using this template to find PAID
+      // part-time work.
+      redKeywords: ["volunteer"],
     },
   },
 ];
