@@ -3,6 +3,7 @@ import type { Source } from "./source.js";
 import type { Gig, SourceConfig } from "../types.js";
 import { registerSource } from "./source.js";
 import { withBrowserSession } from "../auth/browser-session.js";
+import { sessionBackendFrom, type SessionBackend } from "../auth/session-backend.js";
 import { SOURCE_ORIGINS } from "./origins.js";
 
 /**
@@ -275,6 +276,7 @@ async function isAuthenticatedWellfound(page: Page): Promise<boolean> {
   return !(await isSignInPage(page));
 }
 
+/** Required only for the "local" (default) session backend -- see sessionBackendFrom(). A "portunus"-backed source needs no local path at all. */
 function sessionStatePathFrom(cfg: SourceConfig): string {
   const configured = cfg.settings?.sessionStatePath;
   if (typeof configured !== "string" || configured.length === 0) {
@@ -287,11 +289,12 @@ function sessionStatePathFrom(cfg: SourceConfig): string {
   return configured;
 }
 
-async function fetchRoleUrl(url: string, sessionStatePath: string): Promise<WellfoundRawListing[]> {
+async function fetchRoleUrl(url: string, sessionStatePath: string | undefined, sessionBackend: SessionBackend): Promise<WellfoundRawListing[]> {
   return withBrowserSession(
     {
       sourceId: "wellfound",
       storageStatePathSetting: sessionStatePath,
+      sessionBackend,
       allowedOrigins: [...ALLOWED_ORIGINS],
       url,
       isAuthenticated: isAuthenticatedWellfound,
@@ -308,7 +311,8 @@ export const wellfoundSource: Source = {
   label: "Wellfound",
   auth: "browser-session",
   async fetch(cfg: SourceConfig): Promise<Gig[]> {
-    const sessionStatePath = sessionStatePathFrom(cfg);
+    const sessionBackend = sessionBackendFrom(cfg);
+    const sessionStatePath = sessionBackend === "local" ? sessionStatePathFrom(cfg) : undefined;
 
     // Both role-board URLs are fetched via their own withBrowserSession()
     // call (a fresh headed Chromium launch each), per this story's
@@ -318,7 +322,7 @@ export const wellfoundSource: Source = {
     // pattern as braintrust.ts's dedup-across-role-ids.
     const bySlug = new Map<string, WellfoundRawListing>();
     for (const url of ROLE_URLS) {
-      const listings = await fetchRoleUrl(url, sessionStatePath);
+      const listings = await fetchRoleUrl(url, sessionStatePath, sessionBackend);
       for (const l of listings) bySlug.set(l.slug, l);
     }
 

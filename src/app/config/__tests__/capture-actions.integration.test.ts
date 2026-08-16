@@ -171,20 +171,22 @@ describe.skipIf(!RUN_REAL_BROWSER)("session-capture Server Actions: REAL browser
       expect(finishResult.ok).toBe(true);
       if (!finishResult.ok) throw new Error(`expected ok, got: ${finishResult.error}`);
       liveCaptureIds = liveCaptureIds.filter((id) => id !== captureId); // finishCapture() already closed it
+      if (finishResult.data.backend !== "local") throw new Error("expected the local backend (no sessionBackend configured)");
+      const finishedPath = finishResult.data.path;
 
       // 1. The real session-capture.ts wrote a real storageState file, with
       //    the real cookie we set, filtered to the gofractional.com origin.
-      expect(finishResult.data.path).toContain("gofractional-session.json");
-      expect(fs.existsSync(finishResult.data.path)).toBe(true);
-      const writtenState = JSON.parse(fs.readFileSync(finishResult.data.path, "utf8"));
+      expect(finishedPath).toContain("gofractional-session.json");
+      expect(fs.existsSync(finishedPath)).toBe(true);
+      const writtenState = JSON.parse(fs.readFileSync(finishedPath, "utf8"));
       expect(writtenState.cookies.length).toBeGreaterThan(0);
       expect(writtenState.cookies.some((c: { name: string }) => c.name === "session_id")).toBe(true);
-      expect(fs.statSync(finishResult.data.path).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(finishedPath).mode & 0o777).toBe(0o600);
 
       // 2. finishCaptureAction's own auto-write really landed in config.json.
       const onDisk = readOnDiskConfig();
       const savedSource = onDisk.sources.find((s: { id: string }) => s.id === "gofractional");
-      expect(savedSource.settings.sessionStatePath).toBe(finishResult.data.path);
+      expect(savedSource.settings.sessionStatePath).toBe(finishedPath);
     },
     30000,
   );

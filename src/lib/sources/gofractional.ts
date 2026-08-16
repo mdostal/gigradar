@@ -3,6 +3,7 @@ import type { Source } from "./source.js";
 import type { Gig, SourceConfig } from "../types.js";
 import { registerSource } from "./source.js";
 import { withBrowserSession } from "../auth/browser-session.js";
+import { sessionBackendFrom } from "../auth/session-backend.js";
 import { SOURCE_ORIGINS } from "./origins.js";
 
 /**
@@ -269,6 +270,7 @@ async function scrapeCards(page: Page): Promise<GoFractionalRawCard[]> {
   });
 }
 
+/** Required only for the "local" (default) session backend -- see sessionBackendFrom(). A "portunus"-backed source needs no local path at all. */
 function sessionStatePathFrom(cfg: SourceConfig): string {
   const configured = cfg.settings?.sessionStatePath;
   if (typeof configured !== "string" || configured.length === 0) {
@@ -285,12 +287,14 @@ export const gofractionalSource: Source = {
   label: "GoFractional",
   auth: "browser-session",
   async fetch(cfg: SourceConfig): Promise<Gig[]> {
-    const sessionStatePath = sessionStatePathFrom(cfg);
+    const sessionBackend = sessionBackendFrom(cfg);
+    const sessionStatePath = sessionBackend === "local" ? sessionStatePathFrom(cfg) : undefined;
 
     const cards = await withBrowserSession(
       {
         sourceId: "gofractional",
         storageStatePathSetting: sessionStatePath,
+        sessionBackend,
         allowedOrigins: [...ALLOWED_ORIGINS],
         url: JOBS_URL,
         isAuthenticated: isAuthenticatedGoFractional,
