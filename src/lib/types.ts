@@ -124,8 +124,21 @@ export interface ApplyProfileConfig {
 
 /** A source the user has enabled (a job platform / board / feed). */
 export interface SourceConfig {
-  id: string;                 // matches a registered Source.id
+  id: string;                 // matches a registered Source.id, OR any user-chosen id when kind is set
   enabled: boolean;
+  /**
+   * llm-custom-sources epic: when set to `"custom-llm"`, `id` is NOT looked
+   * up in the static `registerSource()` registry at all — `runner.ts`
+   * routes it to the single generic `customLlmSource` (src/lib/sources/
+   * custom-llm-source.ts) instead, which reads everything it needs
+   * (`settings.url`, `settings.hint`, etc.) from THIS config entry. Absent
+   * (every hand-written adapter) is today's behavior, byte-identical.
+   *
+   * `"gmail-digest"` (email-digest-ingestion epic): same fallback-routing
+   * mechanism, extended a second time — routes to `gmailDigestSource`
+   * (src/lib/sources/gmail-digest-source.ts) instead.
+   */
+  kind?: "custom-llm" | "gmail-digest";
   /** Opaque per-source settings (session cookie ref, query, etc.). Never store raw secrets here in OSS — reference an env/keychain entry. */
   settings?: Record<string, unknown>;
 }
@@ -189,6 +202,14 @@ export interface Config {
     killSwitch?: boolean;
     rules: AutoFireRuleConfig[];
   };
+  /**
+   * Which app-icon option (favicon + in-app header mark) to render — an id
+   * from `APP_ICONS` in src/lib/app-icons.ts. Omitted (or an id that no
+   * longer exists) falls back to `DEFAULT_APP_ICON_ID` there, never an
+   * error — same "meaningful, valid do-nothing default" pattern as the
+   * other optional fields on this interface. Not a secret, cosmetic only.
+   */
+  appIcon?: string;
 }
 
 /**

@@ -1,0 +1,23 @@
+name: llm-custom-sources
+title: Generic LLM-driven custom source adapter — any site, no code, BYOK
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+
+stories:
+  - id: custom-source-core-mechanism
+    title: "Core custom-source mechanism: SourceConfig.kind, customLlmSource, runner.ts wiring (no auth, no recipe caching)"
+    complexity: high
+    depends_on: []
+  - id: custom-source-recipe-caching
+    title: "Extraction-recipe caching: selector-based fast path, LLM-derived fallback"
+    complexity: high
+    depends_on: [custom-source-core-mechanism]
+  - id: custom-source-auth
+    title: "Auth for custom sources: config-driven origins/login-URL fallback, real-chrome/session-backend reuse"
+    complexity: medium
+    depends_on: [custom-source-core-mechanism]
+  - id: custom-source-pagination-and-ui
+    title: "Pagination + real /config 'Add custom source' UI with test-extraction preview"
+    complexity: medium
+    depends_on: [custom-source-recipe-caching, custom-source-auth]

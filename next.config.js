@@ -3,6 +3,13 @@
 // `module.exports`) is required here.
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // tauri-installer epic: produces .next/standalone, a self-contained
+  // server bundle (its own minimal node_modules) that gets bundled into
+  // the packaged app's resources and run by a bundled Node sidecar --
+  // see src-tauri/ and scripts/prepare-tauri-sidecars.sh. Purely additive:
+  // `next build`'s normal output (used by npm run start / electron/main.ts)
+  // is unchanged, this just adds the extra standalone output alongside it.
+  output: "standalone",
   experimental: {
     // Default Server Action body limit is 1MB — too small for a real resume
     // PDF upload (resume-link-ui story, profile-overview-ingestion epic).

@@ -17,6 +17,8 @@
  * subdomain matching each list is filtered through before any cookie
  * reaches a browser context.
  */
+import type { SourceConfig } from "../types.js";
+
 export const SOURCE_ORIGINS: Record<string, readonly string[]> = {
   gofractional: ["gofractional.com"],
   ateam: ["a.team", "platform.a.team"],
@@ -73,6 +75,44 @@ export const SOURCE_LOGIN_URLS: Record<string, string> = {
 };
 
 /**
+ * Per-source PROFILE-EDIT URL — where `profile-assist` (`assist-session.ts`)
+ * navigates a persistent session so the owner can be helped filling out
+ * their profile. UNLIKE `SOURCE_LOGIN_URLS` above, **none of these three
+ * entries are live-confirmed** as of this epic's first story — flagged
+ * loudly here rather than silently treated as fact, same posture
+ * `wellfound.ts`'s own `ROLE_URLS` already uses for exactly this situation
+ * (a real gap, shipped anyway, not hidden):
+ *
+ * `gofractional`: `/talent/profile` is a REAL, server-recognized route
+ * pattern (live-confirmed during this epic's planning: navigating there
+ * with the project's own stored session returns a `/explore?notice=
+ * member-not-found` redirect — a specific, meaningful signal, not a generic
+ * 404/fallback) but the specific stored session tested against isn't tied
+ * to an onboarded talent profile, so the URL itself is unverified past that
+ * one signal.
+ *
+ * `ateam`: pure best-guess (`/profile`, A.Team's own general URL
+ * convention) — the project's stored A.Team session was confirmed EXPIRED
+ * (redirects to `/sign-in`) during this epic's planning, so nothing at all
+ * could be live-checked.
+ *
+ * `wellfound`: pure best-guess (`/profile/edit`, a common convention for
+ * this kind of page) — no captured Wellfound session exists at all yet
+ * (see docs/ARCHITECTURE.md's own standing Wellfound follow-up).
+ *
+ * **Standing follow-up, owned by the project owner, not tracked as a
+ * story** (same posture as the A.Team/Wellfound follow-ups already in
+ * docs/ARCHITECTURE.md): re-authenticate each source with a real onboarded
+ * account and confirm/correct these three URLs live before trusting
+ * profile-assist's Full-auto mode against them unsupervised.
+ */
+export const SOURCE_PROFILE_URLS: Record<string, string> = {
+  gofractional: "https://www.gofractional.com/talent/profile",
+  ateam: "https://platform.a.team/profile",
+  wellfound: "https://wellfound.com/profile/edit",
+};
+
+/**
  * Every registered Source's `id`/`label`, kept as plain data here (not
  * imported from the adapter files themselves) so a CLIENT component
  * (`config-client.tsx`) can render a picker without pulling in server-only
@@ -114,3 +154,37 @@ export const KNOWN_SOURCES: readonly { id: string; label: string; auth: "none" |
   // builtin.ts/braintrust.ts.
   { id: "linkedin", label: "LinkedIn", auth: "none" },
 ];
+
+/**
+ * llm-custom-sources epic, custom-source-auth story: the SAME class of
+ * problem as runner.ts's `getSource(sc.id) ?? customLlmSource` fallback
+ * (custom-source-core-mechanism story) — `SOURCE_ORIGINS`/
+ * `SOURCE_LOGIN_URLS` are static registries keyed by known adapter ids, and
+ * a custom source's owner-typed id is never in them. Static registry first
+ * (every existing browser-session-auth source is found here, unchanged),
+ * config-driven fallback second (`cfg.settings.allowedOrigins`) —
+ * deliberately the identical shape, not a second invented pattern.
+ *
+ * Returns `undefined` (never throws) when neither the registry nor the
+ * config has an answer — callers already have their own specific
+ * "no origin allowlist registered" error for that case.
+ */
+export function resolveAllowedOrigins(sourceId: string, cfg: SourceConfig): string[] | undefined {
+  const fromRegistry = SOURCE_ORIGINS[sourceId];
+  if (fromRegistry) return [...fromRegistry];
+
+  const configured = cfg.settings?.allowedOrigins;
+  if (Array.isArray(configured) && configured.length > 0 && configured.every((o) => typeof o === "string")) {
+    return configured;
+  }
+  return undefined;
+}
+
+/** Same config-driven fallback shape as resolveAllowedOrigins() above, for the login URL Capture Login navigates to. */
+export function resolveLoginUrl(sourceId: string, cfg: SourceConfig): string | undefined {
+  const fromRegistry = SOURCE_LOGIN_URLS[sourceId];
+  if (fromRegistry) return fromRegistry;
+
+  const configured = cfg.settings?.loginUrl;
+  return typeof configured === "string" && configured.length > 0 ? configured : undefined;
+}

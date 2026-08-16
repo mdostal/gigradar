@@ -15,6 +15,7 @@ export {
   saveDraft,
   setDraftStatus,
 } from "./drafts.js";
+export { getInterviewPrep, listInterviewPrep, saveInterviewPrep } from "./prep.js";
 export type { GetDbOptions } from "./db.js";
 export type {
   DraftFilter,
@@ -26,4 +27,5 @@ export type {
   StoredAutoFireDecision,
   StoredDraft,
   StoredGig,
+  StoredInterviewPrep,
 } from "./types.js";

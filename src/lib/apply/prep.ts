@@ -1,0 +1,138 @@
+// career-crm epic, prep-packet-mechanism story. A per-gig "judgment" tool
+// -- fit/gap analysis + interview prep, grounded strictly in gigradar's
+// own structured Profile/ApplyProfileConfig/Gig data. Follows draft.ts's
+// REAL shape exactly (one Anthropic Messages API call, forced tool-use,
+// apiKey a required parameter resolved by the caller, never module-scope)
+// and REUSES draft.ts's buildApplicantDataBlock()/buildGigDataBlock()
+// directly rather than a second, duplicated implementation that could
+// drift out of sync (the same reason profile-suggest.ts already reuses
+// buildApplicantDataBlock()).
+//
+// Ports personal-site's match-score/interview-prep PROMPT CONTENT (see
+// .pHive/epics/career-crm/docs/design-discussion.md §1, §5) onto this
+// mechanism -- never that source's raw-JSON.parse()/Vercel-AI-SDK
+// mechanism, and never its hardcoded-profile-string "resume match" input
+// (this repo's own structured Profile replaces that).
+//
+// ONE combined call, not personal-site's two separate ones (match-score +
+// interview-prep chat mode) -- cheaper, and predicted questions naturally
+// cohere with the same gaps the fit analysis surfaces when generated
+// together. See design-discussion.md §5.
+//
+// keyGaps/predictedQuestions are LLM SYNTHESIS, not verbatim extraction --
+// the no-fabricated-data rule here means "never invent a FACT about the
+// gig/profile" (a skill, a rate, a requirement that isn't actually
+// present), not "never reason." Reasoning about the real facts is the
+// entire point of a judgment tool. See design-discussion.md's
+// design_decisions in the story YAML.
+import Anthropic from "@anthropic-ai/sdk";
+import type { ApplyProfileConfig, Gig, Profile } from "../types.js";
+import { buildApplicantDataBlock, buildGigDataBlock } from "./draft.js";
+
+const PREP_TOOL_NAME = "report_prep_packet";
+
+const PREP_TOOL_SCHEMA = {
+  name: PREP_TOOL_NAME,
+  description: "Report a fit/gap analysis and interview prep content for this specific gig, grounded strictly in the provided applicant and gig data. Call this exactly once.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      score: { type: "number", description: "Overall fit score, 1-100." },
+      rationale: { type: "string", description: "A short explanation of the score, grounded in the real applicant/gig data." },
+      topStrengths: { type: "array", items: { type: "string" }, description: "The strongest real alignments between the applicant's actual profile and this gig." },
+      keyGaps: { type: "array", items: { type: "string" }, description: "Real gaps between the applicant's actual profile and this gig's stated requirements -- never invented requirements the listing doesn't state." },
+      recommendation: { type: "string", description: "A short, actionable recommendation: pursue, pursue with caveats, or pass, and why." },
+      predictedQuestions: { type: "array", items: { type: "string" }, description: "Interview questions this specific gig's listing and the identified gaps make likely." },
+      starlaStories: { type: "array", items: { type: "string" }, description: "STARLA-format (Situation/Task/Action/Result/Learning/Application) story prompts drawn from the applicant's real profile that address this gig's likely questions/gaps." },
+    },
+    required: ["score", "rationale", "topStrengths", "keyGaps", "recommendation", "predictedQuestions", "starlaStories"],
+    additionalProperties: false,
+  },
+};
+
+export interface PrepPacketContent {
+  score: number;
+  rationale: string;
+  topStrengths: string[];
+  keyGaps: string[];
+  recommendation: string;
+  predictedQuestions: string[];
+  starlaStories: string[];
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+
+/**
+ * Generates one gig's prep packet via a single Claude Messages API call
+ * using forced tool-use for structured output — mirrors `generateDraft()`'s
+ * shape exactly. `apiKey` is used to construct the Anthropic client HERE,
+ * inside this function call, and nowhere else — callers resolve it
+ * themselves, however is appropriate for their own calling context (CLI
+ * `process.env`, Server Action `readEnvVar()`).
+ *
+ * Throws a specific error if the Anthropic response doesn't include the
+ * expected structured tool-use block, or if the underlying API call
+ * itself fails — never silently returns a partial/placeholder packet.
+ */
+export async function generatePrepPacket(
+  gig: Gig,
+  profile: Profile,
+  applyProfile: ApplyProfileConfig | undefined,
+  apiKey: string,
+): Promise<PrepPacketContent> {
+  const contentBlocks: Anthropic.ContentBlockParam[] = [
+    {
+      type: "text",
+      text:
+        "Analyze this person's real fit for this specific gig, grounded STRICTLY in the real applicant and gig " +
+        "data provided below. Report a 1-100 fit score with rationale, the strongest real alignments (topStrengths), " +
+        "real gaps between the applicant's actual profile and this gig's stated requirements (keyGaps), a short " +
+        "actionable recommendation, likely interview questions given this specific gig and the identified gaps, " +
+        "and STARLA-format story prompts drawn from the applicant's real profile that address those questions/gaps. " +
+        "CRITICAL: never invent, embellish, or assume experience, skills, requirements, or figures that are not " +
+        "explicitly present in the data below. A gap or question must be grounded in what's actually stated, not " +
+        "an assumption about what a listing like this usually asks.",
+    },
+    { type: "text", text: buildApplicantDataBlock(profile, applyProfile ?? { email: "" }) },
+    { type: "text", text: buildGigDataBlock(gig) },
+    { type: "text", text: `Now call the ${PREP_TOOL_NAME} tool exactly once with the complete result.` },
+  ];
+
+  const client = new Anthropic({ apiKey });
+  const response = await client.messages.create({
+    model: "claude-opus-5",
+    max_tokens: 4096,
+    tools: [PREP_TOOL_SCHEMA],
+    tool_choice: { type: "tool", name: PREP_TOOL_NAME },
+    messages: [{ role: "user", content: contentBlocks }],
+  });
+
+  const toolUse = response.content.find(
+    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use" && block.name === PREP_TOOL_NAME,
+  );
+  if (!toolUse) {
+    throw new Error("gigradar career-crm: the Anthropic API response did not include the expected structured prep-packet result.");
+  }
+
+  const parsed = toolUse.input as {
+    score?: unknown;
+    rationale?: unknown;
+    topStrengths?: unknown;
+    keyGaps?: unknown;
+    recommendation?: unknown;
+    predictedQuestions?: unknown;
+    starlaStories?: unknown;
+  };
+
+  return {
+    score: typeof parsed.score === "number" ? parsed.score : 0,
+    rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
+    topStrengths: isStringArray(parsed.topStrengths) ? parsed.topStrengths : [],
+    keyGaps: isStringArray(parsed.keyGaps) ? parsed.keyGaps : [],
+    recommendation: typeof parsed.recommendation === "string" ? parsed.recommendation : "",
+    predictedQuestions: isStringArray(parsed.predictedQuestions) ? parsed.predictedQuestions : [],
+    starlaStories: isStringArray(parsed.starlaStories) ? parsed.starlaStories : [],
+  };
+}

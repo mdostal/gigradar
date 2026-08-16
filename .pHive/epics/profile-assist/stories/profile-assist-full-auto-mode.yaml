@@ -1,0 +1,82 @@
+id: profile-assist-full-auto-mode
+epic: profile-assist
+title: "Full-auto mode: unsupervised tool-use loop with ask_human escape hatch"
+status: done
+complexity: medium
+methodology: classic
+depends_on: [profile-assist-guided-mode]
+
+description: |
+  Vertical Plan Slice 3 -- the epic's north star. Reuses Slice 2's tool-
+  use loop, selector validation, and turn cap VERBATIM (no new loop
+  logic); the only change is removing the approval gate in front of
+  `click`/`fill` so they execute immediately when the LLM proposes
+  them. `ask_human` is UNCHANGED and remains mandatory in the tool
+  schema -- the loop's one and only escape hatch when it's uncertain,
+  same tool, same "blocks that turn only" semantics as Guided mode.
+
+  1. Full-auto tab on `/profile-assist`: same transcript panel as
+     Guided (every turn logged), but no pending-approval cards --
+     click/fill execute immediately and are logged after the fact
+     ("Filled 'Headline' with '...'" / "Clicked 'Save'"). ask_human
+     questions still pause and surface in the transcript exactly like
+     Guided mode.
+  2. Reuse, not reimplementation: this story should touch
+     profile-assist-loop.ts only to make the approval gate
+     conditional on mode (Guided: gated: true, Full-auto: gated:
+     false) -- not fork a second copy of the loop.
+  3. Real end-to-end verification against a real configured source,
+     with the owner watching the live browser the whole time (same bar
+     Guided mode cleared, same bar every other browser-session-auth
+     mechanism in this codebase has cleared) -- this is the mode with
+     the highest blast radius (unsupervised page mutation on a real
+     third-party account) and gets the epic's most careful live check.
+
+acceptance_criteria:
+  - "Given an open Full-auto-tab session, LLM-proposed click/fill actions execute immediately without a human approval step, and each is logged in the transcript with what was done."
+  - "Given the same selector-validation logic Slice 2 built (an element not present in the current snapshot is rejected as a tool error), Full-auto mode enforces it identically -- verified by reusing Slice 2's existing selector-validation tests against Full-auto's code path, not a duplicated test suite."
+  - "Given an ask_human tool call in Full-auto mode, the loop pauses on that turn, the question appears in the transcript, and the human can answer or manually take over the browser -- identical behavior to Guided mode's ask_human handling."
+  - "Given the hard turn cap from Slice 2, Full-auto mode enforces the same limit with the same clean stop behavior."
+  - "Real end-to-end verification: a full Full-auto session against a real configured source completes (or correctly asks for help) with the owner watching, no unexpected/unwanted page mutations."
+
+steps:
+  - id: research
+    description: Re-read profile-assist-loop.ts's Slice 2 implementation to identify the minimal change (conditional approval gate) rather than assuming a rewrite is needed.
+    agent: researcher
+  - id: implement
+    description: Make the approval gate mode-conditional in profile-assist-loop.ts; build the Full-auto tab UI (transcript only, no approval cards).
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Confirm Slice 2's selector-validation and turn-cap tests pass unchanged against Full-auto's code path (same underlying loop). Real end-to-end verification per the acceptance criteria's last item, live, with the owner.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no loop logic was duplicated (Guided and Full-auto share one implementation, gated by a mode flag) and that ask_human's semantics are byte-identical between modes.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch, then open the epic-wide PR into dev (all 3 stories).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/profile-assist-loop.ts
+      purpose: Slice 2's tool-use loop -- this story makes its approval gate mode-conditional, not a new implementation
+
+design_decisions:
+  - decision: One loop implementation shared by Guided and Full-auto, gated by a mode flag -- not two separate loops.
+    rationale: "A second, forked loop implementation for Full-auto would double the surface area for the prompt-injection/selector-validation mitigations to drift out of sync between modes. A single implementation with the gate as its only mode-dependent behavior keeps both modes provably equivalent everywhere except the one intentional difference."
+
+risks:
+  - severity: high
+    description: Full-auto mode is this epic's highest-blast-radius surface -- an unsupervised click/fill on a real third-party account (job platform profile) that goes wrong is a real-world consequence, not a test failure.
+    mitigation: "Inherits every mitigation Slices 1-2 already built (prompt-injection delimiting, selector validation against live DOM, turn cap, mandatory ask_human escape hatch) unchanged -- this story adds no new mutation pathway, only removes the approval prompt Slice 2 required. Real end-to-end verification is live, owner-watched, same bar as GoFractional/A.Team/Wellfound's own adapters cleared before shipping."
+
+references:
+  - path: .pHive/epics/profile-assist/docs/design-discussion.md
+    relevant_excerpt: "§4 The three modes, concretely -- Full auto"
+  - path: .pHive/epics/profile-assist/docs/vertical-plan.md
+    relevant_excerpt: "Slice 3 -- Full-auto mode"

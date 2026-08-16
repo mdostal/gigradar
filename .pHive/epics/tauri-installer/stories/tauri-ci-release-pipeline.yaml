@@ -1,0 +1,64 @@
+id: tauri-ci-release-pipeline
+epic: tauri-installer
+title: "GitHub Actions: build the .dmg on a clean runner, publish to Releases"
+status: done
+complexity: medium
+methodology: classic
+depends_on: [tauri-chromium-sidecar]
+
+description: |
+  Vertical Plan Slice 3 -- proves the build is reproducible outside the
+  owner's own machine, the real precondition for anyone else installing
+  this. No in-app update-check logic yet (Slice 4) -- deliberately
+  isolated so "can we build and ship the artifact" is proven independent
+  of "can an install find and apply an update."
+
+  1. New `.github/workflows/tauri-release.yml`: triggered on a pushed
+     tag matching `v*`. `npm ci`, run
+     `scripts/prepare-tauri-sidecars.sh`, `npx tauri build` on
+     `macos-latest`, publish the `.dmg` + update-manifest JSON to
+     GitHub Releases (via `tauri-apps/tauri-action`, confirmed during
+     design-discussion.md's research to generate the manifest directly).
+  2. Tag convention: prod tags `vX.Y.Z` (matches package.json's existing
+     version, same convention every prior epic's release-finalize step
+     already uses); dev-channel tags `vX.Y.Z-dev.N`.
+  3. For THIS story, sign with a local placeholder/test key (real
+     Portunus-vaulted key generation is explicitly deferred, per
+     design-discussion.md's resolved Open Question 3) -- the workflow
+     itself must be fully buildable and testable now regardless.
+
+acceptance_criteria:
+  - "Pushing a real test tag triggers the workflow and produces a real, downloadable .dmg on the repo's GitHub Releases page."
+  - "The workflow uses the resolved tag convention (plain vX.Y.Z for prod-track tags, vX.Y.Z-dev.N for dev-track) to decide which channel's release metadata it publishes under."
+  - "The published .dmg, downloaded and installed fresh, launches and behaves identically to a locally-built one from the prior two stories."
+
+steps:
+  - id: research
+    description: Confirm tauri-apps/tauri-action's exact current inputs/outputs and GitHub Release publishing shape.
+    agent: researcher
+  - id: implement
+    description: Write the workflow file.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Push a real test tag, verify the Actions run and the resulting Release artifact.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for tag-convention correctness and that no real signing key material is hardcoded/committed anywhere.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: .github
+      purpose: no existing workflows in this repo yet -- first CI of any kind
+
+references:
+  - path: .pHive/epics/tauri-installer/docs/structured-outline.md
+    relevant_excerpt: "Part 1, Slice 3: CI build + publish."

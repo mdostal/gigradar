@@ -1,0 +1,69 @@
+id: tauri-real-auto-update
+epic: tauri-installer
+title: "Real in-app auto-update: dev/prod channel toggle + Tauri updater plugin"
+status: done
+complexity: high
+methodology: classic
+depends_on: [tauri-ci-release-pipeline]
+
+description: |
+  Vertical Plan Slice 4 -- closes the epic's own north star. An installed
+  app checks a real published manifest, respects a stored dev/prod
+  channel preference, and can apply an update end to end.
+
+  1. `npm install @tauri-apps/plugin-updater @tauri-apps/plugin-shell` +
+     Rust-side plugin registration.
+  2. New local preference (sibling to gigradar's data dir, NOT inside
+     config.json -- this is installer-level state, not user Config):
+     `{ channel: "dev" | "prod" }`, default "prod".
+  3. `tauri.conf.json`'s `plugins.updater.pubkey` set to a LOCAL TEST
+     keypair for this story's own development/testing -- the real
+     Portunus-vaulted production key is a separate, later, owner-gated
+     step, explicitly not this story's job.
+  4. Updater `endpoints` built dynamically at runtime from the stored
+     channel preference (design-discussion.md §2's dynamic-endpoint
+     pattern), not a static config array.
+  5. A minimal channel-toggle UI -- a native Tauri window/tray menu item
+     ("Update channel: Dev / Prod"), not a new page inside gigradar's
+     own Next.js UI.
+
+acceptance_criteria:
+  - "A real installed .dmg (from the prior story's pipeline, re-signed with this story's test key for the test loop) checks for updates on launch and via a manual trigger."
+  - "The channel toggle persists across app restarts and correctly changes which endpoint the updater checks."
+  - "A real end-to-end test: bump the version, publish a new release under the SAME channel a test install is tracking, confirm the running app detects and applies it."
+  - "The real production signing key is NOT generated or embedded anywhere in this story's own commits -- test-key only, Portunus-key generation is explicitly out of scope."
+
+steps:
+  - id: research
+    description: Confirm the exact current @tauri-apps/plugin-updater API (dynamic endpoint construction, check/download/install call shapes) against the installed version.
+    agent: researcher
+  - id: implement
+    description: Wire the plugin, channel preference, dynamic endpoints, and toggle UI.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Real end-to-end update test per the acceptance criteria, using a local test signing key.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no real key material is committed and the channel-default (prod, the safer choice) is correct.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: scripts/update.sh
+      purpose: the existing dev/prod channel LANGUAGE (branch-based, for the terminal-launched workflow) this story's real installed-app channel concept parallels but does not reuse code from
+
+design_decisions:
+  - decision: Default the channel preference to "prod", not "dev".
+    rationale: The safer default for anyone who installs this who isn't the owner actively testing -- matches this project's own "safe by default, opt into risk" posture used throughout (kill switches, opt-in flags).
+
+references:
+  - path: .pHive/epics/tauri-installer/docs/structured-outline.md
+    relevant_excerpt: "Part 1, Slice 4: Real auto-update."

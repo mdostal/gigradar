@@ -1,7 +1,7 @@
 id: profile-ingestion-module
 epic: profile-overview-ingestion
 title: "Resume/link extraction module + .env API-key writer (Claude API, mocked in tests)"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: []

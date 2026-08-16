@@ -1,0 +1,19 @@
+name: profile-assist
+title: LLM+Playwright profile-assist (3 autonomy modes) — folds in task #37's "AI-assisted suggest/fill layer" half
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+
+stories:
+  - id: profile-assist-persistent-session-manual-mode
+    title: "Persistent browser-session primitive + Manual/copy-paste mode"
+    complexity: high
+    depends_on: []
+  - id: profile-assist-guided-mode
+    title: "Guided mode: the tool-use loop, human-approval-gated"
+    complexity: high
+    depends_on: [profile-assist-persistent-session-manual-mode]
+  - id: profile-assist-full-auto-mode
+    title: "Full-auto mode: unsupervised tool-use loop with ask_human escape hatch"
+    complexity: medium
+    depends_on: [profile-assist-guided-mode]

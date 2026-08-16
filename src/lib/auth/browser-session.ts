@@ -50,7 +50,9 @@ import fs from "node:fs";
 import { chromium, type Browser, type Page } from "playwright";
 import { hasAnyEncryptedFile, resolveEnvString } from "../config/load.js";
 import { decrypt, getOrCreateKey, isEncryptedEnvelope, VaultTamperError } from "../security/vault.js";
+import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
 import { writeStorageStateAtomically } from "./session-capture.js";
+import { isVerificationChallengeContent, VerificationChallengeError } from "../sources/verification-challenge.js";
 
 const MODULE_PREFIX = "gigradar browser-session";
 
@@ -89,8 +91,20 @@ export interface BrowserSessionOptions {
    * resolveEnvString(), reused here rather than re-implemented). Callers
    * may pass a value loadConfig() already resolved (a plain path, in which
    * case this is a no-op) or a raw unresolved settings value directly.
+   *
+   * REQUIRED when `sessionBackend` is `"local"` (the default) — ignored
+   * when it's `"portunus"`, since a Portunus-backed session has no local
+   * file path at all (see session-backend.ts).
    */
-  storageStatePathSetting: string;
+  storageStatePathSetting?: string;
+  /**
+   * Which vault the source's captured session lives in — `"local"` (the
+   * default, today's on-disk encrypted-vault behavior, unchanged) or
+   * `"portunus"` (oauth-session-capture-v2 epic, portunus-session-backend
+   * story — see session-backend.ts). Omitting this field is byte-identical
+   * to explicitly passing `"local"`.
+   */
+  sessionBackend?: SessionBackend;
   /**
    * REQUIRED per-source origin allowlist (bare domains, e.g.
    * ["app.example.com", "www.example.com"]) — see filterStorageStateToAllowlist().
@@ -137,8 +151,13 @@ export interface BrowserSessionOptions {
  * VaultTamperError — re-thrown with an actionable, session-file-specific
  * message — if the encrypted file's content has been corrupted/tampered
  * with (GCM auth-tag mismatch).
+ *
+ * EXPORTED (profile-assist epic) so assist-session.ts can reuse this exact
+ * read/decrypt/migrate path for a persistent session's initial storageState
+ * load, instead of a second, duplicated implementation — origin-scoping is
+ * safety-critical and must never fork into two copies.
  */
-function readStorageStateFile(filePath: string): StorageState {
+export function readStorageStateFile(filePath: string): StorageState {
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -211,8 +230,15 @@ function readStorageStateFile(filePath: string): StorageState {
   return parsed;
 }
 
-/** Structural check only (not a full schema) — enough to catch "wrong file entirely" without over-validating cookie/origin field shapes. */
-function isStorageStateShape(value: unknown): value is StorageState {
+/**
+ * Structural check only (not a full schema) — enough to catch "wrong file
+ * entirely" without over-validating cookie/origin field shapes. EXPORTED
+ * (oauth-session-capture-v2 epic, portunus-session-backend story) so
+ * session-backend.ts's readSessionViaPortunus() can validate the payload it
+ * gets back from Portunus's tempfile the same way, instead of a second,
+ * duplicated shape check.
+ */
+export function isStorageStateShape(value: unknown): value is StorageState {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return Array.isArray(v.cookies) && Array.isArray(v.origins);
@@ -341,7 +367,7 @@ export async function launchHeadedBrowser(logContext: string): Promise<Browser> 
  * throw. Never silently proceeds or returns as if nothing is wrong.
  */
 export async function withBrowserSession<T>(options: BrowserSessionOptions, run: (page: Page) => Promise<T>): Promise<T> {
-  const { sourceId, storageStatePathSetting, allowedOrigins, url, isAuthenticated } = options;
+  const { sourceId, storageStatePathSetting, sessionBackend, allowedOrigins, url, isAuthenticated } = options;
 
   if (allowedOrigins.length === 0) {
     throw new Error(
@@ -350,12 +376,24 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
     );
   }
 
-  const storageStatePath = resolveEnvString(
-    storageStatePathSetting,
-    `source "${sourceId}" settings storageState path`,
-  );
+  const backend = sessionBackend ?? "local";
 
-  const rawStorageState = readStorageStateFile(storageStatePath);
+  let rawStorageState: StorageState;
+  if (backend === "portunus") {
+    rawStorageState = await readSessionViaPortunus(sourceId, PORTUNUS_SESSION_ACCOUNT);
+  } else {
+    if (!storageStatePathSetting) {
+      throw new Error(
+        `${MODULE_PREFIX}: source "${sourceId}" is using the local session backend but no storageState path was supplied.`,
+      );
+    }
+    const storageStatePath = resolveEnvString(
+      storageStatePathSetting,
+      `source "${sourceId}" settings storageState path`,
+    );
+    rawStorageState = readStorageStateFile(storageStatePath);
+  }
+
   const scopedStorageState = filterStorageStateToAllowlist(rawStorageState, allowedOrigins);
 
   checkChromiumAvailable();
@@ -367,6 +405,19 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
     try {
       const page = await context.newPage();
       await page.goto(url);
+
+      // verification-copilot epic: a cheap page-content signal (title +
+      // visible body text), checked BEFORE the caller's own isAuthenticated
+      // predicate — a verification challenge is a distinct failure mode
+      // from "session expired," and the caller's own auth check may not
+      // recognize it as anything other than a generic auth failure. See
+      // verification-challenge.ts's own header comment for why this is
+      // wired here (the one shared call site) rather than per-adapter.
+      const title = await page.title();
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+      if (isVerificationChallengeContent(`${title}\n${bodyText.slice(0, 2000)}`)) {
+        throw new VerificationChallengeError(sourceId, url);
+      }
 
       const authenticated = await isAuthenticated(page);
       if (!authenticated) {

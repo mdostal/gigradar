@@ -1,0 +1,75 @@
+id: llm-capture-readiness-check
+epic: oauth-session-capture-v2
+title: "LLM-guided capture readiness check (read-only, advisory)"
+status: pending
+complexity: low
+methodology: classic
+depends_on: [real-chrome-spawn-attach]
+status: done
+
+description: |
+  Vertical Plan Slice 3. Reuses profile-suggest.ts's EXACT single-shot
+  shape (one Anthropic tool-use call, apiKey never module-scope, the
+  page's AI-mode aria snapshot delimited as untrusted DATA) rather than
+  a third prompt-injection-mitigation implementation, and deliberately
+  NOT profile-assist-loop.ts's heavier multi-turn tool-use loop -- login
+  itself (including any password/2FA field) stays 100% human-driven,
+  always. This function never receives a mutating tool schema at all.
+
+  1. `src/lib/auth/capture-guidance.ts`: `checkCaptureReadiness(page,
+     sourceId, apiKey): Promise<{ ready: boolean; note: string }>` --
+     reads the current page's AI-mode aria snapshot, asks the LLM
+     "does this look like a successfully-signed-in profile/account page
+     for <sourceId>, or still a login/interstitial page?", returns a
+     plain-language note.
+  2. Capture Login's "waiting" UI state (config-client.tsx's
+     CaptureLoginControl) gains an optional "Check if I'm ready" button
+     next to the existing "I'm done"/"Cancel" buttons -- surfaces the
+     readiness note. Advisory only: clicking it NEVER auto-triggers
+     finishCapture() -- the human still clicks "I'm done" themselves
+     regardless of what the note says.
+
+acceptance_criteria:
+  - "Given a Capture Login session still on a login/interstitial page, clicking 'Check if I'm ready' returns ready:false with a note describing what's still showing (e.g. a sign-in page)."
+  - "Given a Capture Login session on what looks like a real signed-in account page, clicking 'Check if I'm ready' returns ready:true with a confirming note."
+  - "Given any readiness-check result, 'I'm done' remains a fully independent, always-available action -- the check never blocks, gates, or auto-triggers finishCapture()."
+  - "The page snapshot sent to the LLM is delimited as untrusted DATA using the same BEGIN/END framing profile-suggest.ts already established -- verified by a prompt-grounding test mirroring that file's own."
+
+steps:
+  - id: research
+    description: Re-read profile-suggest.ts in full to replicate its exact call shape and delimiting framing rather than approximating it.
+    agent: researcher
+  - id: implement
+    description: Write capture-guidance.ts and the "Check if I'm ready" UI control.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests mirroring profile-suggest.test.ts's structure (mocked Anthropic client, prompt-grounding, injection-delimiting checks). Real end-to-end verification against a live capture session.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm this function's tool schema (if any) never includes a mutating capability, and that the UI truly never auto-triggers finish.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic branch, then open the epic-wide PR into dev (all 3 stories).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/profile-suggest.ts
+      purpose: the exact single-shot call shape + injection-delimiting framing this story reuses
+    - path: src/app/config/config-client.tsx
+      purpose: CaptureLoginControl gains the "Check if I'm ready" button
+
+design_decisions:
+  - decision: Single-shot advisory check, not a tool-use loop, and no mutating tool schema at all.
+    rationale: "Login credentials (passwords, 2FA codes) must stay 100% human-entered, always -- this epic's whole point is making REAL human-driven OAuth work, not automating it. A read-only advisory check cannot regress that even accidentally."
+
+references:
+  - path: .pHive/epics/oauth-session-capture-v2/docs/design-discussion.md
+    relevant_excerpt: "§6 LLM-guided capture setup"
+  - path: .pHive/epics/oauth-session-capture-v2/docs/vertical-plan.md
+    relevant_excerpt: "Slice 3 -- LLM-guided capture readiness check"

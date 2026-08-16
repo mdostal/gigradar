@@ -61,7 +61,8 @@ function compareNullable<T>(
   return sign * compare(a, b);
 }
 
-function compareByField(field: SortField, direction: SortDirection, a: StoredGig, b: StoredGig): number {
+/** Exported for dashboard-client.tsx's TanStack Table column defs, which reuse this same domain-aware comparator per column instead of re-implementing it — TanStack's own sortingFn only ever needs the ascending case (it negates automatically for desc), so callers there always pass "asc". */
+export function compareByField(field: SortField, direction: SortDirection, a: StoredGig, b: StoredGig): number {
   const sign = direction === "asc" ? 1 : -1;
   switch (field) {
     case "source":

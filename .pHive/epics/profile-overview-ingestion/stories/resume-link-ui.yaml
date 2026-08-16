@@ -1,7 +1,7 @@
 id: resume-link-ui
 epic: profile-overview-ingestion
 title: "Extract-from-resume/link UI + Server Action wiring"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [profile-ingestion-module]
