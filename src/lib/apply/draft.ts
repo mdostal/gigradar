@@ -85,6 +85,11 @@ export function buildApplicantDataBlock(profile: Profile, applyProfile: ApplyPro
   if (applyProfile.headline) lines.push(`Headline: ${applyProfile.headline}`);
   if (applyProfile.bio) lines.push(`Bio: ${applyProfile.bio}`);
   if (applyProfile.rateAnchor !== undefined) lines.push(`Rate anchor: ${applyProfile.rateAnchor}`);
+  // career-documents epic, persisted-links story: the ONE place applyProfile.links
+  // reaches every consumer of this shared block (generateDraft, generatePrepPacket) --
+  // omitted entirely when empty/unset, same "only include what's ACTUALLY present"
+  // discipline every other optional field here already follows.
+  if (applyProfile.links && applyProfile.links.length > 0) lines.push(`Other links: ${applyProfile.links.join(", ")}`);
   return lines.join("\n");
 }
 

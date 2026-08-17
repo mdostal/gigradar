@@ -1,0 +1,61 @@
+id: persist-resume-on-upload
+epic: career-documents
+title: "Extend resume upload to persist + a Resume section in /config"
+status: done
+complexity: low
+methodology: classic
+depends_on: [resume-store]
+
+description: |
+  Vertical Plan Slice 2. Extends extractProfileFromResumeAction
+  (src/app/config/actions.ts) so uploading a resume for extraction ALSO
+  persists it: calls resume-store.ts's saveResume() with the uploaded
+  bytes, then saveConfig({applyProfile: {...current, resumePath}}) via
+  the existing config-write path -- "fetch your stuff into gigradar" IS
+  the act of uploading, not a second explicit save step (design-
+  discussion.md section 2.3). Adds a "Resume" section to /config
+  (config-client.tsx) showing whether a resume is currently on file, with
+  a "Remove" action (calls a new removeResumeAction() that deletes the
+  file via resume-store.ts's deleteResume() and clears
+  applyProfile.resumePath). Extraction behavior itself (roles/skills
+  merged into draft.profile) is UNCHANGED -- this story only adds
+  persistence alongside it.
+
+acceptance_criteria:
+  - "Uploading a resume via the existing /config flow persists it: after extraction completes, readRawConfig() shows applyProfile.settings.resumePath (or equivalent field) pointing at a real file under getDefaultDataDir()."
+  - "The persisted file's content round-trips via resume-store.ts's loadResume() to the exact bytes originally uploaded."
+  - "Extraction's existing behavior (roles/skills merged into draft.profile, warnings surfaced) is unchanged -- verified by re-running extractProfileFromResumeAction's existing test suite unmodified plus new persistence assertions, not a rewrite."
+  - "/config shows a Resume section: \"No resume on file\" when resumePath is unset, or an indicator + Remove button when set."
+  - "Clicking Remove deletes the on-disk file (verified: loadResume() on the old path returns undefined afterward) and clears applyProfile.resumePath in config.json."
+  - "A failed saveResume() (e.g. disk write error) surfaces as a specific error and does NOT silently drop the extraction result the user already got -- extraction success and persistence success are reported/handled independently, matching this app's \"partial failure is explicit, never silently swallowed\" convention (see finishCaptureAction's own doc comment for the precedent)."
+
+steps:
+  - id: implement
+    description: Extend extractProfileFromResumeAction to persist via resume-store.ts, add removeResumeAction(), add the /config Resume section.
+    agent: developer
+  - id: test
+    description: Tests per acceptance criteria, isolated temp XDG dirs.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm extraction's existing behavior is unchanged, confirm partial-failure handling (extraction succeeds, persistence fails) is explicit not silent.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/actions.ts
+      purpose: "extractProfileFromResumeAction -- the existing ephemeral upload flow this story extends with persistence"
+    - path: src/app/config/config-client.tsx
+      purpose: "existing resume-upload UI (file input, handleExtract()) -- gains a new Resume section"
+    - path: .pHive/epics/career-documents/stories/resume-store.yaml
+      purpose: "produces saveResume()/deleteResume(), this story's dependency"
+
+references:
+  - path: .pHive/epics/career-documents/docs/design-discussion.md
+    relevant_excerpt: "section 2.3 (persist-on-upload, not a separate step)"

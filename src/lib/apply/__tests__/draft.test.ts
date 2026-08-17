@@ -20,7 +20,7 @@ vi.mock("@anthropic-ai/sdk", () => {
   return { default: FakeAnthropic };
 });
 
-import { generateDraft } from "../draft.js";
+import { buildApplicantDataBlock, generateDraft } from "../draft.js";
 
 beforeEach(() => {
   mockCreate.mockReset();
@@ -64,6 +64,7 @@ const REAL_APPLY_PROFILE: ApplyProfileConfig = {
   headline: "Fractional CTO for seed-stage startups",
   bio: "10 years building and scaling backend systems.",
   rateAnchor: 225,
+  links: ["https://github.com/janedoe", "https://janedoe.dev"],
 };
 
 const REAL_GIG: Gig = {
@@ -134,6 +135,8 @@ describe("generateDraft: prompt grounding — only real data, gig content delimi
     expect(fullPrompt).toContain(REAL_APPLY_PROFILE.headline as string);
     expect(fullPrompt).toContain(REAL_APPLY_PROFILE.bio as string);
     expect(fullPrompt).toContain(String(REAL_APPLY_PROFILE.rateAnchor));
+    expect(fullPrompt).toContain(REAL_APPLY_PROFILE.links![0]);
+    expect(fullPrompt).toContain(REAL_APPLY_PROFILE.links![1]);
     expect(fullPrompt).toContain(REAL_GIG.title);
     expect(fullPrompt).toContain(REAL_GIG.company as string);
     expect(fullPrompt).toContain(REAL_GIG.description as string);
@@ -194,5 +197,24 @@ describe("generateDraft: prompt grounding — only real data, gig content delimi
     expect(gigDataBlock?.indexOf(adversarialGig.description as string)).toBeLessThan(
       gigDataBlock?.indexOf("END GIG LISTING DATA") ?? -1,
     );
+  });
+});
+
+describe("buildApplicantDataBlock: applyProfile.links (career-documents epic)", () => {
+  it("includes every links entry verbatim when the array is non-empty", () => {
+    const block = buildApplicantDataBlock(REAL_PROFILE, { ...REAL_APPLY_PROFILE, links: ["https://github.com/janedoe", "https://janedoe.dev"] });
+    expect(block).toContain("https://github.com/janedoe");
+    expect(block).toContain("https://janedoe.dev");
+  });
+
+  it("omits any links section entirely when links is unset", () => {
+    const withoutLinks: ApplyProfileConfig = { email: REAL_APPLY_PROFILE.email, headline: REAL_APPLY_PROFILE.headline };
+    const block = buildApplicantDataBlock(REAL_PROFILE, withoutLinks);
+    expect(block.toLowerCase()).not.toContain("other links");
+  });
+
+  it("omits any links section entirely when links is an empty array", () => {
+    const block = buildApplicantDataBlock(REAL_PROFILE, { ...REAL_APPLY_PROFILE, links: [] });
+    expect(block.toLowerCase()).not.toContain("other links");
   });
 });

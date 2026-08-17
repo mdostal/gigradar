@@ -1,7 +1,10 @@
 // Tests for src/lib/apply/prep.ts (career-crm epic, prep-packet-mechanism
 // story). Mirrors draft.test.ts's exact mocking shape -- ZERO real API
 // calls in this automated suite.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ApplyProfileConfig, Gig, Profile } from "../../types.js";
 
@@ -21,6 +24,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 });
 
 import { generatePrepPacket, type PrepPacketContent } from "../prep.js";
+import { saveResume } from "../../documents/resume-store.js";
 
 const FULL_PACKET: PrepPacketContent = {
   score: 82,
@@ -30,6 +34,14 @@ const FULL_PACKET: PrepPacketContent = {
   recommendation: "Pursue -- strong fit despite the one gap.",
   predictedQuestions: ["How have you scaled a backend team at a Series A company?"],
   starlaStories: ["S: Series A startup needed... T: ... A: ... R: ... L: ... A: ..."],
+  atsScore: {
+    keywordOverlapScore: 65,
+    matchedKeywords: ["Team Leadership"],
+    missingKeywords: ["Kubernetes"],
+    resumeTweaks: ["Add 'Kubernetes' to your skills -- it's explicitly required in this listing."],
+    parseabilityIssues: [],
+    resumeChecked: false,
+  },
 };
 
 beforeEach(() => {
@@ -38,12 +50,19 @@ beforeEach(() => {
   mockCreate.mockResolvedValue(fakePrepToolResponse(FULL_PACKET));
 });
 
+// The real report_prep_packet tool schema is FLAT (keywordOverlapScore etc.
+// are top-level input fields, same level as score/rationale) -- only
+// generatePrepPacket()'s RETURN type nests them under atsScore. This
+// helper mirrors the tool's real flat shape, exactly like the actual
+// Anthropic tool_use.input the parsing code in prep.ts reads.
 function fakePrepToolResponse(content: PrepPacketContent) {
+  const { atsScore, ...rest } = content;
+  const flatInput = { ...rest, ...atsScore };
   return {
     id: "msg_test",
     type: "message",
     role: "assistant",
-    content: [{ type: "tool_use", id: "toolu_test", name: "report_prep_packet", input: content }],
+    content: [{ type: "tool_use", id: "toolu_test", name: "report_prep_packet", input: flatInput }],
     model: "claude-opus-5",
     stop_reason: "tool_use",
     stop_sequence: null,
@@ -66,7 +85,11 @@ const REAL_PROFILE: Profile = {
   timezone: "America/Chicago",
 };
 
-const REAL_APPLY_PROFILE: ApplyProfileConfig = { email: "jane@example.com", headline: "Fractional CTO for seed-stage startups" };
+const REAL_APPLY_PROFILE: ApplyProfileConfig = {
+  email: "jane@example.com",
+  headline: "Fractional CTO for seed-stage startups",
+  links: ["https://github.com/janedoe", "https://janedoe.dev"],
+};
 
 const REAL_GIG: Gig = {
   sourceId: "braintrust",
@@ -78,7 +101,7 @@ const REAL_GIG: Gig = {
 };
 
 describe("generatePrepPacket: structured output", () => {
-  it("returns all 7 PrepPacketContent fields parsed from the mocked tool_use response", async () => {
+  it("returns all PrepPacketContent fields, including atsScore, parsed from the mocked tool_use response", async () => {
     const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
     expect(result).toEqual(FULL_PACKET);
   });
@@ -130,6 +153,14 @@ describe("generatePrepPacket: prompt grounding — real profile + gig data, gig 
     expect(fullPrompt).toContain(REAL_GIG.description as string);
   });
 
+  it("includes applyProfile.links (career-documents epic) -- proves buildApplicantDataBlock()'s one shared change reaches this second consumer too", async () => {
+    await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    const fullPrompt = textBlocksSentToLLM().join("\n---\n");
+    expect(fullPrompt).toContain(REAL_APPLY_PROFILE.links![0]);
+    expect(fullPrompt).toContain(REAL_APPLY_PROFILE.links![1]);
+  });
+
   it("delimits the gig's data as untrusted DATA, in the same BEGIN/END GIG LISTING DATA block draft.ts uses", async () => {
     await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
 
@@ -159,5 +190,161 @@ describe("generatePrepPacket: prompt grounding — real profile + gig data, gig 
     expect(gigDataBlock?.indexOf("BEGIN GIG LISTING DATA")).toBeLessThan(
       gigDataBlock?.indexOf(adversarialGig.description as string) ?? -1,
     );
+  });
+});
+
+describe("generatePrepPacket: atsScore (ats-navigator epic, bidirectional keyword matching)", () => {
+  it("keywordOverlapScore and resumeTweaks are parsed from the SAME single mocked LLM call as the rest of the packet", async () => {
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(result.atsScore).toEqual(FULL_PACKET.atsScore);
+  });
+
+  it("every resumeTweaks entry references a concrete missingKeywords entry, not generic advice", async () => {
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    for (const tweak of result.atsScore.resumeTweaks) {
+      const referencesAMissingKeyword = result.atsScore.missingKeywords.some((kw) => tweak.includes(kw));
+      expect(referencesAMissingKeyword).toBe(true);
+    }
+  });
+
+  it("defaults atsScore fields to safe empty values when the tool_use response omits them (never throws)", async () => {
+    const { score, rationale, topStrengths, keyGaps, recommendation, predictedQuestions, starlaStories } = FULL_PACKET;
+    mockCreate.mockResolvedValueOnce({
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "toolu_test",
+          name: "report_prep_packet",
+          input: { score, rationale, topStrengths, keyGaps, recommendation, predictedQuestions, starlaStories },
+        },
+      ],
+      model: "claude-opus-5",
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 10 },
+    });
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    expect(result.atsScore).toEqual({ keywordOverlapScore: 0, matchedKeywords: [], missingKeywords: [], resumeTweaks: [], parseabilityIssues: [], resumeChecked: false });
+  });
+});
+
+describe("generatePrepPacket: parseabilityIssues (career-documents epic, real-parseability-check story)", () => {
+  let tmpDataDir: string;
+  let tmpKeyDir: string;
+
+  beforeEach(() => {
+    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-prep-parseability-test-"));
+    tmpKeyDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-prep-parseability-test-key-"));
+    process.env.XDG_DATA_HOME = tmpDataDir;
+    process.env.XDG_CONFIG_HOME = tmpKeyDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDataDir, { recursive: true, force: true });
+    fs.rmSync(tmpKeyDir, { recursive: true, force: true });
+    delete process.env.XDG_DATA_HOME;
+    delete process.env.XDG_CONFIG_HOME;
+  });
+
+  const PACKET_WITH_PARSEABILITY: PrepPacketContent = {
+    ...FULL_PACKET,
+    atsScore: {
+      ...FULL_PACKET.atsScore,
+      parseabilityIssues: ["Contact info is in a page header -- many ATS parsers skip headers entirely."],
+    },
+  };
+
+  it("when applyProfile.resumePath is set and loadResume() succeeds, embeds the real resume as a document content block", async () => {
+    const pdfBytes = Buffer.from("%PDF-1.4 fake resume for parseability test");
+    const { path: resumePath } = saveResume(pdfBytes, "application/pdf");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+    mockCreate.mockResolvedValueOnce(fakePrepToolResponse(PACKET_WITH_PARSEABILITY));
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfileWithResume, "fake-api-key");
+
+    expect(result.atsScore.parseabilityIssues).toEqual(PACKET_WITH_PARSEABILITY.atsScore.parseabilityIssues);
+    expect(result.atsScore.resumeChecked).toBe(true);
+    const call = mockCreate.mock.calls[0]?.[0] as Anthropic.MessageCreateParams;
+    const content = call.messages[0]?.content;
+    if (!Array.isArray(content)) throw new Error("expected an array of content blocks");
+    const documentBlock = content.find((b) => b.type === "document");
+    expect(documentBlock).toBeDefined();
+  });
+
+  it("still exactly ONE Anthropic API call even when a resume is embedded", async () => {
+    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 another fake resume"), "application/pdf");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+    mockCreate.mockResolvedValueOnce(fakePrepToolResponse(PACKET_WITH_PARSEABILITY));
+
+    await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfileWithResume, "fake-api-key");
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a plain-text saved resume is embedded as a text block, not a document block", async () => {
+    const { path: resumePath } = saveResume(Buffer.from("Jane Doe -- backend engineer, plain text resume."), "text/plain");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+    mockCreate.mockResolvedValueOnce(fakePrepToolResponse(PACKET_WITH_PARSEABILITY));
+
+    await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfileWithResume, "fake-api-key");
+
+    const call = mockCreate.mock.calls[0]?.[0] as Anthropic.MessageCreateParams;
+    const content = call.messages[0]?.content;
+    if (!Array.isArray(content)) throw new Error("expected an array of content blocks");
+    expect(content.some((b) => b.type === "document")).toBe(false);
+    const fullPrompt = content
+      .filter((b): b is Anthropic.TextBlockParam => b.type === "text")
+      .map((b) => b.text)
+      .join("\n---\n");
+    expect(fullPrompt).toContain("Jane Doe -- backend engineer, plain text resume.");
+  });
+
+  it("when applyProfile.resumePath is unset, behaves exactly as ats-navigator's own keyword-overlap-only shipped it -- no document block, parseabilityIssues empty", async () => {
+    mockCreate.mockResolvedValueOnce(fakePrepToolResponse(FULL_PACKET));
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    expect(result.atsScore.parseabilityIssues).toEqual([]);
+    expect(result.atsScore.resumeChecked).toBe(false);
+    expect(result.atsScore.keywordOverlapScore).toEqual(FULL_PACKET.atsScore.keywordOverlapScore);
+    const call = mockCreate.mock.calls[0]?.[0] as Anthropic.MessageCreateParams;
+    const content = call.messages[0]?.content;
+    if (!Array.isArray(content)) throw new Error("expected an array of content blocks");
+    expect(content.some((b) => b.type === "document")).toBe(false);
+  });
+
+  it("when resumePath is set but the file has been deleted, degrades gracefully -- no error, no document block, parseabilityIssues empty", async () => {
+    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 to be deleted"), "application/pdf");
+    fs.unlinkSync(resumePath);
+    const applyProfileWithMissingResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+    mockCreate.mockResolvedValueOnce(fakePrepToolResponse(FULL_PACKET));
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfileWithMissingResume, "fake-api-key");
+
+    expect(result.atsScore.parseabilityIssues).toEqual([]);
+    expect(result.atsScore.resumeChecked).toBe(false);
+    const call = mockCreate.mock.calls[0]?.[0] as Anthropic.MessageCreateParams;
+    const content = call.messages[0]?.content;
+    if (!Array.isArray(content)) throw new Error("expected an array of content blocks");
+    expect(content.some((b) => b.type === "document")).toBe(false);
+  });
+
+  it("never surfaces parseabilityIssues the model returned if no resume was actually attached (belt-and-suspenders)", async () => {
+    // Simulates the model ignoring the "empty when no resume attached"
+    // instruction -- this call has NO resumePath, yet the mocked response
+    // still tries to claim parseabilityIssues.
+    mockCreate.mockResolvedValueOnce(fakePrepToolResponse(PACKET_WITH_PARSEABILITY));
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    expect(result.atsScore.parseabilityIssues).toEqual([]);
   });
 });

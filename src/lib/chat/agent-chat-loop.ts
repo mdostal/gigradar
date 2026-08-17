@@ -41,6 +41,7 @@ import { buildAuthorizationUrl, deleteTokenSet } from "../auth/oauth2.js";
 import { resolveOAuthClientCredentials } from "../auth/oauth-credentials.js";
 import { GMAIL_PROVIDER } from "../auth/oauth-providers/gmail.js";
 import { resolveAllowedOrigins, resolveLoginUrl } from "../sources/origins.js";
+import { SOURCE_PRESETS, sourceConfigFromPreset } from "../sources/source-presets.js";
 import { computeStatusStrip } from "../status/status-strip.js";
 import { getGig, listGigs, setStatus } from "../store/gigs.js";
 import { saveInterviewPrep } from "../store/prep.js";
@@ -66,6 +67,8 @@ const CANCEL_CAPTURE_LOGIN_TOOL = "cancel_capture_login";
 const START_GMAIL_CONNECT_TOOL = "start_gmail_connect";
 const DISCONNECT_GMAIL_TOOL = "disconnect_gmail";
 const TAKE_SCREENSHOT_TOOL = "take_screenshot";
+const LIST_SOURCE_PRESETS_TOOL = "list_source_presets";
+const ADD_SOURCE_TOOL = "add_source";
 
 /** Every tool NOT in this set is read-only and auto-executes; every tool IN this set is approval-gated, no exceptions. */
 const WRITE_TOOLS = new Set([
@@ -78,6 +81,7 @@ const WRITE_TOOLS = new Set([
   CANCEL_CAPTURE_LOGIN_TOOL,
   START_GMAIL_CONNECT_TOOL,
   DISCONNECT_GMAIL_TOOL,
+  ADD_SOURCE_TOOL,
 ]);
 
 const GIG_STATUS_VALUES = ["new", "applied", "interview", "archived", "ignored"] as const;
@@ -200,6 +204,27 @@ const CHAT_TOOLS: Anthropic.Tool[] = [
     description:
       "Take a screenshot of the login capture window this chat currently has open (started via start_capture_login), so you can see what's on screen right now. Read-only -- runs immediately, no approval needed. Fails if no capture is currently open.",
     input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: LIST_SOURCE_PRESETS_TOOL,
+    description:
+      "List available source presets (curated job platforms with a ready-made config, e.g. Indeed, Welcome to the Jungle, Zoho Recruit) that add_source can add. Read-only -- runs immediately, no approval needed.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: ADD_SOURCE_TOOL,
+    description:
+      "Propose adding a new source. Either presetId (from a prior list_source_presets result) alone, OR sourceId + url (+ optional hint) for a platform with no preset. Requires explicit user approval before it runs.",
+    input_schema: {
+      type: "object",
+      properties: {
+        presetId: { type: "string", description: "A preset id from list_source_presets, e.g. \"indeed\". Preferred when one exists." },
+        sourceId: { type: "string", description: "Required only when presetId is omitted: a short, url-safe id for this source, e.g. \"monster\"." },
+        url: { type: "string", description: "Required only when presetId is omitted: the page to extract listings from." },
+        hint: { type: "string", description: "Optional, only used when presetId is omitted: a short description of the page's listing layout." },
+      },
+      additionalProperties: false,
+    },
   },
 ];
 
@@ -354,6 +379,11 @@ async function executeReadOnlyTool(toolUse: Anthropic.ToolUseBlock, entry: LoopE
     };
   }
 
+  if (toolUse.name === LIST_SOURCE_PRESETS_TOOL) {
+    const presets = SOURCE_PRESETS.map((p) => ({ id: p.id, label: p.label, description: p.description }));
+    return { message: toolResultMessage(toolUse.id, JSON.stringify(presets)) };
+  }
+
   throw new Error(`${MODULE_PREFIX}: unrecognized read-only tool "${toolUse.name}".`);
 }
 
@@ -378,6 +408,8 @@ function describeProposal(tool: string, input: Record<string, unknown>): string 
       return `Start a Gmail OAuth connection for source "${input.sourceId}"`;
     case DISCONNECT_GMAIL_TOOL:
       return `Disconnect source "${input.sourceId}"'s connected Gmail account`;
+    case ADD_SOURCE_TOOL:
+      return input.presetId ? `Add source from the "${input.presetId}" preset` : `Add source "${input.sourceId}" (${input.url})`;
     default:
       return tool;
   }
@@ -486,6 +518,61 @@ async function executeWriteTool(tool: string, input: Record<string, unknown>, ap
     const backend = sessionBackendFrom(sourceConfigFor(config, sourceId));
     await deleteTokenSet(GMAIL_PROVIDER, sourceId, backend);
     return `Disconnected "${sourceId}"'s Gmail account.`;
+  }
+
+  if (tool === ADD_SOURCE_TOOL) {
+    // existingIds is computed from the FRESH raw read below, not the
+    // `config` param -- both the collision check and the write itself
+    // must agree on the same up-to-date source-of-truth, never a
+    // possibly-stale snapshot the caller resolved earlier in the request.
+    const raw = readRawConfig();
+    const rawSources = Array.isArray(raw.sources) ? [...(raw.sources as unknown[])] : [];
+    const existingIds = rawSources
+      .map((s) => (typeof s === "object" && s !== null ? (s as Record<string, unknown>).id : undefined))
+      .filter((id): id is string => typeof id === "string");
+
+    const presetId = input.presetId ? String(input.presetId) : undefined;
+    let newSource: SourceConfig;
+    let suggestsGmailDigest = false;
+    let label = presetId ?? "";
+
+    if (presetId) {
+      const preset = SOURCE_PRESETS.find((p) => p.id === presetId);
+      if (!preset) throw new Error(`add_source: unknown presetId "${presetId}" -- call list_source_presets first.`);
+      newSource = sourceConfigFromPreset(preset, existingIds);
+      suggestsGmailDigest = preset.suggestsGmailDigest ?? false;
+      label = preset.label;
+    } else {
+      const sourceId = String(input.sourceId ?? "");
+      const url = String(input.url ?? "");
+      const hint = input.hint ? String(input.hint) : undefined;
+      if (!sourceId || !url) throw new Error("add_source: either presetId, or sourceId + url, is required.");
+      let id = sourceId;
+      const taken = new Set(existingIds);
+      let suffix = 2;
+      while (taken.has(id)) {
+        id = `${sourceId}-${suffix}`;
+        suffix += 1;
+      }
+      newSource = { id, enabled: true, kind: "custom-llm", settings: { url, ...(hint && { hint }) } };
+      label = id;
+    }
+
+    rawSources.push(newSource);
+    const saveResult = saveConfig({ sources: rawSources });
+    if (!saveResult.ok) throw new Error(saveResult.error);
+
+    let outcome = `Added source "${newSource.id}" (${label}).`;
+    // ats-navigator epic, chat-guided-source-onboarding story: fold the
+    // Gmail half of onboarding ("HALF of these things will go with a
+    // gmail addition") into the SAME turn rather than a separate ask --
+    // start_gmail_connect remains its own independently approval-gated
+    // tool call, this is only a hint in the tool_result text for the
+    // model to act on if it chooses to.
+    if (suggestsGmailDigest) {
+      outcome += ` Heads up: this platform typically also emails application updates -- want me to connect Gmail for it too (start_gmail_connect)?`;
+    }
+    return outcome;
   }
 
   throw new Error(`${MODULE_PREFIX}: unrecognized write tool "${tool}".`);
