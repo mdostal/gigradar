@@ -76,7 +76,7 @@ jobs:
           # section and docs/index.html's Install step for the other two
           # places someone might land first.
           releaseBody: |
-            **The `.dmg` is unsigned** — no Apple Developer ID certificate yet. macOS Gatekeeper will refuse to open it with a "gigradar.app is damaged and can't be opened" dialog. That's Gatekeeper rejecting the ad-hoc signature, not a corrupted download.
+            **The `.dmg` is unsigned** — no Apple Developer ID certificate yet. macOS Gatekeeper will block the first launch with an "unidentified developer" warning. That's Gatekeeper flagging an unsigned app, not a corrupted download.
 
             After dragging it to `/Applications`, run this once, then launch normally:
 

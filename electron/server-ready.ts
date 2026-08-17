@@ -3,6 +3,80 @@
 // unit-tested against a plain node:http server in the automated suite,
 // with no real Electron process needed. main.ts wires this up to the
 // spawned `next start` child and the native dialog/BrowserWindow.
+import { createServer } from "node:net";
+
+/**
+ * Asks the OS for a free TCP port (bind to port 0, read back what it
+ * assigned, then close) rather than hardcoding one -- a hardcoded 3000
+ * collides with anything else already using that port (a dev server,
+ * another local app, etc.), which failed this app's own startup outright
+ * with no workaround short of freeing the port. Mirrors src-tauri/src/lib.rs's
+ * find_free_port() -- same reasoning, same small accepted TOCTOU race
+ * between closing this probe socket and the real server binding the same
+ * port, acceptable for this app's single-user desktop context.
+ */
+export function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        server.close();
+        reject(new Error("gigradar: could not read back the assigned port"));
+        return;
+      }
+      const { port } = address;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+/** gigradar's documented default port (docs/gmail-oauth-setup.md tells users to
+ * register their Google OAuth client's redirect URI against this port) -- kept
+ * as a PREFERENCE, not a hard requirement, so an install still starts even when
+ * something else on the machine already holds it. */
+export const DEFAULT_PORT = 3000;
+
+/** True if `port` is currently free to bind on 127.0.0.1. */
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+export interface ResolvedPort {
+  port: number;
+  /** True when `preferredPort` (or a `GIGRADAR_PORT` override) was unavailable
+   * and a random free port was substituted instead -- callers should warn the
+   * user, since Gmail OAuth's redirect URI is only valid for a fixed, ahead-of-time
+   * registered port and won't match a fallback. */
+  usedFallback: boolean;
+  /** The port that was actually tried first (the `GIGRADAR_PORT` override, if
+   * set, otherwise `preferredPort`). */
+  preferredPort: number;
+}
+
+/** Prefers `GIGRADAR_PORT` (if set) or `preferredPort` (DEFAULT_PORT by
+ * default) so a stable, once-registered Gmail OAuth redirect URI keeps
+ * working across launches -- but falls back to any OS-assigned free port
+ * rather than refusing to start at all when the preferred port is already
+ * held by some other local process (e.g. an unrelated service that also
+ * happens to use it). */
+export async function resolvePort(preferredPort: number = DEFAULT_PORT): Promise<ResolvedPort> {
+  const envOverride = process.env.GIGRADAR_PORT ? Number(process.env.GIGRADAR_PORT) : undefined;
+  const wanted = envOverride && Number.isFinite(envOverride) ? envOverride : preferredPort;
+
+  if (await isPortFree(wanted)) {
+    return { port: wanted, usedFallback: false, preferredPort: wanted };
+  }
+  const fallback = await findFreePort();
+  return { port: fallback, usedFallback: true, preferredPort: wanted };
+}
 
 /** Thrown by `waitForServerReady` when the deadline passes with no
  * successful response. Distinguished from a generic Error so callers (e.g.
