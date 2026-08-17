@@ -15,6 +15,7 @@ import {
   extractProfileFromResumeAction,
   finishCaptureAction,
   getAutoFireApprovedCountAction,
+  removeResumeAction,
   saveConfigAction,
   setAnthropicApiKeyAction,
   startCaptureAction,
@@ -127,6 +128,17 @@ interface DraftApplyProfile {
   headline: string;
   bio: string;
   rateAnchor: string;
+  /**
+   * career-documents epic: NOT a form field (no text input edits this) --
+   * threaded through configToDraft()/draftToEdits() purely so the "Save
+   * config" button's own top-level-replace applyProfile write never
+   * silently drops a resumePath the resume-upload flow just set via its
+   * OWN, separate saveConfig() call. Same reasoning DraftSource.settings
+   * (a raw SettingPair[] pass-through) already protects
+   * sessionStatePath from -- applyProfile has no such generic pass-through,
+   * so this field exists specifically to close that gap.
+   */
+  resumePath?: string;
 }
 
 /** Mirrors `AutoFireRuleConfig` in src/lib/types.ts — numeric fields are controlled-input strings, same convention as DraftEngagementProfile. */
@@ -271,6 +283,7 @@ function configToDraft(config: Config): DraftConfig {
       headline: config.applyProfile?.headline ?? "",
       bio: config.applyProfile?.bio ?? "",
       rateAnchor: config.applyProfile?.rateAnchor !== undefined ? String(config.applyProfile.rateAnchor) : "",
+      resumePath: config.applyProfile?.resumePath,
     },
   };
 }
@@ -426,6 +439,7 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
     if (draft.applyProfile.rateAnchor.trim() !== "") {
       applyProfile.rateAnchor = draftNumber(draft.applyProfile.rateAnchor);
     }
+    if (draft.applyProfile.resumePath) applyProfile.resumePath = draft.applyProfile.resumePath;
     edits.applyProfile = applyProfile;
   } else {
     edits.applyProfile = undefined;
@@ -603,8 +617,10 @@ type ApiKeyUIState =
 type ExtractUIState =
   | { status: "idle" }
   | { status: "extracting" }
-  | { status: "success"; warnings: string[] }
+  | { status: "success"; warnings: string[]; resumeSaved: boolean; resumeSaveError?: string }
   | { status: "error"; message: string };
+
+type RemoveResumeUIState = { status: "idle" } | { status: "removing" } | { status: "error"; message: string };
 
 // ---------------------------------------------------------------------------
 // Small reusable pieces
@@ -1409,6 +1425,7 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [linksText, setLinksText] = useState("");
   const [extractState, setExtractState] = useState<ExtractUIState>({ status: "idle" });
+  const [removeResumeState, setRemoveResumeState] = useState<RemoveResumeUIState>({ status: "idle" });
 
   function handleResumeFileChange(e: ChangeEvent<HTMLInputElement>) {
     setResumeFile(e.target.files?.[0] ?? null);
@@ -1429,6 +1446,13 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
     // Merge, never replace — extracted roles/skills are additive enrichment
     // of whatever's already in the draft (which may itself hold unsaved
     // hand-edits), deliberately unlike role-templates' overwrite-on-apply.
+    // resumePath is folded into draft.applyProfile too (not just shown as a
+    // status message) — this action already wrote it to config.json
+    // directly, and draft needs to reflect that NOW so a later "Save
+    // config" click (built from draft, see draftToEdits()) doesn't
+    // overwrite applyProfile with a stale, pre-upload value that drops it —
+    // same "keep draft and disk in sync after a direct write" discipline
+    // upsertSettingPair()'s own doc comment documents for Capture Login.
     setDraft((prev) => ({
       ...prev,
       profile: {
@@ -1436,8 +1460,25 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
         roles: mergeDedupe(prev.profile.roles, result.data.roles),
         skills: mergeDedupe(prev.profile.skills, result.data.skills),
       },
+      applyProfile: result.data.resumePath ? { ...prev.applyProfile, resumePath: result.data.resumePath } : prev.applyProfile,
     }));
-    setExtractState({ status: "success", warnings: result.data.warnings });
+    setExtractState({
+      status: "success",
+      warnings: result.data.warnings,
+      resumeSaved: result.data.resumeSaved,
+      resumeSaveError: result.data.resumeSaveError,
+    });
+  }
+
+  async function handleRemoveResume() {
+    setRemoveResumeState({ status: "removing" });
+    const result = await removeResumeAction();
+    if (!result.ok) {
+      setRemoveResumeState({ status: "error", message: result.error });
+      return;
+    }
+    setDraft((prev) => ({ ...prev, applyProfile: { ...prev.applyProfile, resumePath: undefined } }));
+    setRemoveResumeState({ status: "idle" });
   }
 
   function handleSubmit(e: FormEvent) {
@@ -1607,8 +1648,28 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
               roles/skills are MERGED into the Roles/Skills fields above (existing entries are kept, never
               overwritten) — review and edit as needed, nothing is saved until you click &ldquo;Save
               config&rdquo; below. GitHub profiles and personal portfolio/blog links work well; LinkedIn
-              links are not reliably supported (bot-walled against unauthenticated fetches).
+              links are not reliably supported (bot-walled against unauthenticated fetches). Uploading a
+              resume also saves it (encrypted) so gigradar can reuse it later — e.g. a real ATS-format check
+              in prep packets — without asking you to re-upload every time.
             </p>
+            {draft.applyProfile.resumePath && (
+              <div className="mt-2 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                <span role="status">Resume on file.</span>
+                <button
+                  type="button"
+                  onClick={handleRemoveResume}
+                  disabled={removeResumeState.status === "removing"}
+                  className="font-medium text-red-600 hover:underline disabled:opacity-50"
+                >
+                  {removeResumeState.status === "removing" ? "Removing…" : "Remove"}
+                </button>
+                {removeResumeState.status === "error" && (
+                  <span role="alert" className="text-red-700">
+                    {removeResumeState.message}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="mt-2 flex flex-col gap-2">
               <label>
                 <span className={labelClass}>Resume (PDF or plain text)</span>
@@ -1643,6 +1704,16 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                 <p role="status" className="text-xs text-green-700">
                   Extracted roles/skills merged into the fields above — review, edit, then Save.
                 </p>
+                {extractState.resumeSaved && (
+                  <p role="status" className="text-xs text-green-700">
+                    Resume saved.
+                  </p>
+                )}
+                {extractState.resumeSaveError && (
+                  <p role="alert" className="text-xs text-amber-700">
+                    {extractState.resumeSaveError}
+                  </p>
+                )}
                 {extractState.warnings.length > 0 && (
                   <ul className="mt-1 flex flex-col gap-0.5">
                     {extractState.warnings.map((w, i) => (

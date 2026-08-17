@@ -11,6 +11,7 @@ import { resolveOAuthClientCredentials } from "@/lib/auth/oauth-credentials";
 import { GMAIL_PROVIDER } from "@/lib/auth/oauth-providers/gmail";
 import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
+import { deleteResume, getResumePath, saveResume } from "@/lib/documents/resume-store";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
 import { customLlmSource } from "@/lib/sources/custom-llm-source";
 import { resolveAllowedOrigins, resolveLoginUrl } from "@/lib/sources/origins";
@@ -408,16 +409,28 @@ const MISSING_API_KEY_ERROR =
  * the story's documented v1 scope (PDF and plain text only; .docx/.doc
  * explicitly not verified, per design-discussion.md §7).
  */
-async function buildExtractInput(formData: FormData): Promise<ExtractProfileInput> {
+/**
+ * `resumeUpload` rides alongside `input` (career-documents epic,
+ * persist-resume-on-upload story) — the SAME raw bytes/mediaType
+ * `extractProfile()` reads for its one-shot analysis, ALSO handed to
+ * `saveResume()` below so a resume upload persists once, not twice.
+ * `undefined` when no file was uploaded at all.
+ */
+async function buildExtractInput(
+  formData: FormData,
+): Promise<{ input: ExtractProfileInput; resumeUpload?: { data: Buffer; mediaType: string } }> {
   const input: ExtractProfileInput = {};
+  let resumeUpload: { data: Buffer; mediaType: string } | undefined;
 
   const file = formData.get("resumeFile");
   if (file instanceof File && file.size > 0) {
     const buffer = Buffer.from(await file.arrayBuffer());
     if (file.type === "application/pdf") {
       input.resumeFile = { data: buffer, mediaType: "application/pdf" };
+      resumeUpload = { data: buffer, mediaType: "application/pdf" };
     } else {
       input.resumeText = buffer.toString("utf8");
+      resumeUpload = { data: buffer, mediaType: "text/plain" };
     }
   }
 
@@ -430,14 +443,19 @@ async function buildExtractInput(formData: FormData): Promise<ExtractProfileInpu
     if (links.length > 0) input.links = links;
   }
 
-  return input;
+  return { input, resumeUpload };
+}
+
+/** Reads `applyProfile` off the raw (not-yet-validated) config document, as a plain object -- same "tolerant read, empty object if absent/malformed" convention `rawSourceConfigFor()` above uses for `sources`. */
+function rawApplyProfile(raw: Record<string, unknown>): Record<string, unknown> {
+  return typeof raw.applyProfile === "object" && raw.applyProfile !== null ? { ...(raw.applyProfile as Record<string, unknown>) } : {};
 }
 
 /**
  * Wraps `extractProfile()` (`src/lib/profile-ingestion/extract.ts`) for the
  * "Extract from resume/link" button. Accepts a `FormData` file upload
  * (`resumeFile`, PDF or plain text) plus a `links` textarea value, and
- * returns `ActionResult<{roles, skills, warnings}>`.
+ * returns `ActionResult<{roles, skills, warnings, resumeSaved, resumeSaveError?}>`.
  *
  * **The API key is resolved fresh, INSIDE this handler, on every call** —
  * via `env-store.ts`'s `readEnvVar()`, never `process.env` and never a
@@ -458,27 +476,92 @@ async function buildExtractInput(formData: FormData): Promise<ExtractProfileInpu
  * fully unusable input or a genuine Anthropic API error reaches this
  * function's `catch` and comes back as `{ok:false}`.
  *
- * Writes nothing, ever: neither the uploaded resume bytes nor the extracted
- * result touch disk here. Nothing is persisted until the user's own,
- * separate, existing Save action folds the merged draft into `config.json`
- * via `saveConfigAction` above — this action has no `saveConfig()`/
- * `revalidatePath()` call of any kind.
+ * **career-documents epic, persist-resume-on-upload story**: when a resume
+ * file was uploaded, it's now ALSO persisted — `saveResume()`
+ * (`resume-store.ts`) writes the real bytes encrypted-at-rest, and (only
+ * when `applyProfile.email` is already set, since `ApplyProfileConfigSchema`
+ * requires it) `saveConfig()` records the resulting path as
+ * `applyProfile.resumePath`. This is DELIBERATELY independent of the
+ * extraction result: `resumeSaved`/`resumeSaveError` report persistence
+ * status without ever downgrading a successful extraction to `{ok:false}` —
+ * "fetch your stuff into gigradar" happens automatically on upload, but a
+ * persistence hiccup (or an as-yet-unset email) never hides the
+ * roles/skills the user came here for. When no `applyProfile.email` is set
+ * yet, `resumeSaveError` names that specific, actionable fix rather than a
+ * raw schema-validation error.
  */
-export async function extractProfileFromResumeAction(
-  formData: FormData,
-): Promise<ActionResult<{ roles: string[]; skills: string[]; warnings: string[] }>> {
+export async function extractProfileFromResumeAction(formData: FormData): Promise<
+  ActionResult<{
+    roles: string[];
+    skills: string[];
+    warnings: string[];
+    resumeSaved: boolean;
+    resumePath?: string;
+    resumeSaveError?: string;
+  }>
+> {
   const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
   if (!apiKey) {
     return actionErr(new Error(MISSING_API_KEY_ERROR));
   }
 
   try {
-    const input = await buildExtractInput(formData);
+    const { input, resumeUpload } = await buildExtractInput(formData);
     const result = await extractProfile(input, apiKey);
-    return actionOk(result);
+
+    let resumeSaved = false;
+    let resumePath: string | undefined;
+    let resumeSaveError: string | undefined;
+    if (resumeUpload) {
+      try {
+        const saved = saveResume(resumeUpload.data, resumeUpload.mediaType);
+        const currentApplyProfile = rawApplyProfile(readRawConfig());
+        if (typeof currentApplyProfile.email !== "string" || currentApplyProfile.email.trim() === "") {
+          resumeSaveError =
+            'The resume file was saved, but linking it to your profile needs an email set first — enter one in "Apply profile" and save, then re-upload to finish linking it.';
+        } else {
+          const saveResult = saveConfig({ applyProfile: { ...currentApplyProfile, resumePath: saved.path } });
+          if (!saveResult.ok) throw new Error(saveResult.error);
+          resumeSaved = true;
+          resumePath = saved.path;
+          revalidatePath("/config");
+        }
+      } catch (e) {
+        resumeSaveError = e instanceof Error ? e.message : String(e);
+      }
+    }
+
+    return actionOk({ ...result, resumeSaved, resumePath, resumeSaveError });
   } catch (e) {
     return actionErr(e);
   }
+}
+
+/**
+ * Removes the persisted resume: deletes the on-disk file (via
+ * `deleteResume()`, idempotent even if it's already gone) and clears
+ * `applyProfile.resumePath` from `config.json`. Falls back to
+ * `getResumePath()`'s well-known fixed path when `resumePath` isn't set in
+ * config (e.g. a prior upload's file save succeeded but its config-link
+ * step didn't, per `extractProfileFromResumeAction()`'s own
+ * `resumeSaveError` case above) — this action still cleans it up.
+ */
+export async function removeResumeAction(): Promise<ActionResult<null>> {
+  try {
+    const currentApplyProfile = rawApplyProfile(readRawConfig());
+    const resumePath = typeof currentApplyProfile.resumePath === "string" ? currentApplyProfile.resumePath : getResumePath();
+    deleteResume(resumePath);
+
+    if ("resumePath" in currentApplyProfile) {
+      const { resumePath: _drop, ...rest } = currentApplyProfile;
+      const saveResult = saveConfig({ applyProfile: rest });
+      if (!saveResult.ok) return actionErr(new Error(saveResult.error));
+    }
+  } catch (e) {
+    return actionErr(e);
+  }
+  revalidatePath("/config");
+  return actionOk(null);
 }
 
 /**

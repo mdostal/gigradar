@@ -19,10 +19,21 @@ vi.mock("@/lib/profile-ingestion/extract", () => ({
   extractProfile: (...args: unknown[]) => mockExtractProfile(...args),
 }));
 
+// career-documents epic: extractProfileFromResumeAction/removeResumeAction
+// now call revalidatePath() on a successful resume-persistence write, same
+// as every other config-mutating action in this file's sibling test files
+// (actions.test.ts/capture-actions.test.ts/gmail-oauth-actions.test.ts)
+// already mocks it for the same reason: revalidatePath() asserts it's
+// running inside a real Next.js request context, which this Vitest suite
+// isn't.
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+
 import { getConfigPath, getEnvPath } from "@/lib/config/load";
 import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
+import { readRawConfig, saveConfig } from "@/lib/config/save";
+import { loadResume } from "@/lib/documents/resume-store";
 import { decrypt } from "@/lib/security/vault";
-import { extractProfileFromResumeAction, setAnthropicApiKeyAction } from "../actions";
+import { extractProfileFromResumeAction, removeResumeAction, setAnthropicApiKeyAction } from "../actions";
 
 let tmpDir: string;
 let keyTmpDir: string;
@@ -282,6 +293,127 @@ describe("extractProfileFromResumeAction: never persists anything (regression gu
     mockExtractProfile.mockRejectedValue(new Error("boom"));
     const failed = await extractProfileFromResumeAction(new FormData());
     expect(failed.ok).toBe(false);
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+  });
+});
+
+// -- career-documents epic, persist-resume-on-upload story ------------------
+
+function seedBaseConfig(email = "jane@example.com") {
+  return saveConfig({
+    profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
+    needs: {
+      engagementProfiles: [
+        { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+      ],
+      freshStageOnly: false,
+      remoteOnly: false,
+    },
+    sources: [],
+    applyProfile: { email },
+  });
+}
+
+describe("extractProfileFromResumeAction: persists the uploaded resume (career-documents epic)", () => {
+  beforeEach(() => {
+    setEnvVar("ANTHROPIC_API_KEY", "test-key");
+  });
+
+  it("when applyProfile.email is already set, saves the resume and records resumePath in config.json", async () => {
+    expect(seedBaseConfig().ok).toBe(true);
+    mockExtractProfile.mockResolvedValue(fakeExtractResult({ roles: ["Engineer"] }));
+    const pdfBytes = Buffer.from("%PDF-1.4 fake pdf bytes for persistence test");
+    const file = new File([pdfBytes], "resume.pdf", { type: "application/pdf" });
+    const formData = new FormData();
+    formData.set("resumeFile", file);
+
+    const result = await extractProfileFromResumeAction(formData);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.data.resumeSaved).toBe(true);
+    expect(result.data.resumeSaveError).toBeUndefined();
+    expect(result.data.resumePath).toBeDefined();
+
+    const raw = readRawConfig() as { applyProfile?: { resumePath?: string; email?: string } };
+    expect(raw.applyProfile?.resumePath).toBe(result.data.resumePath);
+    expect(raw.applyProfile?.email).toBe("jane@example.com");
+
+    const loaded = loadResume(result.data.resumePath!);
+    expect(loaded).toBeDefined();
+    expect(Buffer.compare(loaded!.data, pdfBytes)).toBe(0);
+  });
+
+  it("when no applyProfile.email is set yet, saves the resume FILE but reports a specific, actionable resumeSaveError instead of writing config.json", async () => {
+    mockExtractProfile.mockResolvedValue(fakeExtractResult());
+    const file = new File([Buffer.from("plain text resume")], "resume.txt", { type: "text/plain" });
+    const formData = new FormData();
+    formData.set("resumeFile", file);
+
+    const result = await extractProfileFromResumeAction(formData);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.data.resumeSaved).toBe(false);
+    expect(result.data.resumeSaveError).toContain("email");
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+  });
+
+  it("extraction succeeds (roles/skills returned) even when resume persistence itself would fail -- the two are independent", async () => {
+    mockExtractProfile.mockResolvedValue(fakeExtractResult({ roles: ["Fractional CTO"], skills: ["Leadership"] }));
+    const file = new File([Buffer.from("resume text")], "resume.txt", { type: "text/plain" });
+    const formData = new FormData();
+    formData.set("resumeFile", file);
+
+    const result = await extractProfileFromResumeAction(formData);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.data.roles).toEqual(["Fractional CTO"]);
+    expect(result.data.skills).toEqual(["Leadership"]);
+  });
+
+  it("uploading only links (no resumeFile) never touches resume-store at all -- resumeSaved is false, no resumePath", async () => {
+    expect(seedBaseConfig().ok).toBe(true);
+    mockExtractProfile.mockResolvedValue(fakeExtractResult());
+    const formData = new FormData();
+    formData.set("links", "https://github.com/jane");
+
+    const result = await extractProfileFromResumeAction(formData);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.data.resumeSaved).toBe(false);
+    expect(result.data.resumePath).toBeUndefined();
+  });
+});
+
+describe("removeResumeAction", () => {
+  it("deletes the on-disk resume file and clears applyProfile.resumePath", async () => {
+    expect(seedBaseConfig().ok).toBe(true);
+    setEnvVar("ANTHROPIC_API_KEY", "test-key");
+    mockExtractProfile.mockResolvedValue(fakeExtractResult());
+    const file = new File([Buffer.from("a resume")], "resume.txt", { type: "text/plain" });
+    const formData = new FormData();
+    formData.set("resumeFile", file);
+    const uploadResult = await extractProfileFromResumeAction(formData);
+    if (!uploadResult.ok) throw new Error("expected ok");
+    const resumePath = uploadResult.data.resumePath!;
+    expect(loadResume(resumePath)).toBeDefined();
+
+    const result = await removeResumeAction();
+
+    expect(result.ok).toBe(true);
+    expect(loadResume(resumePath)).toBeUndefined();
+    const raw = readRawConfig() as { applyProfile?: { resumePath?: string; email?: string } };
+    expect(raw.applyProfile?.resumePath).toBeUndefined();
+    expect(raw.applyProfile?.email).toBe("jane@example.com");
+  });
+
+  it("is safe to call when no resume was ever saved -- no error, no config.json created", async () => {
+    const result = await removeResumeAction();
+
+    expect(result.ok).toBe(true);
     expect(fs.existsSync(getConfigPath())).toBe(false);
   });
 });

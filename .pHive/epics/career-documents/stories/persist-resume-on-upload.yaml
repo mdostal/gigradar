@@ -1,7 +1,7 @@
 id: persist-resume-on-upload
 epic: career-documents
 title: "Extend resume upload to persist + a Resume section in /config"
-status: pending
+status: done
 complexity: low
 methodology: classic
 depends_on: [resume-store]
