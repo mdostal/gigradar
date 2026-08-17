@@ -22,9 +22,8 @@ import { app, BrowserWindow, dialog } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { probeOnce, ServerReadyTimeoutError, waitForServerReady } from "./server-ready.ts";
+import { probeOnce, resolvePort, ServerReadyTimeoutError, waitForServerReady } from "./server-ready.ts";
 
-const SERVER_URL = "http://127.0.0.1:3000";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 let child: ChildProcess | null = null;
@@ -35,8 +34,8 @@ let win: BrowserWindow | null = null;
  * gets its own process group — `npm run start` itself spawns `next start`
  * as a further child, and signaling only the `npm` pid does not reliably
  * propagate to that grandchild. Signaling the negative pid targets the
- * whole group, so nothing is left squatting on port 3000 for the next
- * launch. Safe to call multiple times (window-all-closed AND before-quit
+ * whole group, so nothing is left squatting on our chosen port for the
+ * next launch. Safe to call multiple times (window-all-closed AND before-quit
  * both call this) and safe to call after the child already exited. */
 function killChild(): void {
   if (!child || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
@@ -56,17 +55,35 @@ function showFatalDialog(title: string, message: string): void {
 }
 
 async function main(): Promise<void> {
-  // Pre-flight: if something is already answering on the port before we've
-  // spawned anything of our own, it isn't ours — most likely a concurrent
-  // `npm run dev`/`start`, or a leftover process from a prior launch that
-  // didn't shut down cleanly. Fail fast with an actionable dialog instead
-  // of spawning a second `next start` doomed to fail with EADDRINUSE.
-  if (await probeOnce(SERVER_URL, 500)) {
+  // Prefer DEFAULT_PORT (or a GIGRADAR_PORT override) -- see resolvePort()'s
+  // own doc comment -- but fall back to any OS-assigned free port rather
+  // than refusing to start when that preferred port is already held by an
+  // unrelated local process. A fallback means Gmail OAuth's registered
+  // redirect URI (docs/gmail-oauth-setup.md) won't match this session.
+  const { port, usedFallback, preferredPort } = await resolvePort();
+  const serverUrl = `http://127.0.0.1:${port}`;
+
+  if (usedFallback) {
+    console.warn(
+      `gigradar: preferred port ${preferredPort} is already in use by another process on this ` +
+        `machine -- using ${port} instead so gigradar can still start. If you use Gmail Connect, ` +
+        `its OAuth redirect URI won't match this session; set GIGRADAR_PORT to a port you control ` +
+        `and update your Google OAuth client's redirect URI to match (see docs/gmail-oauth-setup.md).`,
+    );
+  }
+
+  // Pre-flight: if something is already answering on our freshly-chosen
+  // port before we've spawned anything of our own, another process grabbed
+  // it in the brief window between findFreePort() releasing it and us
+  // getting here (or a previous gigradar session left something running).
+  // Fail fast with an actionable dialog instead of spawning a second
+  // `next start` doomed to fail with EADDRINUSE.
+  if (await probeOnce(serverUrl, 500)) {
     showFatalDialog(
       "gigradar — port already in use",
-      `Port 3000 is already in use by another process (e.g. a concurrent "npm run dev" ` +
-        `or "npm run start", or a previous gigradar Electron session that didn't shut down ` +
-        `cleanly).\n\nStop that process first, then relaunch "npm run electron".`,
+      `Port ${port} became unavailable right after gigradar chose it (e.g. a concurrent ` +
+        `process grabbed it, or a previous gigradar Electron session that didn't shut down ` +
+        `cleanly).\n\nRelaunch "npm run electron" to try again.`,
     );
     app.quit();
     return;
@@ -74,7 +91,7 @@ async function main(): Promise<void> {
 
   child = spawn("npm", ["run", "start"], {
     cwd: REPO_ROOT,
-    env: { ...process.env, NODE_OPTIONS: "--experimental-sqlite" },
+    env: { ...process.env, NODE_OPTIONS: "--experimental-sqlite", PORT: String(port) },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
@@ -103,7 +120,7 @@ async function main(): Promise<void> {
     // slipped past the pre-flight check's race window, or any other
     // startup crash) — never wait out the full timeout for a child that's
     // already dead.
-    await Promise.race([waitForServerReady(SERVER_URL, { intervalMs: 300, timeoutMs: 30_000 }), childExitedEarly]);
+    await Promise.race([waitForServerReady(serverUrl, { intervalMs: 300, timeoutMs: 30_000 }), childExitedEarly]);
   } catch (err) {
     const isPortConflict = /EADDRINUSE/.test(stderrTail);
     const isTimeout = err instanceof ServerReadyTimeoutError;
@@ -112,13 +129,13 @@ async function main(): Promise<void> {
     if (isPortConflict) {
       showFatalDialog(
         "gigradar — port already in use",
-        `Port 3000 is already in use by another process. Stop that process first, then ` +
-          `relaunch "npm run electron".${detail}`,
+        `Port ${port} became unavailable after gigradar chose it. Relaunch "npm run electron" ` +
+          `to try again.${detail}`,
       );
     } else if (isTimeout) {
       showFatalDialog(
         "gigradar — failed to start",
-        `gigradar's server did not respond at ${SERVER_URL} within 30 seconds. It may have ` +
+        `gigradar's server did not respond at ${serverUrl} within 30 seconds. It may have ` +
           `failed to start.${detail}`,
       );
     } else {
@@ -138,7 +155,7 @@ async function main(): Promise<void> {
   win.on("closed", () => {
     win = null;
   });
-  await win.loadURL(SERVER_URL);
+  await win.loadURL(serverUrl);
 }
 
 app.whenReady().then(main);
@@ -147,8 +164,8 @@ app.whenReady().then(main);
 // macOS fires before-quit without necessarily firing window-all-closed
 // first, and vice versa closing the last window doesn't always mean the
 // app is quitting on every platform. Both call killChild() (idempotent) so
-// the spawned `next start` process is never left orphaned on port 3000
-// regardless of which shutdown path the user takes.
+// the spawned `next start` process is never left orphaned on its chosen
+// port regardless of which shutdown path the user takes.
 app.on("window-all-closed", () => {
   killChild();
   app.quit();

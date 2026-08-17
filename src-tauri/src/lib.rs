@@ -7,7 +7,7 @@
 // server is confirmed ready — same as electron/main.ts, not a "loading
 // screen that navigates later" pattern, to keep this story's own scope
 // minimal (see structured-outline.md's elicitation notes).
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -18,18 +18,64 @@ use tauri_plugin_shell::ShellExt;
 mod updater;
 
 const SERVER_HOST: &str = "127.0.0.1";
-const SERVER_PORT: &str = "3000";
+/// gigradar's documented default port (docs/gmail-oauth-setup.md tells users
+/// to register their Google OAuth client's redirect URI against this port)
+/// -- kept as a PREFERENCE, not a hard requirement, so the app still starts
+/// even when something else on the machine already holds it.
+const DEFAULT_PORT: u16 = 3000;
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(300);
+
+/// Asks the OS for a free TCP port (bind to port 0, read back what it
+/// assigned, then drop the listener) rather than hardcoding one -- a
+/// hardcoded 3000 collides with anything else already using that port on
+/// the user's machine (a dev server, another app, etc.), which fails this
+/// app's own startup outright with no workaround short of freeing the
+/// port. There's a small window between dropping this listener and the
+/// spawned Node server binding the same port where another process could
+/// grab it first; acceptable for this app's single-user desktop context
+/// (same "good enough, not adversarial" bar `wait_for_server_ready()`
+/// below already assumes) rather than adding a retry loop for a
+/// vanishingly rare race.
+fn find_free_port() -> u16 {
+    TcpListener::bind((SERVER_HOST, 0))
+        .expect("gigradar: could not ask the OS for a free port")
+        .local_addr()
+        .expect("gigradar: could not read back the assigned port")
+        .port()
+}
+
+/// True if `port` is currently free to bind on `SERVER_HOST`.
+fn is_port_free(port: u16) -> bool {
+    TcpListener::bind((SERVER_HOST, port)).is_ok()
+}
+
+/// Prefers `GIGRADAR_PORT` (if set) or `DEFAULT_PORT` so a stable,
+/// once-registered Gmail OAuth redirect URI (docs/gmail-oauth-setup.md)
+/// keeps working across launches, but falls back to any OS-assigned free
+/// port rather than refusing to start when the preferred port is already
+/// held by some other local process. Returns `(port, used_fallback)`.
+fn resolve_server_port() -> (u16, bool) {
+    let preferred = std::env::var("GIGRADAR_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_PORT);
+
+    if is_port_free(preferred) {
+        (preferred, false)
+    } else {
+        (find_free_port(), true)
+    }
+}
 
 /// True once a TCP connect to the server port succeeds — a simple,
 /// dependency-free readiness signal (no HTTP client needed just to poll),
 /// sufficient because the standalone Next.js server only starts listening
 /// once it's genuinely ready to serve, same assumption
 /// electron/server-ready.ts's own HTTP-probe already relied on.
-fn wait_for_server_ready() -> Result<(), String> {
+fn wait_for_server_ready(port: u16) -> Result<(), String> {
     let deadline = Instant::now() + READY_TIMEOUT;
-    let addr = format!("{SERVER_HOST}:{SERVER_PORT}");
+    let addr = format!("{SERVER_HOST}:{port}");
     while Instant::now() < deadline {
         if TcpStream::connect(&addr).is_ok() {
             return Ok(());
@@ -118,6 +164,21 @@ pub fn run() {
             // verified this story) -- just point it at the bundled browser.
             let browsers_dir = resource_dir.join("resources/playwright-browsers");
 
+            // Prefer DEFAULT_PORT (or a GIGRADAR_PORT override), falling back
+            // to any OS-assigned free port -- see resolve_server_port()'s own
+            // doc comment for why. A fallback means Gmail OAuth's registered
+            // redirect URI won't match this session.
+            let (server_port, used_fallback) = resolve_server_port();
+            if used_fallback {
+                log::warn!(
+                    "gigradar: preferred port is already in use by another process on this \
+                     machine -- using {server_port} instead so gigradar can still start. If you \
+                     use Gmail Connect, its OAuth redirect URI won't match this session; set \
+                     GIGRADAR_PORT to a port you control and update your Google OAuth client's \
+                     redirect URI to match (see docs/gmail-oauth-setup.md)."
+                );
+            }
+
             let sidecar = app
                 .shell()
                 .sidecar("node")
@@ -125,7 +186,7 @@ pub fn run() {
                 .args([server_entry.to_string_lossy().to_string()])
                 .env("NODE_OPTIONS", "--experimental-sqlite")
                 .env("PLAYWRIGHT_BROWSERS_PATH", browsers_dir.to_string_lossy().to_string())
-                .env("PORT", SERVER_PORT);
+                .env("PORT", server_port.to_string());
 
             let (mut rx, _child) = sidecar
                 .spawn()
@@ -152,9 +213,9 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
-                match wait_for_server_ready() {
+                match wait_for_server_ready(server_port) {
                     Ok(()) => {
-                        let url = format!("http://{SERVER_HOST}:{SERVER_PORT}");
+                        let url = format!("http://{SERVER_HOST}:{server_port}");
                         WebviewWindowBuilder::new(
                             &app_handle,
                             "main",
