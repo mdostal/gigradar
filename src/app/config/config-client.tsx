@@ -139,6 +139,8 @@ interface DraftApplyProfile {
    * so this field exists specifically to close that gap.
    */
   resumePath?: string;
+  /** career-documents epic, persisted-links story: portfolio/GitHub/personal-site links, editable via StringListEditor below. Generalizes linkedInUrl (kept as its own field, unchanged) into a real list. */
+  links: string[];
 }
 
 /** Mirrors `AutoFireRuleConfig` in src/lib/types.ts — numeric fields are controlled-input strings, same convention as DraftEngagementProfile. */
@@ -284,6 +286,7 @@ function configToDraft(config: Config): DraftConfig {
       bio: config.applyProfile?.bio ?? "",
       rateAnchor: config.applyProfile?.rateAnchor !== undefined ? String(config.applyProfile.rateAnchor) : "",
       resumePath: config.applyProfile?.resumePath,
+      links: config.applyProfile?.links ?? [],
     },
   };
 }
@@ -440,6 +443,8 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
       applyProfile.rateAnchor = draftNumber(draft.applyProfile.rateAnchor);
     }
     if (draft.applyProfile.resumePath) applyProfile.resumePath = draft.applyProfile.resumePath;
+    const links = nonBlank(draft.applyProfile.links);
+    if (links.length > 0) applyProfile.links = links;
     edits.applyProfile = applyProfile;
   } else {
     edits.applyProfile = undefined;
@@ -2148,6 +2153,18 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                 className={inputClass}
               />
             </label>
+            <div className="col-span-2">
+              <StringListEditor
+                label="Other links (portfolio, GitHub, personal site, etc.)"
+                values={draft.applyProfile.links}
+                onChange={(links) => setDraft({ ...draft, applyProfile: { ...draft.applyProfile, links } })}
+                placeholder="https://github.com/yourhandle"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Included alongside your other applicant data whenever gigradar drafts an application or
+                generates a prep packet.
+              </p>
+            </div>
           </div>
         )}
       </section>

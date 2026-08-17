@@ -79,7 +79,11 @@ const REAL_PROFILE: Profile = {
   timezone: "America/Chicago",
 };
 
-const REAL_APPLY_PROFILE: ApplyProfileConfig = { email: "jane@example.com", headline: "Fractional CTO for seed-stage startups" };
+const REAL_APPLY_PROFILE: ApplyProfileConfig = {
+  email: "jane@example.com",
+  headline: "Fractional CTO for seed-stage startups",
+  links: ["https://github.com/janedoe", "https://janedoe.dev"],
+};
 
 const REAL_GIG: Gig = {
   sourceId: "braintrust",
@@ -141,6 +145,14 @@ describe("generatePrepPacket: prompt grounding — real profile + gig data, gig 
     expect(fullPrompt).toContain(REAL_GIG.title);
     expect(fullPrompt).toContain(REAL_GIG.company as string);
     expect(fullPrompt).toContain(REAL_GIG.description as string);
+  });
+
+  it("includes applyProfile.links (career-documents epic) -- proves buildApplicantDataBlock()'s one shared change reaches this second consumer too", async () => {
+    await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, "fake-api-key");
+
+    const fullPrompt = textBlocksSentToLLM().join("\n---\n");
+    expect(fullPrompt).toContain(REAL_APPLY_PROFILE.links![0]);
+    expect(fullPrompt).toContain(REAL_APPLY_PROFILE.links![1]);
   });
 
   it("delimits the gig's data as untrusted DATA, in the same BEGIN/END GIG LISTING DATA block draft.ts uses", async () => {

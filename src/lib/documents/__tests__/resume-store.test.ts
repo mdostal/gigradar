@@ -122,3 +122,17 @@ describe("ApplyProfileConfigSchema: resumePath", () => {
     expect(result.success && result.data.resumePath).toBeUndefined();
   });
 });
+
+describe("ApplyProfileConfigSchema: links (career-documents epic, persisted-links story)", () => {
+  it("accepts a Config with a non-empty links array", () => {
+    const result = ApplyProfileConfigSchema.safeParse({ email: "jane@example.com", links: ["https://github.com/janedoe", "https://janedoe.dev"] });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.links).toEqual(["https://github.com/janedoe", "https://janedoe.dev"]);
+  });
+
+  it("accepts a Config with links omitted (backward compatible, no migration required)", () => {
+    const result = ApplyProfileConfigSchema.safeParse({ email: "jane@example.com" });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.links).toBeUndefined();
+  });
+});

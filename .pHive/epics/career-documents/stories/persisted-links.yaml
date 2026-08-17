@@ -1,7 +1,7 @@
 id: persisted-links
 epic: career-documents
 title: "ApplyProfileConfig.links + list editor + buildApplicantDataBlock() reuse"
-status: pending
+status: done
 complexity: low
 methodology: classic
 depends_on: []
