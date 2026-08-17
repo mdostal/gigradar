@@ -1,7 +1,7 @@
 id: real-parseability-check
 epic: career-documents
 title: "Export buildResumeContentBlock(), wire the real persisted resume into generatePrepPacket()'s atsScore"
-status: pending
+status: done
 complexity: medium
 methodology: classic
 depends_on: [resume-store]
