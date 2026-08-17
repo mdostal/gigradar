@@ -31,7 +31,7 @@ your sources ──fetch──▶ normalize to Gig ──gate()──▶ pass? �
 
 **macOS:** [download the `.dmg`](https://github.com/mdostal/gigradar/releases/latest) and drag it to `/Applications`.
 
-The `.dmg` is currently **unsigned** — there's no Apple Developer ID certificate behind it yet (real notarized signing is on the roadmap; see `docs/ARCHITECTURE.md`). macOS Gatekeeper will refuse to open it with a "gigradar.app is damaged and can't be opened" dialog. That's Gatekeeper rejecting the ad-hoc signature, **not** a corrupted download. Fix it with one command after installing, then launch normally:
+The `.dmg` is currently **unsigned** — there's no Apple Developer ID certificate behind it yet (real notarized signing is on the roadmap; see `docs/ARCHITECTURE.md`). macOS Gatekeeper will block the first launch with an "unidentified developer" warning. That's Gatekeeper flagging an unsigned app, **not** a corrupted download. Fix it with one command after installing, then launch normally:
 
 ```
 xattr -cr /Applications/gigradar.app
