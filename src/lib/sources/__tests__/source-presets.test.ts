@@ -1,7 +1,7 @@
 // Proves source-presets story's acceptance criteria for ../source-presets.ts:
-//   1. exactly 3 presets (indeed, welcome-to-the-jungle, zoho-recruit) --
-//      the owner-confirmed closed list (design-discussion.md §3 "and
-//      etc." -- resolved).
+//   1. exactly 4 presets (indeed, welcome-to-the-jungle, zoho-recruit,
+//      catalant) -- the owner-confirmed list (design-discussion.md §3
+//      "and etc." -- resolved).
 //   2. each preset, wrapped into a full SourceConfig (id/enabled/kind/
 //      settings), validates against the SAME SourceConfigSchema
 //      loadConfig()/saveConfig() use -- schema drift breaks this test,
@@ -18,8 +18,13 @@ import { SOURCE_PRESETS, sourceConfigFromPreset } from "../source-presets.js";
 import { SourceConfigSchema } from "../../config/schema.js";
 
 describe("SOURCE_PRESETS", () => {
-  it("ships exactly the owner-confirmed closed list of 3 presets", () => {
-    expect(SOURCE_PRESETS.map((p) => p.id).sort()).toEqual(["indeed", "welcome-to-the-jungle", "zoho-recruit"]);
+  it("ships exactly the owner-confirmed list of 4 presets", () => {
+    expect(SOURCE_PRESETS.map((p) => p.id).sort()).toEqual([
+      "catalant",
+      "indeed",
+      "welcome-to-the-jungle",
+      "zoho-recruit",
+    ]);
   });
 
   it("has a unique id per preset", () => {
@@ -56,9 +61,11 @@ describe("SOURCE_PRESETS", () => {
     });
   }
 
-  it("indeed defaults customAuth to browser-session (likely-aggressive bot detection, see design-discussion.md §3/§4.1)", () => {
+  it("indeed and catalant default customAuth to browser-session (bot detection / login-gated)", () => {
     const indeed = SOURCE_PRESETS.find((p) => p.id === "indeed")!;
+    const catalant = SOURCE_PRESETS.find((p) => p.id === "catalant")!;
     expect(indeed.settings.customAuth).toBe("browser-session");
+    expect(catalant.settings.customAuth).toBe("browser-session");
   });
 
   it("welcome-to-the-jungle and zoho-recruit leave customAuth unset (public by default)", () => {

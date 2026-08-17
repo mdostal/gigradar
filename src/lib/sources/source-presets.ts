@@ -8,10 +8,10 @@
 // (chat-guided-source-onboarding story) -- ONE array, two front doors,
 // never two divergent preset lists.
 //
-// Owner-confirmed closed list of three (see design-discussion.md §3 "and
-// etc." -- resolved): Indeed, Welcome to the Jungle, Zoho Recruit. Per-
-// platform strategy grounded in REAL robots.txt research (design-
-// discussion.md §3), not a guess:
+// Owner-confirmed list (see design-discussion.md §3 "and etc." -- resolved):
+// Indeed, Welcome to the Jungle, Zoho Recruit, Catalant. Per-platform
+// strategy grounded in REAL research (design-discussion.md §3), not a
+// guess:
 //   - Indeed: robots.txt explicitly disallows /viewjob?, /applystart, and
 //     singles out AI bots -- an EXPLICIT, owner-overridden exception
 //     ("i don't give a shit about indeed and their robots"), same posture
@@ -23,6 +23,19 @@
 //     -- the generic mechanism's whole reason to exist. Public by default;
 //     a login-gated company page still works via the existing Capture
 //     Login flow, just not pre-filled by this preset.
+//   - Catalant (gocatalant.com): the owner's own former platform, entirely
+//     login-gated (legacy gig-radar's platforms.mjs had it as
+//     `scrape: false` -- never actually automated, no reference logic to
+//     port). The public site exposes no listings at all (confirmed by
+//     research: no /projects, /opportunities, or /marketplace path --
+//     everything lives behind app.gocatalant.com once logged in). Per the
+//     owner, once authenticated it's BOTH a browsable marketplace of open
+//     engagements AND personally-matched opportunities pushed to the
+//     account -- the hint below describes both. customAuth defaults to
+//     "browser-session"; the settings.url is a best-effort placeholder
+//     (the real in-app URL can only be discovered by actually logging in)
+//     pending live Capture Login verification against the owner's real
+//     account.
 //
 // `suggestsGmailDigest` flags presets whose platform typically notifies
 // application status/interview invites by email -- consumed by
@@ -83,6 +96,23 @@ export const SOURCE_PRESETS: SourcePreset[] = [
         "Layout varies more company-to-company than most job boards, since each company configures its own Zoho Recruit portal.",
     },
     suggestsGmailDigest: true,
+  },
+  {
+    id: "catalant",
+    label: "Catalant",
+    description:
+      "A fractional/independent-consulting marketplace -- entirely login-gated, both browsable and matched opportunities.",
+    settings: {
+      url: "https://app.gocatalant.com/",
+      hint:
+        "Catalant's authenticated expert dashboard, reachable after logging in at app.gocatalant.com/c/_/auth/login/. " +
+        "Two kinds of engagement cards can appear: browsable open projects in a marketplace/search area, and " +
+        "personally-matched opportunities Catalant has surfaced directly to this account (sometimes labeled " +
+        "'recommended' or 'invitations'). Extract BOTH kinds as Gigs. Each card has a project title, client " +
+        "industry/description, and often a rate/duration estimate; use each card's own detail-page url as the " +
+        "extracted Gig's url, not this dashboard url.",
+      customAuth: "browser-session",
+    },
   },
 ];
 
