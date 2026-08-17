@@ -1,7 +1,8 @@
 import http from "node:http";
+import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
-import { probeOnce, ServerReadyTimeoutError, waitForServerReady } from "../server-ready.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { findFreePort, probeOnce, resolvePort, ServerReadyTimeoutError, waitForServerReady } from "../server-ready.ts";
 
 // Exercises the port-ready polling/retry logic in isolation against a real
 // node:http server standing in for the spawned `next start` child — no
@@ -85,5 +86,64 @@ describe("waitForServerReady", () => {
     await expect(waitForServerReady(deadPortUrl, { intervalMs: 50, timeoutMs: 200 })).rejects.toThrow(
       /Timed out after 200ms waiting for http:\/\/127\.0\.0\.1:1 to respond/,
     );
+  });
+});
+
+describe("findFreePort", () => {
+  it("returns a port that is genuinely free to bind on", async () => {
+    const port = await findFreePort();
+    expect(port).toBeGreaterThan(0);
+
+    // Prove it's really free: bind it ourselves.
+    await new Promise<void>((resolve, reject) => {
+      const probe = createServer();
+      probe.once("error", reject);
+      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve()));
+    });
+  });
+});
+
+describe("resolvePort", () => {
+  const originalGigradarPort = process.env.GIGRADAR_PORT;
+
+  beforeEach(() => {
+    delete process.env.GIGRADAR_PORT;
+  });
+
+  afterEach(() => {
+    if (originalGigradarPort === undefined) delete process.env.GIGRADAR_PORT;
+    else process.env.GIGRADAR_PORT = originalGigradarPort;
+  });
+
+  it("uses the preferred port when it's free, with usedFallback: false", async () => {
+    const preferred = await findFreePort();
+    await expect(resolvePort(preferred)).resolves.toEqual({
+      port: preferred,
+      usedFallback: false,
+      preferredPort: preferred,
+    });
+  });
+
+  it("falls back to a different free port when the preferred one is already taken", async () => {
+    const taken = await new Promise<number>((resolve) => {
+      server = http.createServer((_req, res) => res.end("busy"));
+      server.listen(0, "127.0.0.1", () => resolve((server!.address() as AddressInfo).port));
+    });
+
+    const result = await resolvePort(taken);
+    expect(result.usedFallback).toBe(true);
+    expect(result.preferredPort).toBe(taken);
+    expect(result.port).not.toBe(taken);
+  });
+
+  it("prefers GIGRADAR_PORT over the passed-in preferredPort when set", async () => {
+    const override = await findFreePort();
+    process.env.GIGRADAR_PORT = String(override);
+
+    await expect(resolvePort(1)).resolves.toEqual({
+      port: override,
+      usedFallback: false,
+      preferredPort: override,
+    });
   });
 });

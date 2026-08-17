@@ -46,7 +46,7 @@ npm install
 npm run dev
 ```
 
-Either way, a local dashboard comes up at `127.0.0.1:3000` — never exposed beyond your machine.
+Either way, a local dashboard comes up at `127.0.0.1:3000` by default (falling back to another free port automatically if 3000 is already taken — see `GIGRADAR_PORT` in `docs/gmail-oauth-setup.md` if you need a stable alternative for Gmail OAuth) — never exposed beyond your machine.
 
 ## Add a source (the whole extension story)
 

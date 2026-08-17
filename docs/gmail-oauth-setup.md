@@ -36,9 +36,24 @@ Under **Authorized redirect URIs**, add EXACTLY:
 http://127.0.0.1:3000/api/oauth/gmail/callback
 ```
 
-gigradar always runs on this fixed local address/port across every runtime
-mode (browser, Electron, the packaged `.app`) — this redirect URI never
-changes regardless of how you're running gigradar.
+gigradar prefers port 3000 across every runtime mode (browser, Electron, the
+packaged `.app`) specifically so this registered redirect URI keeps working
+across launches without you needing to touch it again.
+
+**If port 3000 is already used by something else on your machine** (another
+local app or service), gigradar still starts — it falls back to a random
+free port instead of refusing to launch — but that fallback port won't match
+what you registered above, so Gmail Connect won't work for that session. Fix
+it by picking a port you control and setting it explicitly:
+
+```
+GIGRADAR_PORT=3900
+```
+
+(in your shell environment, or your data directory's `.env`) and using that
+same port in step 3 above (`http://127.0.0.1:3900/api/oauth/gmail/callback`)
+instead of 3000. As long as `GIGRADAR_PORT` stays free and set the same way
+every time you launch gigradar, this only needs doing once.
 
 Save, then copy the **Client ID** and **Client secret** Google shows you.
 

@@ -29,8 +29,22 @@ import { readSecretViaPortunus, writeSecretViaPortunus, type SessionBackend } fr
 
 const MODULE_PREFIX = "gigradar oauth2";
 
-/** Fixed across all three runtime modes (browser dev, Electron, Tauri) — see electron/main.ts's SERVER_URL and src-tauri/src/lib.rs's SERVER_PORT, both 127.0.0.1:3000. */
-const REDIRECT_BASE_URL = "http://127.0.0.1:3000";
+/**
+ * Derived from this server process's own `PORT` env var, not a hardcoded
+ * literal — electron/main.ts and src-tauri/src/lib.rs both set `PORT` on
+ * the spawned server child to whatever port they actually bound to (see
+ * their own `resolvePort()`/`resolve_server_port()`), preferring the
+ * documented default (3000, see docs/gmail-oauth-setup.md) but falling
+ * back to an OS-assigned free port when 3000 is already held by something
+ * else on the machine. `next start`/`next dev` (browser mode, no PORT set)
+ * default to 3000 themselves, so the `?? "3000"` fallback below matches
+ * that same behavior. A fallback session's actual port won't match a
+ * previously-registered Google OAuth redirect URI — see resolvePort()'s
+ * own doc comment for the GIGRADAR_PORT escape hatch.
+ */
+function redirectBaseUrl(): string {
+  return `http://127.0.0.1:${process.env.PORT ?? "3000"}`;
+}
 
 /** How long a pending authorization (state -> code_verifier) is held before being treated as abandoned — generous, since it's bounded only by how long the user takes on Google's own consent screen. */
 const PENDING_AUTH_TTL_MS = 10 * 60 * 1000;
@@ -82,7 +96,7 @@ function base64url(input: Buffer): string {
 }
 
 function redirectUriFor(provider: OAuthProvider): string {
-  return `${REDIRECT_BASE_URL}/api/oauth/${provider.id}/callback`;
+  return `${redirectBaseUrl()}/api/oauth/${provider.id}/callback`;
 }
 
 /**
