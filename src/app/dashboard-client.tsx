@@ -509,7 +509,7 @@ export function DashboardClient({
                       </p>
                     )}
                     <p className="mt-1 border-t border-slate-200 pt-1 font-medium">
-                      ATS keyword match: {packet.atsScore.keywordOverlapScore}/100 (vs. your tracked skills/roles, not a resume file)
+                      ATS keyword match: {packet.atsScore.keywordOverlapScore}/100 (vs. your tracked skills/roles)
                     </p>
                     {packet.atsScore.matchedKeywords.length > 0 && (
                       <p>
@@ -530,6 +530,24 @@ export function DashboardClient({
                           ))}
                         </ul>
                       </div>
+                    )}
+                    {packet.atsScore.resumeChecked ? (
+                      packet.atsScore.parseabilityIssues.length > 0 ? (
+                        <div>
+                          <span className="font-medium">Resume format issues (from your saved resume):</span>
+                          <ul className="ml-4 list-disc">
+                            {packet.atsScore.parseabilityIssues.map((issue) => (
+                              <li key={issue}>{issue}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <p className="text-green-700">No resume format issues found.</p>
+                      )
+                    ) : (
+                      <p className="text-slate-500">
+                        No resume format check — save a resume on /config to get a real ATS-parseability read.
+                      </p>
                     )}
                   </div>
                 </details>

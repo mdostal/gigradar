@@ -342,8 +342,13 @@ async function fetchAndExtractLink(url: string): Promise<LinkFetchResult> {
  * `resumeFile` is provided (never locally text-extracted — Claude reads
  * the PDF directly), or a plain text block for `resumeText`. Returns
  * `undefined` if neither is provided.
+ *
+ * EXPORTED (career-documents epic, real-parseability-check story) so
+ * prep.ts's generatePrepPacket() can embed a persisted resume the SAME
+ * way this module already does for its own one-shot extraction call —
+ * one native-PDF-embedding implementation, not a second, duplicated one.
  */
-function buildResumeContentBlock(input: ExtractProfileInput): Anthropic.ContentBlockParam | undefined {
+export function buildResumeContentBlock(input: ExtractProfileInput): Anthropic.ContentBlockParam | undefined {
   if (input.resumeFile) {
     return {
       type: "document",

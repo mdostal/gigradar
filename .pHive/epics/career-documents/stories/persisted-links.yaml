@@ -1,0 +1,59 @@
+id: persisted-links
+epic: career-documents
+title: "ApplyProfileConfig.links + list editor + buildApplicantDataBlock() reuse"
+status: done
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 3 (independent of Slices 1/2/4). ApplyProfileConfig
+  gains links?: string[] -- a NEW, generalized field alongside the
+  existing linkedInUrl (kept unchanged, no migration/breaking change).
+  ApplyProfileConfigSchema gains links: z.array(z.string()).optional().
+  /config gains a links list editor reusing the EXISTING StringListEditor
+  component (already used for role-area coreTitles/keywords/redKeywords
+  -- no new list-editing component). buildApplicantDataBlock() (draft.ts,
+  already shared by generateDraft() AND generatePrepPacket()) gains ONE
+  new line rendering applyProfile.links when present, same
+  "only include fields that are ACTUALLY present, no placeholder text for
+  missing ones" discipline that function's own header comment documents.
+  This ONE change is what makes links data reach every LLM call site
+  through that shared builder "across the board," per the owner's own
+  phrase -- not N separate per-feature wire-ups.
+
+acceptance_criteria:
+  - "ApplyProfileConfigSchema accepts a links: string[] field and continues to accept a Config with it omitted (backward compatible, no migration required for existing config.json files)."
+  - "/config's links editor reuses StringListEditor -- verified by review, not a new component."
+  - "buildApplicantDataBlock() includes every entry in applyProfile.links, verbatim, when the array is non-empty."
+  - "buildApplicantDataBlock() omits any links section entirely when applyProfile.links is unset or empty -- no placeholder/empty-list text, matching the function's existing convention for other optional fields (homeBase, phone, bio, etc)."
+  - "generateDraft() and generatePrepPacket() BOTH reflect a saved links entry in their next LLM call's prompt -- verified by a test on EACH call site (not just draft.ts's own builder-level test), since this is the story's whole point: one change, two consumers."
+
+steps:
+  - id: implement
+    description: Extend ApplyProfileConfig/Schema with links, add the /config list editor, extend buildApplicantDataBlock().
+    agent: developer
+  - id: test
+    description: Tests per acceptance criteria, including explicit assertions on BOTH generateDraft() and generatePrepPacket()'s own prompt-grounding tests.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm StringListEditor reuse (no new component), confirm both consumers pick up the change, confirm no placeholder text for an empty links list.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/draft.ts
+      purpose: "buildApplicantDataBlock() -- the ONE shared data-block builder this story extends, already reused by prep.ts"
+    - path: src/app/config/config-client.tsx
+      purpose: "existing StringListEditor component, reused for the new links field"
+
+references:
+  - path: .pHive/epics/career-documents/docs/design-discussion.md
+    relevant_excerpt: "section 2.2 (persisted links) -- \"tweak it across the board\" is the owner's own phrase this story is literally implementing"
