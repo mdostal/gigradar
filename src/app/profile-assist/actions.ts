@@ -68,7 +68,8 @@ export async function startAssistSessionAction(
   sourceId: string,
   mode: AssistMode,
 ): Promise<ActionResult<{ sessionId: string }>> {
-  const sessionBackend = sessionBackendFrom({ id: sourceId, enabled: true, settings: rawSourceSettingsFor(sourceId) ?? {} });
+  const cfg = { id: sourceId, enabled: true, settings: rawSourceSettingsFor(sourceId) ?? {} };
+  const sessionBackend = sessionBackendFrom(cfg);
 
   const sessionStatePathSetting = sessionBackend === "local" ? rawSessionStatePathFor(sourceId) : undefined;
   if (sessionBackend === "local" && !sessionStatePathSetting) {
@@ -78,7 +79,7 @@ export async function startAssistSessionAction(
   }
 
   try {
-    const { sessionId } = await startAssistSession(sourceId, mode, sessionStatePathSetting, sessionBackend);
+    const { sessionId } = await startAssistSession(sourceId, mode, sessionStatePathSetting, sessionBackend, cfg);
     return actionOk({ sessionId });
   } catch (e) {
     return actionErr(e);
@@ -199,6 +200,28 @@ export async function answerHumanAction(sessionId: string, answer: string): Prom
   try {
     answerHuman(sessionId, answer);
     return actionOk(null);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// embedded-profile-assist epic, embedded-view-readonly story -- a read-only
+// live view of the session's page for the /profile-assist UI's "Embedded"
+// view, deliberately decoupled from profile-assist-loop.ts's own ARIA-
+// snapshot-based reading (that stays unchanged; this is purely for the
+// human's benefit). Same JPEG-quality-70/data-URL shape agent-chat-loop.ts's
+// take_screenshot tool already established for a screenshot rendered inline
+// in this app's own UI, just JPEG instead of PNG here (profile-assist's
+// pane refreshes far more often than a one-off chat screenshot, so the
+// smaller payload matters more).
+// ---------------------------------------------------------------------------
+
+export async function getSessionScreenshotAction(sessionId: string): Promise<ActionResult<{ dataUrl: string }>> {
+  try {
+    const page = getAssistSessionPage(sessionId);
+    const screenshot = await page.screenshot({ type: "jpeg", quality: 70 });
+    return actionOk({ dataUrl: `data:image/jpeg;base64,${screenshot.toString("base64")}` });
   } catch (e) {
     return actionErr(e);
   }

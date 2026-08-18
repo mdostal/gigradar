@@ -12,6 +12,7 @@ import {
   advanceLoopTurnAction,
   answerHumanAction,
   endAssistSessionAction,
+  getSessionScreenshotAction,
   resolveApprovalAction,
   startAssistSessionAction,
   suggestProfileFieldsAction,
@@ -126,11 +127,41 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
   const [humanAnswer, setHumanAnswer] = useState("");
   const runningRef = useRef(false);
 
+  // embedded-profile-assist epic, embedded-view-readonly story. `viewMode`
+  // is purely a display choice for Guided/Full-auto's session-active UI --
+  // "native" (today's unchanged behavior: a separate real Chrome window,
+  // this pane only shows the transcript) vs "embedded" (adds a live
+  // screenshot pane alongside the SAME transcript, unmodified). Manual
+  // mode never reads this -- the toggle only renders inside the
+  // guided/full-auto branch below, matching design-discussion.md section
+  // 4.2's "Manual mode the toggle is inert" call.
+  const [viewMode, setViewMode] = useState<"native" | "embedded">("native");
+  const [screenshot, setScreenshot] = useState<{ status: "idle" | "loading" | "loaded" | "error"; dataUrl?: string; message?: string }>({
+    status: "idle",
+  });
+  // Read inside async loops (runUntilBlocked's while(true) spans many
+  // state updates over real time) so a mid-loop viewMode toggle is seen
+  // immediately rather than only on the next handler invocation.
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
+
+  async function refreshScreenshot(sessionId: string) {
+    if (viewModeRef.current !== "embedded") return;
+    setScreenshot((prev) => ({ ...prev, status: "loading" }));
+    const result = await getSessionScreenshotAction(sessionId);
+    if (!result.ok) {
+      setScreenshot({ status: "error", message: result.error });
+      return;
+    }
+    setScreenshot({ status: "loaded", dataUrl: result.data.dataUrl });
+  }
+
   async function handleStart() {
     setSession({ status: "starting" });
     setTranscript([]);
     setPendingEvent(null);
     setPendingQuestion(null);
+    setScreenshot({ status: "idle" });
     // Tab and AssistMode are the same union ("manual" | "guided" |
     // "full-auto") by design — the tab IS the mode, no mapping needed.
     const mode = tab;
@@ -141,6 +172,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     }
     setSession({ status: "active", sessionId: result.data.sessionId });
     setSuggest({ status: "idle" });
+    void refreshScreenshot(result.data.sessionId);
     if (mode === "guided" || mode === "full-auto") {
       void runUntilBlocked(result.data.sessionId);
     }
@@ -160,6 +192,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     setTranscript([]);
     setPendingEvent(null);
     setPendingQuestion(null);
+    setScreenshot({ status: "idle" });
   }
 
   async function handleRefreshSuggestions() {
@@ -191,6 +224,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
 
         const event = result.data;
         setTranscript((prev) => [...prev, { kind: "event", event }]);
+        void refreshScreenshot(sessionId);
 
         if (event.type === "click" || event.type === "fill") {
           if (event.pending) {
@@ -373,19 +407,61 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-slate-600">
-                  {tab === "guided"
-                    ? "A real browser window is open on your desktop — every proposed action needs your approval below before it happens."
-                    : "A real browser window is open on your desktop — the LLM acts on it directly. It'll pause and ask if it's unsure."}
+                  {viewMode === "embedded"
+                    ? "A live view of the session below (auto-refreshes as the agent acts) — read-only for now."
+                    : tab === "guided"
+                      ? "A real browser window is open on your desktop — every proposed action needs your approval below before it happens."
+                      : "A real browser window is open on your desktop — the LLM acts on it directly. It'll pause and ask if it's unsure."}
                 </p>
-                {doneButton}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = viewMode === "native" ? "embedded" : "native";
+                      setViewMode(next);
+                      if (next === "embedded" && session.status === "active") void refreshScreenshot(session.sessionId);
+                    }}
+                    className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    {viewMode === "embedded" ? "Switch to native window" : "Switch to embedded view"}
+                  </button>
+                  {doneButton}
+                </div>
               </div>
 
-              <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
-                {transcript.length === 0 ? (
-                  <p className="text-xs text-slate-400">Starting…</p>
-                ) : (
-                  transcript.map((item, i) => <TranscriptLine key={i} item={item} />)
+              <div className={viewMode === "embedded" ? "grid grid-cols-2 gap-4" : undefined}>
+                {viewMode === "embedded" && (
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => session.status === "active" && void refreshScreenshot(session.sessionId)}
+                      disabled={screenshot.status === "loading" || session.status !== "active"}
+                      className="self-start rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {screenshot.status === "loading" ? "Refreshing…" : "Refresh"}
+                    </button>
+                    <div className="flex min-h-[300px] items-center justify-center rounded-md border border-slate-200 bg-slate-50 p-2">
+                      {screenshot.status === "error" ? (
+                        <p role="alert" className="p-3 text-xs text-red-600">
+                          {screenshot.message}
+                        </p>
+                      ) : screenshot.dataUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- a Playwright-screenshot data URL, not a static asset next/image can optimize.
+                        <img src={screenshot.dataUrl} alt="Live view of the session's current page" className="w-full rounded" />
+                      ) : (
+                        <p className="text-xs text-slate-400">Loading…</p>
+                      )}
+                    </div>
+                  </div>
                 )}
+
+                <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                  {transcript.length === 0 ? (
+                    <p className="text-xs text-slate-400">Starting…</p>
+                  ) : (
+                    transcript.map((item, i) => <TranscriptLine key={i} item={item} />)
+                  )}
+                </div>
               </div>
 
               {pendingEvent && (
