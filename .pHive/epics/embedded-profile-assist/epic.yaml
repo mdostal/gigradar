@@ -1,0 +1,20 @@
+name: embedded-profile-assist
+title: "Embedded co-browsing view for profile-assist (screenshot-refresh + Playwright-native input forwarding)"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: embedded-view-readonly
+    title: "Read-only embedded live-view pane in /profile-assist (screenshot-refresh, reuses Guided mode's existing loop unchanged)"
+    complexity: medium
+    depends_on: []
+  - id: embedded-view-interactive
+    title: "Click/type forwarding into the embedded pane + mid-session agent-engaged toggle"
+    complexity: medium
+    depends_on: [embedded-view-readonly]

@@ -1,0 +1,71 @@
+id: embedded-view-interactive
+epic: embedded-profile-assist
+title: "Click/type forwarding into the embedded pane + mid-session agent-engaged toggle"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [embedded-view-readonly]
+
+description: |
+  Vertical Plan Slice 2. Builds directly on embedded-view-readonly's
+  screenshot pane: makes it genuinely interactive.
+
+  Two new Server Actions in profile-assist/actions.ts:
+  - clickSessionAtAction(sessionId, xRatio, yRatio): translates the
+    ratio-based coordinates (client computes offsetX/offsetY divided by
+    the rendered <img>'s clientWidth/clientHeight, so it's independent of
+    actual display size) back to real page pixels via the Page's
+    viewportSize(), calls page.mouse.click(x, y) -- Playwright's own
+    input API, already available on the held Page, no raw CDP needed --
+    then returns a fresh screenshot in the same response (design-
+    discussion.md section 4.1's "one round trip, not two" reasoning).
+  - typeIntoSessionAction(sessionId, text): wraps page.keyboard.type(text),
+    same refresh-and-return shape.
+
+  A new agentEngaged: boolean toggle in profile-assist-client.tsx's
+  Embedded view: OFF means the pane is purely human-driven (click/type
+  actions above, no LLM calls); ON re-enables profile-assist-loop.ts's
+  EXISTING Guided-mode propose/approve loop (unchanged) for as long as the
+  toggle stays on, flippable mid-session without ending/restarting the
+  assist session.
+
+acceptance_criteria:
+  - "Clicking anywhere on the embedded pane's <img> calls clickSessionAtAction with coordinates ratio-scaled to the actual page viewport, and the pane updates to the resulting fresh screenshot."
+  - "A text input alongside the embedded pane sends its content via typeIntoSessionAction, which types into whatever element currently has focus on the real page (matches normal keyboard-typing semantics -- the human is expected to click a field first, same as using a real browser)."
+  - "The agentEngaged toggle starts OFF by default when entering Embedded view (matches the 'add as an option, native flow is the safe default' posture from design-discussion.md's owner-clarified scope)."
+  - "Toggling agentEngaged ON resumes profile-assist-loop.ts's existing advanceLoopTurnAction-driven loop (same approval-gated behavior Guided mode already has) without ending the current assist session; toggling OFF pauses it (no further agent turns fire until re-toggled)."
+  - "A human click/type while agentEngaged is ON does not corrupt an in-flight agent turn -- either disallowed (input disabled) while a turn is actively resolving, or clearly queued/sequenced; the acceptance bar is 'no dropped or interleaved actions,' not any specific UX polish beyond that."
+  - "Unit tests cover clickSessionAtAction's coordinate translation math (given a known viewportSize and ratio, asserts the exact x/y passed to page.mouse.click) and typeIntoSessionAction's pass-through."
+
+steps:
+  - id: research
+    description: Confirm Page.viewportSize()'s exact return shape and profile-assist-loop.ts's advanceLoopTurnAction entry point for the pause/resume toggle wiring.
+    agent: researcher
+  - id: implement
+    description: Add clickSessionAtAction/typeIntoSessionAction; add the agentEngaged toggle and click/type UI to profile-assist-client.tsx's Embedded view.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests per acceptance criteria, especially the coordinate-translation math (easy to get subtly wrong -- test with a non-1:1 display-vs-viewport ratio, not just the trivial case).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no race between a human action and an in-flight agent turn; confirm embedded-view-readonly's read-only behavior (Slice 1) still works when agentEngaged toggling is never touched.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/profile-assist-loop.ts
+      purpose: "the existing Guided-mode propose/approve loop this story's agentEngaged toggle pauses/resumes -- reused unmodified, not reimplemented."
+    - path: src/app/profile-assist/actions.ts
+      purpose: "where the two new Server Actions are added, alongside embedded-view-readonly's getSessionScreenshotAction."
+
+references:
+  - path: .pHive/epics/embedded-profile-assist/docs/vertical-plan.md
+    relevant_excerpt: "Slice 2 section -- exact new-surface list and the 'depends on Slice 1' relationship."
