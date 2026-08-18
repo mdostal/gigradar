@@ -1,4 +1,5 @@
 import type { Config, DraftContent, Gig, MatchResult } from "../types.js";
+import type { LlmCredential } from "../config/env-store.js";
 import { getSource } from "../sources/source.js";
 import { VerificationChallengeError } from "../sources/verification-challenge.js";
 import { customLlmSource } from "../sources/custom-llm-source.js";
@@ -164,16 +165,16 @@ export interface ApplicationDraft {
  *    actionable error pointing at `/config` (this project's established
  *    "throw loud, don't silently degrade" convention).
  *
- * `apiKey` is a REQUIRED parameter, resolved by the CALLER (matching
+ * `credential` is a REQUIRED parameter, resolved by the CALLER (matching
  * `generateDraft()`'s own real shape — see draft.ts's header comment) —
  * this function never reads `process.env` or holds a module-scope client
- * itself; it only ever forwards `apiKey` straight through to
+ * itself; it only ever forwards `credential` straight through to
  * `generateDraft()`.
  */
 export async function stageApplication(
   r: MatchResult,
   config: Config,
-  apiKey: string,
+  credential: LlmCredential,
   storeOpts: DbOption = {},
 ): Promise<ApplicationDraft> {
   if (r.tier === "red") {
@@ -188,7 +189,7 @@ export async function stageApplication(
     );
   }
 
-  const content = await generateDraft(r.gig, config.profile, config.applyProfile, apiKey);
+  const content = await generateDraft(r.gig, config.profile, config.applyProfile, credential);
   saveDraft(gigKey(r.gig.sourceId, r.gig.externalId), content, storeOpts);
 
   return { gig: r.gig, content, status: "draft" };

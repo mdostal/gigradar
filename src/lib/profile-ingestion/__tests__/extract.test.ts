@@ -147,7 +147,7 @@ describe("extractProfile: plain-text resume, no links (AC1)", () => {
   it("returns {roles, skills, warnings: []} derived from the mocked Anthropic client's structured response", async () => {
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse(["Fractional CTO", "Senior Backend Engineer"], ["TypeScript", "Node.js"]));
 
-    const result = await extractProfile({ resumeText: "Jane Doe — 10 years building backend systems." }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "Jane Doe — 10 years building backend systems." }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result).toEqual({
       roles: ["Fractional CTO", "Senior Backend Engineer"],
@@ -159,7 +159,7 @@ describe("extractProfile: plain-text resume, no links (AC1)", () => {
   it("sends the resume text as a plain text content block, not a document block", async () => {
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse([], []));
 
-    await extractProfile({ resumeText: "Jane Doe — backend engineer." }, "fake-api-key");
+    await extractProfile({ resumeText: "Jane Doe — backend engineer." }, { kind: "api-key", value: "fake-api-key" });
 
     const call = mockCreate.mock.calls[0]?.[0] as Anthropic.MessageCreateParams;
     const content = call.messages[0]?.content;
@@ -172,7 +172,7 @@ describe("extractProfile: plain-text resume, no links (AC1)", () => {
   it("requests structured output via tool-use (forced tool_choice on the extract_profile tool), not free-text parsing", async () => {
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse([], []));
 
-    await extractProfile({ resumeText: "some resume text" }, "fake-api-key");
+    await extractProfile({ resumeText: "some resume text" }, { kind: "api-key", value: "fake-api-key" });
 
     const call = mockCreate.mock.calls[0]?.[0] as Anthropic.MessageCreateParams;
     expect(call.tool_choice).toEqual({ type: "tool", name: "extract_profile" });
@@ -185,7 +185,7 @@ describe("extractProfile: PDF resume (AC2)", () => {
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse(["Engineer"], ["Python"]));
     const pdfBytes = Buffer.from("%PDF-1.4 fake pdf bytes for testing, not a real PDF");
 
-    const result = await extractProfile({ resumeFile: { data: pdfBytes, mediaType: "application/pdf" } }, "fake-api-key");
+    const result = await extractProfile({ resumeFile: { data: pdfBytes, mediaType: "application/pdf" } }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.roles).toEqual(["Engineer"]);
     const call = mockCreate.mock.calls[0]?.[0] as Anthropic.MessageCreateParams;
@@ -227,7 +227,7 @@ describe("extractProfile: script/style stripping before extraction (AC3, grill H
     mockFetch.mockResolvedValueOnce(fakeFetchResponse({ url, body: html, contentType: "text/html" }));
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse(["Backend Engineer"], ["Go", "Kubernetes"]));
 
-    const result = await extractProfile({ links: [url] }, "fake-api-key");
+    const result = await extractProfile({ links: [url] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toEqual([]);
     const sentText = textBlocksSentToLLM().join("\n");
@@ -257,7 +257,7 @@ describe("extractProfile: known LinkedIn-style login-wall (AC4, grill H2)", () =
     );
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse(["Fractional CTO"], ["Leadership"]));
 
-    const result = await extractProfile({ resumeText: "Jane Doe resume content", links: [linkedInUrl] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "Jane Doe resume content", links: [linkedInUrl] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain(linkedInUrl);
@@ -285,7 +285,7 @@ describe("extractProfile: known LinkedIn-style login-wall (AC4, grill H2)", () =
     );
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse([], []));
 
-    const result = await extractProfile({ resumeText: "resume text", links: [url] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume text", links: [url] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.toLowerCase()).toContain("may require login");
@@ -299,7 +299,7 @@ describe("extractProfile: short-but-legitimate page is NOT flagged as a login-wa
     mockFetch.mockResolvedValueOnce(fakeFetchResponse({ url, body: shortHtml, redirected: false, status: 200 }));
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse(["Designer"], ["Figma"]));
 
-    const result = await extractProfile({ links: [url] }, "fake-api-key");
+    const result = await extractProfile({ links: [url] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toEqual([]);
     const sentText = textBlocksSentToLLM().join("\n");
@@ -314,7 +314,7 @@ describe("extractProfile: partial link failure never fails the overall call", ()
     mockFetch.mockRejectedValueOnce(new Error("network unreachable"));
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse(["Engineer"], ["Rust"]));
 
-    const result = await extractProfile({ resumeText: "resume content here", links: ["https://unreachable.example"] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume content here", links: ["https://unreachable.example"] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("https://unreachable.example");
@@ -327,8 +327,8 @@ describe("extractProfile: Anthropic client is constructed per-call, never at mod
   it("constructs a new Anthropic client on each extractProfile() call, with the exact apiKey passed in", async () => {
     mockCreate.mockResolvedValue(fakeExtractToolResponse([], []));
 
-    await extractProfile({ resumeText: "a" }, "key-one");
-    await extractProfile({ resumeText: "b" }, "key-two");
+    await extractProfile({ resumeText: "a" }, { kind: "api-key", value: "key-one" });
+    await extractProfile({ resumeText: "b" }, { kind: "api-key", value: "key-two" });
 
     expect(mockAnthropicConstructor).toHaveBeenCalledTimes(2);
     expect(mockAnthropicConstructor).toHaveBeenNthCalledWith(1, expect.objectContaining({ apiKey: "key-one" }));
@@ -337,29 +337,29 @@ describe("extractProfile: Anthropic client is constructed per-call, never at mod
 });
 
 describe("extractProfile: no secret or personal data ever appears in a thrown error message (AC8)", () => {
-  it("when no resume and no usable link content is provided, the thrown error never echoes the apiKey", async () => {
-    const apiKey = "sk-ant-super-secret-key-should-not-leak";
+  it("when no resume and no usable link content is provided, the thrown error never echoes the credential", async () => {
+    const credential = { kind: "api-key" as const, value: "sk-ant-super-secret-key-should-not-leak" };
 
-    await expect(extractProfile({}, apiKey)).rejects.toThrow();
+    await expect(extractProfile({}, credential)).rejects.toThrow();
     try {
-      await extractProfile({}, apiKey);
+      await extractProfile({}, credential);
       throw new Error("expected extractProfile() to throw");
     } catch (e) {
-      expect((e as Error).message).not.toContain(apiKey);
+      expect((e as Error).message).not.toContain(credential.value);
     }
   });
 
-  it("when the Anthropic response omits the expected tool_use block, the thrown error names the structural problem, never the apiKey or resume content", async () => {
+  it("when the Anthropic response omits the expected tool_use block, the thrown error names the structural problem, never the credential or resume content", async () => {
     mockCreate.mockResolvedValueOnce({ ...fakeExtractToolResponse([], []), content: [{ type: "text", text: "free-text response instead" }] });
-    const apiKey = "sk-ant-another-secret-key";
+    const credential = { kind: "api-key" as const, value: "sk-ant-another-secret-key" };
     const resumeText = "Jane Doe's private resume content";
 
     try {
-      await extractProfile({ resumeText }, apiKey);
+      await extractProfile({ resumeText }, credential);
       throw new Error("expected extractProfile() to throw");
     } catch (e) {
       const message = (e as Error).message;
-      expect(message).not.toContain(apiKey);
+      expect(message).not.toContain(credential.value);
       expect(message).not.toContain(resumeText);
       expect(message.toLowerCase()).toContain("structured extraction result");
     }
@@ -456,7 +456,7 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
     mockDnsResolvesTo({ address: "127.0.0.1", family: 4 });
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse(["Engineer"], []));
 
-    const result = await extractProfile({ resumeText: "resume content", links: ["https://looks-fine.example/profile"] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume content", links: ["https://looks-fine.example/profile"] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.toLowerCase()).toContain("private/internal address");
@@ -468,7 +468,7 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
   it("AC2: a hostname resolving to 169.254.169.254 (the real cloud metadata IP) is blocked the same way -- proves link-local, not just loopback/RFC1918, is covered", async () => {
     mockDnsResolvesTo({ address: "169.254.169.254", family: 4 });
 
-    const result = await extractProfile({ resumeText: "resume content", links: ["https://metadata.example/latest"] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume content", links: ["https://metadata.example/latest"] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.toLowerCase()).toContain("private/internal address");
@@ -480,7 +480,7 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
     // The hostname text itself gives no hint of anything internal.
     mockDnsResolvesTo({ address: "10.0.0.5", family: 4 });
 
-    const result = await extractProfile({ resumeText: "resume content", links: ["https://totally-normal-looking-site.example/careers"] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume content", links: ["https://totally-normal-looking-site.example/careers"] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.toLowerCase()).toContain("private/internal address");
@@ -489,12 +489,12 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
 
   it("AC3b: 172.16.0.0/12 and 192.168.0.0/16 (the other two RFC1918 ranges) are also blocked", async () => {
     mockDnsResolvesTo({ address: "172.20.3.4", family: 4 });
-    const result1 = await extractProfile({ resumeText: "resume content", links: ["https://site-a.example"] }, "fake-api-key");
+    const result1 = await extractProfile({ resumeText: "resume content", links: ["https://site-a.example"] }, { kind: "api-key", value: "fake-api-key" });
     expect(result1.warnings).toHaveLength(1);
     expect(result1.warnings[0]?.toLowerCase()).toContain("private/internal address");
 
     mockDnsResolvesTo({ address: "192.168.1.1", family: 4 });
-    const result2 = await extractProfile({ resumeText: "resume content", links: ["https://site-b.example"] }, "fake-api-key");
+    const result2 = await extractProfile({ resumeText: "resume content", links: ["https://site-b.example"] }, { kind: "api-key", value: "fake-api-key" });
     expect(result2.warnings).toHaveLength(1);
     expect(result2.warnings[0]?.toLowerCase()).toContain("private/internal address");
 
@@ -504,7 +504,7 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
   it("AC4: an IPv4-mapped IPv6 address (::ffff:127.0.0.1) is normalized and blocked the same as its embedded IPv4 form", async () => {
     mockDnsResolvesTo({ address: "::ffff:127.0.0.1", family: 6 });
 
-    const result = await extractProfile({ resumeText: "resume content", links: ["https://mapped.example"] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume content", links: ["https://mapped.example"] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.toLowerCase()).toContain("private/internal address");
@@ -515,11 +515,11 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
 
   it("AC4b: a real IPv6 loopback (::1) and IPv6 link-local (fe80::1) are also blocked", async () => {
     mockDnsResolvesTo({ address: "::1", family: 6 });
-    const result1 = await extractProfile({ resumeText: "resume content", links: ["https://v6-loopback.example"] }, "fake-api-key");
+    const result1 = await extractProfile({ resumeText: "resume content", links: ["https://v6-loopback.example"] }, { kind: "api-key", value: "fake-api-key" });
     expect(result1.warnings[0]?.toLowerCase()).toContain("private/internal address");
 
     mockDnsResolvesTo({ address: "fe80::1", family: 6 });
-    const result2 = await extractProfile({ resumeText: "resume content", links: ["https://v6-linklocal.example"] }, "fake-api-key");
+    const result2 = await extractProfile({ resumeText: "resume content", links: ["https://v6-linklocal.example"] }, { kind: "api-key", value: "fake-api-key" });
     expect(result2.warnings[0]?.toLowerCase()).toContain("private/internal address");
 
     expect(mockFetch).not.toHaveBeenCalled();
@@ -528,7 +528,7 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
   it("blocks when ANY resolved address (not just the first) falls in a blocked range", async () => {
     mockDnsResolvesTo({ address: "93.184.216.34", family: 4 }, { address: "127.0.0.1", family: 4 });
 
-    const result = await extractProfile({ resumeText: "resume content", links: ["https://multi-address.example"] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume content", links: ["https://multi-address.example"] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.toLowerCase()).toContain("private/internal address");
@@ -536,7 +536,7 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
   });
 
   it("AC5: a non-http(s) scheme (file://) is rejected outright, before any DNS resolution is attempted", async () => {
-    const result = await extractProfile({ resumeText: "resume content", links: ["file:///etc/passwd"] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume content", links: ["file:///etc/passwd"] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.toLowerCase()).toContain("http/https");
@@ -545,7 +545,7 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
   });
 
   it("AC5b: another non-http(s) scheme (ftp://) is also rejected outright, before any DNS resolution is attempted", async () => {
-    const result = await extractProfile({ resumeText: "resume content", links: ["ftp://files.example/archive.zip"] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume content", links: ["ftp://files.example/archive.zip"] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.toLowerCase()).toContain("http/https");
@@ -556,7 +556,7 @@ describe("fetchAndExtractLink(): SSRF IP validation (AC1-AC5)", () => {
   it("a hostname that fails to resolve at all fails closed (blocked with a warning, not a raw DNS error, and fetch() is never called)", async () => {
     mockDnsRejects("ENOTFOUND");
 
-    const result = await extractProfile({ resumeText: "resume content", links: ["https://does-not-resolve.example"] }, "fake-api-key");
+    const result = await extractProfile({ resumeText: "resume content", links: ["https://does-not-resolve.example"] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).not.toContain("ENOTFOUND");
@@ -577,7 +577,7 @@ describe("fetchAndExtractLink(): timeout and streaming size cap (AC6-AC7)", () =
 
       try {
         const started = Date.now();
-        const result = await extractProfile({ resumeText: "resume content", links: [server.url] }, "fake-api-key");
+        const result = await extractProfile({ resumeText: "resume content", links: [server.url] }, { kind: "api-key", value: "fake-api-key" });
         const elapsedMs = Date.now() - started;
 
         expect(result.warnings).toHaveLength(1);
@@ -620,7 +620,7 @@ describe("fetchAndExtractLink(): timeout and streaming size cap (AC6-AC7)", () =
     vi.stubGlobal("fetch", realFetch);
 
     try {
-      const result = await extractProfile({ resumeText: "resume content", links: [server.url] }, "fake-api-key");
+      const result = await extractProfile({ resumeText: "resume content", links: [server.url] }, { kind: "api-key", value: "fake-api-key" });
 
       expect(result.warnings).toHaveLength(1);
       expect(result.warnings[0]?.toLowerCase()).toContain("too large");
@@ -647,7 +647,7 @@ describe("fetchAndExtractLink(): timeout and streaming size cap (AC6-AC7)", () =
 
       try {
         const started = Date.now();
-        const result = await extractProfile({ resumeText: "resume content", links: [server.url] }, "fake-api-key");
+        const result = await extractProfile({ resumeText: "resume content", links: [server.url] }, { kind: "api-key", value: "fake-api-key" });
         const elapsedMs = Date.now() - started;
 
         expect(result.warnings).toHaveLength(1);
@@ -671,7 +671,7 @@ describe("fetchAndExtractLink(): no raw error detail ever reaches the caller (AC
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
-      const result = await extractProfile({ resumeText: "resume content", links: ["https://refuses-connection.example"] }, "fake-api-key");
+      const result = await extractProfile({ resumeText: "resume content", links: ["https://refuses-connection.example"] }, { kind: "api-key", value: "fake-api-key" });
 
       expect(result.warnings).toHaveLength(1);
       expect(result.warnings[0]).not.toContain(distinctiveRawMessage);
@@ -697,7 +697,7 @@ describe("fetchAndExtractLink(): legitimate public URL happy path is unchanged (
     );
     mockCreate.mockResolvedValueOnce(fakeExtractToolResponse(["Fractional CTO"], ["Leadership"]));
 
-    const result = await extractProfile({ links: [url] }, "fake-api-key");
+    const result = await extractProfile({ links: [url] }, { kind: "api-key", value: "fake-api-key" });
 
     expect(result.warnings).toEqual([]);
     expect(result.roles).toEqual(["Fractional CTO"]);

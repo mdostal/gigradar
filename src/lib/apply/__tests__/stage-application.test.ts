@@ -99,7 +99,7 @@ describe("stageApplication: red-tier guardrail (AC3)", () => {
     seedGig(gig);
     const r = makeMatchResult(gig, "red");
 
-    await expect(stageApplication(r, makeConfig(REAL_APPLY_PROFILE), "fake-api-key", { db })).rejects.toThrow(
+    await expect(stageApplication(r, makeConfig(REAL_APPLY_PROFILE), { kind: "api-key", value: "fake-api-key" }, { db })).rejects.toThrow(
       /tier is "red"/,
     );
     expect(mockGenerateDraft).not.toHaveBeenCalled();
@@ -113,7 +113,7 @@ describe("stageApplication: missing applyProfile guardrail (AC4)", () => {
     seedGig(gig);
     const r = makeMatchResult(gig, "green");
 
-    await expect(stageApplication(r, makeConfig(undefined), "fake-api-key", { db })).rejects.toThrow(/\/config/);
+    await expect(stageApplication(r, makeConfig(undefined), { kind: "api-key", value: "fake-api-key" }, { db })).rejects.toThrow(/\/config/);
     expect(mockGenerateDraft).not.toHaveBeenCalled();
     expect(getDraft(`${gig.sourceId}:${gig.externalId}`, { db })).toBeUndefined();
   });
@@ -127,7 +127,7 @@ describe("stageApplication: tier restriction only blocks red, not green/yellow",
     mockGenerateDraft.mockResolvedValueOnce(content);
 
     await expect(
-      stageApplication(makeMatchResult(gig, tier), makeConfig(REAL_APPLY_PROFILE), "fake-api-key", { db }),
+      stageApplication(makeMatchResult(gig, tier), makeConfig(REAL_APPLY_PROFILE), { kind: "api-key", value: "fake-api-key" }, { db }),
     ).resolves.toBeDefined();
   });
 });
@@ -140,9 +140,9 @@ describe("stageApplication: successful draft generation and persistence (AC7)", 
     const content: DraftContent = { coverText: "Dear Acme team...", answers: { "Why?": "Great fit." } };
     mockGenerateDraft.mockResolvedValueOnce(content);
 
-    const result = await stageApplication(makeMatchResult(gig, "green"), config, "fake-api-key", { db });
+    const result = await stageApplication(makeMatchResult(gig, "green"), config, { kind: "api-key", value: "fake-api-key" }, { db });
 
-    expect(mockGenerateDraft).toHaveBeenCalledWith(gig, config.profile, config.applyProfile, "fake-api-key");
+    expect(mockGenerateDraft).toHaveBeenCalledWith(gig, config.profile, config.applyProfile, { kind: "api-key", value: "fake-api-key" });
     expect(result).toEqual({ gig, content, status: "draft" });
 
     const stored = getDraft(`${gig.sourceId}:${gig.externalId}`, { db });

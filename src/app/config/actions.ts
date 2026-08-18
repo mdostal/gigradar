@@ -271,13 +271,13 @@ export async function cancelCaptureAction(captureId: string): Promise<ActionResu
  * The LLM credential is resolved fresh, inside this handler, via
  * `resolveLlmCredential()` (llm-credential-modes epic — supports either a
  * raw Anthropic API key or a long-lived OAuth token, config-selectable).
- * A missing credential returns `MISSING_API_KEY_ERROR` before
+ * A missing credential returns `MISSING_CREDENTIAL_ERROR` before
  * `getCapturePage()`/`checkCaptureReadiness()` ever run.
  */
 export async function checkCaptureReadinessAction(captureId: string, sourceId: string): Promise<ActionResult<CaptureReadiness>> {
   const credential = resolveLlmCredential();
   if (!credential) {
-    return actionErr(new Error(MISSING_API_KEY_ERROR));
+    return actionErr(new Error(MISSING_CREDENTIAL_ERROR));
   }
 
   try {
@@ -387,10 +387,25 @@ export async function setAnthropicApiKeyAction(formData: FormData): Promise<Acti
 /**
  * Specific, field-naming error returned when no Anthropic API key is set —
  * per this story's acceptance criteria, NEVER a generic SDK/auth error
- * bubbling up from `extractProfile()`'s own `Anthropic` client construction.
+ * bubbling up from `customLlmSource.fetch()`'s own `Anthropic` client
+ * construction. Used ONLY by `testCustomSourceExtractionAction()` below —
+ * that action stays on the raw-`apiKey`-only path (see its own doc
+ * comment and `runner.ts`'s `Source.fetch()` interface boundary), so its
+ * error message deliberately still names "Anthropic API key" specifically,
+ * not the more general "Anthropic credential" wording `MISSING_CREDENTIAL_ERROR`
+ * uses for the actions that DO support oauth-token mode.
  */
 const MISSING_API_KEY_ERROR =
-  'gigradar profile ingestion: no Anthropic API key is set. Enter one in the "Anthropic API key" field above and save it, then try again.';
+  'gigradar profile ingestion: no Anthropic API key is set. Enter one in the "Anthropic credential" field above and save it, then try again.';
+
+/**
+ * Specific error returned when no LLM credential (API key OR oauth token)
+ * is set — llm-credential-modes epic. Used by actions that resolve via
+ * `resolveLlmCredential()` (both credential kinds work): `checkCaptureReadinessAction()`
+ * and `extractProfileFromResumeAction()` below.
+ */
+const MISSING_CREDENTIAL_ERROR =
+  'gigradar profile ingestion: no Anthropic credential is set. Configure one in the "Anthropic credential" field above and save it, then try again.';
 
 /**
  * Builds `extractProfile()`'s `ExtractProfileInput` from the raw `FormData`
@@ -456,17 +471,19 @@ function rawApplyProfile(raw: Record<string, unknown>): Record<string, unknown> 
  * (`resumeFile`, PDF or plain text) plus a `links` textarea value, and
  * returns `ActionResult<{roles, skills, warnings, resumeSaved, resumeSaveError?}>`.
  *
- * **The API key is resolved fresh, INSIDE this handler, on every call** —
- * via `env-store.ts`'s `readEnvVar()`, never `process.env` and never a
- * module-scope constant — per this story's non-negotiable requirement
+ * **The LLM credential is resolved fresh, INSIDE this handler, on every
+ * call** — via `env-store.ts`'s `resolveLlmCredential()` (llm-credential-modes
+ * epic — supports either a raw Anthropic API key or a long-lived OAuth
+ * token, config-selectable), never `process.env` and never a module-scope
+ * constant — per this story's non-negotiable requirement
  * (collaborative-review finding, design-discussion.md §3 step 4): the
  * Next.js app's Server Action request path never populates `process.env`
  * from `.env` (only the CLI/cron path, via `loadConfig()`, does that), and a
- * module-scope-resolved key would go stale (or permanently capture
- * `undefined`) the moment the key is set/changed without a server restart.
- * A missing key short-circuits BEFORE `buildExtractInput()` or
- * `extractProfile()` run at all, returning `MISSING_API_KEY_ERROR` — a
- * specific error naming the "Anthropic API key" field, never a generic
+ * module-scope-resolved credential would go stale (or permanently capture
+ * `undefined`) the moment it's set/changed without a server restart.
+ * A missing credential short-circuits BEFORE `buildExtractInput()` or
+ * `extractProfile()` run at all, returning `MISSING_CREDENTIAL_ERROR` — a
+ * specific error naming the "Anthropic credential" field, never a generic
  * Anthropic SDK authentication failure.
  *
  * Per-link fetch/parse failures (including known login-walls) never fail
@@ -499,14 +516,14 @@ export async function extractProfileFromResumeAction(formData: FormData): Promis
     resumeSaveError?: string;
   }>
 > {
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
-  if (!apiKey) {
-    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  const credential = resolveLlmCredential();
+  if (!credential) {
+    return actionErr(new Error(MISSING_CREDENTIAL_ERROR));
   }
 
   try {
     const { input, resumeUpload } = await buildExtractInput(formData);
-    const result = await extractProfile(input, apiKey);
+    const result = await extractProfile(input, credential);
 
     let resumeSaved = false;
     let resumePath: string | undefined;

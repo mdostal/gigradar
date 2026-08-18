@@ -83,23 +83,23 @@ describe("endChatSessionAction", () => {
 });
 
 describe("sendChatMessageAction", () => {
-  it("returns a specific error naming the Anthropic API key, never calls sendMessage", async () => {
+  it("returns a specific error naming the Anthropic credential, never calls sendMessage", async () => {
     const result = await sendChatMessageAction("s1", "hello");
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("Anthropic API key");
+    expect(result.error).toContain("Anthropic credential");
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
-  it("resolves the API key via readEnvVar() and forwards the message to sendMessage()", async () => {
+  it("resolves the credential via resolveLlmCredential() and forwards the message to sendMessage()", async () => {
     setEnvVar("ANTHROPIC_API_KEY", "fake-key");
     sendMessageMock.mockResolvedValue({ type: "message", text: "hi there" });
 
     const result = await sendChatMessageAction("s1", "hello");
 
     expect(result).toEqual({ ok: true, data: { type: "message", text: "hi there" } });
-    expect(sendMessageMock).toHaveBeenCalledWith("s1", "fake-key", "hello");
+    expect(sendMessageMock).toHaveBeenCalledWith("s1", { kind: "api-key", value: "fake-key" }, "hello");
   });
 
   it("returns {ok:false} when sendMessage() itself throws (e.g. unknown session)", async () => {
@@ -115,12 +115,12 @@ describe("sendChatMessageAction", () => {
 });
 
 describe("resolveChatApprovalAction", () => {
-  it("returns a specific error naming the Anthropic API key, never calls resolveApproval", async () => {
+  it("returns a specific error naming the Anthropic credential, never calls resolveApproval", async () => {
     const result = await resolveChatApprovalAction("s1", true);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("Anthropic API key");
+    expect(result.error).toContain("Anthropic credential");
     expect(resolveApprovalMock).not.toHaveBeenCalled();
   });
 
@@ -135,7 +135,7 @@ describe("resolveChatApprovalAction", () => {
     expect(resolveApprovalMock).not.toHaveBeenCalled();
   });
 
-  it("resolves the API key + a real validated Config, and forwards approve through to resolveApproval()", async () => {
+  it("resolves the credential + a real validated Config, and forwards approve through to resolveApproval()", async () => {
     setEnvVar("ANTHROPIC_API_KEY", "fake-key");
     saveConfig(baseConfigEdits());
     resolveApprovalMock.mockResolvedValue({ type: "message", text: "Done." });
@@ -143,7 +143,7 @@ describe("resolveChatApprovalAction", () => {
     const result = await resolveChatApprovalAction("s1", true);
 
     expect(result).toEqual({ ok: true, data: { type: "message", text: "Done." } });
-    expect(resolveApprovalMock).toHaveBeenCalledWith("s1", "fake-key", true, expect.objectContaining({ profile: expect.objectContaining({ name: "Jane Doe" }) }));
+    expect(resolveApprovalMock).toHaveBeenCalledWith("s1", { kind: "api-key", value: "fake-key" }, true, expect.objectContaining({ profile: expect.objectContaining({ name: "Jane Doe" }) }));
   });
 
   it("forwards approve:false through to resolveApproval() unchanged", async () => {
@@ -153,7 +153,7 @@ describe("resolveChatApprovalAction", () => {
 
     await resolveChatApprovalAction("s1", false);
 
-    expect(resolveApprovalMock).toHaveBeenCalledWith("s1", "fake-key", false, expect.anything());
+    expect(resolveApprovalMock).toHaveBeenCalledWith("s1", { kind: "api-key", value: "fake-key" }, false, expect.anything());
   });
 
   it("returns {ok:false} when resolveApproval() itself throws (e.g. no pending approval)", async () => {

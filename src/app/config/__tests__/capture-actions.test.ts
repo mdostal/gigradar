@@ -335,12 +335,12 @@ describe("checkCaptureReadinessAction (oauth-session-capture-v2 epic, llm-captur
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("returns a specific error and never calls checkCaptureReadiness() when no Anthropic API key is set", async () => {
+  it("returns a specific error and never calls checkCaptureReadiness() when no Anthropic credential is set", async () => {
     const result = await checkCaptureReadinessAction("capture-123", "gofractional");
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("no Anthropic API key is set");
+    expect(result.error).toContain("no Anthropic credential is set");
     expect(getCapturePageMock).not.toHaveBeenCalled();
     expect(checkCaptureReadinessMock).not.toHaveBeenCalled();
   });
