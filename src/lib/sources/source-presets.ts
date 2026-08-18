@@ -8,10 +8,10 @@
 // (chat-guided-source-onboarding story) -- ONE array, two front doors,
 // never two divergent preset lists.
 //
-// Owner-confirmed list (see design-discussion.md §3 "and etc." -- resolved):
-// Indeed, Welcome to the Jungle, Zoho Recruit, Catalant. Per-platform
-// strategy grounded in REAL research (design-discussion.md §3), not a
-// guess:
+// Owner-confirmed list (see design-discussion.md §3 "and etc." --
+// resolved, later expanded via a deep-research pass -- see
+// .pHive/epics/source-presets-expansion/ for that research). Per-platform
+// strategy grounded in REAL research, not a guess:
 //   - Indeed: robots.txt explicitly disallows /viewjob?, /applystart, and
 //     singles out AI bots -- an EXPLICIT, owner-overridden exception
 //     ("i don't give a shit about indeed and their robots"), same posture
@@ -36,6 +36,15 @@
 //     (the real in-app URL can only be discovered by actually logging in)
 //     pending live Capture Login verification against the owner's real
 //     account.
+//   - Greenhouse, Ashby, Workable: same "ATS vendor, not one site" shape
+//     as Zoho Recruit -- each company self-hosts a `{host}/{company}`
+//     board. All three have permissive/clean robots.txt (Workable even
+//     publishes an explicit `Content-Signal: ai-input=yes`), public, no
+//     customAuth. (job-boards.greenhouse.io is the current host --
+//     boards.greenhouse.io now 301-redirects there.)
+//   - Contra, Landing.jobs: general freelance/tech-job boards with
+//     permissive robots.txt (Contra explicitly publishes
+//     `Content-Signal: ai-input=yes`) and public listing pages.
 //
 // `suggestsGmailDigest` flags presets whose platform typically notifies
 // application status/interview invites by email -- consumed by
@@ -116,6 +125,70 @@ export const SOURCE_PRESETS: SourcePreset[] = [
       customAuth: "browser-session",
       loginUrl: "https://app.gocatalant.com/c/_/auth/login/",
       allowedOrigins: ["gocatalant.com", "catalant.com"],
+    },
+  },
+  {
+    id: "greenhouse",
+    label: "Greenhouse",
+    description: "An ATS many companies self-host their careers board on. Point this at that specific company's Greenhouse board.",
+    settings: {
+      url: "https://job-boards.greenhouse.io/example-company",
+      hint:
+        "A Greenhouse job board: postings grouped by department, each row showing a title, department, and location, " +
+        "linking to its own posting page at /example-company/jobs/{numeric-id} -- use that posting page's url as each " +
+        "extracted Gig's own url. Some companies redirect their Greenhouse board to a custom-branded careers page " +
+        "instead of showing job-boards.greenhouse.io directly -- if this url redirects, read the redirected page.",
+    },
+    suggestsGmailDigest: true,
+  },
+  {
+    id: "ashby",
+    label: "Ashby",
+    description: "An ATS many companies self-host their careers board on. Point this at that specific company's Ashby board.",
+    settings: {
+      url: "https://jobs.ashbyhq.com/example-company",
+      hint:
+        "An Ashby job board (jobs.ashbyhq.com/{company}): a list of open roles, typically grouped by team/department, " +
+        "each with a title and location, linking to its own posting page at /{company}/{uuid} -- use that posting " +
+        "page's url as each extracted Gig's own url. This is a client-rendered page -- if the initial fetch looks " +
+        "empty, wait for the listing to render before extracting.",
+    },
+  },
+  {
+    id: "workable",
+    label: "Workable",
+    description: "An ATS many companies self-host their careers page on. Point this at that specific company's Workable board.",
+    settings: {
+      url: "https://apply.workable.com/example-company",
+      hint:
+        "A Workable careers page (apply.workable.com/{company} or jobs.workable.com/{company}): a list of open " +
+        "positions with title, department, and location, each linking to its own application page -- use that " +
+        "application page's url as each extracted Gig's own url.",
+    },
+    suggestsGmailDigest: true,
+  },
+  {
+    id: "contra",
+    label: "Contra",
+    description: "A freelance/independent-work marketplace. Point this at its public opportunities listing.",
+    settings: {
+      url: "https://contra.com/opportunities",
+      hint:
+        "Contra's opportunities page: a grid of freelance project/role cards, each with a title, client/company name, " +
+        "and often a budget or engagement-length indicator. Each card links to its own detail page -- use that page's " +
+        "url as each extracted Gig's own url. This is a client-rendered page -- wait for the grid to render before extracting.",
+    },
+  },
+  {
+    id: "landing-jobs",
+    label: "Landing.jobs",
+    description: "A European (Portugal/EU-centric) tech job board. Point this at its general listing page, not a search/filtered URL.",
+    settings: {
+      url: "https://landing.jobs/jobs",
+      hint:
+        "Landing.jobs' general job listing page: a list of tech role cards, each with a title, company name, location, " +
+        "and often a remote/hybrid indicator, linking to its own posting page -- use that posting page's url as each " +
+        "extracted Gig's own url. Mixed seniority, not exclusively fractional/contract -- expect some full-time listings mixed in.",
     },
   },
 ];

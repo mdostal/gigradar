@@ -188,3 +188,20 @@ export function resolveLoginUrl(sourceId: string, cfg: SourceConfig): string | u
   const configured = cfg.settings?.loginUrl;
   return typeof configured === "string" && configured.length > 0 ? configured : undefined;
 }
+
+/**
+ * Same config-driven fallback shape as resolveLoginUrl() above, for the
+ * profile-edit URL profile-assist navigates a persistent session to.
+ * SOURCE_PROFILE_URLS only covers the 3 hand-written browser-session
+ * adapters; a custom-llm source (e.g. a Catalant/Indeed preset) has no
+ * registry entry, so without this fallback profile-assist could never
+ * offer it -- same "static registry first, settings.* second" shape
+ * resolveAllowedOrigins()/resolveLoginUrl() already established.
+ */
+export function resolveProfileUrl(sourceId: string, cfg: SourceConfig): string | undefined {
+  const fromRegistry = SOURCE_PROFILE_URLS[sourceId];
+  if (fromRegistry) return fromRegistry;
+
+  const configured = cfg.settings?.profileUrl;
+  return typeof configured === "string" && configured.length > 0 ? configured : undefined;
+}

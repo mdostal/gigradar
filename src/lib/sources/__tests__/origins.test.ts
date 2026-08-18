@@ -9,7 +9,16 @@
 //      the type level (a mutation attempt must fail to compile), not just a
 //      naming convention.
 import { describe, expect, it } from "vitest";
-import { KNOWN_SOURCES, SOURCE_LOGIN_URLS, SOURCE_ORIGINS, SOURCE_PROFILE_URLS } from "../origins.js";
+import {
+  KNOWN_SOURCES,
+  resolveAllowedOrigins,
+  resolveLoginUrl,
+  resolveProfileUrl,
+  SOURCE_LOGIN_URLS,
+  SOURCE_ORIGINS,
+  SOURCE_PROFILE_URLS,
+} from "../origins.js";
+import type { SourceConfig } from "../../types.js";
 
 // Hardcoded snapshot of the exact values that were inline in
 // gofractional.ts's/ateam.ts's own `const ALLOWED_ORIGINS = [...]` before
@@ -145,5 +154,40 @@ describe("KNOWN_SOURCES", () => {
   it("has no duplicate ids", () => {
     const ids = KNOWN_SOURCES.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+// resolveAllowedOrigins()/resolveLoginUrl()/resolveProfileUrl(): static
+// registry first, cfg.settings.* config-driven fallback second — the
+// mechanism a custom-llm-source preset (e.g. Catalant, Indeed) with no
+// registry entry relies on for Capture Login and profile-assist alike.
+describe("resolveAllowedOrigins/resolveLoginUrl/resolveProfileUrl fallback", () => {
+  const REGISTERED_ID = "gofractional";
+  const CUSTOM_ID = "some-custom-source";
+
+  it("prefers the static registry over cfg.settings for a registered source id", () => {
+    const cfg: SourceConfig = { id: REGISTERED_ID, enabled: true, settings: { allowedOrigins: ["evil.example.com"] } };
+    expect(resolveAllowedOrigins(REGISTERED_ID, cfg)).toEqual([...SOURCE_ORIGINS[REGISTERED_ID]!]);
+    expect(resolveLoginUrl(REGISTERED_ID, cfg)).toBe(SOURCE_LOGIN_URLS[REGISTERED_ID]);
+    expect(resolveProfileUrl(REGISTERED_ID, cfg)).toBe(SOURCE_PROFILE_URLS[REGISTERED_ID]);
+  });
+
+  it("falls back to cfg.settings.* for an id with no registry entry", () => {
+    const cfg: SourceConfig = {
+      id: CUSTOM_ID,
+      enabled: true,
+      kind: "custom-llm",
+      settings: { allowedOrigins: ["example.com"], loginUrl: "https://example.com/login", profileUrl: "https://example.com/profile" },
+    };
+    expect(resolveAllowedOrigins(CUSTOM_ID, cfg)).toEqual(["example.com"]);
+    expect(resolveLoginUrl(CUSTOM_ID, cfg)).toBe("https://example.com/login");
+    expect(resolveProfileUrl(CUSTOM_ID, cfg)).toBe("https://example.com/profile");
+  });
+
+  it("returns undefined (never throws) when neither the registry nor cfg.settings has an answer", () => {
+    const cfg: SourceConfig = { id: CUSTOM_ID, enabled: true, kind: "custom-llm", settings: {} };
+    expect(resolveAllowedOrigins(CUSTOM_ID, cfg)).toBeUndefined();
+    expect(resolveLoginUrl(CUSTOM_ID, cfg)).toBeUndefined();
+    expect(resolveProfileUrl(CUSTOM_ID, cfg)).toBeUndefined();
   });
 });
