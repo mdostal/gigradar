@@ -187,6 +187,8 @@ interface DraftConfig {
   autoFire: DraftAutoFire;
   /** An `APP_ICONS` id (src/lib/app-icons.ts) — like autoDraftOnScan/notifyOnGreenMatch, always sent as-is, no enabled-flag tri-state needed (it always has a value, defaulting to DEFAULT_APP_ICON_ID). */
   appIcon: string;
+  /** llm-credential-modes epic — like appIcon, always has a value (defaulting to "api-key"), no enabled-flag tri-state needed. */
+  llmCredentialKind: "api-key" | "oauth-token";
 }
 
 // -- Config -> Draft -----------------------------------------------------
@@ -267,6 +269,7 @@ function configToDraft(config: Config): DraftConfig {
     autoDraftOnScan: config.autoDraftOnScan ?? false,
     notifyOnGreenMatch: config.notifyOnGreenMatch ?? false,
     appIcon: config.appIcon ?? DEFAULT_APP_ICON_ID,
+    llmCredentialKind: config.llmCredentialKind ?? "api-key",
     autoFire: {
       killSwitch: config.autoFire?.killSwitch ?? false,
       rules: (config.autoFire?.rules ?? []).map((r) => ({
@@ -413,6 +416,7 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
   edits.autoDraftOnScan = draft.autoDraftOnScan;
   edits.notifyOnGreenMatch = draft.notifyOnGreenMatch;
   edits.appIcon = draft.appIcon;
+  edits.llmCredentialKind = draft.llmCredentialKind;
 
   // NOT typed as AutoFireRuleConfig[] here on purpose -- same draftNumber()
   // invalid-passthrough reasoning as `needs` above.
@@ -1611,17 +1615,44 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
           )}
 
           <div className="mt-2 border-t border-slate-200 pt-3">
-            <span className={labelClass}>Anthropic API key</span>
+            <span className={labelClass}>Anthropic credential</span>
             <p className="text-xs text-slate-500">
               Writes directly to <code>.env</code> (encrypted at rest) — not <code>config.json</code> — and
               saves immediately, separately from this form&rsquo;s Save button below.
             </p>
+            <div className="mt-1 flex gap-4 text-sm text-slate-700">
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="llmCredentialKind"
+                  checked={draft.llmCredentialKind === "api-key"}
+                  onChange={() => setDraft({ ...draft, llmCredentialKind: "api-key" })}
+                />
+                API key
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="llmCredentialKind"
+                  checked={draft.llmCredentialKind === "oauth-token"}
+                  onChange={() => setDraft({ ...draft, llmCredentialKind: "oauth-token" })}
+                />
+                Long-lived OAuth token (<code>claude setup-token</code>)
+              </label>
+            </div>
+            {draft.llmCredentialKind === "oauth-token" && (
+              <p className="mt-1 text-xs text-slate-500">
+                Run <code>claude setup-token</code> in a terminal (requires a Claude subscription) and paste the
+                printed token below — same field either way, just sent as a Bearer token instead of an API key.
+                This selector is part of the form below and needs its own Save click to take effect.
+              </p>
+            )}
             <div className="mt-1 flex gap-2">
               <input
                 type="password"
                 value={apiKeyValue}
                 onChange={(e) => setApiKeyValue(e.target.value)}
-                placeholder="sk-ant-..."
+                placeholder={draft.llmCredentialKind === "oauth-token" ? "sk-ant-oat01-..." : "sk-ant-..."}
                 autoComplete="off"
                 className={inputClass}
               />
@@ -1631,12 +1662,12 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                 disabled={apiKeyState.status === "saving" || apiKeyValue.trim() === ""}
                 className={`shrink-0 ${captureButtonClass}`}
               >
-                {apiKeyState.status === "saving" ? "Saving…" : "Save key"}
+                {apiKeyState.status === "saving" ? "Saving…" : "Save credential"}
               </button>
             </div>
             {apiKeyState.status === "success" && (
               <p role="status" className="mt-1 text-xs text-green-700">
-                Anthropic API key saved to .env.
+                Credential saved to .env.
               </p>
             )}
             {apiKeyState.status === "error" && (

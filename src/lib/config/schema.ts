@@ -140,4 +140,15 @@ export const ConfigSchema = z.object({
   notifyOnGreenMatch: z.boolean().optional(),
   autoFire: AutoFireConfigSchema.optional(),
   appIcon: z.string().optional(),
+  /**
+   * llm-credential-modes epic. Which of two ways the resolved
+   * ANTHROPIC_API_KEY env slot's VALUE should be sent to the Anthropic API
+   * -- "api-key" (the x-api-key header, today's only behavior) or
+   * "oauth-token" (a Bearer token, e.g. a long-lived token from this
+   * machine's own `claude setup-token`). Absent/undefined means "api-key",
+   * byte-identical to every install before this field existed -- see
+   * env-store.ts's resolveLlmCredential() and llm-client.ts's
+   * createAnthropicClient().
+   */
+  llmCredentialKind: z.enum(["api-key", "oauth-token"]).optional(),
 });

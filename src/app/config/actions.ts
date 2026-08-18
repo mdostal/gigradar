@@ -9,7 +9,7 @@ import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { buildAuthorizationUrl, deleteTokenSet } from "@/lib/auth/oauth2";
 import { resolveOAuthClientCredentials } from "@/lib/auth/oauth-credentials";
 import { GMAIL_PROVIDER } from "@/lib/auth/oauth-providers/gmail";
-import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
+import { readEnvVar, resolveLlmCredential, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
 import { deleteResume, getResumePath, saveResume } from "@/lib/documents/resume-store";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
@@ -268,22 +268,21 @@ export async function cancelCaptureAction(captureId: string): Promise<ActionResu
  * independent, always-available action regardless of what this returns
  * (see config-client.tsx's `CaptureLoginControl`).
  *
- * The Anthropic API key is resolved fresh, inside this handler, via
- * `readEnvVar()` — same non-negotiable discipline
- * `extractProfileFromResumeAction()` below already establishes (see that
- * function's own doc comment for why). A missing key returns
- * `MISSING_API_KEY_ERROR` before `getCapturePage()`/`checkCaptureReadiness()`
- * ever run.
+ * The LLM credential is resolved fresh, inside this handler, via
+ * `resolveLlmCredential()` (llm-credential-modes epic — supports either a
+ * raw Anthropic API key or a long-lived OAuth token, config-selectable).
+ * A missing credential returns `MISSING_API_KEY_ERROR` before
+ * `getCapturePage()`/`checkCaptureReadiness()` ever run.
  */
 export async function checkCaptureReadinessAction(captureId: string, sourceId: string): Promise<ActionResult<CaptureReadiness>> {
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
-  if (!apiKey) {
+  const credential = resolveLlmCredential();
+  if (!credential) {
     return actionErr(new Error(MISSING_API_KEY_ERROR));
   }
 
   try {
     const page = getCapturePage(captureId);
-    const readiness = await checkCaptureReadiness(page, sourceId, apiKey);
+    const readiness = await checkCaptureReadiness(page, sourceId, credential);
     return actionOk(readiness);
   } catch (e) {
     return actionErr(e);

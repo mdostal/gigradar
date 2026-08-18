@@ -326,7 +326,10 @@ describe("checkCaptureReadinessAction (oauth-session-capture-v2 epic, llm-captur
     const result = await checkCaptureReadinessAction("capture-123", "gofractional");
 
     expect(getCapturePageMock).toHaveBeenCalledWith("capture-123");
-    expect(checkCaptureReadinessMock).toHaveBeenCalledWith({ fake: "page" }, "gofractional", "sk-ant-fake-test-key");
+    expect(checkCaptureReadinessMock).toHaveBeenCalledWith({ fake: "page" }, "gofractional", {
+      kind: "api-key",
+      value: "sk-ant-fake-test-key",
+    });
     expect(result).toEqual({ ok: true, data: { ready: true, note: "Looks like a signed-in dashboard." } });
     expect(fs.existsSync(getConfigPath())).toBe(false);
     expect(revalidatePath).not.toHaveBeenCalled();
