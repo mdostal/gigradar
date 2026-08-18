@@ -69,6 +69,8 @@ export const SOURCE_PRESETS: SourcePreset[] = [
         "a location, and a short snippet of the description. Clicking a card opens the full posting at a /viewjob?jk=... URL " +
         "-- use THAT url as each extracted Gig's own url, not this listing page's url.",
       customAuth: "browser-session",
+      loginUrl: "https://secure.indeed.com/auth",
+      allowedOrigins: ["indeed.com"],
     },
     suggestsGmailDigest: true,
   },
@@ -112,6 +114,8 @@ export const SOURCE_PRESETS: SourcePreset[] = [
         "industry/description, and often a rate/duration estimate; use each card's own detail-page url as the " +
         "extracted Gig's url, not this dashboard url.",
       customAuth: "browser-session",
+      loginUrl: "https://app.gocatalant.com/c/_/auth/login/",
+      allowedOrigins: ["gocatalant.com", "catalant.com"],
     },
   },
 ];

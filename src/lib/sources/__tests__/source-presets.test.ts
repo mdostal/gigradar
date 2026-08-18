@@ -75,6 +75,15 @@ describe("SOURCE_PRESETS", () => {
     expect(zoho.settings.customAuth).toBeUndefined();
   });
 
+  it("every preset with customAuth: browser-session also sets loginUrl and allowedOrigins (Capture Login needs both)", () => {
+    for (const preset of SOURCE_PRESETS) {
+      if (preset.settings.customAuth !== "browser-session") continue;
+      expect(String(preset.settings.loginUrl ?? ""), `${preset.id}.settings.loginUrl`).not.toBe("");
+      expect(Array.isArray(preset.settings.allowedOrigins), `${preset.id}.settings.allowedOrigins`).toBe(true);
+      expect((preset.settings.allowedOrigins as string[]).length, `${preset.id}.settings.allowedOrigins`).toBeGreaterThan(0);
+    }
+  });
+
   it("indeed and zoho-recruit suggest a Gmail digest connection; welcome-to-the-jungle does not", () => {
     const indeed = SOURCE_PRESETS.find((p) => p.id === "indeed")!;
     const zoho = SOURCE_PRESETS.find((p) => p.id === "zoho-recruit")!;
