@@ -1,0 +1,75 @@
+id: embedded-view-readonly
+epic: embedded-profile-assist
+title: "Read-only embedded live-view pane in /profile-assist"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice 1. Adds a new "Embedded" view option to
+  /profile-assist, alongside the existing Manual/Guided/Full-auto mode
+  tabs (profile-assist-client.tsx). When selected, the page renders a
+  two-column layout: left pane is a live screenshot of the active assist
+  session's page (auto-refreshed after every agent turn, plus a manual
+  Refresh button), right pane is the SAME chat/suggestion UI Guided mode
+  already renders today, completely unchanged.
+
+  New Server Action `getSessionScreenshotAction(sessionId)` in
+  src/app/profile-assist/actions.ts: calls the ALREADY-EXPORTED
+  getAssistSessionPage(sessionId) from assist-session.ts, then
+  page.screenshot({type: "jpeg", quality: 70}), base64-encodes it, returns
+  a data: URL via the existing ActionResult<T> shape. No changes needed to
+  assist-session.ts itself -- getAssistSessionPage() already exists and
+  already returns the live Page object.
+
+  This is deliberately READ-ONLY (no click/type forwarding yet -- that's
+  embedded-view-interactive) and does NOT touch profile-assist-loop.ts's
+  existing ARIA-snapshot-based agent reasoning at all -- the screenshot is
+  purely for the human's benefit, a decoupled concern from how the agent
+  itself reads the page. See design-discussion.md section 4.1 for why
+  these two are deliberately not the same mechanism.
+
+acceptance_criteria:
+  - "A new Embedded view toggle appears in /profile-assist alongside Manual/Guided/Full-auto, for any active session."
+  - "Selecting Embedded renders a two-column layout: left pane shows an <img> fed by getSessionScreenshotAction's data URL; right pane renders the existing Guided-mode chat/transcript/approval UI unchanged."
+  - "The left pane's screenshot auto-refreshes after every advanceLoopTurnAction/resolveApprovalAction call already wired in profile-assist-client.tsx (no new polling loop -- piggyback on the existing turn-driven refresh points)."
+  - "A manual Refresh button re-fetches the screenshot on demand (for the case where the human just wants to check current state without taking a turn)."
+  - "getSessionScreenshotAction returns actionErr() with a clear message (not a throw) when sessionId has no active session (getAssistSessionPage throws for an unknown/ended session -- caught and wrapped, same try/catch shape every other action in this file already uses)."
+  - "Selecting Manual/Guided/Full-auto (i.e. NOT Embedded) renders exactly as it does today -- zero behavior change for the existing, already-shipped native-window flow."
+  - "Unit tests cover getSessionScreenshotAction's success path (mocked Page.screenshot) and its error path (no active session)."
+
+steps:
+  - id: research
+    description: Confirm getAssistSessionPage()'s exact exported signature/error behavior in assist-session.ts, and profile-assist-client.tsx's existing turn-refresh call sites to hook the auto-refresh into.
+    agent: researcher
+  - id: implement
+    description: Add getSessionScreenshotAction to actions.ts; add the Embedded view toggle + two-column layout + auto/manual refresh wiring to profile-assist-client.tsx.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit tests per acceptance criteria (mock Playwright Page.screenshot, same mocking convention assist-session.test.ts already establishes).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm Manual/Guided/Full-auto's existing behavior is byte-unchanged; confirm no secret/session data leaks into the screenshot data URL logging.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/assist-session.ts
+      purpose: "getAssistSessionPage(sessionId): Page -- the already-exported accessor this story's new action calls; throws for an unknown session, caught by the new action's try/catch."
+    - path: src/app/profile-assist/actions.ts
+      purpose: "where getSessionScreenshotAction is added, following the file's existing ActionResult<T>/actionOk()/actionErr() convention exactly."
+    - path: src/app/profile-assist/profile-assist-client.tsx
+      purpose: "where the Embedded view toggle, two-column layout, and refresh wiring are added; existing advanceLoopTurnAction/resolveApprovalAction call sites are the auto-refresh hook points."
+
+references:
+  - path: .pHive/epics/embedded-profile-assist/docs/design-discussion.md
+    relevant_excerpt: "section 3(a) and 4.1 -- the screenshot-refresh decision and why it's decoupled from the agent's own ARIA-snapshot reading."
