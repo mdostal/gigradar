@@ -1,7 +1,7 @@
 // Proves source-presets story's acceptance criteria for ../source-presets.ts:
-//   1. exactly 3 presets (indeed, welcome-to-the-jungle, zoho-recruit) --
-//      the owner-confirmed closed list (design-discussion.md §3 "and
-//      etc." -- resolved).
+//   1. exactly 8 presets (indeed, welcome-to-the-jungle, zoho-recruit,
+//      greenhouse, ashby, workable, contra, landing-jobs) -- the ats-
+//      navigator epic's original 3 plus a deep-research expansion pass.
 //   2. each preset, wrapped into a full SourceConfig (id/enabled/kind/
 //      settings), validates against the SAME SourceConfigSchema
 //      loadConfig()/saveConfig() use -- schema drift breaks this test,
@@ -18,8 +18,17 @@ import { SOURCE_PRESETS, sourceConfigFromPreset } from "../source-presets.js";
 import { SourceConfigSchema } from "../../config/schema.js";
 
 describe("SOURCE_PRESETS", () => {
-  it("ships exactly the owner-confirmed closed list of 3 presets", () => {
-    expect(SOURCE_PRESETS.map((p) => p.id).sort()).toEqual(["indeed", "welcome-to-the-jungle", "zoho-recruit"]);
+  it("ships exactly the owner-confirmed list of 8 presets", () => {
+    expect(SOURCE_PRESETS.map((p) => p.id).sort()).toEqual([
+      "ashby",
+      "contra",
+      "greenhouse",
+      "indeed",
+      "landing-jobs",
+      "welcome-to-the-jungle",
+      "workable",
+      "zoho-recruit",
+    ]);
   });
 
   it("has a unique id per preset", () => {
@@ -61,20 +70,28 @@ describe("SOURCE_PRESETS", () => {
     expect(indeed.settings.customAuth).toBe("browser-session");
   });
 
-  it("welcome-to-the-jungle and zoho-recruit leave customAuth unset (public by default)", () => {
-    const wttj = SOURCE_PRESETS.find((p) => p.id === "welcome-to-the-jungle")!;
-    const zoho = SOURCE_PRESETS.find((p) => p.id === "zoho-recruit")!;
-    expect(wttj.settings.customAuth).toBeUndefined();
-    expect(zoho.settings.customAuth).toBeUndefined();
+  it("every other preset leaves customAuth unset (all public by default)", () => {
+    for (const id of ["welcome-to-the-jungle", "zoho-recruit", "greenhouse", "ashby", "workable", "contra", "landing-jobs"]) {
+      const preset = SOURCE_PRESETS.find((p) => p.id === id)!;
+      expect(preset.settings.customAuth, id).toBeUndefined();
+    }
   });
 
-  it("indeed and zoho-recruit suggest a Gmail digest connection; welcome-to-the-jungle does not", () => {
-    const indeed = SOURCE_PRESETS.find((p) => p.id === "indeed")!;
-    const zoho = SOURCE_PRESETS.find((p) => p.id === "zoho-recruit")!;
-    const wttj = SOURCE_PRESETS.find((p) => p.id === "welcome-to-the-jungle")!;
-    expect(indeed.suggestsGmailDigest).toBe(true);
-    expect(zoho.suggestsGmailDigest).toBe(true);
-    expect(wttj.suggestsGmailDigest).toBeFalsy();
+  it("indeed, zoho-recruit, greenhouse, and workable suggest a Gmail digest connection; the rest do not", () => {
+    const digestExpected: Record<string, boolean> = {
+      indeed: true,
+      "welcome-to-the-jungle": false,
+      "zoho-recruit": true,
+      greenhouse: true,
+      ashby: false,
+      workable: true,
+      contra: false,
+      "landing-jobs": false,
+    };
+    for (const [id, expected] of Object.entries(digestExpected)) {
+      const preset = SOURCE_PRESETS.find((p) => p.id === id)!;
+      expect(Boolean(preset.suggestsGmailDigest), id).toBe(expected);
+    }
   });
 });
 
