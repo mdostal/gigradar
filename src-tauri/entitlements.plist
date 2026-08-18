@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- macos-adhoc-codesign fix (v0.24.1) started running codesign over
+	     the whole bundle, which on this platform enforces AMFI's default
+	     restriction against toggling W^X memory permissions for any
+	     signed binary. The bundled Node sidecar's V8 JIT does exactly
+	     that at startup (pthread_jit_write_protect_np, inside
+	     v8::internal::ThreadIsolation::Initialize) and crashed
+	     immediately with SIGTRAP/EXC_BREAKPOINT: live-verified via the
+	     real crash report at ~/Library/Logs/DiagnosticReports/node-*.ips,
+	     not guessed. allow-jit opts the signed bundle back into that
+	     permission. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<!-- Node/V8 also allocate executable memory pages that were never
+	     themselves code-signed (JIT-compiled code, by definition):
+	     required alongside allow-jit for the same W^X toggle to succeed. -->
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<!-- The bundled Node sidecar loads native addons (node:sqlite,
+	     Playwright's own native bindings) that are not signed with this
+	     bundle's own ad-hoc identity: without this, a hardened-runtime
+	     signed process refuses to dlopen them. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>
