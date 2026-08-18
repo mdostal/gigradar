@@ -3,7 +3,7 @@
 // unit-tested against a plain node:http server in the automated suite,
 // with no real Electron process needed. main.ts wires this up to the
 // spawned `next start` child and the native dialog/BrowserWindow.
-import { createServer } from "node:net";
+import { connect, createServer } from "node:net";
 
 /**
  * Asks the OS for a free TCP port (bind to port 0, read back what it
@@ -38,14 +38,28 @@ export function findFreePort(): Promise<number> {
  * something else on the machine already holds it. */
 export const DEFAULT_PORT = 3000;
 
-/** True if `port` is currently free to bind on 127.0.0.1. */
+/**
+ * True if `port` is currently free -- checked via a CONNECT attempt, never
+ * a bind attempt. `net.createServer().listen()` binds with `SO_REUSEADDR`
+ * by Node's own default, which lets a second bind to an already-actively-
+ * listening port SUCCEED -- live-verified on a real always-on local
+ * service already bound to port 3000: `listen(3000, "127.0.0.1")` fired
+ * its success callback even though something else was actively serving
+ * that port, a false "free" positive that sent gigradar's own server to
+ * port 3000 while a DIFFERENT app was already answering there -- the
+ * app window ended up loading that other app's page instead of gigradar's
+ * own. A connect attempt has no such false positive: a live listener
+ * always accepts the connection; a genuinely free port always refuses it
+ * (`ECONNREFUSED`).
+ */
 function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const server = createServer();
-    server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => {
-      server.close(() => resolve(true));
+    const socket = connect({ port, host: "127.0.0.1" });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(false);
     });
+    socket.once("error", () => resolve(true));
   });
 }
 
