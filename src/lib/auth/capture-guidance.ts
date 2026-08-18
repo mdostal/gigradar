@@ -23,8 +23,10 @@
 // (`page.locator("body").ariaSnapshot({ mode: "ai" })`) — see that file's
 // header comment for why this replaced the older, now-removed
 // `page.accessibility.snapshot()` API.
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { Page } from "playwright";
+import { createAnthropicClient } from "../config/llm-client.js";
+import type { LlmCredential } from "../config/env-store.js";
 
 const READINESS_TOOL_NAME = "report_capture_readiness";
 
@@ -87,14 +89,14 @@ function buildPageSnapshotBlock(snapshot: string): string {
  * navigates the page — this function's tool schema has no such capability
  * at all (see this file's header comment).
  *
- * `apiKey` is used to construct the Anthropic client HERE, inside this
+ * `credential` is used to construct the Anthropic client HERE, inside this
  * function call, and nowhere else — see this file's header comment.
  *
  * Throws a specific error if the Anthropic response doesn't include the
  * expected structured tool-use block, or if the underlying API call
  * itself fails — never silently returns a default/guessed readiness result.
  */
-export async function checkCaptureReadiness(page: Page, sourceId: string, apiKey: string): Promise<CaptureReadiness> {
+export async function checkCaptureReadiness(page: Page, sourceId: string, credential: LlmCredential): Promise<CaptureReadiness> {
   const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
 
   const contentBlocks: Anthropic.ContentBlockParam[] = [
@@ -112,7 +114,7 @@ export async function checkCaptureReadiness(page: Page, sourceId: string, apiKey
     },
   ];
 
-  const client = new Anthropic({ apiKey });
+  const client = createAnthropicClient(credential);
 
   const response = await client.messages.create({
     model: "claude-opus-5",

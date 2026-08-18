@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decrypt, encrypt, isEncryptedEnvelope } from "../../security/vault.js";
-import { readEnvVar, setEnvVar } from "../env-store.js";
-import { getEnvPath } from "../load.js";
+import { readEnvVar, resolveLlmCredential, setEnvVar } from "../env-store.js";
+import { getConfigPath, getEnvPath } from "../load.js";
 
 // Same isolation pattern as load.test.ts / save.test.ts: every test points
 // XDG_DATA_HOME (.env's location) AND XDG_CONFIG_HOME (the vault key's
@@ -196,5 +196,61 @@ describe("setEnvVar / readEnvVar: never log the name or value being set or read 
     expect(result.error).toContain(envPath);
     expect(result.error).not.toContain("existing-value");
     expect(result.error).not.toContain("new-value-should-not-leak");
+  });
+});
+
+/** Writes `doc` as a legacy PLAINTEXT config.json fixture — readRawConfig() migrates it in place on first read, same as a real hand-edited file. */
+function writeConfigJson(doc: Record<string, unknown>): void {
+  const configPath = getConfigPath();
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(doc));
+}
+
+describe("resolveLlmCredential (llm-credential-modes epic)", () => {
+  it("returns undefined when ANTHROPIC_API_KEY is unset, regardless of config", () => {
+    writeConfigJson({ llmCredentialKind: "oauth-token" });
+    expect(resolveLlmCredential()).toBeUndefined();
+  });
+
+  it("defaults to kind \"api-key\" when llmCredentialKind is absent from config — byte-identical to every install before this field existed", () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-real-key");
+    // No config.json written at all — readRawConfig() returns {} for a missing file.
+
+    expect(resolveLlmCredential()).toEqual({ kind: "api-key", value: "sk-ant-real-key" });
+  });
+
+  it("resolves kind \"oauth-token\" when Config.llmCredentialKind is set to it", () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-oat01-long-lived-token");
+    writeConfigJson({ llmCredentialKind: "oauth-token" });
+
+    expect(resolveLlmCredential()).toEqual({ kind: "oauth-token", value: "sk-ant-oat01-long-lived-token" });
+  });
+
+  it("resolves kind \"api-key\" when Config.llmCredentialKind is explicitly set to it", () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-real-key");
+    writeConfigJson({ llmCredentialKind: "api-key" });
+
+    expect(resolveLlmCredential()).toEqual({ kind: "api-key", value: "sk-ant-real-key" });
+  });
+
+  it("treats an unrecognized llmCredentialKind value as \"api-key\" rather than throwing", () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-real-key");
+    writeConfigJson({ llmCredentialKind: "something-unexpected" });
+
+    expect(resolveLlmCredential()).toEqual({ kind: "api-key", value: "sk-ant-real-key" });
+  });
+
+  it("does not console.log/warn/error the credential value or the env var name", () => {
+    setEnvVar("ANTHROPIC_API_KEY", "another-secret-oauth-token");
+    writeConfigJson({ llmCredentialKind: "oauth-token" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    resolveLlmCredential();
+
+    const allOutput = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls].flat().join(" ");
+    expect(allOutput).not.toContain("another-secret-oauth-token");
+    expect(allOutput).not.toContain("ANTHROPIC_API_KEY");
   });
 });

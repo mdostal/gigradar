@@ -214,6 +214,17 @@ export interface Config {
    * other optional fields on this interface. Not a secret, cosmetic only.
    */
   appIcon?: string;
+  /**
+   * llm-credential-modes epic. Which of two ways the resolved
+   * ANTHROPIC_API_KEY env slot's VALUE should be sent to the Anthropic API
+   * — "api-key" (the x-api-key header, today's only behavior) or
+   * "oauth-token" (a Bearer token, e.g. a long-lived token from this
+   * machine's own `claude setup-token`). Omitted means "api-key",
+   * byte-identical to every install before this field existed — see
+   * env-store.ts's resolveLlmCredential() and llm-client.ts's
+   * createAnthropicClient().
+   */
+  llmCredentialKind?: "api-key" | "oauth-token";
 }
 
 /**

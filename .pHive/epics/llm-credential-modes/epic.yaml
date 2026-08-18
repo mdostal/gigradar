@@ -1,0 +1,20 @@
+name: llm-credential-modes
+title: "Support a long-lived OAuth token (claude setup-token) as an alternative to a raw Anthropic API key"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: credential-core
+    title: "Config field + resolveLlmCredential() + createAnthropicClient() factory + /config UI, wired into custom-source-recipe.ts"
+    complexity: medium
+    depends_on: []
+  - id: credential-everywhere
+    title: "Migrate the remaining 8 lib call sites + ~11 action/scheduler/runner resolution call sites to the new credential/factory pair"
+    complexity: high
+    depends_on: [credential-core]

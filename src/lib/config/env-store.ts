@@ -35,6 +35,7 @@ import dotenv from "dotenv";
 import { type ActionResult, actionErr, actionOk } from "../actions/result.js";
 import { decrypt, encrypt, getOrCreateKey, isEncryptedEnvelope, VaultTamperError } from "../security/vault.js";
 import { getEnvPath, hasAnyEncryptedFile } from "./load.js";
+import { readRawConfig } from "./save.js";
 
 /**
  * Local, deliberately-DUPLICATED equivalent of load.ts's private
@@ -169,4 +170,39 @@ export function setEnvVar(name: string, value: string): ActionResult<void> {
  */
 export function readEnvVar(name: string): string | undefined {
   return readEnvFileRaw()[name];
+}
+
+/**
+ * llm-credential-modes epic. The resolved ANTHROPIC_API_KEY env slot's
+ * value, tagged with HOW it should be sent to the Anthropic API — plain
+ * `readEnvVar("ANTHROPIC_API_KEY")` only ever returns the raw string, never
+ * which of the two auth shapes (`x-api-key` vs a Bearer token) it is. See
+ * llm-client.ts's `createAnthropicClient()`, the sole consumer of `kind`.
+ */
+export interface LlmCredential {
+  kind: "api-key" | "oauth-token";
+  value: string;
+}
+
+const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
+
+/**
+ * The ONE shared credential-resolution call every LLM call site should use
+ * instead of a bare `readEnvVar("ANTHROPIC_API_KEY")` — reads the SAME env
+ * slot (still never logged, never included in an error message — same
+ * discipline as readEnvVar() above) plus `Config.llmCredentialKind` from
+ * the raw, unresolved config document (readRawConfig(), never
+ * loadConfig() — same raw-vs-resolved discipline this codebase holds
+ * everywhere else; `llmCredentialKind` is a mode selector, not a secret,
+ * so reading it from the raw document is correct and required). Returns
+ * `undefined` when the env var is unset, matching readEnvVar()'s own
+ * undefined-on-unset behavior — never throws for a missing credential.
+ */
+export function resolveLlmCredential(): LlmCredential | undefined {
+  const value = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  if (!value) return undefined;
+
+  const raw = readRawConfig();
+  const kind = raw.llmCredentialKind === "oauth-token" ? "oauth-token" : "api-key";
+  return { kind, value };
 }

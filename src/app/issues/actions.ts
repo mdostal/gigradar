@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { actionErr, actionOk } from "@/lib/actions/result";
 import { checkCaptureReadiness, type CaptureReadiness } from "@/lib/auth/capture-guidance";
 import { closeCopilotSession, getCopilotPage, openCopilotSession } from "@/lib/auth/verification-copilot-session";
-import { readEnvVar } from "@/lib/config/env-store";
+import { resolveLlmCredential } from "@/lib/config/env-store";
 import { readRawConfig } from "@/lib/config/save";
 import { resolveIssue } from "@/lib/notify/issues";
 import type { ActionResult } from "@/lib/actions/result";
@@ -95,14 +95,14 @@ export async function openCopilotSessionAction(sourceId: string, blockedUrl: str
  * Capture Login.
  */
 export async function checkCopilotReadinessAction(sessionId: string, sourceId: string): Promise<ActionResult<CaptureReadiness>> {
-  const apiKey = readEnvVar("ANTHROPIC_API_KEY");
-  if (!apiKey) {
+  const credential = resolveLlmCredential();
+  if (!credential) {
     return actionErr(new Error("No Anthropic API key configured — set one in Config before checking readiness."));
   }
 
   try {
     const page = getCopilotPage(sessionId);
-    const readiness = await checkCaptureReadiness(page, sourceId, apiKey);
+    const readiness = await checkCaptureReadiness(page, sourceId, credential);
     return actionOk(readiness);
   } catch (e) {
     return actionErr(e);
