@@ -122,8 +122,8 @@ function fakeExtractResult(overrides: Partial<{ roles: string[]; skills: string[
   return { roles: [], skills: [], warnings: [], ...overrides };
 }
 
-describe("extractProfileFromResumeAction: missing API key (AC2)", () => {
-  it("returns a specific error naming the 'Anthropic API key' field, not a generic auth failure, and never calls extractProfile()", async () => {
+describe("extractProfileFromResumeAction: missing credential (AC2)", () => {
+  it("returns a specific error naming the 'Anthropic credential' field, not a generic auth failure, and never calls extractProfile()", async () => {
     expect(readEnvVar("ANTHROPIC_API_KEY")).toBeUndefined();
 
     const formData = new FormData();
@@ -133,24 +133,24 @@ describe("extractProfileFromResumeAction: missing API key (AC2)", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("Anthropic API key");
+    expect(result.error).toContain("Anthropic credential");
     expect(mockExtractProfile).not.toHaveBeenCalled();
   });
 });
 
-describe("extractProfileFromResumeAction: per-request API key resolution, not module scope (critical correctness fix)", () => {
+describe("extractProfileFromResumeAction: per-request credential resolution, not module scope (critical correctness fix)", () => {
   it("resolves a freshly-set key on the very next call, proving it isn't cached/resolved once", async () => {
     mockExtractProfile.mockResolvedValue(fakeExtractResult());
 
     setEnvVar("ANTHROPIC_API_KEY", "key-one");
     const first = await extractProfileFromResumeAction(new FormData());
     expect(first.ok).toBe(true);
-    expect(mockExtractProfile).toHaveBeenNthCalledWith(1, expect.anything(), "key-one");
+    expect(mockExtractProfile).toHaveBeenNthCalledWith(1, expect.anything(), { kind: "api-key", value: "key-one" });
 
     setEnvVar("ANTHROPIC_API_KEY", "key-two");
     const second = await extractProfileFromResumeAction(new FormData());
     expect(second.ok).toBe(true);
-    expect(mockExtractProfile).toHaveBeenNthCalledWith(2, expect.anything(), "key-two");
+    expect(mockExtractProfile).toHaveBeenNthCalledWith(2, expect.anything(), { kind: "api-key", value: "key-two" });
   });
 
   it("never resolves the key via process.env — a value set only in process.env (never written via setEnvVar/.env) is not used", async () => {

@@ -25,10 +25,12 @@
 // present), not "never reason." Reasoning about the real facts is the
 // entire point of a judgment tool. See design-discussion.md's
 // design_decisions in the story YAML.
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { loadResume } from "../documents/resume-store.js";
 import { buildResumeContentBlock } from "../profile-ingestion/extract.js";
 import type { ApplyProfileConfig, Gig, Profile } from "../types.js";
+import { createAnthropicClient } from "../config/llm-client.js";
+import type { LlmCredential } from "../config/env-store.js";
 import { buildApplicantDataBlock, buildGigDataBlock } from "./draft.js";
 
 const PREP_TOOL_NAME = "report_prep_packet";
@@ -126,10 +128,10 @@ function isStringArray(value: unknown): value is string[] {
 /**
  * Generates one gig's prep packet via a single Claude Messages API call
  * using forced tool-use for structured output — mirrors `generateDraft()`'s
- * shape exactly. `apiKey` is used to construct the Anthropic client HERE,
- * inside this function call, and nowhere else — callers resolve it
- * themselves, however is appropriate for their own calling context (CLI
- * `process.env`, Server Action `readEnvVar()`).
+ * shape exactly. `credential` is used to construct the Anthropic client
+ * HERE, inside this function call, and nowhere else — callers resolve it
+ * themselves via `resolveLlmCredential()`, however is appropriate for
+ * their own calling context.
  *
  * Throws a specific error if the Anthropic response doesn't include the
  * expected structured tool-use block, or if the underlying API call
@@ -139,7 +141,7 @@ export async function generatePrepPacket(
   gig: Gig,
   profile: Profile,
   applyProfile: ApplyProfileConfig | undefined,
-  apiKey: string,
+  credential: LlmCredential,
 ): Promise<PrepPacketContent> {
   // career-documents epic, real-parseability-check story: loadResume()
   // returns undefined gracefully (missing/never-uploaded/deleted file),
@@ -187,7 +189,7 @@ export async function generatePrepPacket(
     { type: "text", text: `Now call the ${PREP_TOOL_NAME} tool exactly once with the complete result.` },
   ];
 
-  const client = new Anthropic({ apiKey });
+  const client = createAnthropicClient(credential);
   const response = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 4096,

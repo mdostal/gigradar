@@ -9,15 +9,15 @@
 // this module. Nothing here persists anything — persistence, if any, is
 // entirely the caller's concern (an explicit user Save elsewhere).
 //
-// THE ANTHROPIC CLIENT AND apiKey ARE NEVER HELD AT MODULE SCOPE. Both are
-// constructed/used strictly inside extractProfile(), per call — never a
-// module-level `const client = new Anthropic(...)`. This is deliberate,
-// not an oversight: the Next.js app's Server Action request path never
-// populates a secret at import time, so a module-scope client would
-// permanently capture `undefined` on first import (see design-discussion.md
-// §3 step 4's collaborative-review finding).
+// THE ANTHROPIC CLIENT AND credential ARE NEVER HELD AT MODULE SCOPE. Both
+// are constructed/used strictly inside extractProfile(), per call — never a
+// module-level `const client = createAnthropicClient(...)`. This is
+// deliberate, not an oversight: the Next.js app's Server Action request
+// path never populates a secret at import time, so a module-scope client
+// would permanently capture `undefined` on first import (see
+// design-discussion.md §3 step 4's collaborative-review finding).
 //
-// Secret/personal-data handling contract: the API key, the resume's raw
+// Secret/personal-data handling contract: the resolved credential, the resume's raw
 // content, and any extracted personal data (name, skills, roles, fetched
 // link text) are NEVER logged and NEVER included in a thrown error message
 // — errors here describe what went wrong structurally (a missing tool_use
@@ -25,7 +25,9 @@
 // file, keep auditing that invariant.
 import { lookup as dnsLookup } from "node:dns";
 import { promisify } from "node:util";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicClient } from "../config/llm-client.js";
+import type { LlmCredential } from "../config/env-store.js";
 
 const dnsLookupAsync = promisify(dnsLookup);
 
@@ -408,10 +410,12 @@ function isStringArray(value: unknown): value is string[] {
  * and no usable link content) or an Anthropic API error propagates as a
  * thrown error.
  *
- * `apiKey` is used to construct the Anthropic client HERE, inside this
+ * `credential` is used to construct the Anthropic client HERE, inside this
  * function call, and nowhere else — see this file's header comment.
+ * llm-credential-modes epic: `credential` may be a raw API key or a
+ * long-lived OAuth token, per `createAnthropicClient()`'s routing.
  */
-export async function extractProfile(input: ExtractProfileInput, apiKey: string): Promise<ExtractProfileResult> {
+export async function extractProfile(input: ExtractProfileInput, credential: LlmCredential): Promise<ExtractProfileResult> {
   const warnings: string[] = [];
   const linkContents: { url: string; text: string }[] = [];
 
@@ -443,7 +447,7 @@ export async function extractProfile(input: ExtractProfileInput, apiKey: string)
     text: "Extract this person's professional roles and skills from the content above by calling the extract_profile tool.",
   });
 
-  const client = new Anthropic({ apiKey });
+  const client = createAnthropicClient(credential);
 
   const response = await client.messages.create({
     model: "claude-opus-5",

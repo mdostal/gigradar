@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Cron } from "croner";
 
 // raiseIssue() (notifications-epic) fires a real desktop notification --
@@ -9,6 +9,7 @@ import type { Cron } from "croner";
 // osascript/notify-send, same reasoning as issues.test.ts/auto-fire.test.ts.
 vi.mock("../../lib/notify/desktop.js", () => ({ sendDesktopNotification: vi.fn(async () => undefined) }));
 import type { ApplicationDraft } from "../../lib/apply/runner.js";
+import { setEnvVar } from "../../lib/config/env-store.js";
 import { gigKey } from "../../lib/store/index.js";
 import type { Config, Gig, MatchResult, Tier } from "../../lib/types.js";
 import {
@@ -355,11 +356,31 @@ describe("startScheduler: top-level fatal error boundary", () => {
 
 describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   const REAL_APPLY_PROFILE = { email: "jane@example.com" };
-  const ORIGINAL_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-  afterEach(() => {
-    if (ORIGINAL_API_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = ORIGINAL_API_KEY;
+  // llm-credential-modes epic: runAutoDraft() resolves its credential via
+  // resolveLlmCredential() -- a fresh disk read of the encrypted .env store
+  // under XDG_DATA_HOME -- not process.env directly, so tests that need a
+  // credential present write one via setEnvVar(). Deliberately does NOT
+  // override XDG_DATA_HOME itself: this describe block's tests share the
+  // SAME real getDb() singleton/connection across the whole file (no
+  // closeDb() between tests here, unlike auto-fire.test.ts), relying on
+  // vitest.setup.ts's single process-wide XDG_DATA_HOME temp dir staying
+  // constant -- giving each test its own XDG_DATA_HOME would make the
+  // shared connection's already-open db path mismatch the new test's
+  // resolved path and throw ("already holds a connection open"). Only
+  // XDG_CONFIG_HOME (the vault key's separate location, never read by
+  // getDb()) needs isolating here, and only ONCE for the whole describe
+  // block (a fresh temp dir per test would work too, but a single shared
+  // one is simpler and there's no cross-test leakage risk for a key file).
+  let credentialKeyTmpDir: string;
+
+  beforeAll(() => {
+    credentialKeyTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-scheduler-index-test-key-"));
+    vi.stubEnv("XDG_CONFIG_HOME", credentialKeyTmpDir);
+  });
+
+  afterAll(() => {
+    fs.rmSync(credentialKeyTmpDir, { recursive: true, force: true });
   });
 
   /** A stageApplicationFn stand-in that never makes a real Anthropic call — always resolves. Mirrors ApplicationDraft's real shape. */
@@ -381,7 +402,8 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   }
 
   it("Config.autoDraftOnScan unset or false: zero stageApplication() calls -- no behavior change from before this story", async () => {
-    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    // No credential needed -- config.autoDraftOnScan is falsy in both cases
+    // below, so runAutoDraft() returns before ever resolving one.
     const passed = [makeMatchResult("1", "green")];
     const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
 
@@ -396,8 +418,10 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
     }
   });
 
-  it("autoDraftOnScan=true and ANTHROPIC_API_KEY unset: exactly ONE log line naming the missing key, and zero stageApplication() calls -- no per-gig repetition", async () => {
-    delete process.env.ANTHROPIC_API_KEY;
+  it("autoDraftOnScan=true and no LLM credential set: exactly ONE log line naming the missing key, and zero stageApplication() calls -- no per-gig repetition", async () => {
+    // No setEnvVar() call here -- the isolated XDG_DATA_HOME from this
+    // describe block's beforeEach starts with no .env file at all, so
+    // resolveLlmCredential() resolves undefined, same as a fresh install.
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     // Three eligible green gigs -- proves the missing-key skip happens ONCE
     // for the whole cycle, not once per eligible gig.
@@ -417,7 +441,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   });
 
   it("autoDraftOnScan=true, ANTHROPIC_API_KEY set, and Config.applyProfile unset: exactly ONE log line naming the missing apply profile, and zero stageApplication() calls", async () => {
-    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    setEnvVar("ANTHROPIC_API_KEY", "fake-api-key");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const passed = [makeMatchResult("1", "green"), makeMatchResult("2", "green")];
     const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
@@ -435,7 +459,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   });
 
   it("a gig that already has a draft (any status, e.g. 'rejected') is NOT re-drafted when found again as a green-tier match", async () => {
-    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    setEnvVar("ANTHROPIC_API_KEY", "fake-api-key");
     const passed = [makeMatchResult("already-drafted", "green"), makeMatchResult("new", "green")];
     const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
     const stageApplicationFn = fakeStageApplicationFn();
@@ -462,7 +486,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   });
 
   it("more than 5 eligible new green-tier gigs in one cycle: exactly 5 are drafted, not more", async () => {
-    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    setEnvVar("ANTHROPIC_API_KEY", "fake-api-key");
     expect(AUTO_DRAFT_CAP).toBe(5);
     const passed = Array.from({ length: 8 }, (_, i) => makeMatchResult(`g${i}`, "green"));
     const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
@@ -476,7 +500,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   });
 
   it("a yellow-tier or red-tier match in result.passed is never passed to stageApplication() by the auto-draft path", async () => {
-    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    setEnvVar("ANTHROPIC_API_KEY", "fake-api-key");
     const passed = [makeMatchResult("yellow-gig", "yellow"), makeMatchResult("red-gig", "red"), makeMatchResult("green-gig", "green")];
     const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
     const stageApplicationFn = fakeStageApplicationFn();
@@ -490,7 +514,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   });
 
   it("one eligible gig's stageApplication() call fails (mocked): the OTHER eligible gigs in that same cycle still get drafted", async () => {
-    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    setEnvVar("ANTHROPIC_API_KEY", "fake-api-key");
     vi.spyOn(console, "error").mockImplementation(() => {});
     const passed = [makeMatchResult("fails", "green"), makeMatchResult("ok-1", "green"), makeMatchResult("ok-2", "green")];
     const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
@@ -510,7 +534,7 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
   });
 
   it("a successful auto-draft cycle's log output includes a one-line summary of how many gigs were auto-drafted", async () => {
-    process.env.ANTHROPIC_API_KEY = "fake-api-key";
+    setEnvVar("ANTHROPIC_API_KEY", "fake-api-key");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const passed = [makeMatchResult("1", "green"), makeMatchResult("2", "green")];
     const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));

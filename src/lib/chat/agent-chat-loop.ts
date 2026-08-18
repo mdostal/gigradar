@@ -32,7 +32,9 @@
 // content) reaching the model via get_gig's result is BEGIN/END-
 // delimited the same way every other LLM call site in this repo treats
 // scraped content -- see buildGigResultBlock() below.
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicClient } from "../config/llm-client.js";
+import type { LlmCredential } from "../config/env-store.js";
 import { generatePrepPacket } from "../apply/prep.js";
 import { stageApplication, runRadar } from "../apply/runner.js";
 import { cancelCapture, finishCapture, getCapturePage, startCapture } from "../auth/session-capture.js";
@@ -434,8 +436,26 @@ function withSessionStatePathRaw(rawSources: unknown, sourceId: string, sessionS
   return sources as Record<string, unknown>[];
 }
 
-/** Executes an approved write tool for real. `apiKey` and `config` are resolved by the CALLER (the Server Action), never inside this function -- same discipline every other LLM/config-touching function in this repo follows. `entry` is mutated directly for the two capture tools that set/clear `entry.activeCapture`. */
-async function executeWriteTool(tool: string, input: Record<string, unknown>, apiKey: string, config: Config, entry: LoopEntry): Promise<string> {
+/**
+ * Executes an approved write tool for real. `credential` and `config` are
+ * resolved by the CALLER (the Server Action), never inside this function --
+ * same discipline every other LLM/config-touching function in this repo
+ * follows. `entry` is mutated directly for the two capture tools that
+ * set/clear `entry.activeCapture`.
+ *
+ * `RUN_SCAN_TOOL` deliberately still passes `credential.value` as a raw
+ * string (`runOpts.anthropicApiKey`) -- that option threads through
+ * `runRadar()` into `Source.fetch()`, a PUBLIC plugin interface (any
+ * third-party Source implementation may read it), which this
+ * llm-credential-modes epic slice does NOT touch (see design-discussion.md
+ * §3 "explicitly deferred boundary"). A real gap: an oauth-token-kind
+ * credential sent this way would be wrong (the find pipeline's own
+ * custom-llm-source.ts/gmail-digest-source.ts still construct
+ * `new Anthropic({apiKey})` directly, unmigrated) -- scans specifically
+ * still require "api-key" mode until that public-interface question gets
+ * its own deliberate slice, not silently patched here.
+ */
+async function executeWriteTool(tool: string, input: Record<string, unknown>, credential: LlmCredential, config: Config, entry: LoopEntry): Promise<string> {
   if (tool === UPDATE_GIG_STATUS_TOOL) {
     const key = String(input.key ?? "");
     const status = String(input.status ?? "") as GigStatus;
@@ -448,7 +468,7 @@ async function executeWriteTool(tool: string, input: Record<string, unknown>, ap
     const gig = getGig(key);
     if (!gig) throw new Error(`generate_draft: no gig found with key "${key}".`);
     const matchResult: MatchResult = { gig, pass: true, reasons: [], score: 1, tier: gig.tier, matchedProfiles: gig.matchedProfileIds ?? [] };
-    await stageApplication(matchResult, config, apiKey);
+    await stageApplication(matchResult, config, credential);
     return `Generated a draft for "${key}". Review it on /drafts.`;
   }
 
@@ -456,13 +476,13 @@ async function executeWriteTool(tool: string, input: Record<string, unknown>, ap
     const key = String(input.key ?? "");
     const gig = getGig(key);
     if (!gig) throw new Error(`generate_prep_packet: no gig found with key "${key}".`);
-    const content = await generatePrepPacket(gig, config.profile, config.applyProfile, apiKey);
+    const content = await generatePrepPacket(gig, config.profile, config.applyProfile, credential);
     saveInterviewPrep(key, content);
     return `Generated a prep packet for "${key}": fit score ${content.score}/100. ${content.recommendation}`;
   }
 
   if (tool === RUN_SCAN_TOOL) {
-    const result = await runRadar(config, {}, { anthropicApiKey: apiKey });
+    const result = await runRadar(config, {}, { anthropicApiKey: credential.value });
     return `Scan complete: ${result.results.length} gig(s) found, ${result.passed.length} passed the gate, ${result.errors.length} source error(s).`;
   }
 
@@ -578,8 +598,8 @@ async function executeWriteTool(tool: string, input: Record<string, unknown>, ap
   throw new Error(`${MODULE_PREFIX}: unrecognized write tool "${tool}".`);
 }
 
-async function runTurnLoop(entry: LoopEntry, apiKey: string): Promise<ChatLoopEvent> {
-  const client = new Anthropic({ apiKey });
+async function runTurnLoop(entry: LoopEntry, credential: LlmCredential): Promise<ChatLoopEvent> {
+  const client = createAnthropicClient(credential);
   // Screenshots taken during THIS call's read-only tool chain -- scoped to
   // this one sendMessage()/resolveApproval() call, not entry-level state.
   // Fed to the model as a tool_result either way (see
@@ -631,17 +651,17 @@ async function runTurnLoop(entry: LoopEntry, apiKey: string): Promise<ChatLoopEv
 /**
  * Sends `userMessage` and runs the tool-use loop until the model produces
  * a final text answer, proposes a write action, or hits MAX_TURNS.
- * `apiKey` is used to construct the Anthropic client HERE, inside this
+ * `credential` is used to construct the Anthropic client HERE, inside this
  * function, and nowhere else -- same discipline every other LLM call
  * site in this repo follows.
  */
-export async function sendMessage(sessionId: string, apiKey: string, userMessage: string): Promise<ChatLoopEvent> {
+export async function sendMessage(sessionId: string, credential: LlmCredential, userMessage: string): Promise<ChatLoopEvent> {
   const entry = requireSession(sessionId);
   if (entry.pendingApproval) {
     throw new Error(`${MODULE_PREFIX}: a proposed action is still awaiting approval -- resolve it before sending another message.`);
   }
   entry.history.push({ role: "user", content: userMessage });
-  return runTurnLoop(entry, apiKey);
+  return runTurnLoop(entry, credential);
 }
 
 /**
@@ -651,10 +671,10 @@ export async function sendMessage(sessionId: string, apiKey: string, userMessage
  * function (setStatus()/stageApplication()/generatePrepPacket()/
  * runRadar()) and the model is told the real outcome. Either way the loop
  * continues (may produce a further proposal, or a final text message).
- * `config`/`apiKey` resolved by the caller (the Server Action), never
+ * `config`/`credential` resolved by the caller (the Server Action), never
  * here.
  */
-export async function resolveApproval(sessionId: string, apiKey: string, approve: boolean, config: Config): Promise<ChatLoopEvent> {
+export async function resolveApproval(sessionId: string, credential: LlmCredential, approve: boolean, config: Config): Promise<ChatLoopEvent> {
   const entry = requireSession(sessionId);
   const pending = entry.pendingApproval;
   if (!pending) {
@@ -664,15 +684,15 @@ export async function resolveApproval(sessionId: string, apiKey: string, approve
 
   if (!approve) {
     entry.history.push(toolResultMessage(pending.toolUseId, "The user rejected this proposed action. It was NOT executed."));
-    return runTurnLoop(entry, apiKey);
+    return runTurnLoop(entry, credential);
   }
 
   try {
-    const outcome = await executeWriteTool(pending.tool, pending.input, apiKey, config, entry);
+    const outcome = await executeWriteTool(pending.tool, pending.input, credential, config, entry);
     entry.history.push(toolResultMessage(pending.toolUseId, outcome));
   } catch (e) {
     entry.history.push(toolResultMessage(pending.toolUseId, e instanceof Error ? e.message : String(e), true));
   }
 
-  return runTurnLoop(entry, apiKey);
+  return runTurnLoop(entry, credential);
 }

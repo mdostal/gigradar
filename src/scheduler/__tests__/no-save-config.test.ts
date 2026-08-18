@@ -49,15 +49,22 @@ describe("src/scheduler never calls saveConfig() or touches config/save.ts", () 
     }
   });
 
-  it("the only config-reading function imported anywhere in src/scheduler is loadConfig", () => {
+  it("the only config-reading modules imported anywhere in src/scheduler are loadConfig and env-store's resolveLlmCredential", () => {
     const files = readSchedulerSourceFiles();
     const configImports = files
       .map(({ contents }) => [...contents.matchAll(/from\s+["']([^"']*\/lib\/config\/[^"']+)["']/g)])
       .flat();
 
     expect(configImports.length).toBeGreaterThan(0); // sanity: the scheduler does read config from somewhere
+    // llm-credential-modes epic: runAutoDraft() resolves its LLM credential
+    // via resolveLlmCredential() (env-store.js) -- a fresh disk read that
+    // internally uses readRawConfig(), never saveConfig() -- as an
+    // ADDITION to loadConfig(), not a replacement. Still never
+    // config/save.js directly (guarded by the two tests above), so the
+    // "never writes config.json" invariant this suite protects holds.
+    const ALLOWED_CONFIG_IMPORTS = ["../lib/config/load.js", "../lib/config/env-store.js"];
     for (const match of configImports) {
-      expect(match[1]).toBe("../lib/config/load.js");
+      expect(ALLOWED_CONFIG_IMPORTS).toContain(match[1]);
     }
   });
 });

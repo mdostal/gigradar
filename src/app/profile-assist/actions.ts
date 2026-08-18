@@ -18,15 +18,15 @@ import {
   type AssistMode,
 } from "@/lib/auth/assist-session";
 import { sessionBackendFrom } from "@/lib/auth/session-backend";
-import { readEnvVar } from "@/lib/config/env-store";
+import { resolveLlmCredential } from "@/lib/config/env-store";
 import { ConfigSchema } from "@/lib/config/schema";
 import { readRawConfig } from "@/lib/config/save";
 import { suggestProfileFields, type FieldSuggestion } from "@/lib/apply/profile-suggest";
 import { advanceLoopTurn, answerHuman, clearLoop, resolveApproval, type LoopEvent } from "@/lib/apply/profile-assist-loop";
 import type { ActionResult } from "@/lib/actions/result";
+import type { LlmCredential } from "@/lib/config/env-store";
 import type { ApplyProfileConfig, Profile } from "@/lib/types";
 
-const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
 const MISSING_API_KEY_ERROR =
   "No Anthropic API key configured — set one in Config before starting an assisted session.";
 
@@ -122,8 +122,8 @@ function readProfileAndApplyProfile(): { profile: Profile; applyProfile: ApplyPr
 }
 
 export async function suggestProfileFieldsAction(sessionId: string): Promise<ActionResult<FieldSuggestion[]>> {
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
-  if (!apiKey) {
+  const credential = resolveLlmCredential();
+  if (!credential) {
     return actionErr(new Error(MISSING_API_KEY_ERROR));
   }
 
@@ -134,7 +134,7 @@ export async function suggestProfileFieldsAction(sessionId: string): Promise<Act
 
   try {
     const page = getAssistSessionPage(sessionId);
-    const suggestions = await suggestProfileFields(page, profileData.profile, profileData.applyProfile, apiKey);
+    const suggestions = await suggestProfileFields(page, profileData.profile, profileData.applyProfile, credential);
     return actionOk(suggestions);
   } catch (e) {
     return actionErr(e);
@@ -144,18 +144,18 @@ export async function suggestProfileFieldsAction(sessionId: string): Promise<Act
 // ---------------------------------------------------------------------------
 // Guided/Full-auto tool-use loop actions (profile-assist-guided-mode story)
 // — thin wrappers around profile-assist-loop.ts, resolving the same
-// apiKey/profile/applyProfile/page every advanceLoopTurnAction() call needs
-// via readAssistLoopInputs() below, mirroring suggestProfileFieldsAction's
+// credential/profile/applyProfile/page every advanceLoopTurnAction() call
+// needs via readAssistLoopInputs() below, mirroring suggestProfileFieldsAction's
 // own resolution above rather than a third, duplicated version of it.
 // ---------------------------------------------------------------------------
 
 function readAssistLoopInputs(
   sessionId: string,
 ):
-  | { apiKey: string; profile: Profile; applyProfile: ApplyProfileConfig; mode: "guided" | "full-auto" }
+  | { credential: LlmCredential; profile: Profile; applyProfile: ApplyProfileConfig; mode: "guided" | "full-auto" }
   | { error: string } {
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
-  if (!apiKey) return { error: MISSING_API_KEY_ERROR };
+  const credential = resolveLlmCredential();
+  if (!credential) return { error: MISSING_API_KEY_ERROR };
 
   const info = getAssistSessionInfo(sessionId);
   if (!info) return { error: `gigradar profile-assist: session not found or expired (id "${sessionId}").` };
@@ -166,7 +166,7 @@ function readAssistLoopInputs(
   const profileData = readProfileAndApplyProfile();
   if ("error" in profileData) return { error: profileData.error };
 
-  return { apiKey, profile: profileData.profile, applyProfile: profileData.applyProfile, mode: info.mode };
+  return { credential, profile: profileData.profile, applyProfile: profileData.applyProfile, mode: info.mode };
 }
 
 export async function advanceLoopTurnAction(sessionId: string): Promise<ActionResult<LoopEvent>> {
@@ -175,7 +175,7 @@ export async function advanceLoopTurnAction(sessionId: string): Promise<ActionRe
 
   try {
     const page = getAssistSessionPage(sessionId);
-    const event = await advanceLoopTurn(sessionId, page, inputs.mode, inputs.profile, inputs.applyProfile, inputs.apiKey);
+    const event = await advanceLoopTurn(sessionId, page, inputs.mode, inputs.profile, inputs.applyProfile, inputs.credential);
     return actionOk(event);
   } catch (e) {
     return actionErr(e);

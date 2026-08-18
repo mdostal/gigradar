@@ -21,14 +21,17 @@ import { recordScan } from "../../lib/store/gigs.js";
 import { getDraft, saveDraft, setDraftStatus } from "../../lib/store/drafts.js";
 import { listIssues } from "../../lib/notify/issues.js";
 import { registerSubmitAdapter } from "../../lib/submit/adapter.js";
+import { setEnvVar } from "../../lib/config/env-store.js";
 import type { ApplyProfileConfig, Config, DraftContent, Gig, MatchResult } from "../../lib/types.js";
 import { runAutoDraft } from "../index.js";
 
 let tmpDir: string;
+let keyTmpDir: string;
 let db: DatabaseSync;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-scheduler-autofire-test-"));
+  keyTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-scheduler-autofire-test-key-"));
   // attemptAutoFire() (src/scheduler/index.ts) calls getGig()/getDraft()/
   // markDraftSubmitting()/evaluateAutoFire() etc. with NO explicit db
   // override -- unlike src/lib/apply/__tests__/autofire.test.ts, which
@@ -37,7 +40,15 @@ beforeEach(() => {
   // file instead of the real default path, so they all share one connection.
   const dbPath = path.join(tmpDir, "gigs.db");
   vi.stubEnv("GIGRADAR_DB_PATH", dbPath);
-  vi.stubEnv("ANTHROPIC_API_KEY", "test-key");
+  // llm-credential-modes epic: runAutoDraft() now resolves its credential
+  // via resolveLlmCredential() (a fresh disk read of the encrypted .env
+  // store), not process.env directly -- so the test credential has to be
+  // written the same way, via setEnvVar(), with XDG_DATA_HOME/XDG_CONFIG_HOME
+  // pointed at isolated temp dirs (same pattern as env-store.test.ts) rather
+  // than vi.stubEnv("ANTHROPIC_API_KEY", ...), which only sets process.env.
+  vi.stubEnv("XDG_DATA_HOME", tmpDir);
+  vi.stubEnv("XDG_CONFIG_HOME", keyTmpDir);
+  setEnvVar("ANTHROPIC_API_KEY", "test-key");
   db = getDb();
 });
 
@@ -45,6 +56,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   closeDb();
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(keyTmpDir, { recursive: true, force: true });
 });
 
 const APPLY_PROFILE: ApplyProfileConfig = { email: "me@example.test" };

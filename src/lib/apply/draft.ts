@@ -27,8 +27,10 @@
 // ApplyProfileConfig/Gig passed in — no placeholder text is ever
 // substituted for a missing optional field, it's simply omitted from the
 // prompt. See draft.test.ts's prompt-grounding test.
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { ApplyProfileConfig, DraftContent, Gig, Profile } from "../types.js";
+import { createAnthropicClient } from "../config/llm-client.js";
+import type { LlmCredential } from "../config/env-store.js";
 
 const DRAFT_TOOL_NAME = "draft_application";
 
@@ -140,7 +142,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
  * own scraped content clearly delimited as untrusted DATA (see this file's
  * header comment and buildGigDataBlock() above).
  *
- * `apiKey` is used to construct the Anthropic client HERE, inside this
+ * `credential` is used to construct the Anthropic client HERE, inside this
  * function call, and nowhere else — see this file's header comment. Callers
  * (e.g. `apply/runner.ts`'s `stageApplication()`) resolve it themselves,
  * however is appropriate for their own calling context.
@@ -153,7 +155,7 @@ export async function generateDraft(
   gig: Gig,
   profile: Profile,
   applyProfile: ApplyProfileConfig,
-  apiKey: string,
+  credential: LlmCredential,
 ): Promise<DraftContent> {
   const contentBlocks: Anthropic.ContentBlockParam[] = [
     {
@@ -173,7 +175,7 @@ export async function generateDraft(
     },
   ];
 
-  const client = new Anthropic({ apiKey });
+  const client = createAnthropicClient(credential);
 
   const response = await client.messages.create({
     model: "claude-opus-5",

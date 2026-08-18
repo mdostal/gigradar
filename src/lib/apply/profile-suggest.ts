@@ -22,9 +22,11 @@
 // (role, accessible name, value) with `[ref=eN]` element references —
 // the same mechanism Playwright's own official MCP server uses for
 // LLM-consumable page state, reused here rather than a bespoke DOM-walk.
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { Page } from "playwright";
 import type { ApplyProfileConfig, Profile } from "../types.js";
+import { createAnthropicClient } from "../config/llm-client.js";
+import type { LlmCredential } from "../config/env-store.js";
 import { buildApplicantDataBlock } from "./draft.js";
 
 const SUGGEST_TOOL_NAME = "suggest_profile_fields";
@@ -104,7 +106,7 @@ function buildPageSnapshotBlock(snapshot: string): string {
  * instruction block enforces ("never invent... experience... not
  * explicitly present"). Read-only: never clicks/fills/navigates the page.
  *
- * `apiKey` is used to construct the Anthropic client HERE, inside this
+ * `credential` is used to construct the Anthropic client HERE, inside this
  * function call, and nowhere else — see this file's header comment.
  *
  * Throws a specific error if the Anthropic response doesn't include the
@@ -116,7 +118,7 @@ export async function suggestProfileFields(
   page: Page,
   profile: Profile,
   applyProfile: ApplyProfileConfig,
-  apiKey: string,
+  credential: LlmCredential,
 ): Promise<FieldSuggestion[]> {
   const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
 
@@ -139,7 +141,7 @@ export async function suggestProfileFields(
     },
   ];
 
-  const client = new Anthropic({ apiKey });
+  const client = createAnthropicClient(credential);
 
   const response = await client.messages.create({
     model: "claude-opus-5",
