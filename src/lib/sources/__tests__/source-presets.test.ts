@@ -1,7 +1,8 @@
 // Proves source-presets story's acceptance criteria for ../source-presets.ts:
-//   1. exactly 8 presets (indeed, welcome-to-the-jungle, zoho-recruit,
-//      greenhouse, ashby, workable, contra, landing-jobs) -- the ats-
-//      navigator epic's original 3 plus a deep-research expansion pass.
+//   1. exactly 9 presets (indeed, welcome-to-the-jungle, zoho-recruit,
+//      catalant, greenhouse, ashby, workable, contra, landing-jobs) --
+//      the ats-navigator epic's original 3, plus Catalant, plus a
+//      deep-research expansion pass.
 //   2. each preset, wrapped into a full SourceConfig (id/enabled/kind/
 //      settings), validates against the SAME SourceConfigSchema
 //      loadConfig()/saveConfig() use -- schema drift breaks this test,
@@ -9,18 +10,21 @@
 //      already established for RoleAreaConfigSchema).
 //   3. no preset's settings.url carries a query string -- "real per-
 //      listing/page URLs only, never a search URL" (design-discussion.md).
-//   4. indeed defaults to customAuth: "browser-session"; the other two
-//      leave it unset.
-//   5. suggestsGmailDigest is true for indeed/zoho-recruit, false/unset
-//      for welcome-to-the-jungle.
+//   4. every preset with customAuth: "browser-session" also sets
+//      settings.loginUrl and settings.allowedOrigins -- Capture Login
+//      needs both (see origins.ts's resolveLoginUrl()/resolveAllowedOrigins()
+//      config-driven fallback).
+//   5. suggestsGmailDigest is true for the platforms known to notify by
+//      email, false/unset for the rest.
 import { describe, expect, it } from "vitest";
 import { SOURCE_PRESETS, sourceConfigFromPreset } from "../source-presets.js";
 import { SourceConfigSchema } from "../../config/schema.js";
 
 describe("SOURCE_PRESETS", () => {
-  it("ships exactly the owner-confirmed list of 8 presets", () => {
+  it("ships exactly the owner-confirmed list of 9 presets", () => {
     expect(SOURCE_PRESETS.map((p) => p.id).sort()).toEqual([
       "ashby",
+      "catalant",
       "contra",
       "greenhouse",
       "indeed",
@@ -65,9 +69,11 @@ describe("SOURCE_PRESETS", () => {
     });
   }
 
-  it("indeed defaults customAuth to browser-session (likely-aggressive bot detection, see design-discussion.md §3/§4.1)", () => {
+  it("indeed and catalant default customAuth to browser-session (bot detection / login-gated)", () => {
     const indeed = SOURCE_PRESETS.find((p) => p.id === "indeed")!;
+    const catalant = SOURCE_PRESETS.find((p) => p.id === "catalant")!;
     expect(indeed.settings.customAuth).toBe("browser-session");
+    expect(catalant.settings.customAuth).toBe("browser-session");
   });
 
   it("every other preset leaves customAuth unset (all public by default)", () => {
@@ -77,11 +83,21 @@ describe("SOURCE_PRESETS", () => {
     }
   });
 
+  it("every preset with customAuth: browser-session also sets loginUrl and allowedOrigins (Capture Login needs both)", () => {
+    for (const preset of SOURCE_PRESETS) {
+      if (preset.settings.customAuth !== "browser-session") continue;
+      expect(String(preset.settings.loginUrl ?? ""), `${preset.id}.settings.loginUrl`).not.toBe("");
+      expect(Array.isArray(preset.settings.allowedOrigins), `${preset.id}.settings.allowedOrigins`).toBe(true);
+      expect((preset.settings.allowedOrigins as string[]).length, `${preset.id}.settings.allowedOrigins`).toBeGreaterThan(0);
+    }
+  });
+
   it("indeed, zoho-recruit, greenhouse, and workable suggest a Gmail digest connection; the rest do not", () => {
     const digestExpected: Record<string, boolean> = {
       indeed: true,
       "welcome-to-the-jungle": false,
       "zoho-recruit": true,
+      catalant: false,
       greenhouse: true,
       ashby: false,
       workable: true,
