@@ -68,7 +68,8 @@ export async function startAssistSessionAction(
   sourceId: string,
   mode: AssistMode,
 ): Promise<ActionResult<{ sessionId: string }>> {
-  const sessionBackend = sessionBackendFrom({ id: sourceId, enabled: true, settings: rawSourceSettingsFor(sourceId) ?? {} });
+  const cfg = { id: sourceId, enabled: true, settings: rawSourceSettingsFor(sourceId) ?? {} };
+  const sessionBackend = sessionBackendFrom(cfg);
 
   const sessionStatePathSetting = sessionBackend === "local" ? rawSessionStatePathFor(sourceId) : undefined;
   if (sessionBackend === "local" && !sessionStatePathSetting) {
@@ -78,7 +79,7 @@ export async function startAssistSessionAction(
   }
 
   try {
-    const { sessionId } = await startAssistSession(sourceId, mode, sessionStatePathSetting, sessionBackend);
+    const { sessionId } = await startAssistSession(sourceId, mode, sessionStatePathSetting, sessionBackend, cfg);
     return actionOk({ sessionId });
   } catch (e) {
     return actionErr(e);
