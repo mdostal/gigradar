@@ -263,6 +263,51 @@ describe("registry gaps throw before launching a browser", () => {
   });
 });
 
+describe("config-driven fallback for custom sources (settings.allowedOrigins/settings.profileUrl)", () => {
+  const CUSTOM_SOURCE_ID = "catalant";
+
+  it("succeeds for a source with no registry entry when cfg.settings supplies allowedOrigins + profileUrl", async () => {
+    setUpFakeBrowserChain();
+    const storageStatePath = writeStorageStateFixture();
+    const cfg = {
+      id: CUSTOM_SOURCE_ID,
+      enabled: true,
+      kind: "custom-llm" as const,
+      settings: { allowedOrigins: ["gocatalant.com"], profileUrl: "https://app.gocatalant.com/profile" },
+    };
+
+    const info = await startAssistSession(CUSTOM_SOURCE_ID, "manual", storageStatePath, "local", cfg);
+
+    expect(info.sourceId).toBe(CUSTOM_SOURCE_ID);
+    expect(spawnRealChromeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("still throws the actionable error when cfg.settings has neither an allowlist nor a registry entry", async () => {
+    const storageStatePath = writeStorageStateFixture();
+    const cfg = { id: CUSTOM_SOURCE_ID, enabled: true, kind: "custom-llm" as const, settings: {} };
+
+    await expect(startAssistSession(CUSTOM_SOURCE_ID, "manual", storageStatePath, "local", cfg)).rejects.toThrow(
+      /no origin allowlist registered.*settings\.allowedOrigins/,
+    );
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+  });
+
+  it("throws the actionable profileUrl error when only allowedOrigins is set", async () => {
+    const storageStatePath = writeStorageStateFixture();
+    const cfg = {
+      id: CUSTOM_SOURCE_ID,
+      enabled: true,
+      kind: "custom-llm" as const,
+      settings: { allowedOrigins: ["gocatalant.com"] },
+    };
+
+    await expect(startAssistSession(CUSTOM_SOURCE_ID, "manual", storageStatePath, "local", cfg)).rejects.toThrow(
+      /no profile-edit URL registered.*settings\.profileUrl/,
+    );
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("idle timeout", () => {
   it("closes the browser and evicts the session after IDLE_TIMEOUT_MS of no activity", async () => {
     vi.useFakeTimers();

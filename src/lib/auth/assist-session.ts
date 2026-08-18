@@ -36,7 +36,8 @@ import { filterStorageStateToAllowlist, readStorageStateFile, type StorageState 
 import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
 import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
 import { resolveEnvString } from "../config/load.js";
-import { SOURCE_ORIGINS, SOURCE_PROFILE_URLS } from "../sources/origins.js";
+import { resolveAllowedOrigins, resolveProfileUrl } from "../sources/origins.js";
+import type { SourceConfig } from "../types.js";
 
 const MODULE_PREFIX = "gigradar assist-session";
 
@@ -120,12 +121,21 @@ export interface AssistSessionInfo {
  * `IDLE_TIMEOUT_MS` idle-timeout sweep session-capture.ts's startCapture()
  * uses, for the same reason (the user may close the real OS window
  * directly instead of clicking Done).
+ *
+ * `cfg` is optional and defaults to `{ id: sourceId, enabled: true }` (no
+ * `settings`) -- for the 3 hand-written browser-session adapters this is
+ * byte-identical to the old hardcoded-registry-only behavior, since
+ * resolveAllowedOrigins()/resolveProfileUrl() check the static registry
+ * first. Callers with a CUSTOM source (e.g. a custom-llm-source preset with
+ * no registry entry) pass the real SourceConfig so its settings.allowedOrigins/
+ * settings.profileUrl config-driven fallback is used instead.
  */
 export async function startAssistSession(
   sourceId: string,
   mode: AssistMode,
   storageStatePathSetting?: string,
   sessionBackend: SessionBackend = "local",
+  cfg: SourceConfig = { id: sourceId, enabled: true },
 ): Promise<AssistSessionInfo> {
   for (const entry of sessions.values()) {
     if (entry.sourceId === sourceId) {
@@ -135,13 +145,17 @@ export async function startAssistSession(
     }
   }
 
-  const allowedOrigins = SOURCE_ORIGINS[sourceId];
+  const allowedOrigins = resolveAllowedOrigins(sourceId, cfg);
   if (!allowedOrigins || allowedOrigins.length === 0) {
-    throw new Error(`${MODULE_PREFIX}: no origin allowlist registered for source "${sourceId}" (see src/lib/sources/origins.ts).`);
+    throw new Error(
+      `${MODULE_PREFIX}: no origin allowlist registered for source "${sourceId}" (see src/lib/sources/origins.ts, or set settings.allowedOrigins).`,
+    );
   }
-  const profileUrl = SOURCE_PROFILE_URLS[sourceId];
+  const profileUrl = resolveProfileUrl(sourceId, cfg);
   if (!profileUrl) {
-    throw new Error(`${MODULE_PREFIX}: no profile-edit URL registered for source "${sourceId}" (see SOURCE_PROFILE_URLS in src/lib/sources/origins.ts).`);
+    throw new Error(
+      `${MODULE_PREFIX}: no profile-edit URL registered for source "${sourceId}" (see SOURCE_PROFILE_URLS in src/lib/sources/origins.ts, or set settings.profileUrl).`,
+    );
   }
 
   let rawStorageState: StorageState;
