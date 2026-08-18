@@ -45,9 +45,25 @@ fn find_free_port() -> u16 {
         .port()
 }
 
-/// True if `port` is currently free to bind on `SERVER_HOST`.
+/// True if `port` is currently free -- checked via a CONNECT attempt, never
+/// a bind attempt. `TcpListener::bind()` sets `SO_REUSEADDR` on Unix (Rust
+/// std's own default), which lets a second bind to an already-actively-
+/// listening port SUCCEED -- live-verified on this exact machine against a
+/// real always-on local service (Portunus) already bound to port 3000:
+/// `TcpListener::bind(("127.0.0.1", 3000))` returned `Ok` even though
+/// Portunus was actively serving that port, a false "free" positive that
+/// caused `resolve_server_port()` to hand port 3000 to gigradar's own
+/// sidecar while a DIFFERENT app was already answering there -- the
+/// gigradar window ended up loading that other app's page instead of its
+/// own server. A connect attempt has no such false positive: a live
+/// listener always accepts the connection; a genuinely free port always
+/// refuses it (`ECONNREFUSED`).
 fn is_port_free(port: u16) -> bool {
-    TcpListener::bind((SERVER_HOST, port)).is_ok()
+    TcpStream::connect_timeout(
+        &std::net::SocketAddr::from((std::net::Ipv4Addr::new(127, 0, 0, 1), port)),
+        Duration::from_millis(200),
+    )
+    .is_err()
 }
 
 /// Prefers `GIGRADAR_PORT` (if set) or `DEFAULT_PORT` so a stable,
@@ -254,4 +270,37 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The exact regression this module hit against a real always-on local
+    /// service (see `is_port_free()`'s own doc comment): a port with a
+    /// genuine, active listener must be reported as NOT free. Uses a real
+    /// `TcpListener` bound in this test (not a live third-party service) so
+    /// the test is self-contained, but exercises the identical connect-vs-
+    /// bind distinction that caused the real bug.
+    #[test]
+    fn is_port_free_reports_false_for_an_actively_listening_port() {
+        let listener = TcpListener::bind((SERVER_HOST, 0)).expect("bind a test listener");
+        let port = listener.local_addr().expect("read back the bound port").port();
+
+        assert!(
+            !is_port_free(port),
+            "a port with a real, active listener must never be reported as free"
+        );
+
+        drop(listener);
+    }
+
+    #[test]
+    fn is_port_free_reports_true_for_a_genuinely_unused_port() {
+        // Bind-then-drop to obtain a port the OS just handed out (so it's
+        // very unlikely to collide with anything else on this machine),
+        // then immediately release it -- nothing is listening there anymore.
+        let port = find_free_port();
+        assert!(is_port_free(port), "a port with no listener must be reported as free");
+    }
 }
