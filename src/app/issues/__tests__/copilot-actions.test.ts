@@ -144,7 +144,7 @@ describe("checkCopilotReadinessAction", () => {
 
     expect(result).toEqual({ ok: true, data: { ready: false, note: "Still showing a challenge" } });
     expect(getCopilotPageMock).toHaveBeenCalledWith("session-1");
-    expect(checkCaptureReadinessMock).toHaveBeenCalledWith(fakePage, SOURCE_ID, "sk-ant-fake-test-key");
+    expect(checkCaptureReadinessMock).toHaveBeenCalledWith(fakePage, SOURCE_ID, { kind: "api-key", provider: "anthropic", value: "sk-ant-fake-test-key" });
     expect(closeCopilotSessionMock).not.toHaveBeenCalled();
     expect(revalidatePath).not.toHaveBeenCalled();
   });

@@ -1,31 +1,36 @@
-// Resume/link → { roles, skills } extraction via Claude's Messages API.
+// Resume/link → { roles, skills } extraction via the Vercel AI SDK.
 // profile-overview-ingestion epic, profile-ingestion-module story — the
 // foundation module the epic's later UI/Server-Action stories build on. See
 // .pHive/epics/profile-overview-ingestion/docs/design-discussion.md §3
-// step 2.
+// step 2. Migrated off the raw @anthropic-ai/sdk by the llm-provider-harness
+// epic (multi-provider api-key mode — see that epic's design-discussion.md
+// §2.5).
 //
 // In-memory only: the resume bytes and any fetched link text exist for the
 // duration of one extractProfile() call and are never written to disk by
 // this module. Nothing here persists anything — persistence, if any, is
 // entirely the caller's concern (an explicit user Save elsewhere).
 //
-// THE ANTHROPIC CLIENT AND apiKey ARE NEVER HELD AT MODULE SCOPE. Both are
-// constructed/used strictly inside extractProfile(), per call — never a
-// module-level `const client = new Anthropic(...)`. This is deliberate,
-// not an oversight: the Next.js app's Server Action request path never
-// populates a secret at import time, so a module-scope client would
-// permanently capture `undefined` on first import (see design-discussion.md
-// §3 step 4's collaborative-review finding).
+// THE MODEL CLIENT AND credential ARE NEVER HELD AT MODULE SCOPE. Both
+// are constructed/used strictly inside extractProfile(), per call — never a
+// module-level `const model = createAiSdkModel(...)`. This is
+// deliberate, not an oversight: the Next.js app's Server Action request
+// path never populates a secret at import time, so a module-scope client
+// would permanently capture `undefined` on first import (see
+// design-discussion.md §3 step 4's collaborative-review finding).
 //
-// Secret/personal-data handling contract: the API key, the resume's raw
+// Secret/personal-data handling contract: the resolved credential, the resume's raw
 // content, and any extracted personal data (name, skills, roles, fetched
 // link text) are NEVER logged and NEVER included in a thrown error message
-// — errors here describe what went wrong structurally (a missing tool_use
-// block, a fetch failure), never the content itself. If you touch this
+// — errors here describe what went wrong structurally (a missing structured
+// output, a fetch failure), never the content itself. If you touch this
 // file, keep auditing that invariant.
 import { lookup as dnsLookup } from "node:dns";
 import { promisify } from "node:util";
-import Anthropic from "@anthropic-ai/sdk";
+import { type FilePart, NoOutputGeneratedError, Output, type TextPart, generateText } from "ai";
+import { z } from "zod";
+import { createAiSdkModel, generateHarnessObject, toHarnessContentBlocks } from "../config/llm-client.js";
+import type { LlmCredential } from "../config/env-store.js";
 
 const dnsLookupAsync = promisify(dnsLookup);
 
@@ -348,21 +353,12 @@ async function fetchAndExtractLink(url: string): Promise<LinkFetchResult> {
  * way this module already does for its own one-shot extraction call —
  * one native-PDF-embedding implementation, not a second, duplicated one.
  */
-export function buildResumeContentBlock(input: ExtractProfileInput): Anthropic.ContentBlockParam | undefined {
+export function buildResumeContentBlock(input: ExtractProfileInput): FilePart | TextPart | undefined {
   if (input.resumeFile) {
     return {
-      type: "document",
-      source: {
-        type: "base64",
-        // Base64PDFSource's media_type is typed as the single literal
-        // "application/pdf" — resumeFile.mediaType is a plain string per
-        // this module's documented input shape (PDF-only for v1, per the
-        // epic's design-discussion.md §7 "Not verifying" scope cut), so
-        // the cast reflects that documented constraint rather than
-        // widening the type.
-        media_type: input.resumeFile.mediaType as "application/pdf",
-        data: input.resumeFile.data.toString("base64"),
-      },
+      type: "file",
+      data: input.resumeFile.data,
+      mediaType: input.resumeFile.mediaType,
     };
   }
   if (input.resumeText) {
@@ -371,47 +367,24 @@ export function buildResumeContentBlock(input: ExtractProfileInput): Anthropic.C
   return undefined;
 }
 
-const EXTRACT_TOOL_SCHEMA = {
-  name: EXTRACT_TOOL_NAME,
-  description:
-    "Report the person's professional roles and skills extracted from the provided resume and/or link content. " +
-    "Call this exactly once with the complete extraction result.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      roles: {
-        type: "array",
-        items: { type: "string" },
-        description: "Professional roles/titles the person has held or is qualified for (e.g. 'Fractional CTO', 'Senior Backend Engineer').",
-      },
-      skills: {
-        type: "array",
-        items: { type: "string" },
-        description: "Concrete skills, technologies, or areas of expertise (e.g. 'TypeScript', 'React', 'Team Leadership').",
-      },
-    },
-    required: ["roles", "skills"],
-    additionalProperties: false,
-  },
-};
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
+const ExtractResultSchema = z.object({
+  roles: z.array(z.string()).describe("Professional roles/titles the person has held or is qualified for (e.g. 'Fractional CTO', 'Senior Backend Engineer')."),
+  skills: z.array(z.string()).describe("Concrete skills, technologies, or areas of expertise (e.g. 'TypeScript', 'React', 'Team Leadership')."),
+});
 
 /**
  * Extracts `{ roles, skills }` from a resume (PDF or plain text) and/or
- * public links, via one Claude Messages API call using tool-use for
+ * public links, via one LLM call using the Vercel AI SDK's forced
  * structured output (never free-text parsing). Per-link fetch/parse
  * failures — including known login-walls — are collected into `warnings`
  * and do NOT fail the overall call; only a fully unusable input (no resume
- * and no usable link content) or an Anthropic API error propagates as a
+ * and no usable link content) or a genuine API error propagates as a
  * thrown error.
  *
- * `apiKey` is used to construct the Anthropic client HERE, inside this
+ * `credential` is used to construct the model client HERE, inside this
  * function call, and nowhere else — see this file's header comment.
  */
-export async function extractProfile(input: ExtractProfileInput, apiKey: string): Promise<ExtractProfileResult> {
+export async function extractProfile(input: ExtractProfileInput, credential: LlmCredential): Promise<ExtractProfileResult> {
   const warnings: string[] = [];
   const linkContents: { url: string; text: string }[] = [];
 
@@ -424,7 +397,7 @@ export async function extractProfile(input: ExtractProfileInput, apiKey: string)
     }
   }
 
-  const contentBlocks: Anthropic.ContentBlockParam[] = [];
+  const contentBlocks: Array<TextPart | FilePart> = [];
   const resumeBlock = buildResumeContentBlock(input);
   if (resumeBlock) contentBlocks.push(resumeBlock);
 
@@ -440,31 +413,30 @@ export async function extractProfile(input: ExtractProfileInput, apiKey: string)
 
   contentBlocks.push({
     type: "text",
-    text: "Extract this person's professional roles and skills from the content above by calling the extract_profile tool.",
+    text: "Extract this person's professional roles and skills from the content above.",
   });
 
-  const client = new Anthropic({ apiKey });
-
-  const response = await client.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 4096,
-    tools: [EXTRACT_TOOL_SCHEMA],
-    tool_choice: { type: "tool", name: EXTRACT_TOOL_NAME },
-    messages: [{ role: "user", content: contentBlocks }],
-  });
-
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use" && block.name === EXTRACT_TOOL_NAME,
-  );
-  if (!toolUse) {
-    throw new Error(
-      "gigradar profile ingestion: the Anthropic API response did not include the expected structured extraction result.",
-    );
+  if (credential.kind === "claude-code-harness") {
+    const output = await generateHarnessObject(ExtractResultSchema, toHarnessContentBlocks(contentBlocks));
+    return { ...output, warnings };
   }
 
-  const parsed = toolUse.input as { roles?: unknown; skills?: unknown };
-  const roles = isStringArray(parsed.roles) ? parsed.roles : [];
-  const skills = isStringArray(parsed.skills) ? parsed.skills : [];
+  const model = createAiSdkModel(credential);
 
-  return { roles, skills, warnings };
+  const result = await generateText({
+    model,
+    messages: [{ role: "user", content: contentBlocks }],
+    output: Output.object({ schema: ExtractResultSchema, name: EXTRACT_TOOL_NAME }),
+  });
+
+  try {
+    return { ...result.output, warnings };
+  } catch (e) {
+    if (e instanceof NoOutputGeneratedError) {
+      throw new Error(
+        "gigradar profile ingestion: the model's response did not include the expected structured extraction result.",
+      );
+    }
+    throw e;
+  }
 }

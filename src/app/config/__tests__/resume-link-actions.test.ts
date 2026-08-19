@@ -1,5 +1,5 @@
 // Tests for the two Server Actions the `resume-link-ui` story adds to
-// `../actions.ts`: `setAnthropicApiKeyAction` and
+// `../actions.ts`: `setLlmApiKeyAction` and
 // `extractProfileFromResumeAction`. `env-store.ts`'s `setEnvVar`/`readEnvVar`
 // run FOR REAL against isolated temp XDG dirs (same pattern as
 // `env-store.test.ts`/`actions.test.ts` — env-store.ts itself is already
@@ -33,7 +33,7 @@ import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
 import { readRawConfig, saveConfig } from "@/lib/config/save";
 import { loadResume } from "@/lib/documents/resume-store";
 import { decrypt } from "@/lib/security/vault";
-import { extractProfileFromResumeAction, removeResumeAction, setAnthropicApiKeyAction } from "../actions";
+import { extractProfileFromResumeAction, removeResumeAction, setLlmApiKeyAction } from "../actions";
 
 let tmpDir: string;
 let keyTmpDir: string;
@@ -59,14 +59,15 @@ afterEach(() => {
   fs.rmSync(keyTmpDir, { recursive: true, force: true });
 });
 
-// -- setAnthropicApiKeyAction -----------------------------------------------
+// -- setLlmApiKeyAction -------------------------------------------------
 
-describe("setAnthropicApiKeyAction", () => {
+describe("setLlmApiKeyAction", () => {
   it("writes ANTHROPIC_API_KEY to .env (encrypted at rest) and readEnvVar() resolves it back (AC1)", async () => {
     const formData = new FormData();
+    formData.set("provider", "anthropic");
     formData.set("apiKey", "sk-ant-real-looking-test-key-123");
 
-    const result = await setAnthropicApiKeyAction(formData);
+    const result = await setLlmApiKeyAction(formData);
 
     expect(result.ok).toBe(true);
     expect(readEnvVar("ANTHROPIC_API_KEY")).toBe("sk-ant-real-looking-test-key-123");
@@ -75,12 +76,25 @@ describe("setAnthropicApiKeyAction", () => {
     expect(raw).not.toContain("sk-ant-real-looking-test-key-123");
   });
 
+  it("writes to the right env var per provider (llm-provider-harness epic)", async () => {
+    const formData = new FormData();
+    formData.set("provider", "openai");
+    formData.set("apiKey", "sk-openai-test-key");
+
+    const result = await setLlmApiKeyAction(formData);
+
+    expect(result.ok).toBe(true);
+    expect(readEnvVar("OPENAI_API_KEY")).toBe("sk-openai-test-key");
+    expect(readEnvVar("ANTHROPIC_API_KEY")).toBeUndefined();
+  });
+
   it("preserves other existing .env vars untouched (AC1)", async () => {
     setEnvVar("BRAINTRUST_API_KEY", "existing-unrelated-value");
 
     const formData = new FormData();
+    formData.set("provider", "anthropic");
     formData.set("apiKey", "sk-ant-new-key");
-    const result = await setAnthropicApiKeyAction(formData);
+    const result = await setLlmApiKeyAction(formData);
 
     expect(result.ok).toBe(true);
     expect(readEnvVar("BRAINTRUST_API_KEY")).toBe("existing-unrelated-value");
@@ -89,27 +103,42 @@ describe("setAnthropicApiKeyAction", () => {
 
   it("trims surrounding whitespace before writing", async () => {
     const formData = new FormData();
+    formData.set("provider", "anthropic");
     formData.set("apiKey", "  sk-ant-with-whitespace  \n");
 
-    await setAnthropicApiKeyAction(formData);
+    await setLlmApiKeyAction(formData);
 
     expect(readEnvVar("ANTHROPIC_API_KEY")).toBe("sk-ant-with-whitespace");
   });
 
   it("rejects a blank/missing apiKey field without writing to .env", async () => {
     const formData = new FormData();
+    formData.set("provider", "anthropic");
     formData.set("apiKey", "   ");
 
-    const result = await setAnthropicApiKeyAction(formData);
+    const result = await setLlmApiKeyAction(formData);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error.toLowerCase()).toContain("anthropic api key");
+    expect(result.error.toLowerCase()).toContain("api key");
     expect(fs.existsSync(getEnvPath())).toBe(false);
   });
 
   it("rejects a completely missing apiKey field", async () => {
-    const result = await setAnthropicApiKeyAction(new FormData());
+    const formData = new FormData();
+    formData.set("provider", "anthropic");
+    const result = await setLlmApiKeyAction(formData);
+
+    expect(result.ok).toBe(false);
+    expect(fs.existsSync(getEnvPath())).toBe(false);
+  });
+
+  it("rejects an unrecognized provider", async () => {
+    const formData = new FormData();
+    formData.set("provider", "not-a-real-provider");
+    formData.set("apiKey", "sk-something");
+
+    const result = await setLlmApiKeyAction(formData);
 
     expect(result.ok).toBe(false);
     expect(fs.existsSync(getEnvPath())).toBe(false);
@@ -122,8 +151,8 @@ function fakeExtractResult(overrides: Partial<{ roles: string[]; skills: string[
   return { roles: [], skills: [], warnings: [], ...overrides };
 }
 
-describe("extractProfileFromResumeAction: missing API key (AC2)", () => {
-  it("returns a specific error naming the 'Anthropic API key' field, not a generic auth failure, and never calls extractProfile()", async () => {
+describe("extractProfileFromResumeAction: missing credential (AC2)", () => {
+  it("returns a specific error naming the 'Anthropic credential' field, not a generic auth failure, and never calls extractProfile()", async () => {
     expect(readEnvVar("ANTHROPIC_API_KEY")).toBeUndefined();
 
     const formData = new FormData();
@@ -133,24 +162,24 @@ describe("extractProfileFromResumeAction: missing API key (AC2)", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("Anthropic API key");
+    expect(result.error).toContain("Anthropic credential");
     expect(mockExtractProfile).not.toHaveBeenCalled();
   });
 });
 
-describe("extractProfileFromResumeAction: per-request API key resolution, not module scope (critical correctness fix)", () => {
+describe("extractProfileFromResumeAction: per-request credential resolution, not module scope (critical correctness fix)", () => {
   it("resolves a freshly-set key on the very next call, proving it isn't cached/resolved once", async () => {
     mockExtractProfile.mockResolvedValue(fakeExtractResult());
 
     setEnvVar("ANTHROPIC_API_KEY", "key-one");
     const first = await extractProfileFromResumeAction(new FormData());
     expect(first.ok).toBe(true);
-    expect(mockExtractProfile).toHaveBeenNthCalledWith(1, expect.anything(), "key-one");
+    expect(mockExtractProfile).toHaveBeenNthCalledWith(1, expect.anything(), { kind: "api-key", provider: "anthropic", value: "key-one" });
 
     setEnvVar("ANTHROPIC_API_KEY", "key-two");
     const second = await extractProfileFromResumeAction(new FormData());
     expect(second.ok).toBe(true);
-    expect(mockExtractProfile).toHaveBeenNthCalledWith(2, expect.anything(), "key-two");
+    expect(mockExtractProfile).toHaveBeenNthCalledWith(2, expect.anything(), { kind: "api-key", provider: "anthropic", value: "key-two" });
   });
 
   it("never resolves the key via process.env — a value set only in process.env (never written via setEnvVar/.env) is not used", async () => {
@@ -421,11 +450,12 @@ describe("removeResumeAction", () => {
 // Sanity check that decrypt() is reachable/used correctly by this suite's
 // setup (mirrors env-store.test.ts's own convention of proving the on-disk
 // bytes are genuinely encrypted, not just trusting setEnvVar()'s own tests).
-describe("setAnthropicApiKeyAction: on-disk .env is genuinely encrypted, not plaintext", () => {
+describe("setLlmApiKeyAction: on-disk .env is genuinely encrypted, not plaintext", () => {
   it("the raw .env bytes decrypt to a KEY=VALUE line containing the saved key", async () => {
     const formData = new FormData();
+    formData.set("provider", "anthropic");
     formData.set("apiKey", "sk-ant-decrypt-check");
-    await setAnthropicApiKeyAction(formData);
+    await setLlmApiKeyAction(formData);
 
     const raw = fs.readFileSync(getEnvPath(), "utf8");
     const decrypted = decrypt(raw);

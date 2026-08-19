@@ -1,8 +1,8 @@
 // Proves source-presets story's acceptance criteria for ../source-presets.ts:
-//   1. exactly 9 presets (indeed, welcome-to-the-jungle, zoho-recruit,
-//      catalant, greenhouse, ashby, workable, contra, landing-jobs) --
-//      the ats-navigator epic's original 3, plus Catalant, plus a
-//      deep-research expansion pass.
+//   1. exactly 11 presets (indeed, welcome-to-the-jungle, zoho-recruit,
+//      catalant, gun-io, shiny, greenhouse, ashby, workable, contra,
+//      landing-jobs) -- the ats-navigator epic's original 3, plus Catalant,
+//      plus a deep-research expansion pass, plus Gun.io and Shiny.
 //   2. each preset, wrapped into a full SourceConfig (id/enabled/kind/
 //      settings), validates against the SAME SourceConfigSchema
 //      loadConfig()/saveConfig() use -- schema drift breaks this test,
@@ -21,14 +21,16 @@ import { SOURCE_PRESETS, sourceConfigFromPreset } from "../source-presets.js";
 import { SourceConfigSchema } from "../../config/schema.js";
 
 describe("SOURCE_PRESETS", () => {
-  it("ships exactly the owner-confirmed list of 9 presets", () => {
+  it("ships exactly the owner-confirmed list of 11 presets", () => {
     expect(SOURCE_PRESETS.map((p) => p.id).sort()).toEqual([
       "ashby",
       "catalant",
       "contra",
       "greenhouse",
+      "gun-io",
       "indeed",
       "landing-jobs",
+      "shiny",
       "welcome-to-the-jungle",
       "workable",
       "zoho-recruit",
@@ -69,11 +71,15 @@ describe("SOURCE_PRESETS", () => {
     });
   }
 
-  it("indeed and catalant default customAuth to browser-session (bot detection / login-gated)", () => {
+  it("indeed, catalant, gun-io, and shiny default customAuth to browser-session (bot detection / login-gated)", () => {
     const indeed = SOURCE_PRESETS.find((p) => p.id === "indeed")!;
     const catalant = SOURCE_PRESETS.find((p) => p.id === "catalant")!;
+    const gunIo = SOURCE_PRESETS.find((p) => p.id === "gun-io")!;
+    const shiny = SOURCE_PRESETS.find((p) => p.id === "shiny")!;
     expect(indeed.settings.customAuth).toBe("browser-session");
     expect(catalant.settings.customAuth).toBe("browser-session");
+    expect(gunIo.settings.customAuth).toBe("browser-session");
+    expect(shiny.settings.customAuth).toBe("browser-session");
   });
 
   it("every other preset leaves customAuth unset (all public by default)", () => {
@@ -98,6 +104,8 @@ describe("SOURCE_PRESETS", () => {
       "welcome-to-the-jungle": false,
       "zoho-recruit": true,
       catalant: false,
+      "gun-io": false,
+      shiny: false,
       greenhouse: true,
       ashby: false,
       workable: true,

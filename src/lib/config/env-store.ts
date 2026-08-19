@@ -35,6 +35,7 @@ import dotenv from "dotenv";
 import { type ActionResult, actionErr, actionOk } from "../actions/result.js";
 import { decrypt, encrypt, getOrCreateKey, isEncryptedEnvelope, VaultTamperError } from "../security/vault.js";
 import { getEnvPath, hasAnyEncryptedFile } from "./load.js";
+import { readRawConfig } from "./save.js";
 
 /**
  * Local, deliberately-DUPLICATED equivalent of load.ts's private
@@ -169,4 +170,54 @@ export function setEnvVar(name: string, value: string): ActionResult<void> {
  */
 export function readEnvVar(name: string): string | undefined {
   return readEnvFileRaw()[name];
+}
+
+/** llm-provider-harness epic. Which api-key provider a resolved credential is for. */
+export type LlmProvider = "anthropic" | "openai" | "google";
+
+/**
+ * llm-provider-harness epic (supersedes llm-credential-modes' original flat
+ * `{kind, value}` shape, which assumed BOTH kinds carry a secret string --
+ * live-tested and found wrong: harness mode drives the local, already-
+ * authenticated `claude` CLI directly and carries NO secret material at
+ * all). See llm-client.ts's `createAiSdkModel()`, the sole consumer of the
+ * `api-key` branch.
+ */
+export type LlmCredential = { kind: "api-key"; provider: LlmProvider; value: string } | { kind: "claude-code-harness" };
+
+const PROVIDER_ENV_VARS: Record<LlmProvider, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_API_KEY",
+};
+
+/**
+ * The ONE shared credential-resolution call every LLM call site should use
+ * instead of a bare `readEnvVar("ANTHROPIC_API_KEY")` — reads
+ * `Config.llmCredentialKind`/`llmProvider` from the raw, unresolved config
+ * document (readRawConfig(), never loadConfig() — same raw-vs-resolved
+ * discipline this codebase holds everywhere else; these are mode
+ * selectors, not secrets, so reading them from the raw document is correct
+ * and required).
+ *
+ * `claude-code-harness` kind returns immediately with NO env-var read at
+ * all — there is no secret to resolve for that branch, a real
+ * simplification over the old (broken) design. `api-key` kind reads
+ * whichever provider's env slot `llmProvider` selects (still never logged,
+ * never included in an error message — same discipline as readEnvVar()
+ * above), returning `undefined` when that slot is unset, matching
+ * readEnvVar()'s own undefined-on-unset behavior — never throws for a
+ * missing credential.
+ */
+export function resolveLlmCredential(): LlmCredential | undefined {
+  const raw = readRawConfig();
+  if (raw.llmCredentialKind === "claude-code-harness") {
+    return { kind: "claude-code-harness" };
+  }
+
+  const provider: LlmProvider = raw.llmProvider === "openai" || raw.llmProvider === "google" ? raw.llmProvider : "anthropic";
+  const value = readEnvVar(PROVIDER_ENV_VARS[provider]);
+  if (!value) return undefined;
+
+  return { kind: "api-key", provider, value };
 }

@@ -6,7 +6,7 @@ import type { GigStatus } from "@/lib/store";
 import { actionErr, actionOk, type ActionResult } from "@/lib/actions/result";
 import { stageApplication } from "@/lib/apply/runner";
 import { generatePrepPacket, type PrepPacketContent } from "@/lib/apply/prep";
-import { readEnvVar } from "@/lib/config/env-store";
+import { resolveLlmCredential } from "@/lib/config/env-store";
 import { readRawConfig } from "@/lib/config/save";
 import { ConfigSchema } from "@/lib/config/schema";
 import type { MatchResult } from "@/lib/types";
@@ -52,9 +52,6 @@ export async function updateGigStatusAction(
 // throw, surfaced verbatim below, never silently accepted.
 // ---------------------------------------------------------------------------
 
-/** The one, dedicated .env var this feature reads — same name/convention as src/app/config/actions.ts's resume-ingestion action. */
-const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
-
 /**
  * Specific, actionable error when no Anthropic API key is set — mirrors
  * `src/app/config/actions.ts`'s `MISSING_API_KEY_ERROR`, reworded for this
@@ -65,13 +62,13 @@ const MISSING_API_KEY_ERROR =
   'gigradar apply: no Anthropic API key is set. Enter one in the "Anthropic API key" field on /config, then try again.';
 
 /**
- * Resolves the Anthropic API key via `readEnvVar()` — freshly, on every
- * call, exactly like `extractProfileFromResumeAction`
+ * Resolves the LLM credential via `resolveLlmCredential()` — freshly, on
+ * every call, exactly like `extractProfileFromResumeAction`
  * (src/app/config/actions.ts) — never `process.env` directly and never a
  * module-scope constant. This Next.js Server Action request path never
  * populates `process.env` from `.env` the way the CLI/cron path
  * (`loadConfig()`) does; see draft.ts's/runner.ts's own header comments for
- * why `generateDraft()`/`stageApplication()` take `apiKey` as a REQUIRED,
+ * why `generateDraft()`/`stageApplication()` take `credential` as a REQUIRED,
  * caller-resolved parameter rather than resolving it themselves.
  *
  * The `Config` `stageApplication()` needs is built the same
@@ -99,8 +96,8 @@ export async function generateDraftAction(key: string): Promise<ActionResult<{ g
     return actionErr(new Error(`gigradar apply: no gig found for key "${key}".`));
   }
 
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
-  if (!apiKey) {
+  const credential = resolveLlmCredential();
+  if (!credential) {
     return actionErr(new Error(MISSING_API_KEY_ERROR));
   }
 
@@ -123,7 +120,7 @@ export async function generateDraftAction(key: string): Promise<ActionResult<{ g
   };
 
   try {
-    await stageApplication(matchResult, parsedConfig.data, apiKey);
+    await stageApplication(matchResult, parsedConfig.data, credential);
   } catch (e) {
     return actionErr(e);
   }
@@ -157,8 +154,8 @@ export async function generatePrepPacketAction(key: string): Promise<ActionResul
     return actionErr(new Error(`gigradar career-crm: no gig found for key "${key}".`));
   }
 
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
-  if (!apiKey) {
+  const credential = resolveLlmCredential();
+  if (!credential) {
     return actionErr(new Error(MISSING_API_KEY_ERROR));
   }
 
@@ -173,7 +170,7 @@ export async function generatePrepPacketAction(key: string): Promise<ActionResul
 
   let content: PrepPacketContent;
   try {
-    content = await generatePrepPacket(gig, parsedConfig.data.profile, parsedConfig.data.applyProfile, apiKey);
+    content = await generatePrepPacket(gig, parsedConfig.data.profile, parsedConfig.data.applyProfile, credential);
   } catch (e) {
     return actionErr(e);
   }

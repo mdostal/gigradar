@@ -31,9 +31,11 @@
 // GLOBALTHIS-PINNED STATE — same reason as assist-session.ts/session-
 // capture.ts (Next.js dev HMR re-evaluation). One loop entry per
 // sessionId — the loop and its assist session are 1:1.
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { Page } from "playwright";
 import type { ApplyProfileConfig, Profile } from "../types.js";
+import { createAnthropicClient } from "../config/llm-client.js";
+import type { LlmCredential } from "../config/env-store.js";
 import { buildApplicantDataBlock } from "./draft.js";
 
 const MODULE_PREFIX = "gigradar profile-assist-loop";
@@ -245,7 +247,7 @@ export async function advanceLoopTurn(
   mode: "guided" | "full-auto",
   profile: Profile,
   applyProfile: ApplyProfileConfig,
-  apiKey: string,
+  credential: LlmCredential,
 ): Promise<LoopEvent> {
   const entry = getOrInitLoop(sessionId, profile, applyProfile);
 
@@ -259,7 +261,7 @@ export async function advanceLoopTurn(
     return { type: "turn_limit_reached" };
   }
 
-  const client = new Anthropic({ apiKey });
+  const client = createAnthropicClient(credential);
   const response = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 2048,

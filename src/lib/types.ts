@@ -214,6 +214,25 @@ export interface Config {
    * other optional fields on this interface. Not a secret, cosmetic only.
    */
   appIcon?: string;
+  /**
+   * llm-provider-harness epic (supersedes llm-credential-modes' original
+   * "oauth-token" kind -- live-tested and found non-functional). "api-key"
+   * (today's only real behavior -- a raw key for `llmProvider` below, sent
+   * via the AI SDK) or "claude-code-harness" (drives the local,
+   * already-authenticated `claude` CLI directly, no secret value stored or
+   * resolved for this kind at all). Omitted means "api-key",
+   * byte-identical to every install before this field existed — see
+   * env-store.ts's resolveLlmCredential() and llm-client.ts's
+   * createAiSdkModel().
+   */
+  llmCredentialKind?: "api-key" | "claude-code-harness";
+  /**
+   * llm-provider-harness epic. Which provider's api-key mode uses --
+   * meaningless when llmCredentialKind is "claude-code-harness". Omitted
+   * means "anthropic", byte-identical to every install before this field
+   * existed.
+   */
+  llmProvider?: "anthropic" | "openai" | "google";
 }
 
 /**

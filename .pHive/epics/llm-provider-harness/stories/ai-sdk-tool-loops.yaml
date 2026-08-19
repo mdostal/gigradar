@@ -1,0 +1,31 @@
+id: ai-sdk-tool-loops
+epic: llm-provider-harness
+title: "Vercel AI SDK for the two multi-turn tool-loop call sites, adopting native toolApproval"
+status: pending
+complexity: high
+methodology: classic
+depends_on: [ai-sdk-single-shot]
+
+description: |
+  Vertical Plan Slice B. Re-architects agent-chat-loop.ts and
+  profile-assist-loop.ts around generateText()'s tools/toolApproval
+  ('user-approval' for write-tools) instead of Anthropic's raw
+  tool_use/tool_result message loop -- a genuine behavioral upgrade over
+  the current hand-rolled approve/reject plumbing, not just a port (see
+  design-discussion.md section 2.5). Full acceptance criteria to be
+  detailed when this story starts (depends on ai-sdk-single-shot's
+  createAiSdkModel()/resolveLlmCredential() landing first).
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/chat/agent-chat-loop.ts
+    - path: src/lib/apply/profile-assist-loop.ts
+    - path: src/app/chat/actions.ts
+    - path: src/app/profile-assist/actions.ts
+
+references:
+  - path: .pHive/epics/llm-provider-harness/docs/design-discussion.md
+    relevant_excerpt: "section 2.5's toolApproval finding (state:'approval-requested', HMAC-signed approvalId)."
+  - path: .pHive/epics/llm-provider-harness/docs/vertical-plan.md
+    relevant_excerpt: "Slice B"

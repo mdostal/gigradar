@@ -41,6 +41,7 @@ import { z } from "zod";
 
 import { runRadar } from "../lib/apply/runner.js";
 import { loadConfig } from "../lib/config/load.js";
+import { resolveLlmCredential } from "../lib/config/env-store.js";
 import { readRawConfig } from "../lib/config/save.js";
 import { computeStatusStrip } from "../lib/status/status-strip.js";
 import { getGig, listGigs, setStatus } from "../lib/store/gigs.js";
@@ -239,7 +240,7 @@ export async function handleGetStatusSummary(): Promise<CallToolResult> {
 export async function handleRunScan(): Promise<CallToolResult> {
   try {
     const config = loadConfig();
-    const { passed, errors } = await runRadar(config);
+    const { passed, errors } = await runRadar(config, {}, { credential: resolveLlmCredential() });
     return toolOk({ passedCount: passed.length, errors });
   } catch (e) {
     return toolError(e);

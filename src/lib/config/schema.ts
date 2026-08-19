@@ -140,4 +140,27 @@ export const ConfigSchema = z.object({
   notifyOnGreenMatch: z.boolean().optional(),
   autoFire: AutoFireConfigSchema.optional(),
   appIcon: z.string().optional(),
+  /**
+   * llm-provider-harness epic (supersedes llm-credential-modes' original
+   * "oauth-token" kind -- live-tested and found non-functional: a
+   * `claude setup-token` value rejected by api.anthropic.com when reused
+   * as a bare Bearer credential outside the real `claude` process, see
+   * that epic's design-discussion.md). "api-key" (today's only real
+   * behavior -- a raw key for `llmProvider` below, sent via the AI SDK)
+   * or "claude-code-harness" (drives the local, already-authenticated
+   * `claude` CLI directly, via @anthropic-ai/claude-agent-sdk -- no
+   * secret value stored or resolved for this kind at all). Absent/
+   * undefined means "api-key", byte-identical to every install before
+   * this field existed -- see env-store.ts's resolveLlmCredential() and
+   * llm-client.ts's createAiSdkModel().
+   */
+  llmCredentialKind: z.enum(["api-key", "claude-code-harness"]).optional(),
+  /**
+   * llm-provider-harness epic. Which provider's api-key mode uses --
+   * meaningless when llmCredentialKind is "claude-code-harness" (Anthropic-
+   * only for now, see design-discussion.md section 3.5). Absent/undefined
+   * means "anthropic", byte-identical to every install before this field
+   * existed.
+   */
+  llmProvider: z.enum(["anthropic", "openai", "google"]).optional(),
 });

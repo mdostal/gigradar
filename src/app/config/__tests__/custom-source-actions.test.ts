@@ -81,9 +81,9 @@ describe("testCustomSourceExtractionAction: success", () => {
 
     await testCustomSourceExtractionAction("monster", "https://example.com/truck-jobs", "trucking jobs board", "none", undefined);
 
-    const [cfg, , apiKey] = fetchMock.mock.calls[0] as [SourceConfig, Profile, string];
+    const [cfg, , credential] = fetchMock.mock.calls[0] as [SourceConfig, Profile, { kind: string; value: string }];
     expect(cfg).toEqual({ id: "monster", enabled: true, kind: "custom-llm", settings: { url: "https://example.com/truck-jobs", hint: "trucking jobs board" } });
-    expect(apiKey).toBe("sk-ant-fake-test-key");
+    expect(credential).toEqual({ kind: "api-key", provider: "anthropic", value: "sk-ant-fake-test-key" });
   });
 
   it("includes customAuth/sessionStatePath in settings only when customAuth is browser-session", async () => {
@@ -108,12 +108,12 @@ describe("testCustomSourceExtractionAction: success", () => {
 });
 
 describe("testCustomSourceExtractionAction: validation and failure", () => {
-  it("returns a specific error and never calls customLlmSource.fetch() when no Anthropic API key is set", async () => {
+  it("returns a specific error and never calls customLlmSource.fetch() when no LLM credential is set", async () => {
     const result = await testCustomSourceExtractionAction("monster", "https://example.com/jobs", undefined, "none", undefined);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("no Anthropic API key is set");
+    expect(result.error).toContain("no Anthropic credential is set");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

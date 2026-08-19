@@ -9,7 +9,7 @@ import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { buildAuthorizationUrl, deleteTokenSet } from "@/lib/auth/oauth2";
 import { resolveOAuthClientCredentials } from "@/lib/auth/oauth-credentials";
 import { GMAIL_PROVIDER } from "@/lib/auth/oauth-providers/gmail";
-import { readEnvVar, setEnvVar } from "@/lib/config/env-store";
+import { resolveLlmCredential, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
 import { deleteResume, getResumePath, saveResume } from "@/lib/documents/resume-store";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
@@ -268,22 +268,21 @@ export async function cancelCaptureAction(captureId: string): Promise<ActionResu
  * independent, always-available action regardless of what this returns
  * (see config-client.tsx's `CaptureLoginControl`).
  *
- * The Anthropic API key is resolved fresh, inside this handler, via
- * `readEnvVar()` — same non-negotiable discipline
- * `extractProfileFromResumeAction()` below already establishes (see that
- * function's own doc comment for why). A missing key returns
- * `MISSING_API_KEY_ERROR` before `getCapturePage()`/`checkCaptureReadiness()`
- * ever run.
+ * The LLM credential is resolved fresh, inside this handler, via
+ * `resolveLlmCredential()` (llm-credential-modes epic — supports either a
+ * raw Anthropic API key or a long-lived OAuth token, config-selectable).
+ * A missing credential returns `MISSING_CREDENTIAL_ERROR` before
+ * `getCapturePage()`/`checkCaptureReadiness()` ever run.
  */
 export async function checkCaptureReadinessAction(captureId: string, sourceId: string): Promise<ActionResult<CaptureReadiness>> {
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
-  if (!apiKey) {
-    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  const credential = resolveLlmCredential();
+  if (!credential) {
+    return actionErr(new Error(MISSING_CREDENTIAL_ERROR));
   }
 
   try {
     const page = getCapturePage(captureId);
-    const readiness = await checkCaptureReadiness(page, sourceId, apiKey);
+    const readiness = await checkCaptureReadiness(page, sourceId, credential);
     return actionOk(readiness);
   } catch (e) {
     return actionErr(e);
@@ -305,9 +304,13 @@ export async function checkCaptureReadinessAction(captureId: string, sourceId: s
  * saving then hits the cache immediately, rather than re-deriving. This is
  * a real, intentional side effect (a recipe cache file, not config.json).
  *
- * The Anthropic API key is resolved fresh, inside this handler, via
- * `readEnvVar()` — same discipline every other LLM-calling action in this
- * file already follows.
+ * The LLM credential is resolved fresh, inside this handler, via
+ * `resolveLlmCredential()` (both api-key and claude-code-harness modes
+ * work — llm-provider-harness epic, custom-llm-source-credential-migration
+ * story; this used to be a raw `readEnvVar(PROVIDER_API_KEY_VARS.anthropic)`
+ * read, requiring an Anthropic key regardless of the configured credential
+ * mode) — same discipline every other LLM-calling action in this file
+ * already follows.
  */
 export async function testCustomSourceExtractionAction(
   sourceId: string,
@@ -316,9 +319,9 @@ export async function testCustomSourceExtractionAction(
   customAuth: "none" | "browser-session",
   sessionStatePath: string | undefined,
 ): Promise<ActionResult<{ count: number; titles: string[] }>> {
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
-  if (!apiKey) {
-    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  const credential = resolveLlmCredential();
+  if (!credential) {
+    return actionErr(new Error(MISSING_CREDENTIAL_ERROR));
   }
   if (!sourceId) {
     return actionErr(new Error("gigradar config: give this custom source a name before testing extraction."));
@@ -340,7 +343,7 @@ export async function testCustomSourceExtractionAction(
   };
 
   try {
-    const gigs = await customLlmSource.fetch(cfg, testProfile, apiKey);
+    const gigs = await customLlmSource.fetch(cfg, testProfile, credential);
     return actionOk({ count: gigs.length, titles: gigs.slice(0, 5).map((g) => g.title) });
   } catch (e) {
     return actionErr(e);
@@ -355,16 +358,22 @@ export async function testCustomSourceExtractionAction(
 // steps 1 and 4.
 // ---------------------------------------------------------------------------
 
-/** The one, dedicated .env var this feature reads/writes — never hardcoded inline at each call site. */
-const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
+/** llm-provider-harness epic: one dedicated .env var per provider — never hardcoded inline at each call site. */
+const PROVIDER_API_KEY_VARS = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_API_KEY",
+} as const;
 
 /**
  * Thin wrapper around `env-store.ts`'s `setEnvVar()` — the only Server
  * Action in this entire config UI that writes to `.env` instead of
  * `config.json` (called out as such in `config-client.tsx`'s UI copy). Reads
- * the submitted key as a required, non-blank string field named `apiKey`;
- * a blank/missing submission returns a specific error rather than silently
- * writing an empty value to `.env`.
+ * the submitted key as a required, non-blank string field named `apiKey`,
+ * and which provider's env slot to write via a required `provider` field
+ * (llm-provider-harness epic — was Anthropic-only before); a blank/missing/
+ * unrecognized submission returns a specific error rather than silently
+ * writing an empty value to `.env` or guessing a provider.
  *
  * No `revalidatePath()` call: `/config`'s Server Component render
  * (`page.tsx`) never reads `.env` — only `readRawConfig()`'s `config.json`
@@ -377,21 +386,26 @@ const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
  * story's `design_decisions`): the API key is a discrete, single-purpose
  * credential-setup action, not part of the profile draft.
  */
-export async function setAnthropicApiKeyAction(formData: FormData): Promise<ActionResult<void>> {
+export async function setLlmApiKeyAction(formData: FormData): Promise<ActionResult<void>> {
   const apiKey = formData.get("apiKey");
   if (typeof apiKey !== "string" || apiKey.trim() === "") {
-    return actionErr(new Error("gigradar config: Anthropic API key is required — enter a value before saving."));
+    return actionErr(new Error("gigradar config: an API key is required — enter a value before saving."));
   }
-  return setEnvVar(ANTHROPIC_API_KEY_VAR, apiKey.trim());
+  const provider = formData.get("provider");
+  if (provider !== "anthropic" && provider !== "openai" && provider !== "google") {
+    return actionErr(new Error("gigradar config: an unrecognized LLM provider was submitted."));
+  }
+  return setEnvVar(PROVIDER_API_KEY_VARS[provider], apiKey.trim());
 }
 
 /**
- * Specific, field-naming error returned when no Anthropic API key is set —
- * per this story's acceptance criteria, NEVER a generic SDK/auth error
- * bubbling up from `extractProfile()`'s own `Anthropic` client construction.
+ * Specific error returned when no LLM credential (API key OR oauth token)
+ * is set — llm-credential-modes epic. Used by actions that resolve via
+ * `resolveLlmCredential()` (both credential kinds work): `checkCaptureReadinessAction()`
+ * and `extractProfileFromResumeAction()` below.
  */
-const MISSING_API_KEY_ERROR =
-  'gigradar profile ingestion: no Anthropic API key is set. Enter one in the "Anthropic API key" field above and save it, then try again.';
+const MISSING_CREDENTIAL_ERROR =
+  'gigradar profile ingestion: no Anthropic credential is set. Configure one in the "Anthropic credential" field above and save it, then try again.';
 
 /**
  * Builds `extractProfile()`'s `ExtractProfileInput` from the raw `FormData`
@@ -457,17 +471,19 @@ function rawApplyProfile(raw: Record<string, unknown>): Record<string, unknown> 
  * (`resumeFile`, PDF or plain text) plus a `links` textarea value, and
  * returns `ActionResult<{roles, skills, warnings, resumeSaved, resumeSaveError?}>`.
  *
- * **The API key is resolved fresh, INSIDE this handler, on every call** —
- * via `env-store.ts`'s `readEnvVar()`, never `process.env` and never a
- * module-scope constant — per this story's non-negotiable requirement
+ * **The LLM credential is resolved fresh, INSIDE this handler, on every
+ * call** — via `env-store.ts`'s `resolveLlmCredential()` (llm-credential-modes
+ * epic — supports either a raw Anthropic API key or a long-lived OAuth
+ * token, config-selectable), never `process.env` and never a module-scope
+ * constant — per this story's non-negotiable requirement
  * (collaborative-review finding, design-discussion.md §3 step 4): the
  * Next.js app's Server Action request path never populates `process.env`
  * from `.env` (only the CLI/cron path, via `loadConfig()`, does that), and a
- * module-scope-resolved key would go stale (or permanently capture
- * `undefined`) the moment the key is set/changed without a server restart.
- * A missing key short-circuits BEFORE `buildExtractInput()` or
- * `extractProfile()` run at all, returning `MISSING_API_KEY_ERROR` — a
- * specific error naming the "Anthropic API key" field, never a generic
+ * module-scope-resolved credential would go stale (or permanently capture
+ * `undefined`) the moment it's set/changed without a server restart.
+ * A missing credential short-circuits BEFORE `buildExtractInput()` or
+ * `extractProfile()` run at all, returning `MISSING_CREDENTIAL_ERROR` — a
+ * specific error naming the "Anthropic credential" field, never a generic
  * Anthropic SDK authentication failure.
  *
  * Per-link fetch/parse failures (including known login-walls) never fail
@@ -500,14 +516,14 @@ export async function extractProfileFromResumeAction(formData: FormData): Promis
     resumeSaveError?: string;
   }>
 > {
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
-  if (!apiKey) {
-    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  const credential = resolveLlmCredential();
+  if (!credential) {
+    return actionErr(new Error(MISSING_CREDENTIAL_ERROR));
   }
 
   try {
     const { input, resumeUpload } = await buildExtractInput(formData);
-    const result = await extractProfile(input, apiKey);
+    const result = await extractProfile(input, credential);
 
     let resumeSaved = false;
     let resumePath: string | undefined;

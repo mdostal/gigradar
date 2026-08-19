@@ -41,6 +41,7 @@ import { Cron } from "croner";
 import { evaluateAutoFire } from "../lib/apply/autofire.js";
 import { runRadar, stageApplication } from "../lib/apply/runner.js";
 import { loadConfig } from "../lib/config/load.js";
+import { resolveLlmCredential } from "../lib/config/env-store.js";
 import { sendDesktopNotification } from "../lib/notify/desktop.js";
 import { raiseIssue } from "../lib/notify/issues.js";
 import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting } from "../lib/store/index.js";
@@ -167,14 +168,16 @@ function logCycleSummary(
  * itself (matches this file's own per-source error-isolation discipline).
  *
  * Two prerequisites are checked ONCE per cycle, not discovered per-gig via
- * `stageApplication()`'s own errors (a realistic misconfiguration — API key
- * set, apply profile never filled in — would otherwise repeat the same error
- * once per eligible gig, every cycle, forever): `process.env.ANTHROPIC_API_KEY`
- * set (already populated by `loadConfigFn()`'s own resolution — same
- * "process.env, CLI/cron path" mechanism `apply/runner.ts`'s CLI `main()`
- * already uses, no new resolution mechanism here) AND `config.applyProfile`
- * set. Either missing logs exactly ONE clear line naming which, and skips
- * auto-drafting entirely for the cycle.
+ * `stageApplication()`'s own errors (a realistic misconfiguration — no LLM
+ * credential set, apply profile never filled in — would otherwise repeat
+ * the same error once per eligible gig, every cycle, forever): an LLM
+ * credential resolves via `resolveLlmCredential()` (llm-credential-modes
+ * epic — a fresh disk read, works identically whether called from this
+ * cron path or a Server Action — the SAME call `runCycle()` below now
+ * makes for the `runOpts.credential`/`Source.fetch()` path, since
+ * llm-provider-harness's custom-llm-source-credential-migration story)
+ * AND `config.applyProfile` set. Either missing logs exactly ONE clear
+ * line naming which, and skips auto-drafting entirely for the cycle.
  *
  * Eligibility: `tier === "green"` AND `getDraftFn(gigKey(...)) === undefined`
  * — ANY existing draft, regardless of its status (`draft`/`approved`/
@@ -271,8 +274,8 @@ export async function runAutoDraft(
 ): Promise<void> {
   if (!config.autoDraftOnScan) return;
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  const credential = resolveLlmCredential();
+  if (!credential) {
     console.log(
       "gigradar scheduler: autoDraftOnScan is enabled but ANTHROPIC_API_KEY is not set — skipping auto-draft this cycle.",
     );
@@ -294,7 +297,7 @@ export async function runAutoDraft(
   for (const r of eligible) {
     const key = gigKey(r.gig.sourceId, r.gig.externalId);
     try {
-      await stageApplicationFn(r, config, apiKey);
+      await stageApplicationFn(r, config, credential);
       draftedCount += 1;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -423,11 +426,16 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
         .filter((s) => !cycleConfig.sources.some((c) => c.id === s.id))
         .map((s) => s.id);
 
-      // llm-custom-sources epic: resolved fresh each cycle, same
-      // process.env.ANTHROPIC_API_KEY convention runAutoDraft() below
-      // already uses for this exact long-running CLI/scheduler context
-      // (never readEnvVar() -- that's the Server Action convention).
-      const result = await runRadarFn(cycleConfig, {}, { anthropicApiKey: process.env.ANTHROPIC_API_KEY });
+      // llm-custom-sources epic: resolved fresh each cycle via
+      // resolveLlmCredential() -- the SAME call runAutoDraft() below
+      // already makes for this exact long-running CLI/scheduler context
+      // (llm-provider-harness epic, custom-llm-source-credential-migration
+      // story: this used to read process.env.ANTHROPIC_API_KEY directly,
+      // silently bypassing both AI SDK multi-provider mode and
+      // claude-code-harness mode for every custom-llm/gmail-digest source's
+      // real scheduled scan -- found live while verifying a new source
+      // preset's Capture Login end to end).
+      const result = await runRadarFn(cycleConfig, {}, { credential: resolveLlmCredential() });
 
       const erroredIds = new Set(result.errors.map((e) => e.sourceId));
       for (const source of cycleConfig.sources as SourceConfig[]) {

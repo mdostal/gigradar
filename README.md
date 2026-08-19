@@ -48,6 +48,18 @@ npm run dev
 
 Either way, a local dashboard comes up at `127.0.0.1:3000` by default (falling back to another free port automatically if 3000 is already taken — see `GIGRADAR_PORT` in `docs/gmail-oauth-setup.md` if you need a stable alternative for Gmail OAuth) — never exposed beyond your machine.
 
+**Native desktop window instead of a browser tab:** `npm run electron` runs the exact same app inside Electron (spawns the same server as a child process — server code never runs inside Electron's own process). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)'s "Two runtime modes" section for the details, and the roadmap entry for a fully packaged, auto-updating `.app`/`.dmg` (Tauri) beyond the unsigned build above.
+
+## Configure
+
+Everything is set up through the `/config` page in the running app — no hand-editing JSON required, though `config.example.json`/`.env.example` at the repo root show the underlying shape if you want to see it. There you set:
+
+- **Your profile & needs** — roles, skills, rate/hours thresholds (see `Needs`/`EngagementProfile` below), remote-only, etc.
+- **Sources** — pick from the built-in adapter presets (LinkedIn, GoFractional, A.Team, Wellfound, Braintrust, and more) or add your own via a source URL + an LLM-driven extraction recipe (no code required).
+- **Credentials — BYOK.** gigradar never ships or proxies any API key on your behalf. LLM-driven features (custom-source extraction, assisted-apply drafting, profile-assist) need your own Anthropic API key, entered directly in `/config`; browser-session sources need a one-time guided login (`Capture Login`) so gigradar can replay your own authenticated session. Google-account sources (e.g. Gmail digest ingestion) need your own OAuth client — see [`docs/gmail-oauth-setup.md`](docs/gmail-oauth-setup.md) for the one-time setup.
+
+Want gigradar's data queryable from Claude Desktop/Claude Code instead of (or alongside) the dashboard? It ships an MCP server (`npm run mcp`) exposing `list_gigs`/`get_gig`/`update_gig_status`/`get_status_summary`/`run_scan` over stdio — see [`docs/mcp-setup.md`](docs/mcp-setup.md) for copy-pasteable client config.
+
 ## Add a source (the whole extension story)
 
 ```ts
@@ -59,16 +71,21 @@ export const mySource: Source = {
 registerSource(mySource);
 ```
 
-Set your rules in your own config (kept in `.local/`, gitignored):
+Set your rules — either through `/config`, or directly in your own config.json (kept outside the repo, gitignored):
 
 ```ts
-const needs: Needs = { minRate: 175, highRate: 250, maxHours: 20, maxHoursAtHighRate: 40,
-  allowContractToHire: false, freshStageOnly: true, remoteOnly: true };
+const needs: Needs = {
+  engagementProfiles: [
+    { id: "fractional-contract", label: "Fractional/contract", types: ["contract", "fractional"],
+      minRate: 175, highRate: 250, maxHours: 20, maxHoursAtHighRate: 40, rateUnit: "hour" },
+  ],
+  freshStageOnly: true, remoteOnly: true,
+};
 ```
 
 ## Status
 
-`v0.21.0` — real source adapters (LinkedIn, GoFractional, A.Team, Wellfound, Braintrust, and more), the Next.js dashboard/config UI, guided browser-session login, ranked engagement profiles, assisted-apply drafting, a cron scheduler with desktop notifications, a severity-tiered issues view, and an opt-in, trust-gated auto-fire submission system. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and build-out roadmap. Try it live at [mdostal.github.io/gigradar](https://mdostal.github.io/gigradar/).
+`v0.25.2` — real source adapters (LinkedIn, GoFractional, A.Team, Wellfound, Braintrust, and more, plus LLM-driven custom sources and Gmail digest ingestion), the Next.js dashboard/config UI, guided browser-session login, ranked engagement profiles, assisted-apply drafting with a career-tracker/interview-prep layer, an MCP server for Claude Desktop/Code, a cron scheduler with desktop notifications, a severity-tiered issues view with an in-UI human-verification co-pilot, and an opt-in, trust-gated auto-fire submission system. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and build-out roadmap. Try it live at [mdostal.github.io/gigradar](https://mdostal.github.io/gigradar/).
 
 ## Support this project
 

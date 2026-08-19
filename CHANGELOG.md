@@ -4,6 +4,120 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **LLM credential modes.** A `Config.llmCredentialKind` selector alongside
+  the Anthropic API key field in `/config`, laying groundwork for
+  alternatives to a raw pasted key (the shipped `oauth-token` kind is not
+  yet functional end-to-end — see `docs/ARCHITECTURE.md` / the
+  `llm-provider-harness` epic docs for the real mechanism this is being
+  replaced with).
+
+## [0.25.2] - 2026-08-17
+
+### Fixed
+
+- **macOS JIT entitlements** so the signed Tauri bundle's Node sidecar can
+  actually start on a fresh install (was silently failing to launch).
+
+## [0.25.1] - 2026-08-17
+
+### Fixed
+
+- **Free-port detection uses a real connect check**, not a bind check —
+  fixes a race where the dev server could pick a port another process was
+  about to claim.
+
+## [0.25.0] - 2026-08-17
+
+### Added
+
+- **Catalant added as a source preset**, plus 5 more researched
+  fractional/contract platforms added to the source-preset list.
+- **Profile-assist: read-only embedded live-view pane** (Slice 1 of the
+  `embedded-profile-assist` epic) — watch the guided/full-auto session
+  drive the browser without leaving `/config`.
+
+### Fixed
+
+- **Profile-assist now offers every configured browser-session source**,
+  not just the 3 that were previously hardcoded into the picker.
+
+## [0.24.2] - 2026-08-17
+
+### Fixed
+
+- **No more hardcoded port 3000** in the Tauri/Electron runtime modes —
+  both now resolve the real dev-server port dynamically. Gmail OAuth's
+  redirect URI is decoupled from the port-resolution logic as part of the
+  same fix.
+- Install docs updated for the codesign failure mode fixed in 0.24.1.
+
+## [0.24.1] - 2026-08-16
+
+### Fixed
+
+- **Deep ad-hoc codesigning of the whole `.app` bundle**, not just the
+  main binary — fixes a Gatekeeper/launch failure on some macOS versions.
+
+## [0.24.0] - 2026-08-16
+
+### Added
+
+- **`ats-navigator` epic** (4 slices): source presets for guided ATS
+  platforms (Indeed, Welcome to the Jungle, Zoho Recruit), a preset
+  dropdown in `/config`'s Add-a-source flow, chat-guided source onboarding
+  (`list_source_presets`/`add_source` tools), and bidirectional ATS
+  keyword scanning surfaced in interview-prep packets.
+- **`career-documents` epic** (4 slices): encrypted-at-rest resume
+  storage, persisting an uploaded resume + a `/config` Resume section,
+  persisted links reaching every LLM call site, and a real
+  parseability check.
+- Docs: the unsigned `.dmg` + Gatekeeper workaround documented everywhere
+  a first-time installer would look.
+
+## [0.23.0] - 2026-08-16
+
+### Added
+
+- **Agent chat (`/chat`)** — a real tool-use loop against your own tracked
+  gigs: read-only tools first (Slice 1), propose/approve write tools
+  (Slice 2, human-in-the-loop before anything mutates), then
+  source-connection + screenshot tools (Slice 3).
+- 8 broader, engagement-type-agnostic starter role-area templates, on top
+  of the original 5 fractional-C-suite-flavored ones.
+- A real Download link/CTA on the GitHub Pages site.
+
+## [0.22.0] - 2026-08-16
+
+### Added
+
+- **`oauth-session-capture-v2` epic** (3 slices): spawn-then-attach a real,
+  non-fingerprinted Chrome for Capture Login (fixes Google OAuth's
+  automation detection), an owner-selectable Portunus session-vault
+  backend alongside the local encrypted vault, and an LLM-guided "does
+  this look signed in yet?" capture-readiness check.
+- **`llm-custom-sources` epic** (4 slices): add any job board as a source
+  by URL — an LLM derives the extraction recipe, caches it, supports
+  authenticated (browser-session) sources, and handles pagination — plus
+  the `/config` UI to add one with zero code.
+- **`verification-copilot` epic** (2 slices): shared Cloudflare/human-
+  verification detection with its own distinct issue type, plus an in-UI
+  co-pilot action to resolve a blocked source directly from `/issues`.
+- **`email-digest-ingestion` epic** (4 slices): a generic OAuth2
+  mechanism (PKCE, refresh), a Gmail provider, an LLM-driven digest-email
+  extractor, and a `/config` "Connect Gmail" flow — job-alert emails
+  become another source.
+- **`career-crm` epic, Slice 1** (interview prep): `generatePrepPacket()`
+  — fit/gap analysis + interview prep, generated on demand and persisted;
+  Slice 2 surfaces a "Generate prep packet" action on the dashboard.
+- **Profile-assist** (3 autonomy modes): a persistent browser session +
+  Manual mode, Guided mode (human-approval-gated tool-use loop), and
+  Full-auto mode (unsupervised).
+- Brand styling pass tying the app's chrome to the selected app icon's
+  palette.
+- Dashboard rebuilt on TanStack Table — real per-column sort + filter.
+
 ## [0.21.1] - 2026-08-15
 
 ### Added

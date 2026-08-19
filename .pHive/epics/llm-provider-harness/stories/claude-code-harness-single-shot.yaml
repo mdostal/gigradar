@@ -1,0 +1,56 @@
+id: claude-code-harness-single-shot
+epic: llm-provider-harness
+title: "claude-code-harness credential kind (claude-agent-sdk query()) for single-shot call sites, replacing the dead oauth-token kind"
+status: complete
+complexity: high
+methodology: classic
+depends_on: [ai-sdk-single-shot]
+
+description: |
+  Vertical Plan Slice C. Ships the real, working replacement for
+  llm-credential-modes' non-functional oauth-token kind: query() from
+  @anthropic-ai/claude-agent-sdk, pathToClaudeCodeExecutable pointed at
+  the local claude binary, live-verified this session to authenticate
+  with zero apiKey/authToken. First real step is a spike resolving
+  design-discussion.md section 4 open question 1 -- does query() expose a
+  schema-forcing option, or does forced structured output need the
+  single-allowed-tool trick (design-discussion.md section 2.3 point 4).
+  That spike's result decides this story's actual mechanism before full
+  acceptance criteria are written. Also must resolve open questions 3
+  (pathToClaudeCodeExecutable resolution in packaged Electron/Tauri
+  builds) and 4 (clear error when claude isn't installed/authenticated).
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/config/llm-client.ts
+    - path: src/lib/config/env-store.ts
+      purpose: "resolveLlmCredential()'s claude-code-harness branch needs to actually work end to end, not just type-check (ai-sdk-single-shot leaves it typed but non-functional)."
+
+references:
+  - path: .pHive/epics/llm-provider-harness/docs/design-discussion.md
+    relevant_excerpt: "section 2.3 (all 5 live-verified claude-agent-sdk findings) and section 4 (open questions 1, 3, 4)."
+  - path: .pHive/epics/llm-provider-harness/docs/vertical-plan.md
+    relevant_excerpt: "Slice C"
+
+completion_note: |
+  Spike resolved open question 1: query()'s options.outputFormat:
+  {type:"json_schema", schema} forces real structured output, read off the
+  final result-type message's structured_output field -- no
+  single-allowed-tool trick needed. generateHarnessObject()
+  (src/lib/config/llm-client.ts) implements this, plus
+  toHarnessContentBlocks() bridging the AI SDK's TextPart/FilePart shape to
+  the real Anthropic content-block shape harness mode needs (PDF support
+  included). Wired into all 5 single-shot call sites (draft.ts, prep.ts,
+  extract.ts, capture-guidance.ts, profile-suggest.ts) via a
+  `credential.kind === "claude-code-harness"` branch. Open question 3
+  (packaged-build pathToClaudeCodeExecutable resolution) only partially
+  resolved -- live-verified that omitting the option works on this dev
+  machine, NOT yet verified inside an actual Tauri/Electron bundle. Open
+  question 4 (clear error on missing/unauthenticated CLI) addressed via
+  HarnessQueryError, unit-tested via a mocked query() throw but not yet
+  live-tested against a real CLI-uninstalled machine. See
+  design-discussion.md section 4 for the full resolution writeup.
+  Unit-tested: src/lib/config/__tests__/llm-client.test.ts (18 tests) plus
+  a harness-branch-reachability test added to each of the 5 call sites'
+  own test files. Full suite (1110 tests) + tsc --noEmit both green.

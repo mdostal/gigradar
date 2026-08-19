@@ -187,14 +187,14 @@ describe("sendMessage: plain conversational turn, no tools", () => {
     mockCreate.mockResolvedValueOnce(fakeTextResponse("Hi! Ask me about your gigs."));
     startChatSession("s1");
 
-    const result = await sendMessage("s1", "fake-api-key", "hello");
+    const result = await sendMessage("s1", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "hello");
 
     expect(result).toEqual({ type: "message", text: "Hi! Ask me about your gigs." });
     endChatSession("s1");
   });
 
   it("throws a specific error when sendMessage() is called for a session that was never started", async () => {
-    await expect(sendMessage("never-started", "fake-api-key", "hello")).rejects.toThrow(/no chat session/);
+    await expect(sendMessage("never-started", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "hello")).rejects.toThrow(/no chat session/);
   });
 });
 
@@ -208,7 +208,7 @@ describe("sendMessage: list_gigs tool", () => {
       .mockResolvedValueOnce(fakeTextResponse("You have 1 green-tier gig: Fractional CTO at Acme."));
 
     startChatSession("s2");
-    const result = await sendMessage("s2", "fake-api-key", "how many green-tier gigs do I have?");
+    const result = await sendMessage("s2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "how many green-tier gigs do I have?");
 
     expect(result).toEqual({ type: "message", text: "You have 1 green-tier gig: Fractional CTO at Acme." });
 
@@ -233,7 +233,7 @@ describe("sendMessage: get_gig tool", () => {
       .mockResolvedValueOnce(fakeTextResponse("That's a Fractional CTO role at Acme."));
 
     startChatSession("s3");
-    await sendMessage("s3", "fake-api-key", "tell me about this gig");
+    await sendMessage("s3", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "tell me about this gig");
 
     const secondCall = mockCreate.mock.calls[1]?.[0] as Anthropic.MessageCreateParams;
     const toolResultText = JSON.stringify(secondCall.messages);
@@ -249,7 +249,7 @@ describe("sendMessage: get_gig tool", () => {
       .mockResolvedValueOnce(fakeTextResponse("I couldn't find that gig."));
 
     startChatSession("s4");
-    const result = await sendMessage("s4", "fake-api-key", "tell me about gig does-not:exist");
+    const result = await sendMessage("s4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "tell me about gig does-not:exist");
 
     expect(result).toEqual({ type: "message", text: "I couldn't find that gig." });
     const secondCall = mockCreate.mock.calls[1]?.[0] as Anthropic.MessageCreateParams;
@@ -266,7 +266,7 @@ describe("sendMessage: get_status_summary tool", () => {
       .mockResolvedValueOnce(fakeTextResponse("Your profile needs setup and no sources are configured yet."));
 
     startChatSession("s5");
-    const result = await sendMessage("s5", "fake-api-key", "what's my status?");
+    const result = await sendMessage("s5", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "what's my status?");
 
     expect(result).toEqual({ type: "message", text: "Your profile needs setup and no sources are configured yet." });
     endChatSession("s5");
@@ -285,7 +285,7 @@ describe("sendMessage: read-only tools never mutate the store", () => {
       .mockResolvedValueOnce(fakeTextResponse("All done looking things up."));
 
     startChatSession("s6");
-    await sendMessage("s6", "fake-api-key", "look everything up");
+    await sendMessage("s6", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "look everything up");
 
     const after = db.prepare("SELECT * FROM gigs WHERE key = ?").get(key);
     expect(after).toEqual(before);
@@ -297,10 +297,10 @@ describe("sendMessage: multi-turn conversation retains history", () => {
   it("a follow-up message's request includes the earlier turns' history", async () => {
     mockCreate.mockResolvedValueOnce(fakeTextResponse("Sure, ask away."));
     startChatSession("s7");
-    await sendMessage("s7", "fake-api-key", "hi");
+    await sendMessage("s7", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "hi");
 
     mockCreate.mockResolvedValueOnce(fakeTextResponse("As I said, ask away."));
-    await sendMessage("s7", "fake-api-key", "still there?");
+    await sendMessage("s7", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "still there?");
 
     const secondCall = mockCreate.mock.calls[1]?.[0] as Anthropic.MessageCreateParams;
     expect(secondCall.messages.length).toBeGreaterThanOrEqual(3); // hi, assistant reply, still there?
@@ -315,7 +315,7 @@ describe("sendMessage: MAX_TURNS", () => {
     }
 
     startChatSession("s8");
-    const result = await sendMessage("s8", "fake-api-key", "keep going forever");
+    const result = await sendMessage("s8", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "keep going forever");
 
     expect(result).toEqual({ type: "turn_limit_reached" });
     expect(mockCreate).toHaveBeenCalledTimes(MAX_TURNS);
@@ -329,7 +329,7 @@ describe("write tools: propose then approve, no exceptions", () => {
     mockCreate.mockResolvedValueOnce(fakeToolUseResponse("update_gig_status", { key, status: "applied" }));
 
     startChatSession("w1");
-    const result = await sendMessage("w1", "fake-api-key", "mark this one applied");
+    const result = await sendMessage("w1", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "mark this one applied");
 
     expect(result).toEqual({
       type: "proposal",
@@ -345,9 +345,9 @@ describe("write tools: propose then approve, no exceptions", () => {
     const key = seedGig({ sourceId: "src-a", externalId: "1" });
     mockCreate.mockResolvedValueOnce(fakeToolUseResponse("update_gig_status", { key, status: "applied" }));
     startChatSession("w2");
-    await sendMessage("w2", "fake-api-key", "mark this one applied");
+    await sendMessage("w2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "mark this one applied");
 
-    await expect(sendMessage("w2", "fake-api-key", "another message")).rejects.toThrow(/still awaiting approval/);
+    await expect(sendMessage("w2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "another message")).rejects.toThrow(/still awaiting approval/);
     endChatSession("w2");
   });
 
@@ -358,8 +358,8 @@ describe("write tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Done, marked as applied."));
 
     startChatSession("w3");
-    await sendMessage("w3", "fake-api-key", "mark this one applied");
-    const result = await resolveApproval("w3", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("w3", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "mark this one applied");
+    const result = await resolveApproval("w3", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Done, marked as applied." });
     expect(db.prepare("SELECT status FROM gigs WHERE key = ?").get(key)).toEqual({ status: "applied" });
@@ -373,8 +373,8 @@ describe("write tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Okay, not marking it applied."));
 
     startChatSession("w4");
-    await sendMessage("w4", "fake-api-key", "mark this one applied");
-    const result = await resolveApproval("w4", "fake-api-key", false, FAKE_CONFIG);
+    await sendMessage("w4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "mark this one applied");
+    const result = await resolveApproval("w4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, false, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Okay, not marking it applied." });
     expect(db.prepare("SELECT status FROM gigs WHERE key = ?").get(key)).toEqual({ status: "new" });
@@ -383,7 +383,7 @@ describe("write tools: propose then approve, no exceptions", () => {
 
   it("resolveApproval() throws when there is no pending approval", async () => {
     startChatSession("w5");
-    await expect(resolveApproval("w5", "fake-api-key", true, FAKE_CONFIG)).rejects.toThrow(/no pending approval/);
+    await expect(resolveApproval("w5", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG)).rejects.toThrow(/no pending approval/);
     endChatSession("w5");
   });
 
@@ -395,10 +395,10 @@ describe("write tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Draft generated."));
 
     startChatSession("w6");
-    await sendMessage("w6", "fake-api-key", "draft an application for this one");
-    await resolveApproval("w6", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("w6", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "draft an application for this one");
+    await resolveApproval("w6", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
-    expect(stageApplicationMock).toHaveBeenCalledWith(expect.objectContaining({ gig: expect.objectContaining({ sourceId: "src-a" }) }), FAKE_CONFIG, "fake-api-key");
+    expect(stageApplicationMock).toHaveBeenCalledWith(expect.objectContaining({ gig: expect.objectContaining({ sourceId: "src-a" }) }), FAKE_CONFIG, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
     endChatSession("w6");
   });
 
@@ -410,8 +410,8 @@ describe("write tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Prep packet ready."));
 
     startChatSession("w7");
-    await sendMessage("w7", "fake-api-key", "generate a prep packet for this one");
-    const result = await resolveApproval("w7", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("w7", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "generate a prep packet for this one");
+    const result = await resolveApproval("w7", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Prep packet ready." });
     expect(generatePrepPacketMock).toHaveBeenCalled();
@@ -421,18 +421,18 @@ describe("write tools: propose then approve, no exceptions", () => {
     endChatSession("w7");
   });
 
-  it("run_scan: approval calls the REAL runRadar() with the config and BYOK apiKey", async () => {
+  it("run_scan: approval calls the REAL runRadar() with the config and the full credential", async () => {
     runRadarMock.mockResolvedValue({ results: [{}], passed: [{}], errors: [], newlyInsertedKeys: [] });
     mockCreate
       .mockResolvedValueOnce(fakeToolUseResponse("run_scan", {}))
       .mockResolvedValueOnce(fakeTextResponse("Scan done."));
 
     startChatSession("w8");
-    await sendMessage("w8", "fake-api-key", "run a scan");
-    const result = await resolveApproval("w8", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("w8", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "run a scan");
+    const result = await resolveApproval("w8", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Scan done." });
-    expect(runRadarMock).toHaveBeenCalledWith(FAKE_CONFIG, {}, { anthropicApiKey: "fake-api-key" });
+    expect(runRadarMock).toHaveBeenCalledWith(FAKE_CONFIG, {}, { credential: { kind: "api-key", provider: "anthropic", value: "fake-api-key" } });
     endChatSession("w8");
   });
 
@@ -442,8 +442,8 @@ describe("write tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("That gig doesn't exist."));
 
     startChatSession("w9");
-    await sendMessage("w9", "fake-api-key", "mark does-not:exist as applied");
-    const result = await resolveApproval("w9", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("w9", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "mark does-not:exist as applied");
+    const result = await resolveApproval("w9", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "That gig doesn't exist." });
     endChatSession("w9");
@@ -455,7 +455,7 @@ describe("source-connection tools: propose then approve, no exceptions", () => {
     mockCreate.mockResolvedValueOnce(fakeToolUseResponse("start_capture_login", { sourceId: "gofractional" }));
 
     startChatSession("c1");
-    const result = await sendMessage("c1", "fake-api-key", "log me into gofractional");
+    const result = await sendMessage("c1", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "log me into gofractional");
 
     expect(result).toEqual({
       type: "proposal",
@@ -474,8 +474,8 @@ describe("source-connection tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Browser window opened -- log in, then let me know."));
 
     startChatSession("c2");
-    await sendMessage("c2", "fake-api-key", "log me into gofractional");
-    const result = await resolveApproval("c2", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("c2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "log me into gofractional");
+    const result = await resolveApproval("c2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Browser window opened -- log in, then let me know." });
     expect(startCaptureMock).toHaveBeenCalledWith("gofractional", "https://www.gofractional.com/login", ["gofractional.com"]);
@@ -488,8 +488,8 @@ describe("source-connection tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("There's no login capture open right now."));
 
     startChatSession("c3");
-    await sendMessage("c3", "fake-api-key", "finish the login");
-    const result = await resolveApproval("c3", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("c3", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "finish the login");
+    const result = await resolveApproval("c3", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "There's no login capture open right now." });
     expect(finishCaptureMock).not.toHaveBeenCalled();
@@ -526,10 +526,10 @@ describe("source-connection tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Saved."));
 
     startChatSession("c4");
-    await sendMessage("c4", "fake-api-key", "log me into gofractional");
-    await resolveApproval("c4", "fake-api-key", true, FAKE_CONFIG);
-    await sendMessage("c4", "fake-api-key", "I'm done, finish it");
-    const result = await resolveApproval("c4", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("c4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "log me into gofractional");
+    await resolveApproval("c4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
+    await sendMessage("c4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "I'm done, finish it");
+    const result = await resolveApproval("c4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Saved." });
     expect(finishCaptureMock).toHaveBeenCalledWith("cap-2", "local");
@@ -551,10 +551,10 @@ describe("source-connection tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Cancelled."));
 
     startChatSession("c5");
-    await sendMessage("c5", "fake-api-key", "log me into gofractional");
-    await resolveApproval("c5", "fake-api-key", true, FAKE_CONFIG);
-    await sendMessage("c5", "fake-api-key", "never mind, cancel it");
-    const result = await resolveApproval("c5", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("c5", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "log me into gofractional");
+    await resolveApproval("c5", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
+    await sendMessage("c5", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "never mind, cancel it");
+    const result = await resolveApproval("c5", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Cancelled." });
     expect(cancelCaptureMock).toHaveBeenCalledWith("cap-3");
@@ -569,8 +569,8 @@ describe("source-connection tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Open the link I gave you to connect Gmail."));
 
     startChatSession("c6");
-    await sendMessage("c6", "fake-api-key", "connect my gmail alerts source");
-    const result = await resolveApproval("c6", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("c6", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "connect my gmail alerts source");
+    const result = await resolveApproval("c6", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Open the link I gave you to connect Gmail." });
     expect(buildAuthorizationUrlMock).toHaveBeenCalledWith({ id: "gmail" }, "gmail-alerts", "client-123");
@@ -584,8 +584,8 @@ describe("source-connection tools: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Disconnected."));
 
     startChatSession("c7");
-    await sendMessage("c7", "fake-api-key", "disconnect gmail-alerts");
-    const result = await resolveApproval("c7", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("c7", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "disconnect gmail-alerts");
+    const result = await resolveApproval("c7", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Disconnected." });
     expect(deleteTokenSetMock).toHaveBeenCalledWith({ id: "gmail" }, "gmail-alerts", "local");
@@ -600,7 +600,7 @@ describe("take_screenshot: read-only, auto-executes against the chat-owned captu
       .mockResolvedValueOnce(fakeTextResponse("There's nothing open to screenshot."));
 
     startChatSession("s9");
-    const result = await sendMessage("s9", "fake-api-key", "show me the login window");
+    const result = await sendMessage("s9", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "show me the login window");
 
     expect(result).toEqual({ type: "message", text: "There's nothing open to screenshot." });
     expect(getCapturePageMock).not.toHaveBeenCalled();
@@ -618,9 +618,9 @@ describe("take_screenshot: read-only, auto-executes against the chat-owned captu
       .mockResolvedValueOnce(fakeTextResponse("I can see the login page."));
 
     startChatSession("s10");
-    await sendMessage("s10", "fake-api-key", "log me into gofractional");
-    await resolveApproval("s10", "fake-api-key", true, FAKE_CONFIG);
-    const result = await sendMessage("s10", "fake-api-key", "what does it look like?");
+    await sendMessage("s10", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "log me into gofractional");
+    await resolveApproval("s10", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
+    const result = await sendMessage("s10", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "what does it look like?");
 
     expect(result).toEqual({
       type: "message",
@@ -646,7 +646,7 @@ describe("list_source_presets: read-only, auto-executes", () => {
       .mockResolvedValueOnce(fakeTextResponse("Here's what's available."));
 
     startChatSession("p1");
-    const result = await sendMessage("p1", "fake-api-key", "what job sites can you add?");
+    const result = await sendMessage("p1", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "what job sites can you add?");
 
     expect(result).toEqual({ type: "message", text: "Here's what's available." });
     const secondCall = mockCreate.mock.calls[1]?.[0] as Anthropic.MessageCreateParams;
@@ -704,7 +704,7 @@ describe("add_source: propose then approve, no exceptions", () => {
     mockCreate.mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "zoho-recruit" }));
 
     startChatSession("as1");
-    const result = await sendMessage("as1", "fake-api-key", "add zoho recruit");
+    const result = await sendMessage("as1", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "add zoho recruit");
 
     expect(result).toEqual({
       type: "proposal",
@@ -728,8 +728,8 @@ describe("add_source: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Added it."));
 
     startChatSession("as2");
-    await sendMessage("as2", "fake-api-key", "add zoho recruit");
-    const result = await resolveApproval("as2", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("as2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "add zoho recruit");
+    const result = await resolveApproval("as2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Added it." });
     const { readRawConfig } = await import("../../config/save.js");
@@ -744,8 +744,8 @@ describe("add_source: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "zoho-recruit" }))
       .mockResolvedValueOnce(fakeTextResponse("Added zoho-recruit."));
     startChatSession("as3");
-    await sendMessage("as3", "fake-api-key", "add zoho recruit");
-    await resolveApproval("as3", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("as3", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "add zoho recruit");
+    await resolveApproval("as3", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
     const gmailCall = mockCreate.mock.calls[1]?.[0] as Anthropic.MessageCreateParams;
     expect(JSON.stringify(gmailCall.messages)).toContain("start_gmail_connect");
     endChatSession("as3");
@@ -755,8 +755,8 @@ describe("add_source: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "welcome-to-the-jungle" }))
       .mockResolvedValueOnce(fakeTextResponse("Added welcome-to-the-jungle."));
     startChatSession("as4");
-    await sendMessage("as4", "fake-api-key", "add welcome to the jungle");
-    await resolveApproval("as4", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("as4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "add welcome to the jungle");
+    await resolveApproval("as4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
     const noGmailCall = mockCreate.mock.calls[mockCreate.mock.calls.length - 1]?.[0] as Anthropic.MessageCreateParams;
     expect(JSON.stringify(noGmailCall.messages)).not.toContain("start_gmail_connect");
     endChatSession("as4");
@@ -768,8 +768,8 @@ describe("add_source: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeToolUseResponse("add_source", { presetId: "indeed" }))
       .mockResolvedValueOnce(fakeTextResponse("Added indeed."));
     startChatSession("as5");
-    await sendMessage("as5", "fake-api-key", "add indeed");
-    await resolveApproval("as5", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("as5", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "add indeed");
+    await resolveApproval("as5", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(buildAuthorizationUrlMock).not.toHaveBeenCalled();
     endChatSession("as5");
@@ -794,8 +794,8 @@ describe("add_source: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Added it."));
 
     startChatSession("as6");
-    await sendMessage("as6", "fake-api-key", "add monster at https://example.test/monster/jobs");
-    await resolveApproval("as6", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("as6", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "add monster at https://example.test/monster/jobs");
+    await resolveApproval("as6", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     const { readRawConfig } = await import("../../config/save.js");
     const raw = readRawConfig() as { sources?: SourceConfig[] };
@@ -811,8 +811,8 @@ describe("add_source: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("Okay, not adding it."));
 
     startChatSession("as7");
-    await sendMessage("as7", "fake-api-key", "add indeed");
-    const result = await resolveApproval("as7", "fake-api-key", false, FAKE_CONFIG);
+    await sendMessage("as7", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "add indeed");
+    const result = await resolveApproval("as7", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, false, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Okay, not adding it." });
     const { readRawConfig } = await import("../../config/save.js");
@@ -828,8 +828,8 @@ describe("add_source: propose then approve, no exceptions", () => {
       .mockResolvedValueOnce(fakeTextResponse("I don't recognize that preset."));
 
     startChatSession("as8");
-    await sendMessage("as8", "fake-api-key", "add does-not-exist");
-    const result = await resolveApproval("as8", "fake-api-key", true, FAKE_CONFIG);
+    await sendMessage("as8", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "add does-not-exist");
+    const result = await resolveApproval("as8", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "I don't recognize that preset." });
     endChatSession("as8");

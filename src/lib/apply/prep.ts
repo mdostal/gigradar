@@ -1,18 +1,22 @@
 // career-crm epic, prep-packet-mechanism story. A per-gig "judgment" tool
 // -- fit/gap analysis + interview prep, grounded strictly in gigradar's
 // own structured Profile/ApplyProfileConfig/Gig data. Follows draft.ts's
-// REAL shape exactly (one Anthropic Messages API call, forced tool-use,
-// apiKey a required parameter resolved by the caller, never module-scope)
-// and REUSES draft.ts's buildApplicantDataBlock()/buildGigDataBlock()
-// directly rather than a second, duplicated implementation that could
-// drift out of sync (the same reason profile-suggest.ts already reuses
-// buildApplicantDataBlock()).
+// REAL shape exactly (one LLM call, forced structured output via the
+// Vercel AI SDK -- see llm-provider-harness epic's design-discussion.md
+// §2.5 -- `credential` a required parameter resolved by the caller, never
+// module-scope) and REUSES draft.ts's
+// buildApplicantDataBlock()/buildGigDataBlock() directly rather than a
+// second, duplicated implementation that could drift out of sync (the
+// same reason profile-suggest.ts already reuses buildApplicantDataBlock()).
 //
 // Ports personal-site's match-score/interview-prep PROMPT CONTENT (see
 // .pHive/epics/career-crm/docs/design-discussion.md §1, §5) onto this
-// mechanism -- never that source's raw-JSON.parse()/Vercel-AI-SDK
-// mechanism, and never its hardcoded-profile-string "resume match" input
-// (this repo's own structured Profile replaces that).
+// mechanism -- never that source's raw-JSON.parse() mechanism (NOT the
+// same thing as this codebase's own, later, DELIBERATE Vercel AI SDK
+// adoption above -- that source's version bypassed forced structured
+// output entirely via a hand-rolled JSON.parse() of free text), and never
+// its hardcoded-profile-string "resume match" input (this repo's own
+// structured Profile replaces that).
 //
 // ONE combined call, not personal-site's two separate ones (match-score +
 // interview-prep chat mode) -- cheaper, and predicted questions naturally
@@ -25,55 +29,35 @@
 // present), not "never reason." Reasoning about the real facts is the
 // entire point of a judgment tool. See design-discussion.md's
 // design_decisions in the story YAML.
-import Anthropic from "@anthropic-ai/sdk";
+import { type FilePart, NoOutputGeneratedError, Output, type TextPart, generateText } from "ai";
+import { z } from "zod";
 import { loadResume } from "../documents/resume-store.js";
 import { buildResumeContentBlock } from "../profile-ingestion/extract.js";
 import type { ApplyProfileConfig, Gig, Profile } from "../types.js";
+import { createAiSdkModel, generateHarnessObject, toHarnessContentBlocks } from "../config/llm-client.js";
+import type { LlmCredential } from "../config/env-store.js";
 import { buildApplicantDataBlock, buildGigDataBlock } from "./draft.js";
 
 const PREP_TOOL_NAME = "report_prep_packet";
 
-const PREP_TOOL_SCHEMA = {
-  name: PREP_TOOL_NAME,
-  description: "Report a fit/gap analysis and interview prep content for this specific gig, grounded strictly in the provided applicant and gig data. Call this exactly once.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      score: { type: "number", description: "Overall fit score, 1-100." },
-      rationale: { type: "string", description: "A short explanation of the score, grounded in the real applicant/gig data." },
-      topStrengths: { type: "array", items: { type: "string" }, description: "The strongest real alignments between the applicant's actual profile and this gig." },
-      keyGaps: { type: "array", items: { type: "string" }, description: "Real gaps between the applicant's actual profile and this gig's stated requirements -- never invented requirements the listing doesn't state." },
-      recommendation: { type: "string", description: "A short, actionable recommendation: pursue, pursue with caveats, or pass, and why." },
-      predictedQuestions: { type: "array", items: { type: "string" }, description: "Interview questions this specific gig's listing and the identified gaps make likely." },
-      starlaStories: { type: "array", items: { type: "string" }, description: "STARLA-format (Situation/Task/Action/Result/Learning/Application) story prompts drawn from the applicant's real profile that address this gig's likely questions/gaps." },
-      keywordOverlapScore: { type: "number", description: "1-100: how well the applicant's tracked skills/roles overlap with this specific listing's own stated keywords -- an ATS-keyword-matching lens, distinct from the holistic fit score above." },
-      matchedKeywords: { type: "array", items: { type: "string" }, description: "Skills/role terms from the applicant's real profile that are ALSO explicitly present in this listing's text." },
-      missingKeywords: { type: "array", items: { type: "string" }, description: "Keywords this listing's text explicitly emphasizes that are NOT present anywhere in the applicant's tracked skills/roles." },
-      resumeTweaks: { type: "array", items: { type: "string" }, description: "Concrete, ATS-mechanical actions to close the keyword gap -- each MUST name a specific missingKeywords entry and where/how many times it appears in the listing. Never generic advice." },
-      parseabilityIssues: {
-        type: "array",
-        items: { type: "string" },
-        description:
-          "ONLY when a real resume file/document was actually attached to this request: specific, observable format/structure problems that would trip up an automated ATS parser (multi-column layout, tables, text embedded in images, contact info in a header/footer, non-standard section headings) -- each naming the SPECIFIC problem, never vague. If NO resume file was attached, this MUST be an empty array -- never guess or fabricate issues about a resume you cannot see.",
-      },
-    },
-    required: [
-      "score",
-      "rationale",
-      "topStrengths",
-      "keyGaps",
-      "recommendation",
-      "predictedQuestions",
-      "starlaStories",
-      "keywordOverlapScore",
-      "matchedKeywords",
-      "missingKeywords",
-      "resumeTweaks",
-      "parseabilityIssues",
-    ],
-    additionalProperties: false,
-  },
-};
+const PrepResultSchema = z.object({
+  score: z.number().describe("Overall fit score, 1-100."),
+  rationale: z.string().describe("A short explanation of the score, grounded in the real applicant/gig data."),
+  topStrengths: z.array(z.string()).describe("The strongest real alignments between the applicant's actual profile and this gig."),
+  keyGaps: z.array(z.string()).describe("Real gaps between the applicant's actual profile and this gig's stated requirements -- never invented requirements the listing doesn't state."),
+  recommendation: z.string().describe("A short, actionable recommendation: pursue, pursue with caveats, or pass, and why."),
+  predictedQuestions: z.array(z.string()).describe("Interview questions this specific gig's listing and the identified gaps make likely."),
+  starlaStories: z.array(z.string()).describe("STARLA-format (Situation/Task/Action/Result/Learning/Application) story prompts drawn from the applicant's real profile that address this gig's likely questions/gaps."),
+  keywordOverlapScore: z.number().describe("1-100: how well the applicant's tracked skills/roles overlap with this specific listing's own stated keywords -- an ATS-keyword-matching lens, distinct from the holistic fit score above."),
+  matchedKeywords: z.array(z.string()).describe("Skills/role terms from the applicant's real profile that are ALSO explicitly present in this listing's text."),
+  missingKeywords: z.array(z.string()).describe("Keywords this listing's text explicitly emphasizes that are NOT present anywhere in the applicant's tracked skills/roles."),
+  resumeTweaks: z.array(z.string()).describe("Concrete, ATS-mechanical actions to close the keyword gap -- each MUST name a specific missingKeywords entry and where/how many times it appears in the listing. Never generic advice."),
+  parseabilityIssues: z
+    .array(z.string())
+    .describe(
+      "ONLY when a real resume file/document was actually attached to this request: specific, observable format/structure problems that would trip up an automated ATS parser (multi-column layout, tables, text embedded in images, contact info in a header/footer, non-standard section headings) -- each naming the SPECIFIC problem, never vague. If NO resume file was attached, this MUST be an empty array -- never guess or fabricate issues about a resume you cannot see.",
+    ),
+});
 
 /**
  * ats-navigator epic, ats-resume-score story. Bidirectional ATS
@@ -119,27 +103,23 @@ export interface PrepPacketContent {
   atsScore: AtsScore;
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((v) => typeof v === "string");
-}
-
 /**
  * Generates one gig's prep packet via a single Claude Messages API call
- * using forced tool-use for structured output — mirrors `generateDraft()`'s
- * shape exactly. `apiKey` is used to construct the Anthropic client HERE,
- * inside this function call, and nowhere else — callers resolve it
- * themselves, however is appropriate for their own calling context (CLI
- * `process.env`, Server Action `readEnvVar()`).
+ * using the Vercel AI SDK's forced structured output — mirrors
+ * `generateDraft()`'s shape exactly. `credential` is used to construct the
+ * model client HERE, inside this function call, and nowhere else — callers
+ * resolve it themselves via `resolveLlmCredential()`, however is
+ * appropriate for their own calling context.
  *
- * Throws a specific error if the Anthropic response doesn't include the
- * expected structured tool-use block, or if the underlying API call
- * itself fails — never silently returns a partial/placeholder packet.
+ * Throws a specific error if the model's response doesn't include the
+ * expected structured output, or if the underlying API call itself fails —
+ * never silently returns a partial/placeholder packet.
  */
 export async function generatePrepPacket(
   gig: Gig,
   profile: Profile,
   applyProfile: ApplyProfileConfig | undefined,
-  apiKey: string,
+  credential: LlmCredential,
 ): Promise<PrepPacketContent> {
   // career-documents epic, real-parseability-check story: loadResume()
   // returns undefined gracefully (missing/never-uploaded/deleted file),
@@ -155,7 +135,7 @@ export async function generatePrepPacket(
       )
     : undefined;
 
-  const contentBlocks: Anthropic.ContentBlockParam[] = [
+  const contentBlocks: Array<TextPart | FilePart> = [
     {
       type: "text",
       text:
@@ -184,57 +164,49 @@ export async function generatePrepPacket(
     { type: "text", text: buildApplicantDataBlock(profile, applyProfile ?? { email: "" }) },
     { type: "text", text: buildGigDataBlock(gig) },
     ...(resumeBlock ? [{ type: "text" as const, text: "The applicant's real, current resume file follows:" }, resumeBlock] : []),
-    { type: "text", text: `Now call the ${PREP_TOOL_NAME} tool exactly once with the complete result.` },
+    { type: "text", text: `Now report the complete result via the ${PREP_TOOL_NAME} structured output.` },
   ];
 
-  const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 4096,
-    tools: [PREP_TOOL_SCHEMA],
-    tool_choice: { type: "tool", name: PREP_TOOL_NAME },
-    messages: [{ role: "user", content: contentBlocks }],
-  });
+  let parsed: z.infer<typeof PrepResultSchema>;
 
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use" && block.name === PREP_TOOL_NAME,
-  );
-  if (!toolUse) {
-    throw new Error("gigradar career-crm: the Anthropic API response did not include the expected structured prep-packet result.");
+  if (credential.kind === "claude-code-harness") {
+    parsed = await generateHarnessObject(PrepResultSchema, toHarnessContentBlocks(contentBlocks));
+  } else {
+    const model = createAiSdkModel(credential);
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: contentBlocks }],
+      output: Output.object({ schema: PrepResultSchema, name: PREP_TOOL_NAME }),
+    });
+
+    try {
+      parsed = result.output;
+    } catch (e) {
+      if (e instanceof NoOutputGeneratedError) {
+        throw new Error("gigradar career-crm: the model's response did not include the expected structured prep-packet result.");
+      }
+      throw e;
+    }
   }
 
-  const parsed = toolUse.input as {
-    score?: unknown;
-    rationale?: unknown;
-    topStrengths?: unknown;
-    keyGaps?: unknown;
-    recommendation?: unknown;
-    predictedQuestions?: unknown;
-    starlaStories?: unknown;
-    keywordOverlapScore?: unknown;
-    matchedKeywords?: unknown;
-    missingKeywords?: unknown;
-    resumeTweaks?: unknown;
-    parseabilityIssues?: unknown;
-  };
-
   return {
-    score: typeof parsed.score === "number" ? parsed.score : 0,
-    rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
-    topStrengths: isStringArray(parsed.topStrengths) ? parsed.topStrengths : [],
-    keyGaps: isStringArray(parsed.keyGaps) ? parsed.keyGaps : [],
-    recommendation: typeof parsed.recommendation === "string" ? parsed.recommendation : "",
-    predictedQuestions: isStringArray(parsed.predictedQuestions) ? parsed.predictedQuestions : [],
-    starlaStories: isStringArray(parsed.starlaStories) ? parsed.starlaStories : [],
+    score: parsed.score,
+    rationale: parsed.rationale,
+    topStrengths: parsed.topStrengths,
+    keyGaps: parsed.keyGaps,
+    recommendation: parsed.recommendation,
+    predictedQuestions: parsed.predictedQuestions,
+    starlaStories: parsed.starlaStories,
     atsScore: {
-      keywordOverlapScore: typeof parsed.keywordOverlapScore === "number" ? parsed.keywordOverlapScore : 0,
-      matchedKeywords: isStringArray(parsed.matchedKeywords) ? parsed.matchedKeywords : [],
-      missingKeywords: isStringArray(parsed.missingKeywords) ? parsed.missingKeywords : [],
-      resumeTweaks: isStringArray(parsed.resumeTweaks) ? parsed.resumeTweaks : [],
+      keywordOverlapScore: parsed.keywordOverlapScore,
+      matchedKeywords: parsed.matchedKeywords,
+      missingKeywords: parsed.missingKeywords,
+      resumeTweaks: parsed.resumeTweaks,
       // Belt-and-suspenders: even if the model ignores the "empty when no
       // resume attached" instruction, never surface fabricated issues when
       // this call genuinely had no resume block to look at.
-      parseabilityIssues: resumeBlock && isStringArray(parsed.parseabilityIssues) ? parsed.parseabilityIssues : [],
+      parseabilityIssues: resumeBlock ? parsed.parseabilityIssues : [],
       resumeChecked: resumeBlock !== undefined,
     },
   };

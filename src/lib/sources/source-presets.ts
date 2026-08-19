@@ -45,6 +45,24 @@
 //   - Contra, Landing.jobs: general freelance/tech-job boards with
 //     permissive robots.txt (Contra explicitly publishes
 //     `Content-Signal: ai-input=yes`) and public listing pages.
+//   - Gun.io (gun.io): a curated freelance-developer marketplace, same
+//     shape as Catalant -- confirmed by direct research (live `curl`, not
+//     assumed): the public gun.io/jobs/ page is a marketing teaser (4
+//     example cards, zero per-listing links -- the ONLY link on the whole
+//     page is a sign-up CTA), and the real listings live behind
+//     app.gun.io, a fully client-rendered SPA (`x-guild-version` response
+//     header) requiring login. customAuth defaults to "browser-session";
+//     the settings.url is a best-effort placeholder (the real in-app URL
+//     can only be discovered by actually logging in), same
+//     pending-live-verification caveat as Catalant's own entry above.
+//   - Shiny (useshiny.com): same shape again -- confirmed by direct
+//     research (live `curl`, not assumed): useshiny.com/jobs 404s (a stale
+//     URL -- the site's own marketing pages link nowhere but a sign-in/
+//     sign-up CTA at app.useshiny.com), and app.useshiny.com is a real
+//     authenticated SPA (no-cache/x-frame-options headers, not a static
+//     marketing response). customAuth defaults to "browser-session"; the
+//     settings.url is a best-effort placeholder pending live Capture Login
+//     verification, same caveat as Catalant/Gun.io above.
 //
 // `suggestsGmailDigest` flags presets whose platform typically notifies
 // application status/interview invites by email -- consumed by
@@ -125,6 +143,39 @@ export const SOURCE_PRESETS: SourcePreset[] = [
       customAuth: "browser-session",
       loginUrl: "https://app.gocatalant.com/c/_/auth/login/",
       allowedOrigins: ["gocatalant.com", "catalant.com"],
+    },
+  },
+  {
+    id: "gun-io",
+    label: "Gun.io",
+    description: "A curated freelance-developer marketplace -- entirely login-gated, like Catalant.",
+    settings: {
+      url: "https://app.gun.io/",
+      hint:
+        "Gun.io's authenticated freelancer dashboard, reachable after logging in at app.gun.io/sign-up/ (existing " +
+        "accounts land on the same login form). Look for a jobs/opportunities area listing open roles matched to " +
+        "this account -- each card typically has a title, a one-line description of the engagement, and skill tags " +
+        "(e.g. 'Backend Engineer', 'Python', 'LLMs'). Use each card's own detail-page url as the extracted Gig's " +
+        "url, not this dashboard url.",
+      customAuth: "browser-session",
+      loginUrl: "https://app.gun.io/sign-up/",
+      allowedOrigins: ["gun.io"],
+    },
+  },
+  {
+    id: "shiny",
+    label: "Shiny",
+    description: "A fractional-executive matching platform -- entirely login-gated, like Catalant/Gun.io.",
+    settings: {
+      url: "https://app.useshiny.com/",
+      hint:
+        "Shiny's authenticated dashboard, reachable after logging in at app.useshiny.com/sign-in/. Look for a " +
+        "jobs/opportunities/matches area listing engagements matched to this account -- each card typically has " +
+        "a title, client/company description, and often a rate or engagement-length indicator. Use each card's " +
+        "own detail-page url as the extracted Gig's url, not this dashboard url.",
+      customAuth: "browser-session",
+      loginUrl: "https://app.useshiny.com/sign-in/",
+      allowedOrigins: ["useshiny.com"],
     },
   },
   {
