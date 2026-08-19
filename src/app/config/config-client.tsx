@@ -187,7 +187,7 @@ interface DraftConfig {
   autoFire: DraftAutoFire;
   /** An `APP_ICONS` id (src/lib/app-icons.ts) — like autoDraftOnScan/notifyOnGreenMatch, always sent as-is, no enabled-flag tri-state needed (it always has a value, defaulting to DEFAULT_APP_ICON_ID). */
   appIcon: string;
-  /** llm-provider-harness epic — like appIcon, always has a value (defaulting to "api-key"), no enabled-flag tri-state needed. "claude-code-harness" isn't yet selectable in this UI (Slice A only ships the type) — see the credential section below. */
+  /** llm-provider-harness epic — like appIcon, always has a value (defaulting to "api-key"), no enabled-flag tri-state needed. */
   llmCredentialKind: "api-key" | "claude-code-harness";
   /** llm-provider-harness epic — which provider api-key mode uses, always has a value (defaulting to "anthropic"). */
   llmProvider: "anthropic" | "openai" | "google";
@@ -1632,56 +1632,88 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
           <div className="mt-2 border-t border-slate-200 pt-3">
             <span className={labelClass}>LLM provider &amp; credential</span>
             <p className="text-xs text-slate-500">
-              Provider selection saves with this form&rsquo;s Save button below. The API key itself writes
-              directly to <code>.env</code> (encrypted at rest) — not <code>config.json</code> — and saves
-              immediately, separately from Save.
+              This choice saves with this form&rsquo;s Save button below.
             </p>
             <div className="mt-1 flex gap-4 text-sm text-slate-700">
               {(
                 [
-                  { id: "anthropic", label: "Anthropic" },
-                  { id: "openai", label: "OpenAI" },
-                  { id: "google", label: "Google" },
+                  { id: "api-key", label: "API key" },
+                  { id: "claude-code-harness", label: "Claude Code (local subscription)" },
                 ] as const
-              ).map((p) => (
-                <label key={p.id} className="flex items-center gap-1.5">
+              ).map((k) => (
+                <label key={k.id} className="flex items-center gap-1.5">
                   <input
                     type="radio"
-                    name="llmProvider"
-                    checked={draft.llmProvider === p.id}
-                    onChange={() => setDraft({ ...draft, llmProvider: p.id })}
+                    name="llmCredentialKind"
+                    checked={draft.llmCredentialKind === k.id}
+                    onChange={() => setDraft({ ...draft, llmCredentialKind: k.id })}
                   />
-                  {p.label}
+                  {k.label}
                 </label>
               ))}
             </div>
-            <div className="mt-1 flex gap-2">
-              <input
-                type="password"
-                value={apiKeyValue}
-                onChange={(e) => setApiKeyValue(e.target.value)}
-                placeholder={PROVIDER_KEY_PLACEHOLDERS[draft.llmProvider]}
-                autoComplete="off"
-                className={inputClass}
-              />
-              <button
-                type="button"
-                onClick={handleSetApiKey}
-                disabled={apiKeyState.status === "saving" || apiKeyValue.trim() === ""}
-                className={`shrink-0 ${captureButtonClass}`}
-              >
-                {apiKeyState.status === "saving" ? "Saving…" : "Save credential"}
-              </button>
-            </div>
-            {apiKeyState.status === "success" && (
-              <p role="status" className="mt-1 text-xs text-green-700">
-                Credential saved to .env.
+
+            {draft.llmCredentialKind === "claude-code-harness" ? (
+              <p className="mt-2 text-xs text-slate-500">
+                Uses your local, already-authenticated <code>claude</code> CLI (Claude Code) — no API key
+                needed here. Requires the <code>claude</code> CLI to be installed and signed in on this
+                machine (run <code>claude</code> once outside gigradar to check). No credential value is
+                ever read, stored, or sent by gigradar in this mode.
               </p>
-            )}
-            {apiKeyState.status === "error" && (
-              <p role="alert" className="mt-1 text-xs text-red-700">
-                {apiKeyState.message}
-              </p>
+            ) : (
+              <>
+                <p className="text-xs text-slate-500">
+                  The API key itself writes directly to <code>.env</code> (encrypted at rest) — not{" "}
+                  <code>config.json</code> — and saves immediately, separately from Save.
+                </p>
+                <div className="mt-1 flex gap-4 text-sm text-slate-700">
+                  {(
+                    [
+                      { id: "anthropic", label: "Anthropic" },
+                      { id: "openai", label: "OpenAI" },
+                      { id: "google", label: "Google" },
+                    ] as const
+                  ).map((p) => (
+                    <label key={p.id} className="flex items-center gap-1.5">
+                      <input
+                        type="radio"
+                        name="llmProvider"
+                        checked={draft.llmProvider === p.id}
+                        onChange={() => setDraft({ ...draft, llmProvider: p.id })}
+                      />
+                      {p.label}
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-1 flex gap-2">
+                  <input
+                    type="password"
+                    value={apiKeyValue}
+                    onChange={(e) => setApiKeyValue(e.target.value)}
+                    placeholder={PROVIDER_KEY_PLACEHOLDERS[draft.llmProvider]}
+                    autoComplete="off"
+                    className={inputClass}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSetApiKey}
+                    disabled={apiKeyState.status === "saving" || apiKeyValue.trim() === ""}
+                    className={`shrink-0 ${captureButtonClass}`}
+                  >
+                    {apiKeyState.status === "saving" ? "Saving…" : "Save credential"}
+                  </button>
+                </div>
+                {apiKeyState.status === "success" && (
+                  <p role="status" className="mt-1 text-xs text-green-700">
+                    Credential saved to .env.
+                  </p>
+                )}
+                {apiKeyState.status === "error" && (
+                  <p role="alert" className="mt-1 text-xs text-red-700">
+                    {apiKeyState.message}
+                  </p>
+                )}
+              </>
             )}
           </div>
 
