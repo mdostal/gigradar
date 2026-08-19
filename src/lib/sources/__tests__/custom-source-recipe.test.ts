@@ -141,6 +141,13 @@ describe("extractWithRecipe: pure Playwright selector walk, ZERO LLM calls", () 
     expect(await extractWithRecipe(page as never, "monster", FAKE_RECIPE)).toBeNull();
   });
 
+  it("returns null (self-heals) rather than throwing when a cached recipe's listItemSelector is not valid CSS (e.g. a recipe written before validation existed)", async () => {
+    const poisonedRecipe: CustomSourceRecipe = { ...FAKE_RECIPE, listItemSelector: "UNVERIFIED — no listing/card markup was present" };
+    const page = { locator: vi.fn().mockReturnValue({ all: vi.fn().mockRejectedValue(new Error('Unexpected token "/" while parsing css selector')) }) };
+
+    await expect(extractWithRecipe(page as never, "monster", poisonedRecipe)).resolves.toBeNull();
+  });
+
   it("returns null when every matched item is missing title AND url (stale recipe signal, not a legitimate empty result)", async () => {
     const page = makeFakePage([makeFakeItem(null, null), makeFakeItem("", "")]);
 
@@ -170,8 +177,12 @@ function fakeRecipeResult(listings: unknown[], recipe: Record<string, unknown> |
   return { output: { listings, recipe } };
 }
 
-function fakePage(html: string) {
-  return { content: vi.fn().mockResolvedValue(html) };
+/** `locator(...).count()` resolves for every selector by default (simulates a real, valid CSS selector) -- pass a rejecting override to simulate the LLM reporting prose instead of a selector. */
+function fakePage(html: string, locatorCount: () => Promise<number> = () => Promise.resolve(1)) {
+  return {
+    content: vi.fn().mockResolvedValue(html),
+    locator: vi.fn().mockReturnValue({ count: locatorCount }),
+  };
 }
 
 const FAKE_CREDENTIAL = { kind: "api-key" as const, provider: "anthropic" as const, value: "fake-api-key" };
@@ -266,6 +277,14 @@ describe("deriveRecipeAndExtract: single-shot LLM call, raw HTML", () => {
     const prompt = promptSentToLLM();
     expect(prompt.length).toBeLessThan(hugeHtml.length);
     expect(prompt).toContain("truncated");
+  });
+
+  it("throws a clear, specific error (and never returns a recipe to cache) when the model reports prose instead of a real CSS selector", async () => {
+    const notASelector = "UNVERIFIED — no listing/card markup was present in the supplied HTML (only <head> meta/CSS was given, no <body> content)";
+    mockGenerateText.mockResolvedValueOnce(fakeRecipeResult([], { listItemSelector: notASelector, titleSelector: "UNVERIFIED", urlSelector: "UNVERIFIED" }));
+    const page = fakePage("<html><head></head></html>", () => Promise.reject(new Error('Unexpected token "/" while parsing css selector')));
+
+    await expect(deriveRecipeAndExtract(page as never, "monster", undefined, FAKE_CREDENTIAL)).rejects.toThrow(/could not derive a working extraction recipe/);
   });
 });
 

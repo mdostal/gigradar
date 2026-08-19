@@ -149,8 +149,18 @@ export function writeRecipe(sourceId: string, recipe: CustomSourceRecipe): void 
  * element missing title or url" as the malformed-recipe signal.
  */
 export async function extractWithRecipe(page: Page, sourceId: string, recipe: CustomSourceRecipe): Promise<Gig[] | null> {
-  const items = await page.locator(recipe.listItemSelector).all();
-  if (items.length === 0) return null;
+  // A cached recipe's listItemSelector is trusted CSS by the time it reaches
+  // here — deriveRecipeAndExtract() validates before ever writing one to
+  // disk (see isValidSelector() below). This catch is for a recipe file
+  // written before that validation existed (self-heals a poisoned cache the
+  // same way a zero-match selector already self-heals: treat it as stale
+  // and fall back to re-derivation) rather than crashing the whole scan on
+  // a Playwright CSS-parse error.
+  const items = await page
+    .locator(recipe.listItemSelector)
+    .all()
+    .catch(() => null);
+  if (!items || items.length === 0) return null;
 
   const gigs: Gig[] = [];
   for (const item of items) {
@@ -274,6 +284,33 @@ export async function deriveRecipeAndExtract(
       }
       throw e;
     }
+  }
+
+  // RecipeResultSchema only constrains listItemSelector to z.string() —
+  // Zod has no CSS-selector type, so nothing stops the model from reporting
+  // prose instead of a real selector when it can't find listing markup on
+  // the page (live-verified: claude-code-harness mode returned
+  // "UNVERIFIED — no listing/card markup was present..." as
+  // listItemSelector's value for a page whose captured HTML had no <body>
+  // content). Validating that against the SAME page here — before this
+  // recipe is ever cached or used — turns that into the clear, actionable
+  // error below instead of a recipe that gets written to disk once and then
+  // throws a raw Playwright CSS-parse error on every future scan that reads
+  // it back (extractWithRecipe()'s own catch only protects against a
+  // recipe that was ALREADY bad before this validation existed).
+  const listItemSelectorValid = await page
+    .locator(parsed.recipe.listItemSelector)
+    .count()
+    .then(() => true)
+    .catch(() => false);
+  if (!listItemSelectorValid) {
+    throw new Error(
+      `${MODULE_PREFIX}: source "${sourceId}" — the LLM could not derive a working extraction recipe for this ` +
+        `page (reported: "${parsed.recipe.listItemSelector}"). This usually means the fetched page didn't contain ` +
+        "real listing content (a verification/interstitial page, an empty result page, or a navigation issue) " +
+        "rather than a page gigradar failed to parse — check that the page loads its real content with the " +
+        "configured session, then try again.",
+    );
   }
 
   const recipe: CustomSourceRecipe = {
