@@ -69,6 +69,32 @@ if [ -d public ]; then
   cp -r public "$RES_DIR/public"
 fi
 
+# llm-provider-harness epic: @anthropic-ai/claude-agent-sdk's query()
+# resolves its native `claude` CLI binary via a require.resolve()-style
+# lookup for @anthropic-ai/claude-agent-sdk-<platform>-<arch> (an
+# optionalDependency, live-verified this session by reading sdk.mjs's own
+# resolution code -- see design-discussion.md's now-CONFIRMED, not just
+# anticipated, open question 3) -- a DYNAMIC require Next's own
+# standalone-output file tracer (@vercel/nft) can't see statically, so it
+# silently drops BOTH @anthropic-ai/claude-agent-sdk itself and its native
+# binary sibling from .next/standalone entirely. Found live: a real
+# packaged build's claude-code-harness mode failed with "Native CLI binary
+# for darwin-arm64 not found" the first time it was actually exercised in
+# a real .app, not npm run dev. Same "Next's tracer missed it, copy it in
+# manually" pattern as .next/static/public above.
+ANTHROPIC_DIR="$RES_DIR/node_modules/@anthropic-ai"
+mkdir -p "$ANTHROPIC_DIR"
+if [ -d "node_modules/@anthropic-ai/claude-agent-sdk" ]; then
+  cp -r "node_modules/@anthropic-ai/claude-agent-sdk" "$ANTHROPIC_DIR/"
+fi
+NATIVE_BINARY_PKG="claude-agent-sdk-$NODE_PLATFORM"
+if [ -d "node_modules/@anthropic-ai/$NATIVE_BINARY_PKG" ]; then
+  cp -r "node_modules/@anthropic-ai/$NATIVE_BINARY_PKG" "$ANTHROPIC_DIR/"
+  echo "prepare-tauri-sidecars: bundled @anthropic-ai/$NATIVE_BINARY_PKG for claude-code-harness mode."
+else
+  echo "prepare-tauri-sidecars: WARNING -- node_modules/@anthropic-ai/$NATIVE_BINARY_PKG not found; claude-code-harness mode will fail inside this packaged build. Run 'npm install' without --omit=optional first." >&2
+fi
+
 BROWSERS_DIR="src-tauri/resources/playwright-browsers"
 if [ ! -d "$BROWSERS_DIR" ] || [ -z "$(ls -A "$BROWSERS_DIR" 2>/dev/null)" ]; then
   echo "prepare-tauri-sidecars: installing Chromium into $BROWSERS_DIR..."
