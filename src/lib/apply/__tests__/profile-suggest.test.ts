@@ -5,12 +5,13 @@ import type { ApplyProfileConfig, Profile } from "../../types.js";
 // same mocking shape draft.test.ts already uses. `@ai-sdk/anthropic`'s
 // createAnthropic is mocked too, to assert per-call credential
 // construction (llm-provider-harness epic).
-const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel } = vi.hoisted(() => {
+const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel, mockGenerateHarnessObject } = vi.hoisted(() => {
   const mockAnthropicModel = vi.fn((modelId: string) => ({ modelId, provider: "anthropic" }));
   return {
     mockGenerateText: vi.fn(),
     mockCreateAnthropic: vi.fn(() => mockAnthropicModel),
     mockAnthropicModel,
+    mockGenerateHarnessObject: vi.fn(),
   };
 });
 
@@ -21,6 +22,11 @@ vi.mock("ai", async (importOriginal) => {
 
 vi.mock("@ai-sdk/anthropic", () => ({ createAnthropic: mockCreateAnthropic }));
 
+vi.mock("../../config/llm-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/llm-client.js")>();
+  return { ...actual, generateHarnessObject: mockGenerateHarnessObject };
+});
+
 import { NoOutputGeneratedError } from "ai";
 import { suggestProfileFields } from "../profile-suggest.js";
 
@@ -30,6 +36,7 @@ beforeEach(() => {
   mockGenerateText.mockReset();
   mockCreateAnthropic.mockClear();
   mockAnthropicModel.mockClear();
+  mockGenerateHarnessObject.mockReset();
   mockGenerateText.mockResolvedValue({ output: { suggestions: [] } });
 });
 
@@ -80,6 +87,24 @@ describe("suggestProfileFields: structured output", () => {
     await expect(suggestProfileFields(createFakePage(), REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "api-key", provider: "anthropic", value: "fake-api-key" })).rejects.toThrow(
       /did not include the expected structured suggestions result/,
     );
+  });
+});
+
+describe("suggestProfileFields: claude-code-harness credential routes to generateHarnessObject, never the AI SDK", () => {
+  it("calls generateHarnessObject and unwraps its .suggestions, never touching createAnthropic/generateText", async () => {
+    mockGenerateHarnessObject.mockResolvedValueOnce({
+      suggestions: [{ fieldLabel: "Bio", suggestedValue: "10 years building and scaling backend systems." }],
+    });
+
+    const result = await suggestProfileFields(createFakePage(), REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "claude-code-harness" });
+
+    expect(result).toEqual([{ fieldLabel: "Bio", suggestedValue: "10 years building and scaling backend systems." }]);
+    expect(mockGenerateHarnessObject).toHaveBeenCalledTimes(1);
+    expect(mockCreateAnthropic).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+
+    const [, prompt] = mockGenerateHarnessObject.mock.calls[0] as [unknown, string];
+    expect(prompt).toContain(REAL_PROFILE.name);
   });
 });
 

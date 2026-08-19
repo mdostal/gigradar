@@ -31,7 +31,7 @@
 import { NoOutputGeneratedError, Output, generateText } from "ai";
 import { z } from "zod";
 import type { ApplyProfileConfig, DraftContent, Gig, Profile } from "../types.js";
-import { createAiSdkModel } from "../config/llm-client.js";
+import { createAiSdkModel, generateHarnessObject } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 
 const DRAFT_TOOL_NAME = "draft_application";
@@ -148,6 +148,10 @@ export async function generateDraft(
     buildGigDataBlock(gig),
     `Now report the complete drafted application via the ${DRAFT_TOOL_NAME} structured output.`,
   ].join("\n\n");
+
+  if (credential.kind === "claude-code-harness") {
+    return generateHarnessObject(DraftResultSchema, prompt);
+  }
 
   const model = createAiSdkModel(credential);
 

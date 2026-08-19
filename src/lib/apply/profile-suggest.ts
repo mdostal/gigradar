@@ -27,7 +27,7 @@ import { NoOutputGeneratedError, Output, generateText } from "ai";
 import { z } from "zod";
 import type { Page } from "playwright";
 import type { ApplyProfileConfig, Profile } from "../types.js";
-import { createAiSdkModel } from "../config/llm-client.js";
+import { createAiSdkModel, generateHarnessObject } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 import { buildApplicantDataBlock } from "./draft.js";
 
@@ -98,6 +98,10 @@ export async function suggestProfileFields(
     buildPageSnapshotBlock(snapshot),
     "Now report the complete list of suggestions via the structured output.",
   ].join("\n\n");
+
+  if (credential.kind === "claude-code-harness") {
+    return (await generateHarnessObject(SuggestResultSchema, prompt)).suggestions;
+  }
 
   const model = createAiSdkModel(credential);
 

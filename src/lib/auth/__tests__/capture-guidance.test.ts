@@ -7,12 +7,13 @@
 // the new mechanism.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel } = vi.hoisted(() => {
+const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel, mockGenerateHarnessObject } = vi.hoisted(() => {
   const mockAnthropicModel = vi.fn((modelId: string) => ({ modelId, provider: "anthropic" }));
   return {
     mockGenerateText: vi.fn(),
     mockCreateAnthropic: vi.fn(() => mockAnthropicModel),
     mockAnthropicModel,
+    mockGenerateHarnessObject: vi.fn(),
   };
 });
 
@@ -23,6 +24,11 @@ vi.mock("ai", async (importOriginal) => {
 
 vi.mock("@ai-sdk/anthropic", () => ({ createAnthropic: mockCreateAnthropic }));
 
+vi.mock("../../config/llm-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/llm-client.js")>();
+  return { ...actual, generateHarnessObject: mockGenerateHarnessObject };
+});
+
 import { NoOutputGeneratedError } from "ai";
 import { checkCaptureReadiness } from "../capture-guidance.js";
 
@@ -32,6 +38,7 @@ beforeEach(() => {
   mockGenerateText.mockReset();
   mockCreateAnthropic.mockClear();
   mockAnthropicModel.mockClear();
+  mockGenerateHarnessObject.mockReset();
   mockGenerateText.mockResolvedValue({ output: { ready: false, note: "Still on a sign-in page." } });
 });
 
@@ -76,6 +83,22 @@ describe("checkCaptureReadiness: structured output", () => {
     await expect(checkCaptureReadiness(createFakePage(), "gofractional", { kind: "api-key", provider: "anthropic", value: "fake-api-key" })).rejects.toThrow(
       /did not include the expected structured readiness result/,
     );
+  });
+});
+
+describe("checkCaptureReadiness: claude-code-harness credential routes to generateHarnessObject, never the AI SDK", () => {
+  it("calls generateHarnessObject with the joined prompt and never touches createAnthropic/generateText", async () => {
+    mockGenerateHarnessObject.mockResolvedValueOnce({ ready: true, note: "Looks signed in." });
+
+    const result = await checkCaptureReadiness(createFakePage(), "gofractional", { kind: "claude-code-harness" });
+
+    expect(result).toEqual({ ready: true, note: "Looks signed in." });
+    expect(mockGenerateHarnessObject).toHaveBeenCalledTimes(1);
+    expect(mockCreateAnthropic).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+
+    const [, prompt] = mockGenerateHarnessObject.mock.calls[0] as [unknown, string];
+    expect(prompt).toContain("gofractional");
   });
 });
 

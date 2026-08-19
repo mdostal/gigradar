@@ -29,7 +29,7 @@ import { lookup as dnsLookup } from "node:dns";
 import { promisify } from "node:util";
 import { type FilePart, NoOutputGeneratedError, Output, type TextPart, generateText } from "ai";
 import { z } from "zod";
-import { createAiSdkModel } from "../config/llm-client.js";
+import { createAiSdkModel, generateHarnessObject, toHarnessContentBlocks } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 
 const dnsLookupAsync = promisify(dnsLookup);
@@ -415,6 +415,11 @@ export async function extractProfile(input: ExtractProfileInput, credential: Llm
     type: "text",
     text: "Extract this person's professional roles and skills from the content above.",
   });
+
+  if (credential.kind === "claude-code-harness") {
+    const output = await generateHarnessObject(ExtractResultSchema, toHarnessContentBlocks(contentBlocks));
+    return { ...output, warnings };
+  }
 
   const model = createAiSdkModel(credential);
 

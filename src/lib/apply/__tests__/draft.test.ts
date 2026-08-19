@@ -6,12 +6,13 @@ import type { ApplyProfileConfig, Gig, Profile } from "../../types.js";
 // profile-ingestion/__tests__/extract.test.ts's exact mocking shape.
 // `@ai-sdk/anthropic`'s createAnthropic is mocked too, to assert per-call
 // credential construction (llm-provider-harness epic).
-const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel } = vi.hoisted(() => {
+const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel, mockGenerateHarnessObject } = vi.hoisted(() => {
   const mockAnthropicModel = vi.fn((modelId: string) => ({ modelId, provider: "anthropic" }));
   return {
     mockGenerateText: vi.fn(),
     mockCreateAnthropic: vi.fn(() => mockAnthropicModel),
     mockAnthropicModel,
+    mockGenerateHarnessObject: vi.fn(),
   };
 });
 
@@ -22,6 +23,11 @@ vi.mock("ai", async (importOriginal) => {
 
 vi.mock("@ai-sdk/anthropic", () => ({ createAnthropic: mockCreateAnthropic }));
 
+vi.mock("../../config/llm-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/llm-client.js")>();
+  return { ...actual, generateHarnessObject: mockGenerateHarnessObject };
+});
+
 import { NoOutputGeneratedError } from "ai";
 import { buildApplicantDataBlock, generateDraft } from "../draft.js";
 
@@ -29,6 +35,7 @@ beforeEach(() => {
   mockGenerateText.mockReset();
   mockCreateAnthropic.mockClear();
   mockAnthropicModel.mockClear();
+  mockGenerateHarnessObject.mockReset();
   mockGenerateText.mockResolvedValue({ output: { coverText: "Dear hiring team...", answers: {} } });
 });
 
@@ -89,6 +96,23 @@ describe("generateDraft: structured output", () => {
     await expect(generateDraft(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "api-key", provider: "anthropic", value: "fake-api-key" })).rejects.toThrow(
       /did not include the expected structured draft result/,
     );
+  });
+});
+
+describe("generateDraft: claude-code-harness credential routes to generateHarnessObject, never the AI SDK (llm-provider-harness Slice C)", () => {
+  it("calls generateHarnessObject with the joined prompt and never touches createAnthropic/generateText", async () => {
+    mockGenerateHarnessObject.mockResolvedValueOnce({ coverText: "Dear harness team...", answers: {} });
+
+    const result = await generateDraft(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "claude-code-harness" });
+
+    expect(result).toEqual({ coverText: "Dear harness team...", answers: {} });
+    expect(mockGenerateHarnessObject).toHaveBeenCalledTimes(1);
+    expect(mockCreateAnthropic).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+
+    const [, prompt] = mockGenerateHarnessObject.mock.calls[0] as [unknown, string];
+    expect(prompt).toContain(REAL_GIG.title);
+    expect(prompt).toContain(REAL_PROFILE.name);
   });
 });
 
