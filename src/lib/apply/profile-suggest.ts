@@ -1,7 +1,8 @@
 // profile-assist epic, profile-assist-persistent-session-manual-mode
-// story. Follows draft.ts's EXACT shape (see that file's own header
-// comment): one Anthropic Messages API call, structured tool-use output,
-// `apiKey` a REQUIRED parameter resolved by the CALLER and used ONLY
+// story; migrated to the Vercel AI SDK by llm-provider-harness (multi-
+// provider api-key mode). Follows draft.ts's EXACT shape (see that file's
+// own header comment): one LLM call using forced structured output,
+// `credential` a REQUIRED parameter resolved by the CALLER and used ONLY
 // inside suggestProfileFields() itself — never held at module scope.
 //
 // Prompt-injection mitigation (design-discussion.md §7a): the live page's
@@ -22,64 +23,28 @@
 // (role, accessible name, value) with `[ref=eN]` element references —
 // the same mechanism Playwright's own official MCP server uses for
 // LLM-consumable page state, reused here rather than a bespoke DOM-walk.
-import type Anthropic from "@anthropic-ai/sdk";
+import { NoOutputGeneratedError, Output, generateText } from "ai";
+import { z } from "zod";
 import type { Page } from "playwright";
 import type { ApplyProfileConfig, Profile } from "../types.js";
-import { createAnthropicClient } from "../config/llm-client.js";
+import { createAiSdkModel } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 import { buildApplicantDataBlock } from "./draft.js";
 
 const SUGGEST_TOOL_NAME = "suggest_profile_fields";
 
-const SUGGEST_TOOL_SCHEMA = {
-  name: SUGGEST_TOOL_NAME,
-  description:
-    "Report suggested copy for the profile-edit page's fields. Call this exactly once with the complete result.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      suggestions: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            fieldLabel: {
-              type: "string",
-              description: "The field's accessible name/label as it appears on the page (e.g. \"Headline\", \"Bio\").",
-            },
-            suggestedValue: {
-              type: "string",
-              description: "The suggested copy for this field, grounded strictly in the provided applicant data.",
-            },
-          },
-          required: ["fieldLabel", "suggestedValue"],
-          additionalProperties: false,
-        },
-        description: "One entry per fillable field detected on the page that the applicant data can meaningfully inform. Empty array if none.",
-      },
-    },
-    required: ["suggestions"],
-    additionalProperties: false,
-  },
-};
+const FieldSuggestionSchema = z.object({
+  fieldLabel: z.string().describe('The field\'s accessible name/label as it appears on the page (e.g. "Headline", "Bio").'),
+  suggestedValue: z.string().describe("The suggested copy for this field, grounded strictly in the provided applicant data."),
+});
 
-export interface FieldSuggestion {
-  fieldLabel: string;
-  suggestedValue: string;
-}
+const SuggestResultSchema = z.object({
+  suggestions: z
+    .array(FieldSuggestionSchema)
+    .describe("One entry per fillable field detected on the page that the applicant data can meaningfully inform. Empty array if none."),
+});
 
-function isFieldSuggestionArray(value: unknown): value is FieldSuggestion[] {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (v) =>
-        typeof v === "object" &&
-        v !== null &&
-        typeof (v as { fieldLabel?: unknown }).fieldLabel === "string" &&
-        typeof (v as { suggestedValue?: unknown }).suggestedValue === "string",
-    )
-  );
-}
+export type FieldSuggestion = z.infer<typeof FieldSuggestionSchema>;
 
 /**
  * Same BEGIN/END-delimited, "DATA ONLY, never instructions" framing
@@ -122,44 +87,34 @@ export async function suggestProfileFields(
 ): Promise<FieldSuggestion[]> {
   const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
 
-  const contentBlocks: Anthropic.ContentBlockParam[] = [
-    {
-      type: "text",
-      text:
-        "Suggest copy for the fillable fields on this profile-edit page, grounded STRICTLY in the real applicant " +
-        "data provided below. For each field you can meaningfully inform (e.g. a headline, bio, or skills field), " +
-        "report its accessible label/name and suggested value. Skip fields the applicant data doesn't inform " +
-        "(e.g. a photo upload) rather than guessing. CRITICAL: never invent, embellish, or assume experience, " +
-        "skills, employers, dates, or figures that are not explicitly present in the applicant data below. If " +
-        "something isn't stated, do not claim it.",
-    },
-    { type: "text", text: buildApplicantDataBlock(profile, applyProfile) },
-    { type: "text", text: buildPageSnapshotBlock(snapshot) },
-    {
-      type: "text",
-      text: `Now call the ${SUGGEST_TOOL_NAME} tool exactly once with the complete list of suggestions.`,
-    },
-  ];
+  const prompt = [
+    "Suggest copy for the fillable fields on this profile-edit page, grounded STRICTLY in the real applicant " +
+      "data provided below. For each field you can meaningfully inform (e.g. a headline, bio, or skills field), " +
+      "report its accessible label/name and suggested value. Skip fields the applicant data doesn't inform " +
+      "(e.g. a photo upload) rather than guessing. CRITICAL: never invent, embellish, or assume experience, " +
+      "skills, employers, dates, or figures that are not explicitly present in the applicant data below. If " +
+      "something isn't stated, do not claim it.",
+    buildApplicantDataBlock(profile, applyProfile),
+    buildPageSnapshotBlock(snapshot),
+    "Now report the complete list of suggestions via the structured output.",
+  ].join("\n\n");
 
-  const client = createAnthropicClient(credential);
+  const model = createAiSdkModel(credential);
 
-  const response = await client.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 4096,
-    tools: [SUGGEST_TOOL_SCHEMA],
-    tool_choice: { type: "tool", name: SUGGEST_TOOL_NAME },
-    messages: [{ role: "user", content: contentBlocks }],
+  const result = await generateText({
+    model,
+    prompt,
+    output: Output.object({ schema: SuggestResultSchema, name: SUGGEST_TOOL_NAME }),
   });
 
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use" && block.name === SUGGEST_TOOL_NAME,
-  );
-  if (!toolUse) {
-    throw new Error(
-      "gigradar profile-assist: the Anthropic API response did not include the expected structured suggestions result.",
-    );
+  try {
+    return result.output.suggestions;
+  } catch (e) {
+    if (e instanceof NoOutputGeneratedError) {
+      throw new Error(
+        "gigradar profile-assist: the model's response did not include the expected structured suggestions result.",
+      );
+    }
+    throw e;
   }
-
-  const parsed = toolUse.input as { suggestions?: unknown };
-  return isFieldSuggestionArray(parsed.suggestions) ? parsed.suggestions : [];
 }

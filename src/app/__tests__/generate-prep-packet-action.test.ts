@@ -151,7 +151,7 @@ describe("generatePrepPacketAction: works without an applyProfile configured (un
     const result = await generatePrepPacketAction("src-a:1");
 
     expect(result).toEqual({ ok: true, data: PACKET });
-    expect(mockGeneratePrepPacket).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined, { kind: "api-key", value: "fake-key" });
+    expect(mockGeneratePrepPacket).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined, { kind: "api-key", provider: "anthropic", value: "fake-key" });
   });
 });
 

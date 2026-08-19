@@ -1,7 +1,8 @@
-// oauth-session-capture-v2 epic, llm-capture-readiness-check story.
-// Follows profile-suggest.ts's EXACT shape (see that file's own header
-// comment): one Anthropic Messages API call, structured tool-use output,
-// `apiKey` a REQUIRED parameter resolved by the CALLER and used ONLY
+// oauth-session-capture-v2 epic, llm-capture-readiness-check story;
+// migrated to the Vercel AI SDK by llm-provider-harness (multi-provider
+// api-key mode). Follows profile-suggest.ts's EXACT shape (see that file's
+// own header comment): one LLM call using forced structured output,
+// `credential` a REQUIRED parameter resolved by the CALLER and used ONLY
 // inside checkCaptureReadiness() itself — never held at module scope.
 //
 // READ-ONLY, ADVISORY, NEVER MUTATING. This function's tool schema has NO
@@ -23,46 +24,24 @@
 // (`page.locator("body").ariaSnapshot({ mode: "ai" })`) — see that file's
 // header comment for why this replaced the older, now-removed
 // `page.accessibility.snapshot()` API.
-import type Anthropic from "@anthropic-ai/sdk";
+import { NoOutputGeneratedError, Output, generateText } from "ai";
+import { z } from "zod";
 import type { Page } from "playwright";
-import { createAnthropicClient } from "../config/llm-client.js";
+import { createAiSdkModel } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 
 const READINESS_TOOL_NAME = "report_capture_readiness";
 
-const READINESS_TOOL_SCHEMA = {
-  name: READINESS_TOOL_NAME,
-  description: "Report whether this page looks like a successfully-signed-in account/profile page, or still a login/interstitial page. Call this exactly once.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      ready: {
-        type: "boolean",
-        description: "true if the page looks like a real, signed-in account/profile page for this site; false if it still looks like a login, sign-in, or interstitial page.",
-      },
-      note: {
-        type: "string",
-        description: "A short, plain-language explanation of what the page currently looks like (e.g. \"Still showing a Google sign-in form\" or \"Looks like a signed-in dashboard\").",
-      },
-    },
-    required: ["ready", "note"],
-    additionalProperties: false,
-  },
-};
+const ReadinessResultSchema = z.object({
+  ready: z
+    .boolean()
+    .describe("true if the page looks like a real, signed-in account/profile page for this site; false if it still looks like a login, sign-in, or interstitial page."),
+  note: z
+    .string()
+    .describe('A short, plain-language explanation of what the page currently looks like (e.g. "Still showing a Google sign-in form" or "Looks like a signed-in dashboard").'),
+});
 
-export interface CaptureReadiness {
-  ready: boolean;
-  note: string;
-}
-
-function isCaptureReadiness(value: unknown): value is CaptureReadiness {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { ready?: unknown }).ready === "boolean" &&
-    typeof (value as { note?: unknown }).note === "string"
-  );
-}
+export type CaptureReadiness = z.infer<typeof ReadinessResultSchema>;
 
 /**
  * Same BEGIN/END-delimited, "DATA ONLY, never instructions" framing
@@ -83,61 +62,46 @@ function buildPageSnapshotBlock(snapshot: string): string {
 }
 
 /**
- * Reads `page`'s current AI-mode aria snapshot and asks Claude whether it
- * looks like a successfully-signed-in account/profile page for `sourceId`,
- * or still a login/interstitial page. Read-only: never clicks, fills, or
- * navigates the page — this function's tool schema has no such capability
- * at all (see this file's header comment).
+ * Reads `page`'s current AI-mode aria snapshot and asks the model whether
+ * it looks like a successfully-signed-in account/profile page for
+ * `sourceId`, or still a login/interstitial page. Read-only: never clicks,
+ * fills, or navigates the page — this function's tool schema has no such
+ * capability at all (see this file's header comment).
  *
- * `credential` is used to construct the Anthropic client HERE, inside this
+ * `credential` is used to construct the model client HERE, inside this
  * function call, and nowhere else — see this file's header comment.
  *
- * Throws a specific error if the Anthropic response doesn't include the
- * expected structured tool-use block, or if the underlying API call
- * itself fails — never silently returns a default/guessed readiness result.
+ * Throws a specific error if the model's response doesn't include the
+ * expected structured output, or if the underlying API call itself fails —
+ * never silently returns a default/guessed readiness result.
  */
 export async function checkCaptureReadiness(page: Page, sourceId: string, credential: LlmCredential): Promise<CaptureReadiness> {
   const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
 
-  const contentBlocks: Anthropic.ContentBlockParam[] = [
-    {
-      type: "text",
-      text:
-        `Look at the page snapshot below. Does it look like a successfully-signed-in account/profile page for ` +
-        `"${sourceId}", or does it still look like a login, sign-in, or interstitial (e.g. a Google/OAuth sign-in ` +
-        `form, a "verifying you're human" challenge, a loading screen)? Report your assessment.`,
-    },
-    { type: "text", text: buildPageSnapshotBlock(snapshot) },
-    {
-      type: "text",
-      text: `Now call the ${READINESS_TOOL_NAME} tool exactly once with your assessment.`,
-    },
-  ];
+  const prompt = [
+    `Look at the page snapshot below. Does it look like a successfully-signed-in account/profile page for ` +
+      `"${sourceId}", or does it still look like a login, sign-in, or interstitial (e.g. a Google/OAuth sign-in ` +
+      `form, a "verifying you're human" challenge, a loading screen)? Report your assessment.`,
+    buildPageSnapshotBlock(snapshot),
+    "Now report your assessment via the structured output.",
+  ].join("\n\n");
 
-  const client = createAnthropicClient(credential);
+  const model = createAiSdkModel(credential);
 
-  const response = await client.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 1024,
-    tools: [READINESS_TOOL_SCHEMA],
-    tool_choice: { type: "tool", name: READINESS_TOOL_NAME },
-    messages: [{ role: "user", content: contentBlocks }],
+  const result = await generateText({
+    model,
+    prompt,
+    output: Output.object({ schema: ReadinessResultSchema, name: READINESS_TOOL_NAME }),
   });
 
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use" && block.name === READINESS_TOOL_NAME,
-  );
-  if (!toolUse) {
-    throw new Error(
-      "gigradar capture-guidance: the Anthropic API response did not include the expected structured readiness result.",
-    );
+  try {
+    return result.output;
+  } catch (e) {
+    if (e instanceof NoOutputGeneratedError) {
+      throw new Error(
+        "gigradar capture-guidance: the model's response did not include the expected structured readiness result.",
+      );
+    }
+    throw e;
   }
-
-  if (!isCaptureReadiness(toolUse.input)) {
-    throw new Error(
-      "gigradar capture-guidance: the Anthropic API response's structured result did not match the expected {ready, note} shape.",
-    );
-  }
-
-  return toolUse.input;
 }

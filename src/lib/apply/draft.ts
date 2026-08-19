@@ -1,11 +1,12 @@
 // LLM-drafted per-gig applications — assisted-apply-drafting epic,
-// draft-generation-foundation story. Follows profile-ingestion/extract.ts's
-// REAL shape exactly (see that file's own header comment and this story's
-// design_decisions): one Anthropic Messages API call, structured tool-use
-// output, `apiKey` a REQUIRED parameter resolved by the CALLER and used ONLY
-// inside generateDraft() itself.
+// draft-generation-foundation story; migrated to the Vercel AI SDK by the
+// llm-provider-harness epic (multi-provider api-key mode — see
+// design-discussion.md §2.5). One generateText() call using forced
+// structured output (`output: Output.object(...)`), `credential` a
+// REQUIRED parameter resolved by the CALLER and used ONLY inside
+// generateDraft() itself.
 //
-// THE ANTHROPIC CLIENT AND apiKey ARE NEVER HELD AT MODULE SCOPE — same
+// THE MODEL CLIENT AND credential ARE NEVER HELD AT MODULE SCOPE — same
 // discipline as extract.ts, same reason: this module stays agnostic to
 // whether it's called from the CLI/MCP path (process.env already populated
 // by loadConfig()) or a future Server Action (readEnvVar()), never assuming
@@ -27,37 +28,25 @@
 // ApplyProfileConfig/Gig passed in — no placeholder text is ever
 // substituted for a missing optional field, it's simply omitted from the
 // prompt. See draft.test.ts's prompt-grounding test.
-import type Anthropic from "@anthropic-ai/sdk";
+import { NoOutputGeneratedError, Output, generateText } from "ai";
+import { z } from "zod";
 import type { ApplyProfileConfig, DraftContent, Gig, Profile } from "../types.js";
-import { createAnthropicClient } from "../config/llm-client.js";
+import { createAiSdkModel } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 
 const DRAFT_TOOL_NAME = "draft_application";
 
-const DRAFT_TOOL_SCHEMA = {
-  name: DRAFT_TOOL_NAME,
-  description:
-    "Report the drafted job application: a cover message and any structured answers to application-specific " +
-    "questions implied by the listing. Call this exactly once with the complete result.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      coverText: {
-        type: "string",
-        description: "The drafted cover message/letter for this application, grounded strictly in the provided applicant data.",
-      },
-      answers: {
-        type: "object",
-        additionalProperties: { type: "string" },
-        description:
-          "Structured answers to any application-specific questions the listing implies, keyed by the question " +
-          "text. An empty object if the listing implies no specific questions beyond a cover message.",
-      },
-    },
-    required: ["coverText", "answers"],
-    additionalProperties: false,
-  },
-};
+const DraftResultSchema = z.object({
+  coverText: z
+    .string()
+    .describe("The drafted cover message/letter for this application, grounded strictly in the provided applicant data."),
+  answers: z
+    .record(z.string(), z.string())
+    .describe(
+      "Structured answers to any application-specific questions the listing implies, keyed by the question " +
+        "text. An empty object if the listing implies no specific questions beyond a cover message.",
+    ),
+});
 
 /**
  * Builds the TRUSTED applicant-data content block — real `Profile` +
@@ -124,32 +113,24 @@ export function buildGigDataBlock(gig: Gig): string {
   ].join("\n");
 }
 
-function isStringRecord(value: unknown): value is Record<string, string> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.values(value as Record<string, unknown>).every((v) => typeof v === "string")
-  );
-}
-
 /**
- * Drafts one gig's application via a single Claude Messages API call using
- * forced tool-use for structured output (never free-text parsing) — mirrors
- * `extractProfile()`'s shape exactly. Grounded strictly in the real
- * `profile`/`applyProfile`/`gig` data passed in, with an explicit
- * instruction never to fabricate unstated experience/figures, and the gig's
- * own scraped content clearly delimited as untrusted DATA (see this file's
- * header comment and buildGigDataBlock() above).
+ * Drafts one gig's application via a single LLM call using the Vercel AI
+ * SDK's forced structured output (`output: Output.object(...)`, never
+ * free-text parsing) — mirrors `extractProfile()`'s shape exactly.
+ * Grounded strictly in the real `profile`/`applyProfile`/`gig` data passed
+ * in, with an explicit instruction never to fabricate unstated experience/
+ * figures, and the gig's own scraped content clearly delimited as
+ * untrusted DATA (see this file's header comment and buildGigDataBlock()
+ * above).
  *
- * `credential` is used to construct the Anthropic client HERE, inside this
- * function call, and nowhere else — see this file's header comment. Callers
- * (e.g. `apply/runner.ts`'s `stageApplication()`) resolve it themselves,
- * however is appropriate for their own calling context.
+ * `credential` is used to construct the model HERE, inside this function
+ * call, and nowhere else — see this file's header comment. Callers (e.g.
+ * `apply/runner.ts`'s `stageApplication()`) resolve it themselves, however
+ * is appropriate for their own calling context.
  *
- * Throws a specific error if the Anthropic response doesn't include the
- * expected structured tool-use block, or if the underlying API call itself
- * fails — never silently returns a partial/placeholder draft.
+ * Throws a specific error if the model's response doesn't include the
+ * expected structured output, or if the underlying API call itself fails —
+ * never silently returns a partial/placeholder draft.
  */
 export async function generateDraft(
   gig: Gig,
@@ -157,46 +138,31 @@ export async function generateDraft(
   applyProfile: ApplyProfileConfig,
   credential: LlmCredential,
 ): Promise<DraftContent> {
-  const contentBlocks: Anthropic.ContentBlockParam[] = [
-    {
-      type: "text",
-      text:
-        "Draft a job application for this person, grounded STRICTLY in the real applicant data provided below. " +
-        "Write a cover message (coverText) and, only if the listing implies specific application questions, " +
-        "concise structured answers (answers, keyed by question) — otherwise leave answers as an empty object. " +
-        "CRITICAL: never invent, embellish, or assume experience, skills, employers, dates, or figures that are " +
-        "not explicitly present in the applicant data below. If something isn't stated, do not claim it.",
-    },
-    { type: "text", text: buildApplicantDataBlock(profile, applyProfile) },
-    { type: "text", text: buildGigDataBlock(gig) },
-    {
-      type: "text",
-      text: `Now call the ${DRAFT_TOOL_NAME} tool exactly once with the complete drafted application.`,
-    },
-  ];
+  const prompt = [
+    "Draft a job application for this person, grounded STRICTLY in the real applicant data provided below. " +
+      "Write a cover message (coverText) and, only if the listing implies specific application questions, " +
+      "concise structured answers (answers, keyed by question) — otherwise leave answers as an empty object. " +
+      "CRITICAL: never invent, embellish, or assume experience, skills, employers, dates, or figures that are " +
+      "not explicitly present in the applicant data below. If something isn't stated, do not claim it.",
+    buildApplicantDataBlock(profile, applyProfile),
+    buildGigDataBlock(gig),
+    `Now report the complete drafted application via the ${DRAFT_TOOL_NAME} structured output.`,
+  ].join("\n\n");
 
-  const client = createAnthropicClient(credential);
+  const model = createAiSdkModel(credential);
 
-  const response = await client.messages.create({
-    model: "claude-opus-5",
-    max_tokens: 4096,
-    tools: [DRAFT_TOOL_SCHEMA],
-    tool_choice: { type: "tool", name: DRAFT_TOOL_NAME },
-    messages: [{ role: "user", content: contentBlocks }],
+  const result = await generateText({
+    model,
+    prompt,
+    output: Output.object({ schema: DraftResultSchema, name: DRAFT_TOOL_NAME }),
   });
 
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use" && block.name === DRAFT_TOOL_NAME,
-  );
-  if (!toolUse) {
-    throw new Error(
-      "gigradar apply: the Anthropic API response did not include the expected structured draft result.",
-    );
+  try {
+    return result.output;
+  } catch (e) {
+    if (e instanceof NoOutputGeneratedError) {
+      throw new Error("gigradar apply: the model's response did not include the expected structured draft result.");
+    }
+    throw e;
   }
-
-  const parsed = toolUse.input as { coverText?: unknown; answers?: unknown };
-  const coverText = typeof parsed.coverText === "string" ? parsed.coverText : "";
-  const answers = isStringRecord(parsed.answers) ? parsed.answers : {};
-
-  return { coverText, answers };
 }
