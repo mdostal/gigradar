@@ -21,8 +21,8 @@ gigradar is a **tool suite to find and interact with engagements**, not just a s
 ## Contracts (`src/lib/types.ts` is the source of truth)
 
 - **`Profile`** — who you are: roles (priority order), skills, timezone, optional home base.
-- **`Needs`** — your hard gate: `minRate`, `highRate`, `maxHours`, `maxHoursAtHighRate` (high rate unlocks more hours), `allowContractToHire`, `freshStageOnly`, `remoteOnly`.
-- **`Source`** — `{ id, label, auth, fetch(cfg, profile) → Gig[] }`. Registered via `registerSource`.
+- **`Needs`** — your hard gate: `engagementProfiles` (a list of named rate/hours thresholds per engagement type — e.g. "Fractional/contract" at $250/hr with a weekly-hours cap, or "Full-time (700k+)" at $700,000/yr with none — a gig can match more than one profile, see `EngagementProfile` in `types.ts`), plus `freshStageOnly`, `remoteOnly`. Supersedes an older flat `minRate`/`highRate`/`maxHours`/`maxHoursAtHighRate`/`allowContractToHire` shape, still auto-migrated on read (`config/load.ts`'s `migrateNeedsEngagementProfiles()`).
+- **`Source`** — `{ id, label, auth, fetch(cfg, profile, apiKey?) → Gig[] }`. Registered via `registerSource`. The optional `apiKey` is forwarded to every adapter uniformly; only `kind: "custom-llm"`/`"gmail-digest"` sources read it (see the `llm-custom-sources`/`email-digest-ingestion` epics).
 - **`Gig`** — normalized listing; **`url` is always a real per-listing page, never a search URL**; `stage` set where the source exposes it; optional `tier` stamped by the tiering module.
 - **`MatchResult`** — `{ gig, pass, reasons[], score, tier? }`. Always explainable.
 - **`RoleAreaConfig`** — user-supplied `{ coreTitles, keywords, redKeywords }` (never hardcoded) driving the tiering classifier's green/yellow/red precedence: a title-match in `coreTitles` wins GREEN even over a `redKeywords` hit; unmatched is YELLOW, never a hard reject.
@@ -1339,9 +1339,16 @@ process already exited on its own.
 
 ### `src/lib/auth/session-backend.ts`
 
-An owner-selectable alternative to the local AES-256-GCM vault for storing
-a captured browser session — never a forced migration, gracefully absent
-(not broken) for OSS users without Portunus installed.
+Portunus is the maintainer's own private, unpublished secrets-manager CLI —
+not a public tool you can install. This section documents an
+owner-selectable alternative to the local AES-256-GCM vault for storing a
+captured browser session — never a forced migration, gracefully absent
+(not broken, and never shown in the UI at all) for OSS users without
+Portunus installed. If you'd rather store sessions in your own secrets
+backend (1Password CLI, Vault, etc.), `session-backend.ts`'s
+`SessionBackend` union is the extension point to fork/add a case to today;
+a real registered-plugin interface for this is a reasonable follow-up, not
+yet built.
 `isPortunusAvailable()` runs a real, live `portunus --version` check
 (cached per-process, never assumed) before anything tries to use it.
 `sessionBackendFrom(cfg)` resolves `SourceConfig.settings.sessionBackend`
