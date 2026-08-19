@@ -172,37 +172,52 @@ export function readEnvVar(name: string): string | undefined {
   return readEnvFileRaw()[name];
 }
 
-/**
- * llm-credential-modes epic. The resolved ANTHROPIC_API_KEY env slot's
- * value, tagged with HOW it should be sent to the Anthropic API — plain
- * `readEnvVar("ANTHROPIC_API_KEY")` only ever returns the raw string, never
- * which of the two auth shapes (`x-api-key` vs a Bearer token) it is. See
- * llm-client.ts's `createAnthropicClient()`, the sole consumer of `kind`.
- */
-export interface LlmCredential {
-  kind: "api-key" | "oauth-token";
-  value: string;
-}
+/** llm-provider-harness epic. Which api-key provider a resolved credential is for. */
+export type LlmProvider = "anthropic" | "openai" | "google";
 
-const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
+/**
+ * llm-provider-harness epic (supersedes llm-credential-modes' original flat
+ * `{kind, value}` shape, which assumed BOTH kinds carry a secret string --
+ * live-tested and found wrong: harness mode drives the local, already-
+ * authenticated `claude` CLI directly and carries NO secret material at
+ * all). See llm-client.ts's `createAiSdkModel()`, the sole consumer of the
+ * `api-key` branch.
+ */
+export type LlmCredential = { kind: "api-key"; provider: LlmProvider; value: string } | { kind: "claude-code-harness" };
+
+const PROVIDER_ENV_VARS: Record<LlmProvider, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_API_KEY",
+};
 
 /**
  * The ONE shared credential-resolution call every LLM call site should use
- * instead of a bare `readEnvVar("ANTHROPIC_API_KEY")` — reads the SAME env
- * slot (still never logged, never included in an error message — same
- * discipline as readEnvVar() above) plus `Config.llmCredentialKind` from
- * the raw, unresolved config document (readRawConfig(), never
- * loadConfig() — same raw-vs-resolved discipline this codebase holds
- * everywhere else; `llmCredentialKind` is a mode selector, not a secret,
- * so reading it from the raw document is correct and required). Returns
- * `undefined` when the env var is unset, matching readEnvVar()'s own
- * undefined-on-unset behavior — never throws for a missing credential.
+ * instead of a bare `readEnvVar("ANTHROPIC_API_KEY")` — reads
+ * `Config.llmCredentialKind`/`llmProvider` from the raw, unresolved config
+ * document (readRawConfig(), never loadConfig() — same raw-vs-resolved
+ * discipline this codebase holds everywhere else; these are mode
+ * selectors, not secrets, so reading them from the raw document is correct
+ * and required).
+ *
+ * `claude-code-harness` kind returns immediately with NO env-var read at
+ * all — there is no secret to resolve for that branch, a real
+ * simplification over the old (broken) design. `api-key` kind reads
+ * whichever provider's env slot `llmProvider` selects (still never logged,
+ * never included in an error message — same discipline as readEnvVar()
+ * above), returning `undefined` when that slot is unset, matching
+ * readEnvVar()'s own undefined-on-unset behavior — never throws for a
+ * missing credential.
  */
 export function resolveLlmCredential(): LlmCredential | undefined {
-  const value = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  const raw = readRawConfig();
+  if (raw.llmCredentialKind === "claude-code-harness") {
+    return { kind: "claude-code-harness" };
+  }
+
+  const provider: LlmProvider = raw.llmProvider === "openai" || raw.llmProvider === "google" ? raw.llmProvider : "anthropic";
+  const value = readEnvVar(PROVIDER_ENV_VARS[provider]);
   if (!value) return undefined;
 
-  const raw = readRawConfig();
-  const kind = raw.llmCredentialKind === "oauth-token" ? "oauth-token" : "api-key";
-  return { kind, value };
+  return { kind: "api-key", provider, value };
 }

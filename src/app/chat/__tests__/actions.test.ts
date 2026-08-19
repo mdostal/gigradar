@@ -99,7 +99,7 @@ describe("sendChatMessageAction", () => {
     const result = await sendChatMessageAction("s1", "hello");
 
     expect(result).toEqual({ ok: true, data: { type: "message", text: "hi there" } });
-    expect(sendMessageMock).toHaveBeenCalledWith("s1", { kind: "api-key", value: "fake-key" }, "hello");
+    expect(sendMessageMock).toHaveBeenCalledWith("s1", { kind: "api-key", provider: "anthropic", value: "fake-key" }, "hello");
   });
 
   it("returns {ok:false} when sendMessage() itself throws (e.g. unknown session)", async () => {
@@ -143,7 +143,7 @@ describe("resolveChatApprovalAction", () => {
     const result = await resolveChatApprovalAction("s1", true);
 
     expect(result).toEqual({ ok: true, data: { type: "message", text: "Done." } });
-    expect(resolveApprovalMock).toHaveBeenCalledWith("s1", { kind: "api-key", value: "fake-key" }, true, expect.objectContaining({ profile: expect.objectContaining({ name: "Jane Doe" }) }));
+    expect(resolveApprovalMock).toHaveBeenCalledWith("s1", { kind: "api-key", provider: "anthropic", value: "fake-key" }, true, expect.objectContaining({ profile: expect.objectContaining({ name: "Jane Doe" }) }));
   });
 
   it("forwards approve:false through to resolveApproval() unchanged", async () => {
@@ -153,7 +153,7 @@ describe("resolveChatApprovalAction", () => {
 
     await resolveChatApprovalAction("s1", false);
 
-    expect(resolveApprovalMock).toHaveBeenCalledWith("s1", { kind: "api-key", value: "fake-key" }, false, expect.anything());
+    expect(resolveApprovalMock).toHaveBeenCalledWith("s1", { kind: "api-key", provider: "anthropic", value: "fake-key" }, false, expect.anything());
   });
 
   it("returns {ok:false} when resolveApproval() itself throws (e.g. no pending approval)", async () => {

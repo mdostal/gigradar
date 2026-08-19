@@ -215,16 +215,24 @@ export interface Config {
    */
   appIcon?: string;
   /**
-   * llm-credential-modes epic. Which of two ways the resolved
-   * ANTHROPIC_API_KEY env slot's VALUE should be sent to the Anthropic API
-   * — "api-key" (the x-api-key header, today's only behavior) or
-   * "oauth-token" (a Bearer token, e.g. a long-lived token from this
-   * machine's own `claude setup-token`). Omitted means "api-key",
+   * llm-provider-harness epic (supersedes llm-credential-modes' original
+   * "oauth-token" kind -- live-tested and found non-functional). "api-key"
+   * (today's only real behavior -- a raw key for `llmProvider` below, sent
+   * via the AI SDK) or "claude-code-harness" (drives the local,
+   * already-authenticated `claude` CLI directly, no secret value stored or
+   * resolved for this kind at all). Omitted means "api-key",
    * byte-identical to every install before this field existed — see
    * env-store.ts's resolveLlmCredential() and llm-client.ts's
-   * createAnthropicClient().
+   * createAiSdkModel().
    */
-  llmCredentialKind?: "api-key" | "oauth-token";
+  llmCredentialKind?: "api-key" | "claude-code-harness";
+  /**
+   * llm-provider-harness epic. Which provider's api-key mode uses --
+   * meaningless when llmCredentialKind is "claude-code-harness". Omitted
+   * means "anthropic", byte-identical to every install before this field
+   * existed.
+   */
+  llmProvider?: "anthropic" | "openai" | "google";
 }
 
 /**

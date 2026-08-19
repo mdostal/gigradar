@@ -1,0 +1,26 @@
+id: claude-code-harness-tool-loops
+epic: llm-provider-harness
+title: "claude-code-harness for the multi-turn tool-loop call sites"
+status: pending
+complexity: high
+methodology: classic
+depends_on: [claude-code-harness-single-shot, ai-sdk-tool-loops]
+
+description: |
+  Vertical Plan Slice D -- possibly its own follow-up epic rather than a
+  story here, per vertical-plan.md's own note. Harness mode for
+  agent-chat-loop.ts/profile-assist-loop.ts, gated on resolving
+  design-discussion.md section 4 open questions 2 (does harness mode
+  support a genuine pause-for-approval gate via canUseTool, or only
+  allow/deny-at-call-time) and 3 (packaged-build binary resolution,
+  shared with Slice C). Scoped in detail once Slice C's spike lands --
+  not yet planned beyond this placeholder.
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+
+references:
+  - path: .pHive/epics/llm-provider-harness/docs/design-discussion.md
+    relevant_excerpt: "section 4 open question 2."
+  - path: .pHive/epics/llm-provider-harness/docs/vertical-plan.md
+    relevant_excerpt: "Slice D"

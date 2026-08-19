@@ -1,0 +1,28 @@
+name: llm-provider-harness
+title: "Multi-provider api-key path (Vercel AI SDK) + real Claude-Code-harness credential mode, superseding llm-credential-modes' non-functional oauth-token kind"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: ai-sdk-single-shot
+    title: "Vercel AI SDK for api-key mode's single-shot call sites, multi-provider config"
+    complexity: high
+    depends_on: []
+  - id: ai-sdk-tool-loops
+    title: "Vercel AI SDK for the two multi-turn tool-loop call sites, adopting native toolApproval"
+    complexity: high
+    depends_on: [ai-sdk-single-shot]
+  - id: claude-code-harness-single-shot
+    title: "claude-code-harness credential kind (claude-agent-sdk query()) for single-shot call sites, replacing the dead oauth-token kind"
+    complexity: high
+    depends_on: [ai-sdk-single-shot]
+  - id: claude-code-harness-tool-loops
+    title: "claude-code-harness for the multi-turn tool-loop call sites"
+    complexity: high
+    depends_on: [claude-code-harness-single-shot, ai-sdk-tool-loops]

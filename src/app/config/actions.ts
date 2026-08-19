@@ -315,7 +315,7 @@ export async function testCustomSourceExtractionAction(
   customAuth: "none" | "browser-session",
   sessionStatePath: string | undefined,
 ): Promise<ActionResult<{ count: number; titles: string[] }>> {
-  const apiKey = readEnvVar(ANTHROPIC_API_KEY_VAR);
+  const apiKey = readEnvVar(PROVIDER_API_KEY_VARS.anthropic);
   if (!apiKey) {
     return actionErr(new Error(MISSING_API_KEY_ERROR));
   }
@@ -354,16 +354,22 @@ export async function testCustomSourceExtractionAction(
 // steps 1 and 4.
 // ---------------------------------------------------------------------------
 
-/** The one, dedicated .env var this feature reads/writes — never hardcoded inline at each call site. */
-const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
+/** llm-provider-harness epic: one dedicated .env var per provider — never hardcoded inline at each call site. */
+const PROVIDER_API_KEY_VARS = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_API_KEY",
+} as const;
 
 /**
  * Thin wrapper around `env-store.ts`'s `setEnvVar()` — the only Server
  * Action in this entire config UI that writes to `.env` instead of
  * `config.json` (called out as such in `config-client.tsx`'s UI copy). Reads
- * the submitted key as a required, non-blank string field named `apiKey`;
- * a blank/missing submission returns a specific error rather than silently
- * writing an empty value to `.env`.
+ * the submitted key as a required, non-blank string field named `apiKey`,
+ * and which provider's env slot to write via a required `provider` field
+ * (llm-provider-harness epic — was Anthropic-only before); a blank/missing/
+ * unrecognized submission returns a specific error rather than silently
+ * writing an empty value to `.env` or guessing a provider.
  *
  * No `revalidatePath()` call: `/config`'s Server Component render
  * (`page.tsx`) never reads `.env` — only `readRawConfig()`'s `config.json`
@@ -376,12 +382,16 @@ const ANTHROPIC_API_KEY_VAR = "ANTHROPIC_API_KEY";
  * story's `design_decisions`): the API key is a discrete, single-purpose
  * credential-setup action, not part of the profile draft.
  */
-export async function setAnthropicApiKeyAction(formData: FormData): Promise<ActionResult<void>> {
+export async function setLlmApiKeyAction(formData: FormData): Promise<ActionResult<void>> {
   const apiKey = formData.get("apiKey");
   if (typeof apiKey !== "string" || apiKey.trim() === "") {
-    return actionErr(new Error("gigradar config: Anthropic API key is required — enter a value before saving."));
+    return actionErr(new Error("gigradar config: an API key is required — enter a value before saving."));
   }
-  return setEnvVar(ANTHROPIC_API_KEY_VAR, apiKey.trim());
+  const provider = formData.get("provider");
+  if (provider !== "anthropic" && provider !== "openai" && provider !== "google") {
+    return actionErr(new Error("gigradar config: an unrecognized LLM provider was submitted."));
+  }
+  return setEnvVar(PROVIDER_API_KEY_VARS[provider], apiKey.trim());
 }
 
 /**

@@ -1,0 +1,83 @@
+id: ai-sdk-single-shot
+epic: llm-provider-harness
+title: "Vercel AI SDK for api-key mode's single-shot call sites, multi-provider config"
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Vertical Plan Slice A. Adds real dependencies (ai, @ai-sdk/anthropic,
+  @ai-sdk/openai, @ai-sdk/google -- v7.0.67/4.0.x per design-discussion.md
+  section 2.5's live-verified research). LlmCredential becomes a
+  discriminated union: {kind:"api-key", provider, value} |
+  {kind:"claude-code-harness"} (the harness branch ships in Slice C --
+  this slice only needs the type to EXIST so resolveLlmCredential()'s
+  signature is correct going forward, not a working harness path yet).
+  New Config.llmProvider: "anthropic" | "openai" | "google" (default
+  "anthropic", byte-identical for existing installs). Migrates the 5
+  single-shot (non-tool-loop) call sites off raw @anthropic-ai/sdk onto
+  generateText({model, output: Output.object({schema})}) --
+  generateObject() is DEPRECATED in v7, do not use it (design-discussion.md
+  section 2.5's flagged migration gotcha).
+
+  Deliberately does NOT touch: agent-chat-loop.ts/profile-assist-loop.ts
+  (Slice B -- multi-turn tool loops need toolApproval design, not a
+  mechanical port), the Source.fetch()-boundary call sites
+  (custom-source-recipe.ts/custom-llm-source.ts/gmail-digest-source.ts --
+  same deliberately-deferred public-plugin-interface boundary as
+  llm-credential-modes), or the claude-code-harness kind's actual
+  resolution (Slice C -- resolveLlmCredential() may return it as a type,
+  but no call site branches on it successfully yet in this slice; document
+  this gap explicitly rather than silently leaving it half-wired).
+
+acceptance_criteria:
+  - "package.json gains ai, @ai-sdk/anthropic, @ai-sdk/openai, @ai-sdk/google as real dependencies."
+  - "LlmCredential is a discriminated union: {kind:\"api-key\", provider:\"anthropic\"|\"openai\"|\"google\", value:string} | {kind:\"claude-code-harness\"}."
+  - "Config.llmProvider is optional, \"anthropic\"|\"openai\"|\"google\", absent/default resolves identically to today's Anthropic-only behavior."
+  - "resolveLlmCredential() reads the right env slot per llmProvider (ANTHROPIC_API_KEY/OPENAI_API_KEY/GOOGLE_API_KEY) and returns {kind:\"api-key\", provider, value}; returns {kind:\"claude-code-harness\"} when llmCredentialKind is set to that value, with no env-var read at all for that branch."
+  - "New createAiSdkModel(credential) in llm-client.ts returns the right @ai-sdk/* model instance per credential.provider, throwing a clear error if called with a claude-code-harness credential (that's Slice C's job)."
+  - "draft.ts, prep.ts, extract.ts, capture-guidance.ts, profile-suggest.ts migrated to generateText({model, output: Output.object({schema: zodSchema})}) -- never the deprecated generateObject()."
+  - "extract.ts's native PDF input still works via the AI SDK's FilePart content type ({type:'file', data, mediaType}), not re-implemented as text extraction."
+  - "/config UI gains a provider selector (anthropic/openai/google) next to the existing credential-kind radio, each with its own key input field; existing installs with no llmProvider set render as \"anthropic\" selected, zero visual/behavioral change."
+  - "npm test and npx tsc --noEmit both pass; existing test suites for the 4 migrated call sites updated to mock the AI SDK's generateText instead of the raw Anthropic SDK constructor, asserting the same prompt-construction/parsing behavior as before (not re-testing the AI SDK itself)."
+
+steps:
+  - id: research
+    description: Confirm exact current call signatures of the 4 call sites (draft.ts/prep.ts/extract.ts/capture-guidance.ts) and their existing tool_choice/schema shapes to map 1:1 onto generateText's output:Output.object() equivalent.
+    agent: researcher
+  - id: implement
+    description: Add AI SDK dependencies, the LlmCredential union, Config.llmProvider, resolveLlmCredential()'s provider-aware resolution, createAiSdkModel(), migrate the 4 call sites, update /config UI.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Update/write unit tests per acceptance criteria; mock generateText, not the raw SDK.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm zero behavior change for existing api-key/anthropic-only installs; confirm the claude-code-harness branch fails loudly (not silently) wherever it's not yet wired; confirm no resolved secret ever logged.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/config/llm-client.ts
+      purpose: "createAnthropicClient() is replaced/joined by createAiSdkModel()."
+    - path: src/lib/config/env-store.ts
+      purpose: "resolveLlmCredential()'s signature changes to the discriminated union, provider-aware resolution."
+    - path: src/lib/config/schema.ts
+      purpose: "Config.llmProvider added."
+    - path: src/lib/apply/draft.ts
+    - path: src/lib/apply/prep.ts
+    - path: src/lib/profile-ingestion/extract.ts
+    - path: src/lib/auth/capture-guidance.ts
+    - path: src/lib/apply/profile-suggest.ts
+
+references:
+  - path: .pHive/epics/llm-provider-harness/docs/design-discussion.md
+    relevant_excerpt: "section 2.5's live-verified Vercel AI SDK fit-check (forced structured output, PDF input, per-call credential threading, the generateObject deprecation gotcha) and section 3's design decisions."

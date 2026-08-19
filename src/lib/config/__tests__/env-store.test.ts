@@ -206,43 +206,61 @@ function writeConfigJson(doc: Record<string, unknown>): void {
   fs.writeFileSync(configPath, JSON.stringify(doc));
 }
 
-describe("resolveLlmCredential (llm-credential-modes epic)", () => {
-  it("returns undefined when ANTHROPIC_API_KEY is unset, regardless of config", () => {
-    writeConfigJson({ llmCredentialKind: "oauth-token" });
+describe("resolveLlmCredential (llm-provider-harness epic)", () => {
+  it("returns undefined when the api-key env var is unset, regardless of provider config", () => {
+    writeConfigJson({ llmCredentialKind: "api-key", llmProvider: "anthropic" });
     expect(resolveLlmCredential()).toBeUndefined();
   });
 
-  it("defaults to kind \"api-key\" when llmCredentialKind is absent from config — byte-identical to every install before this field existed", () => {
+  it("defaults to kind \"api-key\"/provider \"anthropic\" when both fields are absent from config — byte-identical to every install before this field existed", () => {
     setEnvVar("ANTHROPIC_API_KEY", "sk-ant-real-key");
     // No config.json written at all — readRawConfig() returns {} for a missing file.
 
-    expect(resolveLlmCredential()).toEqual({ kind: "api-key", value: "sk-ant-real-key" });
+    expect(resolveLlmCredential()).toEqual({ kind: "api-key", provider: "anthropic", value: "sk-ant-real-key" });
   });
 
-  it("resolves kind \"oauth-token\" when Config.llmCredentialKind is set to it", () => {
-    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-oat01-long-lived-token");
-    writeConfigJson({ llmCredentialKind: "oauth-token" });
+  it("resolves kind \"claude-code-harness\" when Config.llmCredentialKind is set to it -- WITHOUT reading any env var at all, even when none is set", () => {
+    // No setEnvVar() call at all -- proves this kind carries no secret
+    // material and doesn't depend on ANTHROPIC_API_KEY the way api-key mode does.
+    writeConfigJson({ llmCredentialKind: "claude-code-harness" });
 
-    expect(resolveLlmCredential()).toEqual({ kind: "oauth-token", value: "sk-ant-oat01-long-lived-token" });
+    expect(resolveLlmCredential()).toEqual({ kind: "claude-code-harness" });
   });
 
   it("resolves kind \"api-key\" when Config.llmCredentialKind is explicitly set to it", () => {
     setEnvVar("ANTHROPIC_API_KEY", "sk-ant-real-key");
     writeConfigJson({ llmCredentialKind: "api-key" });
 
-    expect(resolveLlmCredential()).toEqual({ kind: "api-key", value: "sk-ant-real-key" });
+    expect(resolveLlmCredential()).toEqual({ kind: "api-key", provider: "anthropic", value: "sk-ant-real-key" });
   });
 
   it("treats an unrecognized llmCredentialKind value as \"api-key\" rather than throwing", () => {
     setEnvVar("ANTHROPIC_API_KEY", "sk-ant-real-key");
     writeConfigJson({ llmCredentialKind: "something-unexpected" });
 
-    expect(resolveLlmCredential()).toEqual({ kind: "api-key", value: "sk-ant-real-key" });
+    expect(resolveLlmCredential()).toEqual({ kind: "api-key", provider: "anthropic", value: "sk-ant-real-key" });
+  });
+
+  it("resolves the right env slot per Config.llmProvider (openai/google), not always ANTHROPIC_API_KEY", () => {
+    setEnvVar("OPENAI_API_KEY", "sk-openai-real-key");
+    writeConfigJson({ llmProvider: "openai" });
+    expect(resolveLlmCredential()).toEqual({ kind: "api-key", provider: "openai", value: "sk-openai-real-key" });
+
+    setEnvVar("GOOGLE_API_KEY", "AIza-google-real-key");
+    writeConfigJson({ llmProvider: "google" });
+    expect(resolveLlmCredential()).toEqual({ kind: "api-key", provider: "google", value: "AIza-google-real-key" });
+  });
+
+  it("treats an unrecognized llmProvider value as \"anthropic\" rather than throwing", () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-real-key");
+    writeConfigJson({ llmProvider: "something-unexpected" });
+
+    expect(resolveLlmCredential()).toEqual({ kind: "api-key", provider: "anthropic", value: "sk-ant-real-key" });
   });
 
   it("does not console.log/warn/error the credential value or the env var name", () => {
-    setEnvVar("ANTHROPIC_API_KEY", "another-secret-oauth-token");
-    writeConfigJson({ llmCredentialKind: "oauth-token" });
+    setEnvVar("ANTHROPIC_API_KEY", "another-secret-key");
+    writeConfigJson({ llmCredentialKind: "api-key" });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -250,7 +268,7 @@ describe("resolveLlmCredential (llm-credential-modes epic)", () => {
     resolveLlmCredential();
 
     const allOutput = [...logSpy.mock.calls, ...warnSpy.mock.calls, ...errorSpy.mock.calls].flat().join(" ");
-    expect(allOutput).not.toContain("another-secret-oauth-token");
+    expect(allOutput).not.toContain("another-secret-key");
     expect(allOutput).not.toContain("ANTHROPIC_API_KEY");
   });
 });
