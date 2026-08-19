@@ -48,7 +48,14 @@ function fakeRecipeResult(listings: unknown[]) {
 }
 
 function setUpFakeBrowser() {
-  const page = { goto: vi.fn().mockResolvedValue(undefined), content: vi.fn().mockResolvedValue("<html><body></body></html>") };
+  const page = {
+    goto: vi.fn().mockResolvedValue(undefined),
+    content: vi.fn().mockResolvedValue("<html><body></body></html>"),
+    // deriveRecipeAndExtract() validates listItemSelector against the live
+    // page via locator(...).count() before ever returning/caching a recipe
+    // -- resolve it here to simulate a real, valid CSS selector.
+    locator: vi.fn().mockReturnValue({ count: vi.fn().mockResolvedValue(1) }),
+  };
   const browser = { newPage: vi.fn().mockResolvedValue(page), close: vi.fn().mockResolvedValue(undefined) };
   launchMock.mockResolvedValue(browser);
 }
