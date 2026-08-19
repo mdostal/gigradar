@@ -9,7 +9,7 @@ import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { buildAuthorizationUrl, deleteTokenSet } from "@/lib/auth/oauth2";
 import { resolveOAuthClientCredentials } from "@/lib/auth/oauth-credentials";
 import { GMAIL_PROVIDER } from "@/lib/auth/oauth-providers/gmail";
-import { readEnvVar, resolveLlmCredential, setEnvVar } from "@/lib/config/env-store";
+import { resolveLlmCredential, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
 import { deleteResume, getResumePath, saveResume } from "@/lib/documents/resume-store";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
@@ -304,9 +304,13 @@ export async function checkCaptureReadinessAction(captureId: string, sourceId: s
  * saving then hits the cache immediately, rather than re-deriving. This is
  * a real, intentional side effect (a recipe cache file, not config.json).
  *
- * The Anthropic API key is resolved fresh, inside this handler, via
- * `readEnvVar()` — same discipline every other LLM-calling action in this
- * file already follows.
+ * The LLM credential is resolved fresh, inside this handler, via
+ * `resolveLlmCredential()` (both api-key and claude-code-harness modes
+ * work — llm-provider-harness epic, custom-llm-source-credential-migration
+ * story; this used to be a raw `readEnvVar(PROVIDER_API_KEY_VARS.anthropic)`
+ * read, requiring an Anthropic key regardless of the configured credential
+ * mode) — same discipline every other LLM-calling action in this file
+ * already follows.
  */
 export async function testCustomSourceExtractionAction(
   sourceId: string,
@@ -315,9 +319,9 @@ export async function testCustomSourceExtractionAction(
   customAuth: "none" | "browser-session",
   sessionStatePath: string | undefined,
 ): Promise<ActionResult<{ count: number; titles: string[] }>> {
-  const apiKey = readEnvVar(PROVIDER_API_KEY_VARS.anthropic);
-  if (!apiKey) {
-    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  const credential = resolveLlmCredential();
+  if (!credential) {
+    return actionErr(new Error(MISSING_CREDENTIAL_ERROR));
   }
   if (!sourceId) {
     return actionErr(new Error("gigradar config: give this custom source a name before testing extraction."));
@@ -339,7 +343,7 @@ export async function testCustomSourceExtractionAction(
   };
 
   try {
-    const gigs = await customLlmSource.fetch(cfg, testProfile, apiKey);
+    const gigs = await customLlmSource.fetch(cfg, testProfile, credential);
     return actionOk({ count: gigs.length, titles: gigs.slice(0, 5).map((g) => g.title) });
   } catch (e) {
     return actionErr(e);
@@ -393,20 +397,6 @@ export async function setLlmApiKeyAction(formData: FormData): Promise<ActionResu
   }
   return setEnvVar(PROVIDER_API_KEY_VARS[provider], apiKey.trim());
 }
-
-/**
- * Specific, field-naming error returned when no Anthropic API key is set —
- * per this story's acceptance criteria, NEVER a generic SDK/auth error
- * bubbling up from `customLlmSource.fetch()`'s own `Anthropic` client
- * construction. Used ONLY by `testCustomSourceExtractionAction()` below —
- * that action stays on the raw-`apiKey`-only path (see its own doc
- * comment and `runner.ts`'s `Source.fetch()` interface boundary), so its
- * error message deliberately still names "Anthropic API key" specifically,
- * not the more general "Anthropic credential" wording `MISSING_CREDENTIAL_ERROR`
- * uses for the actions that DO support oauth-token mode.
- */
-const MISSING_API_KEY_ERROR =
-  'gigradar profile ingestion: no Anthropic API key is set. Enter one in the "Anthropic credential" field above and save it, then try again.';
 
 /**
  * Specific error returned when no LLM credential (API key OR oauth token)

@@ -421,7 +421,7 @@ describe("write tools: propose then approve, no exceptions", () => {
     endChatSession("w7");
   });
 
-  it("run_scan: approval calls the REAL runRadar() with the config and BYOK apiKey", async () => {
+  it("run_scan: approval calls the REAL runRadar() with the config and the full credential", async () => {
     runRadarMock.mockResolvedValue({ results: [{}], passed: [{}], errors: [], newlyInsertedKeys: [] });
     mockCreate
       .mockResolvedValueOnce(fakeToolUseResponse("run_scan", {}))
@@ -432,7 +432,7 @@ describe("write tools: propose then approve, no exceptions", () => {
     const result = await resolveApproval("w8", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
     expect(result).toEqual({ type: "message", text: "Scan done." });
-    expect(runRadarMock).toHaveBeenCalledWith(FAKE_CONFIG, {}, { anthropicApiKey: "fake-api-key" });
+    expect(runRadarMock).toHaveBeenCalledWith(FAKE_CONFIG, {}, { credential: { kind: "api-key", provider: "anthropic", value: "fake-api-key" } });
     endChatSession("w8");
   });
 

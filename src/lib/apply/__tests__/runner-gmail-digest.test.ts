@@ -7,8 +7,10 @@
 // file's only job is proving the actual end-to-end wiring: a source id
 // with NO hand-written adapter and NO registerSource() call still
 // produces real gigs when runRadar() is called, purely via config
-// (`kind: "gmail-digest"`). `@anthropic-ai/sdk` and Gmail's REST API
-// (global.fetch) are both mocked -- no live network, no real OAuth token.
+// (`kind: "gmail-digest"`). The LLM (via the Vercel AI SDK,
+// llm-provider-harness's custom-llm-source-credential-migration story) and
+// Gmail's REST API (global.fetch) are both mocked -- no live network, no
+// real OAuth token.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,13 +19,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeDb, getDb } from "../../store/index.js";
 import type { Config } from "../../types.js";
 
-const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
-vi.mock("@anthropic-ai/sdk", () => {
-  class FakeAnthropic {
-    messages = { create: mockCreate };
-  }
-  return { default: FakeAnthropic };
+const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel } = vi.hoisted(() => {
+  const mockAnthropicModel = vi.fn((modelId: string) => ({ modelId, provider: "anthropic" }));
+  return {
+    mockGenerateText: vi.fn(),
+    mockCreateAnthropic: vi.fn(() => mockAnthropicModel),
+    mockAnthropicModel,
+  };
 });
+
+vi.mock("ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("ai")>();
+  return { ...actual, generateText: mockGenerateText };
+});
+
+vi.mock("@ai-sdk/anthropic", () => ({ createAnthropic: mockCreateAnthropic }));
 
 const getValidAccessTokenMock = vi.fn();
 vi.mock("../../auth/oauth2.js", () => ({
@@ -31,6 +41,8 @@ vi.mock("../../auth/oauth2.js", () => ({
 }));
 
 import { runRadar } from "../runner.js";
+
+const FAKE_CREDENTIAL = { kind: "api-key" as const, provider: "anthropic" as const, value: "fake-api-key" };
 
 function base64url(s: string): string {
   return Buffer.from(s, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -52,7 +64,7 @@ function setUpFakeGmailAndAnthropic(listings: Array<{ title: string; url: string
   });
   global.fetch = fetchMock as unknown as typeof fetch;
 
-  mockCreate.mockResolvedValue({ content: [{ type: "tool_use", id: "t1", name: "report_digest_listings", input: { listings } }] });
+  mockGenerateText.mockResolvedValue({ output: { listings } });
 }
 
 let tmpDir: string;
@@ -64,7 +76,9 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-runner-gmail-digest-test-"));
   dbPath = path.join(tmpDir, "gigs.db");
   db = getDb({ path: dbPath });
-  mockCreate.mockReset();
+  mockGenerateText.mockReset();
+  mockCreateAnthropic.mockClear();
+  mockAnthropicModel.mockClear();
   getValidAccessTokenMock.mockReset();
   originalFetch = global.fetch;
 });
@@ -94,7 +108,7 @@ describe('runRadar(): kind:"gmail-digest" routing fallback', () => {
   it("fetches real gigs for an id with NO registerSource() call at all, purely via config", async () => {
     setUpFakeGmailAndAnthropic([{ title: "Fractional CTO", url: "https://linkedin.com/jobs/1" }]);
 
-    const result = await runRadar(makeConfig(), { db }, { anthropicApiKey: "fake-api-key" });
+    const result = await runRadar(makeConfig(), { db }, { credential: FAKE_CREDENTIAL });
 
     expect(result.errors).toEqual([]);
     expect(result.results).toHaveLength(1);
@@ -105,7 +119,7 @@ describe('runRadar(): kind:"gmail-digest" routing fallback', () => {
   it("reports a per-source error (never a thrown exception out of runRadar itself) when the token is invalid/missing", async () => {
     getValidAccessTokenMock.mockRejectedValue(new Error("gigradar oauth2: no gmail connection found for source \"gmail-digest\""));
 
-    const result = await runRadar(makeConfig(), { db }, { anthropicApiKey: "fake-api-key" });
+    const result = await runRadar(makeConfig(), { db }, { credential: FAKE_CREDENTIAL });
 
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]?.sourceId).toBe("gmail-digest");

@@ -443,19 +443,16 @@ function withSessionStatePathRaw(rawSources: unknown, sourceId: string, sessionS
  * follows. `entry` is mutated directly for the two capture tools that
  * set/clear `entry.activeCapture`.
  *
- * `RUN_SCAN_TOOL` deliberately still passes `credential.value` as a raw
- * string (`runOpts.anthropicApiKey`) -- that option threads through
- * `runRadar()` into `Source.fetch()`, a PUBLIC plugin interface (any
- * third-party Source implementation may read it), which this
- * llm-provider-harness epic slice does NOT touch (see design-discussion.md
- * §3.4 "explicitly deferred boundary"). The find pipeline's own
- * custom-llm-source.ts/gmail-digest-source.ts still construct
- * `new Anthropic({apiKey})` directly, unmigrated -- scans specifically
- * still require an Anthropic "api-key" credential until that
- * public-interface question gets its own deliberate slice, not silently
- * patched here. A non-Anthropic-api-key or claude-code-harness credential
- * throws a clear error naming this gap rather than forwarding the wrong
- * value.
+ * `RUN_SCAN_TOOL` passes the whole `credential` through as `runOpts.credential`
+ * -- that option threads through `runRadar()` into `Source.fetch()`, a
+ * PUBLIC plugin interface (any third-party Source implementation may read
+ * it). Previously restricted to an Anthropic "api-key" credential only
+ * (custom-llm-source.ts/gmail-digest-source.ts constructed
+ * `new Anthropic({apiKey})` directly); llm-provider-harness's
+ * custom-llm-source-credential-migration story migrated both to
+ * `createAiSdkModel()`/`generateHarnessObject()`, so this no longer needs
+ * its own restriction -- every credential kind `Source.fetch()` itself
+ * accepts now reaches a real scan here too.
  */
 async function executeWriteTool(tool: string, input: Record<string, unknown>, credential: LlmCredential, config: Config, entry: LoopEntry): Promise<string> {
   if (tool === UPDATE_GIG_STATUS_TOOL) {
@@ -484,12 +481,7 @@ async function executeWriteTool(tool: string, input: Record<string, unknown>, cr
   }
 
   if (tool === RUN_SCAN_TOOL) {
-    if (credential.kind !== "api-key" || credential.provider !== "anthropic") {
-      throw new Error(
-        "run_scan: the find/scan pipeline's custom-LLM-source extraction still requires an Anthropic api-key credential — it hasn't been migrated to other providers or claude-code-harness mode yet.",
-      );
-    }
-    const result = await runRadar(config, {}, { anthropicApiKey: credential.value });
+    const result = await runRadar(config, {}, { credential });
     return `Scan complete: ${result.results.length} gig(s) found, ${result.passed.length} passed the gate, ${result.errors.length} source error(s).`;
   }
 

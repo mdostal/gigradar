@@ -1,4 +1,5 @@
 import type { Gig, SourceConfig, Profile } from "../types.js";
+import type { LlmCredential } from "../config/env-store.js";
 
 /**
  * The plugin contract every source implements. Add a platform by implementing
@@ -23,16 +24,20 @@ export interface Source {
    * where the source exposes it. Throw on auth failure so the runner can
    * report "needs login" instead of silently returning zero.
    *
-   * `apiKey`: an optional trailing parameter (llm-custom-sources epic) —
+   * `credential`: an optional trailing parameter (llm-custom-sources epic;
+   * widened from a raw `apiKey?: string` by llm-provider-harness's
+   * custom-llm-source-credential-migration story, so BOTH api-key
+   * multi-provider mode AND claude-code-harness mode reach real scanning) —
    * every hand-written adapter ignores it (TS structural typing already
    * allows an implementation to declare fewer parameters than the
    * interface, so none of them need to change). Only `customLlmSource`
-   * (src/lib/sources/custom-llm-source.ts) reads it, to construct its own
-   * Anthropic client — resolved by the CALLER (runner.ts), never
-   * module-scope, same discipline `stageApplication()`'s own `apiKey`
+   * (src/lib/sources/custom-llm-source.ts) and `gmailDigestSource`
+   * (src/lib/sources/gmail-digest-source.ts) read it, to construct their
+   * own LLM client — resolved by the CALLER (runner.ts), never
+   * module-scope, same discipline `stageApplication()`'s own `credential`
    * parameter already established.
    */
-  fetch(cfg: SourceConfig, profile: Profile, apiKey?: string): Promise<Gig[]>;
+  fetch(cfg: SourceConfig, profile: Profile, credential?: LlmCredential): Promise<Gig[]>;
 }
 
 const registry = new Map<string, Source>();
