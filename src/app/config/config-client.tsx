@@ -1405,8 +1405,18 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
     const hint = typeof settings.hint === "string" ? settings.hint : undefined;
     const customAuth = settings.customAuth === "browser-session" ? "browser-session" : "none";
     const sessionStatePath = typeof settings.sessionStatePath === "string" ? settings.sessionStatePath : undefined;
+    // A found bug, live-verified against a real browser-session preset
+    // (Gun.io) in a real installed build: this preview action's synthetic
+    // SourceConfig never included allowedOrigins at all, so
+    // resolveAllowedOrigins() (origins.ts) always rejected it with "no
+    // origin allowlist registered" for ANY preset relying on
+    // settings.allowedOrigins (every non-hand-written-adapter
+    // browser-session source: Indeed, Catalant, Gun.io, Shiny) — the
+    // static SOURCE_ORIGINS registry lookup it falls back to only covers
+    // gofractional.ts/ateam.ts/wellfound.ts's own hand-written ids.
+    const allowedOrigins = Array.isArray(settings.allowedOrigins) && settings.allowedOrigins.every((o) => typeof o === "string") ? (settings.allowedOrigins as string[]) : undefined;
 
-    const result = await testCustomSourceExtractionAction(source.id, url, hint, customAuth, sessionStatePath);
+    const result = await testCustomSourceExtractionAction(source.id, url, hint, customAuth, sessionStatePath, allowedOrigins);
     if (!result.ok) {
       setTestExtractionState((prev) => ({ ...prev, [i]: { status: "error", message: result.error } }));
       return;

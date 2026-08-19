@@ -105,6 +105,36 @@ describe("testCustomSourceExtractionAction: success", () => {
     const [cfg] = fetchMock.mock.calls[0] as [SourceConfig];
     expect(cfg.settings).toEqual({ url: "https://example.com/jobs", customAuth: "browser-session" });
   });
+
+  it("includes allowedOrigins in settings when customAuth is browser-session and allowedOrigins is given -- a found, live-verified bug: this preview action used to never pass it through at all, so resolveAllowedOrigins() rejected EVERY browser-session preset that relies on settings.allowedOrigins (Indeed/Catalant/Gun.io/Shiny), regardless of what was actually saved", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-fake-test-key");
+    fetchMock.mockResolvedValue([]);
+
+    await testCustomSourceExtractionAction("gun-io", "https://app.gun.io/", undefined, "browser-session", "/fake/gun-io-session.json", ["gun.io"]);
+
+    const [cfg] = fetchMock.mock.calls[0] as [SourceConfig];
+    expect(cfg.settings).toEqual({ url: "https://app.gun.io/", customAuth: "browser-session", sessionStatePath: "/fake/gun-io-session.json", allowedOrigins: ["gun.io"] });
+  });
+
+  it("omits allowedOrigins from settings when customAuth is browser-session but allowedOrigins is not given", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-fake-test-key");
+    fetchMock.mockResolvedValue([]);
+
+    await testCustomSourceExtractionAction("monster", "https://example.com/jobs", undefined, "browser-session", undefined, undefined);
+
+    const [cfg] = fetchMock.mock.calls[0] as [SourceConfig];
+    expect(cfg.settings).not.toHaveProperty("allowedOrigins");
+  });
+
+  it("never includes allowedOrigins in settings when customAuth is \"none\", even if allowedOrigins is somehow passed", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "sk-ant-fake-test-key");
+    fetchMock.mockResolvedValue([]);
+
+    await testCustomSourceExtractionAction("monster", "https://example.com/jobs", undefined, "none", undefined, ["example.com"]);
+
+    const [cfg] = fetchMock.mock.calls[0] as [SourceConfig];
+    expect(cfg.settings).toEqual({ url: "https://example.com/jobs" });
+  });
 });
 
 describe("testCustomSourceExtractionAction: validation and failure", () => {

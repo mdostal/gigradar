@@ -311,6 +311,14 @@ export async function checkCaptureReadinessAction(captureId: string, sourceId: s
  * read, requiring an Anthropic key regardless of the configured credential
  * mode) — same discipline every other LLM-calling action in this file
  * already follows.
+ *
+ * `allowedOrigins` (a found bug, live-verified against a real
+ * browser-session preset in a real installed build): this synthetic
+ * preview `SourceConfig` used to never carry it at all, so
+ * `resolveAllowedOrigins()` (origins.ts) always rejected ANY preset
+ * relying on `settings.allowedOrigins` (every non-hand-written-adapter
+ * browser-session source — Indeed, Catalant, Gun.io, Shiny) with "no
+ * origin allowlist registered", regardless of what was actually saved.
  */
 export async function testCustomSourceExtractionAction(
   sourceId: string,
@@ -318,6 +326,7 @@ export async function testCustomSourceExtractionAction(
   hint: string | undefined,
   customAuth: "none" | "browser-session",
   sessionStatePath: string | undefined,
+  allowedOrigins?: string[],
 ): Promise<ActionResult<{ count: number; titles: string[] }>> {
   const credential = resolveLlmCredential();
   if (!credential) {
@@ -338,7 +347,11 @@ export async function testCustomSourceExtractionAction(
     settings: {
       url,
       ...(hint && { hint }),
-      ...(customAuth === "browser-session" && { customAuth, ...(sessionStatePath && { sessionStatePath }) }),
+      ...(customAuth === "browser-session" && {
+        customAuth,
+        ...(sessionStatePath && { sessionStatePath }),
+        ...(allowedOrigins && allowedOrigins.length > 0 && { allowedOrigins }),
+      }),
     },
   };
 
