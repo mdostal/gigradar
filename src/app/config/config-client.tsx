@@ -322,11 +322,40 @@ function draftNumber(value: string): number | string {
   return value.trim() !== "" && !Number.isNaN(n) ? n : value;
 }
 
+/**
+ * `allowedOrigins` is the one settings field that's a real array, not a
+ * string (see source-presets.ts's `allowedOrigins: ["gun.io"]` etc.) —
+ * `settingsToPairs()` above JSON.stringifies it for display
+ * (`'["gun.io"]'`), so this reverses exactly that encoding on the way
+ * back, rather than leaving it as a literal string `resolveAllowedOrigins()`
+ * (origins.ts) can never treat as an array. A found bug, live-verified via
+ * real Capture Login (llm-provider-harness/gun-io-source-preset epic): every
+ * `browser-session` preset (Indeed, Catalant, Gun.io) added through "Add
+ * from a preset" silently broke Capture Login with a "no origin allowlist
+ * registered" error the moment its settings round-tripped through this
+ * editor, since the encode side (JSON.stringify) never had a matching
+ * decode side. A manually-typed, non-JSON value falls through to the
+ * literal string unchanged — resolveAllowedOrigins() then correctly
+ * treats it as "no array configured", same behavior as before this fix.
+ */
+function parseAllowedOrigins(value: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((o) => typeof o === "string") ? parsed : value;
+  } catch {
+    return value;
+  }
+}
+
 function pairsToSettings(pairs: SettingPair[]): Record<string, unknown> | undefined {
   const nonBlankPairs = pairs.filter((p) => p.key.trim() !== "");
   if (nonBlankPairs.length === 0) return undefined;
   const settings: Record<string, unknown> = {};
-  for (const p of nonBlankPairs) settings[p.key] = p.value; // literal string — never resolved
+  for (const p of nonBlankPairs) {
+    // literal string — never resolved — EXCEPT allowedOrigins, see
+    // parseAllowedOrigins()'s own comment above for why.
+    settings[p.key] = p.key === "allowedOrigins" ? parseAllowedOrigins(p.value) : p.value;
+  }
   return settings;
 }
 
