@@ -55,6 +55,14 @@
 //     the settings.url is a best-effort placeholder (the real in-app URL
 //     can only be discovered by actually logging in), same
 //     pending-live-verification caveat as Catalant's own entry above.
+//   - Shiny (useshiny.com): same shape again -- confirmed by direct
+//     research (live `curl`, not assumed): useshiny.com/jobs 404s (a stale
+//     URL -- the site's own marketing pages link nowhere but a sign-in/
+//     sign-up CTA at app.useshiny.com), and app.useshiny.com is a real
+//     authenticated SPA (no-cache/x-frame-options headers, not a static
+//     marketing response). customAuth defaults to "browser-session"; the
+//     settings.url is a best-effort placeholder pending live Capture Login
+//     verification, same caveat as Catalant/Gun.io above.
 //
 // `suggestsGmailDigest` flags presets whose platform typically notifies
 // application status/interview invites by email -- consumed by
@@ -152,6 +160,22 @@ export const SOURCE_PRESETS: SourcePreset[] = [
       customAuth: "browser-session",
       loginUrl: "https://app.gun.io/sign-up/",
       allowedOrigins: ["gun.io"],
+    },
+  },
+  {
+    id: "shiny",
+    label: "Shiny",
+    description: "A fractional-executive matching platform -- entirely login-gated, like Catalant/Gun.io.",
+    settings: {
+      url: "https://app.useshiny.com/",
+      hint:
+        "Shiny's authenticated dashboard, reachable after logging in at app.useshiny.com/sign-in/. Look for a " +
+        "jobs/opportunities/matches area listing engagements matched to this account -- each card typically has " +
+        "a title, client/company description, and often a rate or engagement-length indicator. Use each card's " +
+        "own detail-page url as the extracted Gig's url, not this dashboard url.",
+      customAuth: "browser-session",
+      loginUrl: "https://app.useshiny.com/sign-in/",
+      allowedOrigins: ["useshiny.com"],
     },
   },
   {
