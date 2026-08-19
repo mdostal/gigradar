@@ -4,11 +4,13 @@
 // readRecipe/writeRecipe/extractWithRecipe/deriveRecipeAndExtract) is
 // mocked here and tested in its own dedicated file
 // (custom-source-recipe.test.ts). `playwright` is mocked (no real browser);
-// `@anthropic-ai/sdk` is never even imported by this file, since this file
-// never calls it directly.
+// no LLM SDK is ever imported by this file, since this file never calls
+// one directly.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Gig, Profile, SourceConfig } from "../../types.js";
 import type { CustomSourceRecipe } from "../custom-source-recipe.js";
+
+const FAKE_CREDENTIAL = { kind: "api-key" as const, provider: "anthropic" as const, value: "fake-api-key" };
 
 const launchMock = vi.fn();
 vi.mock("playwright", () => ({
@@ -76,7 +78,7 @@ describe("customLlmSource.fetch: settings.url", () => {
   it("throws a specific, actionable error (before ever launching a browser) when settings.url is missing", async () => {
     const cfg: SourceConfig = { id: "monster", enabled: true, kind: "custom-llm", settings: {} };
 
-    await expect(customLlmSource.fetch(cfg, PROFILE, "fake-api-key")).rejects.toThrow(/missing settings\.url/);
+    await expect(customLlmSource.fetch(cfg, PROFILE, FAKE_CREDENTIAL)).rejects.toThrow(/missing settings\.url/);
     expect(launchMock).not.toHaveBeenCalled();
   });
 
@@ -85,7 +87,7 @@ describe("customLlmSource.fetch: settings.url", () => {
     readRecipeMock.mockReturnValue(FAKE_RECIPE);
     extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
 
-    await customLlmSource.fetch(customSourceCfg({ url: "https://example.com/truck-jobs" }), PROFILE, "fake-api-key");
+    await customLlmSource.fetch(customSourceCfg({ url: "https://example.com/truck-jobs" }), PROFILE, FAKE_CREDENTIAL);
 
     expect(page.goto).toHaveBeenCalledWith("https://example.com/truck-jobs");
   });
@@ -97,7 +99,7 @@ describe("customLlmSource.fetch: cache-hit fast path (no LLM derivation)", () =>
     readRecipeMock.mockReturnValue(FAKE_RECIPE);
     extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
 
-    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key");
+    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, FAKE_CREDENTIAL);
 
     expect(gigs).toBe(FAKE_GIGS);
     expect(extractWithRecipeMock).toHaveBeenCalledWith(expect.anything(), "monster", FAKE_RECIPE);
@@ -105,7 +107,7 @@ describe("customLlmSource.fetch: cache-hit fast path (no LLM derivation)", () =>
     expect(writeRecipeMock).not.toHaveBeenCalled();
   });
 
-  it("succeeds via the cached recipe even with NO apiKey supplied -- the key is only needed on the LLM-derivation fallback", async () => {
+  it("succeeds via the cached recipe even with NO credential supplied -- one is only needed on the LLM-derivation fallback", async () => {
     setUpFakeBrowser();
     readRecipeMock.mockReturnValue(FAKE_RECIPE);
     extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
@@ -123,10 +125,10 @@ describe("customLlmSource.fetch: cache-miss / stale-recipe fallback to LLM deriv
     readRecipeMock.mockReturnValue(undefined);
     deriveRecipeAndExtractMock.mockResolvedValue({ gigs: FAKE_GIGS, recipe: FAKE_RECIPE });
 
-    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key");
+    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, FAKE_CREDENTIAL);
 
     expect(extractWithRecipeMock).not.toHaveBeenCalled();
-    expect(deriveRecipeAndExtractMock).toHaveBeenCalledWith(expect.anything(), "monster", undefined, "fake-api-key");
+    expect(deriveRecipeAndExtractMock).toHaveBeenCalledWith(expect.anything(), "monster", undefined, FAKE_CREDENTIAL);
     expect(writeRecipeMock).toHaveBeenCalledWith("monster", FAKE_RECIPE);
     expect(gigs).toBe(FAKE_GIGS);
   });
@@ -138,7 +140,7 @@ describe("customLlmSource.fetch: cache-miss / stale-recipe fallback to LLM deriv
     const freshRecipe: CustomSourceRecipe = { ...FAKE_RECIPE, listItemSelector: ".new-card-class" };
     deriveRecipeAndExtractMock.mockResolvedValue({ gigs: FAKE_GIGS, recipe: freshRecipe });
 
-    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key");
+    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, FAKE_CREDENTIAL);
 
     expect(deriveRecipeAndExtractMock).toHaveBeenCalled();
     expect(writeRecipeMock).toHaveBeenCalledWith("monster", freshRecipe);
@@ -150,16 +152,16 @@ describe("customLlmSource.fetch: cache-miss / stale-recipe fallback to LLM deriv
     readRecipeMock.mockReturnValue(undefined);
     deriveRecipeAndExtractMock.mockResolvedValue({ gigs: FAKE_GIGS, recipe: FAKE_RECIPE });
 
-    await customLlmSource.fetch(customSourceCfg({ hint: "this is a truck-driving jobs board" }), PROFILE, "fake-api-key");
+    await customLlmSource.fetch(customSourceCfg({ hint: "this is a truck-driving jobs board" }), PROFILE, FAKE_CREDENTIAL);
 
-    expect(deriveRecipeAndExtractMock).toHaveBeenCalledWith(expect.anything(), "monster", "this is a truck-driving jobs board", "fake-api-key");
+    expect(deriveRecipeAndExtractMock).toHaveBeenCalledWith(expect.anything(), "monster", "this is a truck-driving jobs board", FAKE_CREDENTIAL);
   });
 
-  it("throws a specific error and never calls deriveRecipeAndExtract() when apiKey is missing and there's no usable cached recipe", async () => {
+  it("throws a specific error and never calls deriveRecipeAndExtract() when credential is missing and there's no usable cached recipe", async () => {
     setUpFakeBrowser();
     readRecipeMock.mockReturnValue(undefined);
 
-    await expect(customLlmSource.fetch(customSourceCfg(), PROFILE, undefined)).rejects.toThrow(/no Anthropic API key was supplied/);
+    await expect(customLlmSource.fetch(customSourceCfg(), PROFILE, undefined)).rejects.toThrow(/no LLM credential was supplied/);
     expect(deriveRecipeAndExtractMock).not.toHaveBeenCalled();
   });
 });
@@ -170,7 +172,7 @@ describe("customLlmSource.fetch: headless chromium.launch(), closed on every exi
     readRecipeMock.mockReturnValue(FAKE_RECIPE);
     extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
 
-    await customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key");
+    await customLlmSource.fetch(customSourceCfg(), PROFILE, FAKE_CREDENTIAL);
 
     expect(launchMock).toHaveBeenCalledWith({ headless: true });
   });
@@ -180,7 +182,7 @@ describe("customLlmSource.fetch: headless chromium.launch(), closed on every exi
     readRecipeMock.mockReturnValue(undefined);
     deriveRecipeAndExtractMock.mockRejectedValue(new Error("simulated derivation failure"));
 
-    await expect(customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key")).rejects.toThrow("simulated derivation failure");
+    await expect(customLlmSource.fetch(customSourceCfg(), PROFILE, FAKE_CREDENTIAL)).rejects.toThrow("simulated derivation failure");
 
     expect(browser.close).toHaveBeenCalledTimes(1);
   });
@@ -197,7 +199,7 @@ describe("customLlmSource.fetch: pagination is delegated to followPagination()",
     ];
     followPaginationMock.mockResolvedValue(paginatedGigs);
 
-    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key");
+    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, FAKE_CREDENTIAL);
 
     expect(followPaginationMock).toHaveBeenCalledWith(expect.anything(), "monster", FAKE_RECIPE, FAKE_GIGS);
     expect(gigs).toBe(paginatedGigs);
@@ -208,7 +210,7 @@ describe("customLlmSource.fetch: pagination is delegated to followPagination()",
     readRecipeMock.mockReturnValue(undefined);
     deriveRecipeAndExtractMock.mockResolvedValue({ gigs: FAKE_GIGS, recipe: FAKE_RECIPE });
 
-    await customLlmSource.fetch(customSourceCfg(), PROFILE, "fake-api-key");
+    await customLlmSource.fetch(customSourceCfg(), PROFILE, FAKE_CREDENTIAL);
 
     expect(followPaginationMock).toHaveBeenCalledWith(expect.anything(), "monster", FAKE_RECIPE, FAKE_GIGS);
   });
@@ -227,7 +229,7 @@ describe("customLlmSource.fetch: settings.customAuth === \"browser-session\"", (
   it("routes to withBrowserSession() instead of chromium.launch(), with the resolved allowedOrigins/sessionStatePath/sessionBackend", async () => {
     withBrowserSessionMock.mockResolvedValue(FAKE_GIGS);
 
-    const gigs = await customLlmSource.fetch(authedCfg(), PROFILE, "fake-api-key");
+    const gigs = await customLlmSource.fetch(authedCfg(), PROFILE, FAKE_CREDENTIAL);
 
     expect(launchMock).not.toHaveBeenCalled();
     expect(withBrowserSessionMock).toHaveBeenCalledTimes(1);
@@ -243,7 +245,7 @@ describe("customLlmSource.fetch: settings.customAuth === \"browser-session\"", (
   it("isAuthenticated always resolves true -- no source-specific auth-failure check exists for an arbitrary custom site", async () => {
     withBrowserSessionMock.mockResolvedValue(FAKE_GIGS);
 
-    await customLlmSource.fetch(authedCfg(), PROFILE, "fake-api-key");
+    await customLlmSource.fetch(authedCfg(), PROFILE, FAKE_CREDENTIAL);
 
     const [options] = withBrowserSessionMock.mock.calls[0] as [{ isAuthenticated: () => Promise<boolean> }, unknown];
     await expect(options.isAuthenticated()).resolves.toBe(true);
@@ -252,7 +254,7 @@ describe("customLlmSource.fetch: settings.customAuth === \"browser-session\"", (
   it("passes sessionBackend:\"portunus\" through when settings.sessionBackend is portunus", async () => {
     withBrowserSessionMock.mockResolvedValue(FAKE_GIGS);
 
-    await customLlmSource.fetch(authedCfg({ sessionBackend: "portunus" }), PROFILE, "fake-api-key");
+    await customLlmSource.fetch(authedCfg({ sessionBackend: "portunus" }), PROFILE, FAKE_CREDENTIAL);
 
     const [options] = withBrowserSessionMock.mock.calls[0] as [Record<string, unknown>, unknown];
     expect(options.sessionBackend).toBe("portunus");
@@ -261,14 +263,14 @@ describe("customLlmSource.fetch: settings.customAuth === \"browser-session\"", (
   it("throws a specific error (before calling withBrowserSession()) when settings.sessionStatePath is missing", async () => {
     const cfg = customSourceCfg({ customAuth: "browser-session", allowedOrigins: ["monster.com"] });
 
-    await expect(customLlmSource.fetch(cfg, PROFILE, "fake-api-key")).rejects.toThrow(/missing settings\.sessionStatePath/);
+    await expect(customLlmSource.fetch(cfg, PROFILE, FAKE_CREDENTIAL)).rejects.toThrow(/missing settings\.sessionStatePath/);
     expect(withBrowserSessionMock).not.toHaveBeenCalled();
   });
 
   it("throws a specific error (before calling withBrowserSession()) when there's no allowedOrigins from either the static registry or settings", async () => {
     const cfg = customSourceCfg({ customAuth: "browser-session", sessionStatePath: "/fake/monster-session.json" });
 
-    await expect(customLlmSource.fetch(cfg, PROFILE, "fake-api-key")).rejects.toThrow(/no origin allowlist registered/);
+    await expect(customLlmSource.fetch(cfg, PROFILE, FAKE_CREDENTIAL)).rejects.toThrow(/no origin allowlist registered/);
     expect(withBrowserSessionMock).not.toHaveBeenCalled();
   });
 
@@ -277,7 +279,7 @@ describe("customLlmSource.fetch: settings.customAuth === \"browser-session\"", (
     readRecipeMock.mockReturnValue(FAKE_RECIPE);
     extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
 
-    const gigs = await customLlmSource.fetch(authedCfg(), PROFILE, "fake-api-key");
+    const gigs = await customLlmSource.fetch(authedCfg(), PROFILE, FAKE_CREDENTIAL);
 
     expect(extractWithRecipeMock).toHaveBeenCalledWith({ fakePage: true }, "monster", FAKE_RECIPE);
     expect(gigs).toBe(FAKE_GIGS);

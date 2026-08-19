@@ -1,5 +1,5 @@
 import type { Config, DraftContent, Gig, MatchResult } from "../types.js";
-import type { LlmCredential } from "../config/env-store.js";
+import { resolveLlmCredential, type LlmCredential } from "../config/env-store.js";
 import { getSource } from "../sources/source.js";
 import { VerificationChallengeError } from "../sources/verification-challenge.js";
 import { customLlmSource } from "../sources/custom-llm-source.js";
@@ -29,18 +29,21 @@ import { generateDraft } from "./draft.js";
  * `storeOpts` forwards straight to recordScan() (db/now overrides) — tests
  * use it to point at a temp database instead of the process-wide default.
  *
- * `runOpts.anthropicApiKey` (llm-custom-sources epic): forwarded as
- * `fetch()`'s optional 3rd argument to EVERY source uniformly — every
- * hand-written adapter ignores it (see source.ts's `fetch()` doc comment);
- * only `kind: "custom-llm"` sources (routed to `customLlmSource` below)
- * read it. Resolved by the CALLER (CLI `main()`/the scheduler), never
- * module-scope — same discipline `stageApplication()`'s own `apiKey`
- * parameter already established.
+ * `runOpts.credential` (llm-custom-sources epic; widened from a raw
+ * `anthropicApiKey` string by llm-provider-harness's
+ * custom-llm-source-credential-migration story): forwarded as `fetch()`'s
+ * optional 3rd argument to EVERY source uniformly — every hand-written
+ * adapter ignores it (see source.ts's `fetch()` doc comment); only
+ * `kind: "custom-llm"`/`kind: "gmail-digest"` sources (routed to
+ * `customLlmSource`/`gmailDigestSource` below) read it. Resolved by the
+ * CALLER (CLI `main()`/the scheduler/agent-chat-loop.ts's run_scan tool),
+ * never module-scope — same discipline `stageApplication()`'s own
+ * `credential` parameter already established.
  */
 export async function runRadar(
   config: Config,
   storeOpts: RecordScanOptions = {},
-  runOpts: { anthropicApiKey?: string } = {},
+  runOpts: { credential?: LlmCredential } = {},
 ): Promise<{
   results: MatchResult[];
   passed: MatchResult[];
@@ -81,7 +84,7 @@ export async function runRadar(
     if (!src) { errors.push({ sourceId: sc.id, message: "no such registered source" }); continue; }
     let gigs: Gig[] = [];
     try {
-      gigs = await src.fetch(sc, config.profile, runOpts.anthropicApiKey);
+      gigs = await src.fetch(sc, config.profile, runOpts.credential);
     } catch (e) {
       // A source that needs login throws — report it, don't fake zero results.
       // Crucially: do NOT push a batch for it either, so recordScan can tell
@@ -225,7 +228,7 @@ async function main(): Promise<void> {
   ]);
 
   const config = loadConfig();
-  const { passed, errors } = await runRadar(config, {}, { anthropicApiKey: process.env.ANTHROPIC_API_KEY });
+  const { passed, errors } = await runRadar(config, {}, { credential: resolveLlmCredential() });
 
   if (errors.length > 0) {
     console.error(`gigradar: ${errors.length} source(s) errored:`);

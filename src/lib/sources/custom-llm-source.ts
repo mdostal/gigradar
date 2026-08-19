@@ -56,6 +56,7 @@ import { deriveRecipeAndExtract, extractWithRecipe, followPagination, readRecipe
 import { withBrowserSession } from "../auth/browser-session.js";
 import { sessionBackendFrom } from "../auth/session-backend.js";
 import { resolveAllowedOrigins } from "./origins.js";
+import type { LlmCredential } from "../config/env-store.js";
 
 const MODULE_PREFIX = "gigradar custom-llm-source";
 
@@ -94,31 +95,31 @@ function sessionStatePathFrom(cfg: SourceConfig): string {
  * The cache-then-fallback extraction shared by both browser-acquisition
  * paths below: try `readRecipe()`'s cached recipe via `extractWithRecipe()`
  * first (zero LLM calls); on a cache miss or a stale recipe (`null`), fall
- * back to `deriveRecipeAndExtract()` and overwrite the cache. `apiKey` is
- * only required on the fallback path — checked there, not earlier, so a
- * source with a still-valid cached recipe keeps working even if the key is
- * temporarily unset/invalid.
+ * back to `deriveRecipeAndExtract()` and overwrite the cache. `credential`
+ * is only required on the fallback path — checked there, not earlier, so a
+ * source with a still-valid cached recipe keeps working even if no
+ * credential is currently resolvable.
  *
  * Either path's first-page result is then run through
  * `followPagination()` (custom-source-recipe-pagination story) — a no-op
  * when the recipe has no `nextPageSelector`, so this is additive and never
  * changes single-page-source behavior.
  */
-async function extractViaRecipeOrDerive(page: Page, cfg: SourceConfig, hint: string | undefined, apiKey: string | undefined): Promise<Gig[]> {
+async function extractViaRecipeOrDerive(page: Page, cfg: SourceConfig, hint: string | undefined, credential: LlmCredential | undefined): Promise<Gig[]> {
   const cached = readRecipe(cfg.id);
   if (cached) {
     const viaRecipe = await extractWithRecipe(page, cfg.id, cached);
     if (viaRecipe) return followPagination(page, cfg.id, cached, viaRecipe);
   }
 
-  if (!apiKey) {
+  if (!credential) {
     throw new Error(
-      `${MODULE_PREFIX}: source "${cfg.id}" is a custom LLM source but no Anthropic API key was supplied. ` +
+      `${MODULE_PREFIX}: source "${cfg.id}" is a custom LLM source but no LLM credential was supplied. ` +
         "Set one in Config before scanning.",
     );
   }
 
-  const { gigs, recipe } = await deriveRecipeAndExtract(page, cfg.id, hint, apiKey);
+  const { gigs, recipe } = await deriveRecipeAndExtract(page, cfg.id, hint, credential);
   writeRecipe(cfg.id, recipe);
   return followPagination(page, cfg.id, recipe, gigs);
 }
@@ -135,7 +136,7 @@ export const customLlmSource: Source = {
   id: "custom-llm",
   label: "Custom (LLM)",
   auth: "none",
-  async fetch(cfg: SourceConfig, _profile: Profile, apiKey?: string): Promise<Gig[]> {
+  async fetch(cfg: SourceConfig, _profile: Profile, credential?: LlmCredential): Promise<Gig[]> {
     const url = urlFrom(cfg);
     const hint = hintFrom(cfg);
 
@@ -158,7 +159,7 @@ export const customLlmSource: Source = {
           url,
           isAuthenticated: async () => true,
         },
-        (page) => extractViaRecipeOrDerive(page, cfg, hint, apiKey),
+        (page) => extractViaRecipeOrDerive(page, cfg, hint, credential),
       );
     }
 
@@ -166,7 +167,7 @@ export const customLlmSource: Source = {
     try {
       const page = await browser.newPage();
       await page.goto(url);
-      return await extractViaRecipeOrDerive(page, cfg, hint, apiKey);
+      return await extractViaRecipeOrDerive(page, cfg, hint, credential);
     } finally {
       await browser.close();
     }
