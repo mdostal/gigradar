@@ -34,7 +34,7 @@ import { z } from "zod";
 import { loadResume } from "../documents/resume-store.js";
 import { buildResumeContentBlock } from "../profile-ingestion/extract.js";
 import type { ApplyProfileConfig, Gig, Profile } from "../types.js";
-import { createAiSdkModel } from "../config/llm-client.js";
+import { createAiSdkModel, generateHarnessObject, toHarnessContentBlocks } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 import { buildApplicantDataBlock, buildGigDataBlock } from "./draft.js";
 
@@ -167,22 +167,27 @@ export async function generatePrepPacket(
     { type: "text", text: `Now report the complete result via the ${PREP_TOOL_NAME} structured output.` },
   ];
 
-  const model = createAiSdkModel(credential);
-
-  const result = await generateText({
-    model,
-    messages: [{ role: "user", content: contentBlocks }],
-    output: Output.object({ schema: PrepResultSchema, name: PREP_TOOL_NAME }),
-  });
-
   let parsed: z.infer<typeof PrepResultSchema>;
-  try {
-    parsed = result.output;
-  } catch (e) {
-    if (e instanceof NoOutputGeneratedError) {
-      throw new Error("gigradar career-crm: the model's response did not include the expected structured prep-packet result.");
+
+  if (credential.kind === "claude-code-harness") {
+    parsed = await generateHarnessObject(PrepResultSchema, toHarnessContentBlocks(contentBlocks));
+  } else {
+    const model = createAiSdkModel(credential);
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: contentBlocks }],
+      output: Output.object({ schema: PrepResultSchema, name: PREP_TOOL_NAME }),
+    });
+
+    try {
+      parsed = result.output;
+    } catch (e) {
+      if (e instanceof NoOutputGeneratedError) {
+        throw new Error("gigradar career-crm: the model's response did not include the expected structured prep-packet result.");
+      }
+      throw e;
     }
-    throw e;
   }
 
   return {

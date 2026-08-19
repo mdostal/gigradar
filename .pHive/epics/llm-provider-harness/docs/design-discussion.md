@@ -256,27 +256,42 @@ instruction.
 
 ## 4. Real open questions (not resolved by research — flagged honestly, not guessed)
 
-1. **Does `query()` itself expose a structured-output-forcing mechanism**
-   equivalent to the raw CLI's `--json-schema`, or does harness-mode
-   forced-JSON have to rely on the single-allowed-tool trick verified in
-   §2.3 point 4 (restrict `allowedTools` to one tool + a directive
-   prompt)? Not verified either way — needs a real test before Slice B
-   below is scoped in detail.
-2. **Does harness mode support a genuine pause-for-human-approval gate**
-   the way the AI SDK's `toolApproval` does, or only `canUseTool`'s
-   allow/deny-at-call-time model (T3 Code's usage, §2.2)? `canUseTool` can
-   likely be made to pause+resume by not resolving its promise until an
-   external event fires, but that's a design choice this epic needs to
-   make deliberately, not assume works identically to the AI SDK's native
-   state machine.
-3. **Where does `pathToClaudeCodeExecutable` get resolved from in a
-   packaged (Electron/Tauri) build**, not just this dev machine — needs
-   the same kind of PATH-resolution care the port-hardcoding fix earlier
-   this session required.
-4. **Behavior when the `claude` CLI isn't installed or isn't
-   authenticated** in harness mode — must be a clear, actionable error
-   (this codebase's standing "flag, don't silently fail" discipline), not
-   yet designed in detail.
+1. **RESOLVED (Slice C spike, live-verified).** `query()` exposes a real
+   structured-output-forcing mechanism: `options.outputFormat: {type:
+   "json_schema", schema}`, read off the final `result`-type message's
+   `structured_output` field — no single-allowed-tool trick needed. One
+   real gotcha found and fixed: `zod` v4's `z.toJSONSchema()` always
+   includes a top-level `"$schema"` meta key, which the `claude` CLI's own
+   `--json-schema` validator rejects outright; `generateHarnessObject()`
+   (`src/lib/config/llm-client.ts`) strips it before passing the schema
+   through. The same mechanism accepts either a plain string prompt or a
+   one-shot async-generator `SDKUserMessage` carrying real Anthropic-shaped
+   content blocks (including a `{type:"document", source:{...}}` block for
+   native PDF input) — live-verified both shapes, so Slice C's single
+   `generateHarnessObject()` function covers every single-shot call site,
+   PDF-attachment ones included.
+2. **Still open — deferred to Slice D.** Does harness mode support a
+   genuine pause-for-human-approval gate the way the AI SDK's
+   `toolApproval` does, or only `canUseTool`'s allow/deny-at-call-time
+   model (T3 Code's usage, §2.2)? Not touched by Slice C, which is
+   single-shot/forced-structured-output only — no tool-use loop involved.
+3. **Partially resolved.** Live-verified on this dev machine that omitting
+   `pathToClaudeCodeExecutable` entirely still resolves and authenticates
+   correctly — the SDK's own built-in resolution finds and uses the local
+   `claude` CLI, simpler and more portable than hardcoding a path. NOT yet
+   verified inside an actual packaged Tauri/Electron `.app` bundle — if the
+   SDK's default resolution logic ever doesn't hold there (e.g. `claude`
+   not on the bundled app's PATH), that's a real, still-open gap. Revisit
+   if it's hit in practice.
+4. **Partially addressed.** `generateHarnessObject()` wraps every failure
+   mode — the query throwing (CLI not installed/not authenticated), no
+   result message received, an error result, or a missing
+   `structured_output` field — in a specific `HarnessQueryError` with an
+   actionable message ("is the claude CLI installed and authenticated?"),
+   never a raw, unexplained exception. NOT yet live-tested against a real
+   "claude CLI genuinely not installed" machine state (only unit-tested via
+   a mocked `query()` throw) — the actual CLI-uninstalled UX is still
+   unverified in practice.
 
 ## 5. Scale assessment
 

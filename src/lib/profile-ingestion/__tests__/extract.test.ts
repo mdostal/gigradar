@@ -9,7 +9,7 @@ import type { FilePart, TextPart } from "ai";
 // construction (llm-provider-harness epic). vi.hoisted() so
 // mockGenerateText/mockCreateAnthropic exist before vi.mock()'s factory
 // (which vitest hoists above these imports) runs.
-const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel, mockDnsLookup } = vi.hoisted(() => {
+const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel, mockDnsLookup, mockGenerateHarnessObject } = vi.hoisted(() => {
   const mockAnthropicModel = vi.fn((modelId: string) => ({ modelId, provider: "anthropic" }));
   return {
     mockGenerateText: vi.fn(),
@@ -23,6 +23,7 @@ const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel, mockDnsLookup
     // override this per-call to simulate a hostname resolving to a blocked
     // range. NEVER hits a real resolver -- fully hermetic.
     mockDnsLookup: vi.fn(),
+    mockGenerateHarnessObject: vi.fn(),
   };
 });
 
@@ -36,6 +37,11 @@ vi.mock("@ai-sdk/anthropic", () => ({ createAnthropic: mockCreateAnthropic }));
 vi.mock("node:dns", () => ({
   lookup: mockDnsLookup,
 }));
+
+vi.mock("../../config/llm-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/llm-client.js")>();
+  return { ...actual, generateHarnessObject: mockGenerateHarnessObject };
+});
 
 import { NoOutputGeneratedError } from "ai";
 
@@ -56,6 +62,7 @@ beforeEach(() => {
   mockAnthropicModel.mockClear();
   mockFetch.mockReset();
   mockDnsLookup.mockReset();
+  mockGenerateHarnessObject.mockReset();
   mockDnsLookup.mockImplementation((_hostname: string, _options: unknown, callback: DnsCallback) => {
     callback(null, [SAFE_PUBLIC_ADDRESS]);
   });
@@ -313,6 +320,34 @@ describe("extractProfile: partial link failure never fails the overall call", ()
     mockGenerateText.mockResolvedValueOnce(fakeExtractResult(["Engineer"], ["Rust"]));
 
     const result = await extractProfile({ resumeText: "resume content here", links: ["https://unreachable.example"] }, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain("https://unreachable.example");
+    expect(result.roles).toEqual(["Engineer"]);
+    expect(result.skills).toEqual(["Rust"]);
+  });
+});
+
+describe("extractProfile: claude-code-harness credential routes to generateHarnessObject, never the AI SDK", () => {
+  it("calls generateHarnessObject with harness-shaped content blocks and merges the result with warnings, never touching createAnthropic/generateText", async () => {
+    mockGenerateHarnessObject.mockResolvedValueOnce({ roles: ["Fractional CTO"], skills: ["TypeScript"] });
+
+    const result = await extractProfile({ resumeText: "Jane Doe — 10 years building backend systems." }, { kind: "claude-code-harness" });
+
+    expect(result).toEqual({ roles: ["Fractional CTO"], skills: ["TypeScript"], warnings: [] });
+    expect(mockGenerateHarnessObject).toHaveBeenCalledTimes(1);
+    expect(mockCreateAnthropic).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+
+    const [, content] = mockGenerateHarnessObject.mock.calls[0] as [unknown, Array<{ type: string; text?: string }>];
+    expect(content.some((b) => b.type === "text" && b.text?.includes("Jane Doe — 10 years building backend systems."))).toBe(true);
+  });
+
+  it("preserves warnings from link-fetch failures alongside the harness-mode extraction result", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("network unreachable"));
+    mockGenerateHarnessObject.mockResolvedValueOnce({ roles: ["Engineer"], skills: ["Rust"] });
+
+    const result = await extractProfile({ resumeText: "resume content here", links: ["https://unreachable.example"] }, { kind: "claude-code-harness" });
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("https://unreachable.example");

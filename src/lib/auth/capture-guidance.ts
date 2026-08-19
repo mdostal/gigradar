@@ -27,7 +27,7 @@
 import { NoOutputGeneratedError, Output, generateText } from "ai";
 import { z } from "zod";
 import type { Page } from "playwright";
-import { createAiSdkModel } from "../config/llm-client.js";
+import { createAiSdkModel, generateHarnessObject } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 
 const READINESS_TOOL_NAME = "report_capture_readiness";
@@ -85,6 +85,10 @@ export async function checkCaptureReadiness(page: Page, sourceId: string, creden
     buildPageSnapshotBlock(snapshot),
     "Now report your assessment via the structured output.",
   ].join("\n\n");
+
+  if (credential.kind === "claude-code-harness") {
+    return generateHarnessObject(ReadinessResultSchema, prompt);
+  }
 
   const model = createAiSdkModel(credential);
 

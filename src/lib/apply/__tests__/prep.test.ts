@@ -9,12 +9,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FilePart, TextPart } from "ai";
 import type { ApplyProfileConfig, Gig, Profile } from "../../types.js";
 
-const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel } = vi.hoisted(() => {
+const { mockGenerateText, mockCreateAnthropic, mockAnthropicModel, mockGenerateHarnessObject } = vi.hoisted(() => {
   const mockAnthropicModel = vi.fn((modelId: string) => ({ modelId, provider: "anthropic" }));
   return {
     mockGenerateText: vi.fn(),
     mockCreateAnthropic: vi.fn(() => mockAnthropicModel),
     mockAnthropicModel,
+    mockGenerateHarnessObject: vi.fn(),
   };
 });
 
@@ -24,6 +25,11 @@ vi.mock("ai", async (importOriginal) => {
 });
 
 vi.mock("@ai-sdk/anthropic", () => ({ createAnthropic: mockCreateAnthropic }));
+
+vi.mock("../../config/llm-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/llm-client.js")>();
+  return { ...actual, generateHarnessObject: mockGenerateHarnessObject };
+});
 
 import { NoOutputGeneratedError } from "ai";
 import { generatePrepPacket, type PrepPacketContent } from "../prep.js";
@@ -51,6 +57,7 @@ beforeEach(() => {
   mockGenerateText.mockReset();
   mockCreateAnthropic.mockClear();
   mockAnthropicModel.mockClear();
+  mockGenerateHarnessObject.mockReset();
   mockGenerateText.mockResolvedValue(fakePrepResult(FULL_PACKET));
 });
 
@@ -63,6 +70,12 @@ function fakePrepResult(content: PrepPacketContent) {
   const { atsScore, ...rest } = content;
   const flatOutput = { ...rest, ...atsScore };
   return { output: flatOutput };
+}
+
+/** Same flat shape as fakePrepResult()'s .output, for mocking generateHarnessObject()'s direct return (no {output} wrapper). */
+function flatPrepResult(content: PrepPacketContent) {
+  const { atsScore, ...rest } = content;
+  return { ...rest, ...atsScore };
 }
 
 function messageContentSentToLLM(): Array<TextPart | FilePart> {
@@ -121,6 +134,22 @@ describe("generatePrepPacket: structured output", () => {
   it("works with an undefined applyProfile (not every user has one configured)", async () => {
     const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, undefined, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
     expect(result).toEqual(FULL_PACKET);
+  });
+});
+
+describe("generatePrepPacket: claude-code-harness credential routes to generateHarnessObject, never the AI SDK", () => {
+  it("calls generateHarnessObject with harness-shaped content blocks and returns the same PrepPacketContent shape, never touching createAnthropic/generateText", async () => {
+    mockGenerateHarnessObject.mockResolvedValueOnce(flatPrepResult(FULL_PACKET));
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "claude-code-harness" });
+
+    expect(result).toEqual(FULL_PACKET);
+    expect(mockGenerateHarnessObject).toHaveBeenCalledTimes(1);
+    expect(mockCreateAnthropic).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+
+    const [, content] = mockGenerateHarnessObject.mock.calls[0] as [unknown, Array<{ type: string; text?: string }>];
+    expect(content.some((b) => b.type === "text" && b.text?.includes(REAL_GIG.title))).toBe(true);
   });
 });
 
