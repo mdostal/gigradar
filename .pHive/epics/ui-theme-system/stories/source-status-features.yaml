@@ -1,0 +1,28 @@
+id: source-status-features
+epic: ui-theme-system
+title: Session-health note on Connected badges + inline Run login capture on Needs-login badges
+status: complete
+complexity: medium
+methodology: classic
+depends_on: [theme-architecture-and-radar]
+
+description: |
+  Two universal (theme-independent) feature additions to the Config
+  Sources login-status badge, per the design swarm synthesis: a
+  session-health note on Connected badges (structured cross-reference
+  against open Issues by context.sourceId, not a fragile keyword match on
+  issue message text), and an inline "Run login capture" button on
+  Needs-login badges (reuses the existing handleStartCapture handler).
+
+acceptance_criteria:
+  - "Given a source shows \"Connected\" and has an open issue (context.sourceId matches), when viewing /config, then a secondary note \"Has an open issue — see Issues\" appears next to the badge."
+  - "Given a source shows \"Needs login\", when viewing /config, then an inline \"Run login capture\" button appears next to the badge, wired to the same capture flow as the existing CaptureLoginControl section."
+  - "npm test and npx tsc --noEmit both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/page.tsx
+      purpose: Computes sourcesWithOpenIssues via listIssues({open:true}) cross-referenced by context.sourceId
+    - path: src/app/config/config-client.tsx
+      purpose: SourceStatusBadge renders the note + inline button, wired to existing handleStartCapture

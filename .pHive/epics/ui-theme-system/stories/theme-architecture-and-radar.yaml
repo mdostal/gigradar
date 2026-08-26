@@ -1,7 +1,7 @@
 id: theme-architecture-and-radar
 epic: ui-theme-system
 title: Token-driven theme architecture, Config.uiTheme, ThemePicker, radar theme (default)
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: []

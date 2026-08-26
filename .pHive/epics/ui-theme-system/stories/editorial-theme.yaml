@@ -1,0 +1,23 @@
+id: editorial-theme
+epic: ui-theme-system
+title: Editorial "the ledger" theme, selectable
+status: complete
+complexity: medium
+methodology: classic
+depends_on: [theme-architecture-and-radar]
+
+description: |
+  Additive theme file (src/app/themes/editorial.css), token values pulled
+  directly from the verified swarm mockup. Light-first (unlike radar's
+  dark-first), matching the mockup's own default -- each theme keeps its
+  own light/dark convention rather than being forced into a shared one.
+
+acceptance_criteria:
+  - "Given Config.uiTheme:\"editorial\" is saved, when the app renders, then data-theme=\"editorial\" is stamped on <html> and the editorial palette/typography applies."
+  - "Tier and status colors remain theme-invariant -- unchanged from radar's values."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/themes/editorial.css
+      purpose: New theme file, same [data-theme="..."] structure as radar.css

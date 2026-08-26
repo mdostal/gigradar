@@ -1,0 +1,22 @@
+id: terminal-theme
+epic: ui-theme-system
+title: Terminal/tmux theme, selectable
+status: complete
+complexity: medium
+methodology: classic
+depends_on: [theme-architecture-and-radar]
+
+description: |
+  Additive theme file (src/app/themes/terminal.css), token values pulled
+  directly from the verified swarm mockup. Light-first, matching the
+  mockup's own default.
+
+acceptance_criteria:
+  - "Given Config.uiTheme:\"terminal\" is saved, when the app renders, then data-theme=\"terminal\" is stamped on <html> and the terminal palette/typography applies."
+  - "Tier and status colors remain theme-invariant -- unchanged from radar's values."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/themes/terminal.css
+      purpose: New theme file, same [data-theme="..."] structure as radar.css
