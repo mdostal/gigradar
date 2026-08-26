@@ -236,15 +236,47 @@ function showsCaptureLogin(source: DraftSource): boolean {
  * checkSessionReadiness() (session-readiness.ts), computed server-side in
  * page.tsx — this component only renders it, never re-derives it
  * client-side.
+ *
+ * ui-theme-system epic, source-status-features story, two additions:
+ * - `hasOpenIssue` shows a lighter secondary note under a "Connected"
+ *   badge ("Has an open issue — see Issues") rather than presuming to
+ *   diagnose the specific cause from the issue's message text (see
+ *   design-discussion.md §3c for why a keyword match was rejected).
+ * - `onStartCapture` renders an inline "Run login capture" button
+ *   directly on a "Needs login" row, wired to the SAME handleStartCapture
+ *   handler the fuller CaptureLoginControl section below already uses —
+ *   a shortcut, not a second capture mechanism.
  */
-function SourceStatusBadge({ source, readiness }: { source: DraftSource; readiness: SessionReadiness | undefined }) {
+function SourceStatusBadge({
+  source,
+  readiness,
+  hasOpenIssue,
+  onStartCapture,
+}: {
+  source: DraftSource;
+  readiness: SessionReadiness | undefined;
+  hasOpenIssue: boolean;
+  onStartCapture: () => void;
+}) {
   if (!showsCaptureLogin(source)) {
     return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-theme-text-dim">No login needed</span>;
   }
   if (readiness === "connected") {
-    return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Connected</span>;
+    return (
+      <span className="flex items-center gap-1.5">
+        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Connected</span>
+        {hasOpenIssue && <span className="text-xs text-amber-700">Has an open issue — see Issues</span>}
+      </span>
+    );
   }
-  return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Needs login</span>;
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Needs login</span>
+      <button type="button" onClick={onStartCapture} className="text-xs font-medium text-theme-accent hover:underline">
+        Run login capture
+      </button>
+    </span>
+  );
 }
 
 function sourceToDraft(source: SourceConfig): DraftSource {
@@ -1275,11 +1307,14 @@ export function ConfigClient({
   initial,
   portunusAvailable,
   sessionReadiness,
+  sourcesWithOpenIssues: sourcesWithOpenIssuesList,
 }: {
   initial: Config;
   portunusAvailable: boolean;
   sessionReadiness: Record<string, SessionReadiness>;
+  sourcesWithOpenIssues: string[];
 }) {
+  const sourcesWithOpenIssues = new Set(sourcesWithOpenIssuesList);
   const [draft, setDraft] = useState<DraftConfig>(() => configToDraft(initial));
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -1984,7 +2019,12 @@ export function ConfigClient({
                     </select>
                   )}
                 </label>
-                <SourceStatusBadge source={source} readiness={sessionReadiness[source.id]} />
+                <SourceStatusBadge
+                  source={source}
+                  readiness={sessionReadiness[source.id]}
+                  hasOpenIssue={sourcesWithOpenIssues.has(source.id)}
+                  onStartCapture={() => handleStartCapture(i, source.id)}
+                />
                 <CheckboxField
                   label="Enabled"
                   checked={source.enabled}
