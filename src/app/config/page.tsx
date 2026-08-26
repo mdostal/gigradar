@@ -2,6 +2,7 @@ import { isPortunusAvailable } from "@/lib/auth/session-backend";
 import { checkSessionReadiness, type SessionReadiness } from "@/lib/auth/session-readiness";
 import { ConfigSchema } from "@/lib/config/schema";
 import { readRawConfig } from "@/lib/config/save";
+import { listIssues } from "@/lib/notify/issues";
 import type { Config } from "@/lib/types";
 import { ConfigClient } from "./config-client";
 
@@ -75,6 +76,19 @@ export default async function ConfigPage() {
     sessionReadiness[source.id] = await checkSessionReadiness(source);
   }
 
+  // ui-theme-system epic, source-status-features story: a "Connected"
+  // badge shows a lighter secondary note when its source has an open
+  // issue -- NOT a keyword-match on the issue's message text (rejected in
+  // design-discussion.md §3c: "session expired" string-matching would
+  // misfire on an unrelated network blip). Structured match on the
+  // issue's own context.sourceId field instead, which raiseIssue() already
+  // sets for every source-scoped issue (see src/lib/notify/issues.ts).
+  const sourcesWithOpenIssues = new Set(
+    listIssues({ open: true })
+      .map((issue) => issue.context?.sourceId)
+      .filter((id): id is string => typeof id === "string"),
+  );
+
   let subtitle: string;
   if (!configExists) {
     subtitle = "No config.json found yet — fill in the form below to create one (first-run setup).";
@@ -87,9 +101,14 @@ export default async function ConfigPage() {
 
   return (
     <main className="mx-auto max-w-4xl p-6">
-      <h1 className="text-2xl font-bold tracking-tight text-slate-900">Configure gigradar</h1>
-      <p className="text-sm text-slate-500">{subtitle}</p>
-      <ConfigClient initial={initial} portunusAvailable={portunusAvailable} sessionReadiness={sessionReadiness} />
+      <h1 className="text-2xl font-bold tracking-tight text-theme-text">Configure gigradar</h1>
+      <p className="text-sm text-theme-text-dim">{subtitle}</p>
+      <ConfigClient
+        initial={initial}
+        portunusAvailable={portunusAvailable}
+        sessionReadiness={sessionReadiness}
+        sourcesWithOpenIssues={[...sourcesWithOpenIssues]}
+      />
     </main>
   );
 }

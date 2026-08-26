@@ -19,8 +19,8 @@ export default function IssuesPage() {
 
   return (
     <main className="mx-auto max-w-4xl p-6">
-      <h1 className="text-2xl font-bold tracking-tight text-slate-900">Issues</h1>
-      <p className="text-sm text-slate-500">
+      <h1 className="text-2xl font-bold tracking-tight text-theme-text">Issues</h1>
+      <p className="text-sm text-theme-text-dim">
         {open.length === 0 ? "Nothing needs attention right now." : `${open.length} open issue${open.length === 1 ? "" : "s"}.`}
       </p>
       <IssuesClient open={open} resolved={resolved} />

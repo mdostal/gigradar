@@ -4,6 +4,7 @@ import { type ChangeEvent, type FormEvent, useEffect, useState, useTransition } 
 import { APP_ICONS, DEFAULT_APP_ICON_ID } from "@/lib/app-icons";
 import type { SessionReadiness } from "@/lib/auth/session-readiness";
 import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
+import { DEFAULT_UI_THEME, UI_THEMES, type UiThemeId } from "@/lib/ui-theme";
 import type { ConfigEdits } from "@/lib/config/save";
 import { mergeDedupe } from "@/lib/profile-ingestion/merge";
 import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
@@ -188,6 +189,8 @@ interface DraftConfig {
   autoFire: DraftAutoFire;
   /** An `APP_ICONS` id (src/lib/app-icons.ts) — like autoDraftOnScan/notifyOnGreenMatch, always sent as-is, no enabled-flag tri-state needed (it always has a value, defaulting to DEFAULT_APP_ICON_ID). */
   appIcon: string;
+  /** ui-theme-system epic — like appIcon, always has a value, defaulting to DEFAULT_UI_THEME. */
+  uiTheme: UiThemeId;
   /** llm-provider-harness epic — like appIcon, always has a value (defaulting to "api-key"), no enabled-flag tri-state needed. */
   llmCredentialKind: "api-key" | "claude-code-harness";
   /** llm-provider-harness epic — which provider api-key mode uses, always has a value (defaulting to "anthropic"). */
@@ -233,15 +236,47 @@ function showsCaptureLogin(source: DraftSource): boolean {
  * checkSessionReadiness() (session-readiness.ts), computed server-side in
  * page.tsx — this component only renders it, never re-derives it
  * client-side.
+ *
+ * ui-theme-system epic, source-status-features story, two additions:
+ * - `hasOpenIssue` shows a lighter secondary note under a "Connected"
+ *   badge ("Has an open issue — see Issues") rather than presuming to
+ *   diagnose the specific cause from the issue's message text (see
+ *   design-discussion.md §3c for why a keyword match was rejected).
+ * - `onStartCapture` renders an inline "Run login capture" button
+ *   directly on a "Needs login" row, wired to the SAME handleStartCapture
+ *   handler the fuller CaptureLoginControl section below already uses —
+ *   a shortcut, not a second capture mechanism.
  */
-function SourceStatusBadge({ source, readiness }: { source: DraftSource; readiness: SessionReadiness | undefined }) {
+function SourceStatusBadge({
+  source,
+  readiness,
+  hasOpenIssue,
+  onStartCapture,
+}: {
+  source: DraftSource;
+  readiness: SessionReadiness | undefined;
+  hasOpenIssue: boolean;
+  onStartCapture: () => void;
+}) {
   if (!showsCaptureLogin(source)) {
-    return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">No login needed</span>;
+    return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-theme-text-dim">No login needed</span>;
   }
   if (readiness === "connected") {
-    return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Connected</span>;
+    return (
+      <span className="flex items-center gap-1.5">
+        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Connected</span>
+        {hasOpenIssue && <span className="text-xs text-amber-700">Has an open issue — see Issues</span>}
+      </span>
+    );
   }
-  return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Needs login</span>;
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Needs login</span>
+      <button type="button" onClick={onStartCapture} className="text-xs font-medium text-theme-accent hover:underline">
+        Run login capture
+      </button>
+    </span>
+  );
 }
 
 function sourceToDraft(source: SourceConfig): DraftSource {
@@ -291,6 +326,7 @@ function configToDraft(config: Config): DraftConfig {
     autoDraftOnScan: config.autoDraftOnScan ?? false,
     notifyOnGreenMatch: config.notifyOnGreenMatch ?? false,
     appIcon: config.appIcon ?? DEFAULT_APP_ICON_ID,
+    uiTheme: config.uiTheme ?? DEFAULT_UI_THEME,
     llmCredentialKind: config.llmCredentialKind ?? "api-key",
     llmProvider: config.llmProvider ?? "anthropic",
     autoFire: {
@@ -468,6 +504,7 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
   edits.autoDraftOnScan = draft.autoDraftOnScan;
   edits.notifyOnGreenMatch = draft.notifyOnGreenMatch;
   edits.appIcon = draft.appIcon;
+  edits.uiTheme = draft.uiTheme;
   edits.llmCredentialKind = draft.llmCredentialKind;
   edits.llmProvider = draft.llmProvider;
 
@@ -567,7 +604,7 @@ function upsertSettingPair(pairs: SettingPair[], key: string, value: string): Se
 }
 
 const captureButtonClass =
-  "rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50";
+  "rounded-md border border-theme-surface-border px-3 py-1.5 text-xs font-medium text-theme-text transition-colors hover:bg-theme-surface-raised disabled:opacity-50";
 
 /**
  * Renders one source row's capture control: the "Capture login" button in
@@ -689,9 +726,9 @@ type RemoveResumeUIState = { status: "idle" } | { status: "removing" } | { statu
 // ---------------------------------------------------------------------------
 
 const inputClass =
-  "w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:outline-none";
-const labelClass = "block text-sm font-medium text-slate-700";
-const sectionClass = "rounded-lg border border-slate-200 bg-white p-4";
+  "w-full rounded-md border border-theme-surface-border px-2 py-1.5 text-sm text-theme-text placeholder:text-theme-text-dim focus:border-slate-500 focus:outline-none";
+const labelClass = "block text-sm font-medium text-theme-text";
+const sectionClass = "rounded-lg border border-theme-surface-border bg-theme-surface p-4";
 
 /** llm-provider-harness epic — a plausible key-format hint per provider, shown as the API-key field's placeholder. */
 const PROVIDER_KEY_PLACEHOLDERS: Record<"anthropic" | "openai" | "google", string> = {
@@ -743,7 +780,7 @@ function StringListEditor({
         <button
           type="button"
           onClick={() => onChange([...values, ""])}
-          className="self-start text-xs font-medium text-slate-600 hover:underline"
+          className="self-start text-xs font-medium text-theme-text-dim hover:underline"
         >
           + Add
         </button>
@@ -791,7 +828,7 @@ function SettingsEditor({
   return (
     <div>
       <span className={labelClass}>Settings</span>
-      {hint?.note && <p className="mt-0.5 text-xs text-slate-500">{hint.note}</p>}
+      {hint?.note && <p className="mt-0.5 text-xs text-theme-text-dim">{hint.note}</p>}
       <div className="mt-1 flex flex-col gap-1.5">
         {pairs.map((pair, i) => (
           // eslint-disable-next-line react/no-array-index-key
@@ -828,7 +865,7 @@ function SettingsEditor({
         <button
           type="button"
           onClick={() => onChange([...pairs, { key: "", value: "" }])}
-          className="self-start text-xs font-medium text-slate-600 hover:underline"
+          className="self-start text-xs font-medium text-theme-text-dim hover:underline"
         >
           + Add setting
         </button>
@@ -863,7 +900,7 @@ function SessionBackendPicker({
   return (
     <div className="mt-2">
       <span className={labelClass}>Session vault</span>
-      <div className="mt-1 flex gap-4 text-sm text-slate-700">
+      <div className="mt-1 flex gap-4 text-sm text-theme-text">
         <label className="flex items-center gap-1.5">
           <input
             type="radio"
@@ -899,12 +936,12 @@ function CheckboxField({
   onChange: (next: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-1.5 text-sm text-slate-700">
+    <label className="flex items-center gap-1.5 text-sm text-theme-text">
       <input
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="h-4 w-4 rounded border-slate-300"
+        className="h-4 w-4 rounded border-theme-surface-border"
       />
       {label}
     </label>
@@ -934,12 +971,38 @@ function IconPicker({ value, onChange }: { value: string; onChange: (id: string)
             className={[
               "flex flex-col items-center gap-1.5 rounded-lg border p-2 text-center transition-colors",
               selected
-                ? "border-slate-900 bg-slate-50 ring-1 ring-slate-900"
-                : "border-slate-200 bg-white hover:border-slate-400",
+                ? "border-slate-900 bg-theme-surface-raised ring-1 ring-slate-900"
+                : "border-theme-surface-border bg-theme-surface hover:border-slate-400",
             ].join(" ")}
           >
             <img src={icon.path} alt="" width={48} height={48} className="rounded-md" />
-            <span className="text-xs font-medium text-slate-700">{icon.label}</span>
+            <span className="text-xs font-medium text-theme-text">{icon.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** ui-theme-system epic: picks Config.uiTheme -- same radiogroup pattern as IconPicker above, sibling in the Appearance section. Applies live via the data-theme attribute layout.tsx stamps server-side, so a saved change takes effect on next navigation like every other Config field. */
+function ThemePicker({ value, onChange }: { value: UiThemeId; onChange: (id: UiThemeId) => void }) {
+  return (
+    <div role="radiogroup" aria-label="UI theme" className="grid grid-cols-3 gap-3">
+      {UI_THEMES.map((theme) => {
+        const selected = theme.id === value;
+        return (
+          <button
+            key={theme.id}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(theme.id)}
+            className={[
+              "rounded-lg border p-3 text-center text-sm font-medium transition-colors",
+              selected ? "border-slate-900 bg-theme-surface-raised ring-1 ring-slate-900" : "border-theme-surface-border bg-theme-surface hover:border-slate-400 text-theme-text",
+            ].join(" ")}
+          >
+            {theme.label}
           </button>
         );
       })}
@@ -965,7 +1028,7 @@ function EngagementProfilesEditor({
   return (
     <div className="mt-3 flex flex-col gap-3">
       {profiles.map((p, i) => (
-        <div key={p.id} className="rounded-md border border-slate-200 p-3">
+        <div key={p.id} className="rounded-md border border-theme-surface-border p-3">
           <div className="flex items-end gap-3">
             <label className="flex-1">
               <span className={labelClass}>Profile label</span>
@@ -1007,7 +1070,7 @@ function EngagementProfilesEditor({
 
           <div className="mt-2 flex flex-wrap gap-3">
             {ALL_ENGAGEMENT_TYPES.map((t) => (
-              <label key={t} className="flex items-center gap-1.5 text-sm text-slate-700">
+              <label key={t} className="flex items-center gap-1.5 text-sm text-theme-text">
                 <input
                   type="checkbox"
                   checked={p.types.includes(t)}
@@ -1015,7 +1078,7 @@ function EngagementProfilesEditor({
                     const types = e.target.checked ? [...p.types, t] : p.types.filter((x) => x !== t);
                     onChange(profiles.map((pp, idx) => (idx === i ? { ...pp, types } : pp)));
                   }}
-                  className="h-4 w-4 rounded border-slate-300"
+                  className="h-4 w-4 rounded border-theme-surface-border"
                 />
                 {ENGAGEMENT_TYPE_LABEL[t]}
               </label>
@@ -1079,7 +1142,7 @@ function EngagementProfilesEditor({
       <button
         type="button"
         onClick={() => onChange([...profiles, defaultEngagementProfile()])}
-        className="self-start text-xs font-medium text-slate-600 hover:underline"
+        className="self-start text-xs font-medium text-theme-text-dim hover:underline"
       >
         + Add profile
       </button>
@@ -1126,7 +1189,7 @@ function AutoFireRulesEditor({
         const s = statusByIndex[i] ?? { status: "idle" };
         return (
           // eslint-disable-next-line react/no-array-index-key
-          <div key={i} className="rounded-md border border-slate-200 p-3">
+          <div key={i} className="rounded-md border border-theme-surface-border p-3">
             <div className="flex flex-wrap items-end gap-3">
               <label>
                 <span className={labelClass}>Source</span>
@@ -1196,7 +1259,7 @@ function AutoFireRulesEditor({
                 type="button"
                 onClick={() => checkStatus(i, r)}
                 disabled={r.sourceId.trim() === "" || s.status === "loading"}
-                className="text-xs font-medium text-slate-600 hover:underline disabled:opacity-50"
+                className="text-xs font-medium text-theme-text-dim hover:underline disabled:opacity-50"
               >
                 {s.status === "loading" ? "Checking…" : "Check status"}
               </button>
@@ -1205,7 +1268,7 @@ function AutoFireRulesEditor({
                   className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                     s.approvedCount >= minApprovals
                       ? "bg-green-100 text-green-800"
-                      : "bg-slate-100 text-slate-700"
+                      : "bg-slate-100 text-theme-text"
                   }`}
                 >
                   {s.approvedCount}/{r.minApprovals || 0} approved —{" "}
@@ -1220,7 +1283,7 @@ function AutoFireRulesEditor({
       <button
         type="button"
         onClick={() => onChange([...rules, defaultAutoFireRule()])}
-        className="self-start text-xs font-medium text-slate-600 hover:underline"
+        className="self-start text-xs font-medium text-theme-text-dim hover:underline"
       >
         + Add rule
       </button>
@@ -1244,11 +1307,14 @@ export function ConfigClient({
   initial,
   portunusAvailable,
   sessionReadiness,
+  sourcesWithOpenIssues: sourcesWithOpenIssuesList,
 }: {
   initial: Config;
   portunusAvailable: boolean;
   sessionReadiness: Record<string, SessionReadiness>;
+  sourcesWithOpenIssues: string[];
 }) {
+  const sourcesWithOpenIssues = new Set(sourcesWithOpenIssuesList);
   const [draft, setDraft] = useState<DraftConfig>(() => configToDraft(initial));
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -1617,7 +1683,7 @@ export function ConfigClient({
       )}
 
       <section className={sectionClass}>
-        <h2 className="text-lg font-semibold text-slate-900">Profile</h2>
+        <h2 className="text-lg font-semibold text-theme-text">Profile</h2>
         <div className="mt-3 flex flex-col gap-3">
           <label>
             <span className={labelClass}>Name</span>
@@ -1696,12 +1762,12 @@ export function ConfigClient({
             </div>
           )}
 
-          <div className="mt-2 border-t border-slate-200 pt-3">
+          <div className="mt-2 border-t border-theme-surface-border pt-3">
             <span className={labelClass}>LLM provider &amp; credential</span>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-theme-text-dim">
               This choice saves with this form&rsquo;s Save button below.
             </p>
-            <div className="mt-1 flex gap-4 text-sm text-slate-700">
+            <div className="mt-1 flex gap-4 text-sm text-theme-text">
               {(
                 [
                   { id: "api-key", label: "API key" },
@@ -1721,7 +1787,7 @@ export function ConfigClient({
             </div>
 
             {draft.llmCredentialKind === "claude-code-harness" ? (
-              <p className="mt-2 text-xs text-slate-500">
+              <p className="mt-2 text-xs text-theme-text-dim">
                 Uses your local, already-authenticated <code>claude</code> CLI (Claude Code) — no API key
                 needed here. Requires the <code>claude</code> CLI to be installed and signed in on this
                 machine (run <code>claude</code> once outside gigradar to check). No credential value is
@@ -1729,11 +1795,11 @@ export function ConfigClient({
               </p>
             ) : (
               <>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-theme-text-dim">
                   The API key itself writes directly to <code>.env</code> (encrypted at rest) — not{" "}
                   <code>config.json</code> — and saves immediately, separately from Save.
                 </p>
-                <div className="mt-1 flex gap-4 text-sm text-slate-700">
+                <div className="mt-1 flex gap-4 text-sm text-theme-text">
                   {(
                     [
                       { id: "anthropic", label: "Anthropic" },
@@ -1784,9 +1850,9 @@ export function ConfigClient({
             )}
           </div>
 
-          <div className="border-t border-slate-200 pt-3">
+          <div className="border-t border-theme-surface-border pt-3">
             <span className={labelClass}>Extract from resume/link</span>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-theme-text-dim">
               Sends the resume and/or link content to Anthropic&rsquo;s API using the key above. Extracted
               roles/skills are MERGED into the Roles/Skills fields above (existing entries are kept, never
               overwritten) — review and edit as needed, nothing is saved until you click &ldquo;Save
@@ -1796,7 +1862,7 @@ export function ConfigClient({
               in prep packets — without asking you to re-upload every time.
             </p>
             {draft.applyProfile.resumePath && (
-              <div className="mt-2 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              <div className="mt-2 flex items-center gap-2 rounded-md border border-theme-surface-border bg-theme-surface-raised px-3 py-2 text-xs text-theme-text">
                 <span role="status">Resume on file.</span>
                 <button
                   type="button"
@@ -1882,8 +1948,8 @@ export function ConfigClient({
       </section>
 
       <section className={sectionClass}>
-        <h2 className="text-lg font-semibold text-slate-900">Needs</h2>
-        <p className="text-xs text-slate-500">
+        <h2 className="text-lg font-semibold text-theme-text">Needs</h2>
+        <p className="text-xs text-theme-text-dim">
           At least one engagement profile is required — this is the gate's hard constraint set. A gig is checked
           against every profile whose engagement type it matches (a listing can clear more than one); each profile
           has its own rate floor, so e.g. a low-ball full-time salary can be excluded even while a good hourly
@@ -1908,11 +1974,11 @@ export function ConfigClient({
       </section>
 
       <section className={sectionClass}>
-        <h2 className="text-lg font-semibold text-slate-900">Sources</h2>
+        <h2 className="text-lg font-semibold text-theme-text">Sources</h2>
         <div className="mt-3 flex flex-col gap-4">
           {draft.sources.map((source, i) => (
             // eslint-disable-next-line react/no-array-index-key
-            <div key={i} className="rounded-md border border-slate-200 p-3">
+            <div key={i} className="rounded-md border border-theme-surface-border p-3">
               <div className="flex items-end gap-3">
                 <label className="flex-1">
                   <span className={labelClass}>Source</span>
@@ -1953,7 +2019,12 @@ export function ConfigClient({
                     </select>
                   )}
                 </label>
-                <SourceStatusBadge source={source} readiness={sessionReadiness[source.id]} />
+                <SourceStatusBadge
+                  source={source}
+                  readiness={sessionReadiness[source.id]}
+                  hasOpenIssue={sourcesWithOpenIssues.has(source.id)}
+                  onStartCapture={() => handleStartCapture(i, source.id)}
+                />
                 <CheckboxField
                   label="Enabled"
                   checked={source.enabled}
@@ -2031,7 +2102,7 @@ export function ConfigClient({
               )}
               {source.isGmailDigest && (
                 <div className="mt-2">
-                  <p className="text-xs text-slate-500">gigradar can only read your Gmail inbox — it can never send, delete, or modify anything.</p>
+                  <p className="text-xs text-theme-text-dim">gigradar can only read your Gmail inbox — it can never send, delete, or modify anything.</p>
                   {gmailConnectedSourceIds.has(source.id) ? (
                     <button
                       type="button"
@@ -2121,7 +2192,7 @@ export function ConfigClient({
             onClick={() =>
               setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, isCustom: false, isGmailDigest: false, settings: [] }] })
             }
-            className="self-start text-sm font-medium text-slate-600 hover:underline"
+            className="self-start text-sm font-medium text-theme-text-dim hover:underline"
           >
             + Add source (blank)
           </button>
@@ -2130,14 +2201,14 @@ export function ConfigClient({
 
       <section className={sectionClass}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">Role area (optional)</h2>
+          <h2 className="text-lg font-semibold text-theme-text">Role area (optional)</h2>
           <CheckboxField
             label="Configure role-area filtering"
             checked={draft.roleArea.enabled}
             onChange={(enabled) => setDraft({ ...draft, roleArea: { ...draft.roleArea, enabled } })}
           />
         </div>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-theme-text-dim">
           Left off, every gig tiers &quot;yellow&quot; — the do-nothing default, not an error.
         </p>
         <div className="mt-3 flex items-end gap-2">
@@ -2181,7 +2252,7 @@ export function ConfigClient({
       </section>
 
       <section className={sectionClass}>
-        <h2 className="text-lg font-semibold text-slate-900">Schedule (optional)</h2>
+        <h2 className="text-lg font-semibold text-theme-text">Schedule (optional)</h2>
         <label>
           <span className={labelClass}>Cron expression</span>
           <input
@@ -2192,7 +2263,7 @@ export function ConfigClient({
             className={inputClass}
           />
         </label>
-        <p className="mt-3 text-xs text-slate-500">
+        <p className="mt-3 text-xs text-theme-text-dim">
           Only take effect while the scheduler (<code>npm run scheduler</code>) is running.
         </p>
         <div className="mt-2 flex flex-col gap-2">
@@ -2211,14 +2282,14 @@ export function ConfigClient({
 
       <section className={sectionClass}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">Apply profile (optional)</h2>
+          <h2 className="text-lg font-semibold text-theme-text">Apply profile (optional)</h2>
           <CheckboxField
             label="Configure apply profile"
             checked={draft.applyProfile.enabled}
             onChange={(enabled) => setDraft({ ...draft, applyProfile: { ...draft.applyProfile, enabled } })}
           />
         </div>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-theme-text-dim">
           The apply-specific fields a real application form needs (beyond Profile above) — email, phone,
           LinkedIn, a short headline/bio, and a rate to anchor. Left off, drafting an application throws until
           this is configured. Encrypted at rest like every other field in <code>config.json</code>.
@@ -2299,7 +2370,7 @@ export function ConfigClient({
                 onChange={(links) => setDraft({ ...draft, applyProfile: { ...draft.applyProfile, links } })}
                 placeholder="https://github.com/yourhandle"
               />
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-theme-text-dim">
                 Included alongside your other applicant data whenever gigradar drafts an application or
                 generates a prep packet.
               </p>
@@ -2309,8 +2380,8 @@ export function ConfigClient({
       </section>
 
       <section className={sectionClass}>
-        <h2 className="text-lg font-semibold text-slate-900">Auto-fire (optional)</h2>
-        <p className="text-xs text-slate-500">
+        <h2 className="text-lg font-semibold text-theme-text">Auto-fire (optional)</h2>
+        <p className="text-xs text-theme-text-dim">
           Real, automatic application submission — off by default, and gated: a rule only ever fires once
           you&apos;ve manually approved at least its own <code>minApprovals</code> drafts for that exact
           source/tier pair. See docs/ARCHITECTURE.md for the full trust/decision-tree contract.
@@ -2331,8 +2402,8 @@ export function ConfigClient({
       </section>
 
       <section className={sectionClass}>
-        <h2 className="text-lg font-semibold text-slate-900">Appearance</h2>
-        <p className="text-xs text-slate-500">
+        <h2 className="text-lg font-semibold text-theme-text">Appearance</h2>
+        <p className="text-xs text-theme-text-dim">
           Sets the favicon and the small mark next to &quot;gigradar&quot; in the nav — cosmetic only, no
           functional effect. This is a per-install preference (whoever's config.json this is), not shared with
           anyone else running gigradar.
@@ -2340,18 +2411,23 @@ export function ConfigClient({
         <div className="mt-3">
           <IconPicker value={draft.appIcon} onChange={(appIcon) => setDraft({ ...draft, appIcon })} />
         </div>
-        <p className="mt-3 text-xs text-slate-500">
+        <p className="mt-3 text-xs text-theme-text-dim">
           Have an opinion, or an idea for another one?{" "}
           <a
             href="https://github.com/mdostal/gigradar/discussions/20"
             target="_blank"
             rel="noreferrer noopener"
-            className="underline hover:text-slate-700"
+            className="underline hover:text-theme-text"
           >
             Vote / suggest icons on GitHub Discussions
           </a>
           .
         </p>
+        <h3 className="mt-4 text-sm font-semibold text-theme-text">Theme</h3>
+        <p className="text-xs text-theme-text-dim">Which visual style to render the Dashboard, Config, and Issues pages in.</p>
+        <div className="mt-2">
+          <ThemePicker value={draft.uiTheme} onChange={(uiTheme) => setDraft({ ...draft, uiTheme })} />
+        </div>
       </section>
 
       <div>

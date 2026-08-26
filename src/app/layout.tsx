@@ -4,6 +4,7 @@ import "./globals.css";
 import { resolveAppIcon } from "@/lib/app-icons";
 import { readRawConfig } from "@/lib/config/save";
 import { listIssues } from "@/lib/notify/issues";
+import { resolveUiTheme } from "@/lib/ui-theme";
 import { issuesBadgeInfo } from "./issues-badge";
 import { NavHeader } from "./nav-header";
 
@@ -37,9 +38,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const openIssues = listIssues({ open: true });
   const raw = readRawConfig();
   const icon = resolveAppIcon(typeof raw.appIcon === "string" ? raw.appIcon : undefined);
+  const theme = resolveUiTheme(raw.uiTheme);
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-slate-50 text-slate-900 antialiased">
+    <html lang="en" data-theme={theme}>
+      <body className="theme-body min-h-screen antialiased">
         <NavHeader issuesBadge={issuesBadgeInfo(openIssues)} iconSrc={icon.path} />
         {children}
       </body>

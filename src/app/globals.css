@@ -1,4 +1,10 @@
 @import "tailwindcss";
+/* ui-theme-system epic: CSS @import rules must stay grouped at the very top
+   of the file, before any other rule -- moving this below the @theme/root
+   blocks below silently drops the import entirely. */
+@import "./themes/radar.css";
+@import "./themes/editorial.css";
+@import "./themes/terminal.css";
 
 /*
  * Brand tokens (icon-picker / styling-pass follow-up) -- the exact palette
@@ -19,4 +25,54 @@
   --color-brand-accent: #34d399;
   --color-brand-yellow: #fbbf24;
   --color-brand-red: #f87171;
+}
+
+/*
+ * ui-theme-system epic: a second, runtime-switchable token layer, additive
+ * to the @theme block above (compile-time chrome tokens, unrelated to
+ * this). Covers Dashboard, Config Sources, and Issues, switched via the
+ * data-theme attribute layout.tsx stamps on the html element (see
+ * src/lib/ui-theme.ts; default theme is radar, no migration needed for
+ * existing installs with no uiTheme field set).
+ *
+ * Real CSS custom properties (not @theme, which is compile-time only) so a
+ * single build can switch themes purely via the attribute, no rebuild.
+ * @theme inline below re-exposes them as Tailwind utilities.
+ * Tier and status colors are deliberately theme-invariant -- each theme
+ * file only ever redefines accent/surface/font tokens, never tier or
+ * status colors, so green/yellow/red and connected/needs-login/no-login
+ * read identically no matter which theme is active.
+ */
+:root {
+  --tier-green: #22c55e;
+  --tier-yellow: #eab308;
+  --tier-red: #ef4444;
+  --status-connected: #22c55e;
+  --status-needslogin: #eab308;
+  --status-nologin: #64748b;
+}
+
+@theme inline {
+  --color-theme-page-bg: var(--page-bg);
+  --color-theme-surface: var(--surface-bg);
+  --color-theme-surface-raised: var(--surface-bg-raised);
+  --color-theme-surface-border: var(--surface-border);
+  --color-theme-text: var(--text-primary);
+  --color-theme-text-dim: var(--text-secondary);
+  --color-theme-accent: var(--accent);
+  --color-theme-tier-green: var(--tier-green);
+  --color-theme-tier-yellow: var(--tier-yellow);
+  --color-theme-tier-red: var(--tier-red);
+  --color-theme-status-connected: var(--status-connected);
+  --color-theme-status-needslogin: var(--status-needslogin);
+  --color-theme-status-nologin: var(--status-nologin);
+  --font-theme-heading: var(--font-heading);
+  --font-theme-body: var(--font-body);
+  --font-theme-mono: var(--font-mono);
+}
+
+.theme-body {
+  background: var(--page-bg);
+  color: var(--text-primary);
+  font-family: var(--font-body);
 }

@@ -1,0 +1,56 @@
+/*
+ * ui-theme-system epic: the terminal / tmux-session theme. Token values
+ * are pulled directly from the verified, owner-approved swarm mockup
+ * rather than reinvented. Light-first (matches the mockup default), with
+ * a dark variant for prefers-color-scheme or an explicit dark choice.
+ *
+ * Tier and status colors are not redefined here -- those are
+ * theme-invariant, defined once in globals.css root.
+ */
+[data-theme="terminal"] {
+  --page-bg: #e9e5d9;
+  --surface-bg: #f2efe5;
+  --surface-bg-raised: #dcd6c5;
+  --surface-border: #c6bea8;
+  --surface-border-strong: #a89d80;
+  --text-primary: #221d15;
+  --text-secondary: #5c5442;
+  --text-faint: #8a7f68;
+  --accent: #9a5a1c;
+  --accent-ink: #7c4712;
+  --accent-dim: rgba(154, 90, 28, 0.14);
+
+  --font-heading: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-body: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="terminal"]:not([data-theme-mode="light"]) {
+    --page-bg: #14120e;
+    --surface-bg: #1c1912;
+    --surface-bg-raised: #0f0d09;
+    --surface-border: #332c1f;
+    --surface-border-strong: #4a4230;
+    --text-primary: #ece4d1;
+    --text-secondary: #a89c82;
+    --text-faint: #6b6250;
+    --accent: #dd9a44;
+    --accent-ink: #f0b268;
+    --accent-dim: rgba(221, 154, 68, 0.14);
+  }
+}
+
+[data-theme="terminal"][data-theme-mode="dark"] {
+  --page-bg: #14120e;
+  --surface-bg: #1c1912;
+  --surface-bg-raised: #0f0d09;
+  --surface-border: #332c1f;
+  --surface-border-strong: #4a4230;
+  --text-primary: #ece4d1;
+  --text-secondary: #a89c82;
+  --text-faint: #6b6250;
+  --accent: #dd9a44;
+  --accent-ink: #f0b268;
+  --accent-dim: rgba(221, 154, 68, 0.14);
+}
