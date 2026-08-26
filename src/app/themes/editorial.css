@@ -1,0 +1,57 @@
+/*
+ * ui-theme-system epic: the editorial "the ledger" theme. Token values are
+ * pulled directly from the verified, owner-approved swarm mockup rather
+ * than reinvented. Light-first (matches the mockup default -- the opposite
+ * of radar, which is dark-first), with a dark variant for
+ * prefers-color-scheme or an explicit dark choice.
+ *
+ * Tier and status colors are not redefined here -- those are
+ * theme-invariant, defined once in globals.css root.
+ */
+[data-theme="editorial"] {
+  --page-bg: #f5efe3;
+  --surface-bg: #fcfaf3;
+  --surface-bg-raised: #ffffff;
+  --surface-border: #ddd0b4;
+  --surface-border-strong: #c9b990;
+  --text-primary: #2b2418;
+  --text-secondary: #6c6250;
+  --text-faint: #948a76;
+  --accent: #3e4c6e;
+  --accent-ink: #2f3a56;
+  --accent-dim: #e4e7f0;
+
+  --font-heading: "Iowan Old Style", "Palatino Linotype", Palatino, "URW Palladio L", Georgia, "Times New Roman", serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="editorial"]:not([data-theme-mode="light"]) {
+    --page-bg: #1c1712;
+    --surface-bg: #241e17;
+    --surface-bg-raised: #2b241b;
+    --surface-border: #423824;
+    --surface-border-strong: #574a2c;
+    --text-primary: #ece2ce;
+    --text-secondary: #b6a98e;
+    --text-faint: #857a63;
+    --accent: #9fb0dd;
+    --accent-ink: #c2cfec;
+    --accent-dim: #303a52;
+  }
+}
+
+[data-theme="editorial"][data-theme-mode="dark"] {
+  --page-bg: #1c1712;
+  --surface-bg: #241e17;
+  --surface-bg-raised: #2b241b;
+  --surface-border: #423824;
+  --surface-border-strong: #574a2c;
+  --text-primary: #ece2ce;
+  --text-secondary: #b6a98e;
+  --text-faint: #857a63;
+  --accent: #9fb0dd;
+  --accent-ink: #c2cfec;
+  --accent-dim: #303a52;
+}

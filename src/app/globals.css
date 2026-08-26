@@ -3,6 +3,8 @@
    of the file, before any other rule -- moving this below the @theme/root
    blocks below silently drops the import entirely. */
 @import "./themes/radar.css";
+@import "./themes/editorial.css";
+@import "./themes/terminal.css";
 
 /*
  * Brand tokens (icon-picker / styling-pass follow-up) -- the exact palette
