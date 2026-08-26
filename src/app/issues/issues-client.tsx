@@ -83,14 +83,14 @@ function VerificationCopilot({ issueId, sourceId, blockedUrl }: { issueId: strin
   }
 
   return (
-    <div className="mt-2 flex flex-col gap-2 rounded-md bg-slate-50 p-2">
+    <div className="mt-2 flex flex-col gap-2 rounded-md bg-theme-surface-raised p-2">
       <div className="flex flex-wrap items-center gap-2">
         {!sessionId ? (
           <button
             type="button"
             onClick={handleOpen}
             disabled={isPending}
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+            className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-xs font-medium text-theme-text transition-colors hover:bg-theme-surface-raised disabled:opacity-50"
           >
             {isPending ? "Opening…" : "Open browser to help clear it"}
           </button>
@@ -100,7 +100,7 @@ function VerificationCopilot({ issueId, sourceId, blockedUrl }: { issueId: strin
               type="button"
               onClick={handleCheck}
               disabled={isPending}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+              className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-xs font-medium text-theme-text transition-colors hover:bg-theme-surface-raised disabled:opacity-50"
             >
               {isPending ? "Checking…" : "Check if it looks cleared"}
             </button>
@@ -108,14 +108,14 @@ function VerificationCopilot({ issueId, sourceId, blockedUrl }: { issueId: strin
               type="button"
               onClick={handleFinish}
               disabled={isPending}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+              className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-xs font-medium text-theme-text transition-colors hover:bg-theme-surface-raised disabled:opacity-50"
             >
               {isPending ? "Finishing…" : "I'm done"}
             </button>
           </>
         )}
       </div>
-      {readinessNote && <p className="text-xs text-slate-500">{readinessNote}</p>}
+      {readinessNote && <p className="text-xs text-theme-text-dim">{readinessNote}</p>}
       {error && <p className="text-xs text-red-700">{error}</p>}
     </div>
   );
@@ -136,17 +136,17 @@ function IssueRow({ issue, resolvable }: { issue: StoredIssue; resolvable: boole
   const verification = resolvable ? verificationContext(issue) : null;
 
   return (
-    <div className="rounded-md border border-slate-200 p-3">
+    <div className="rounded-md border border-theme-surface-border p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${SEVERITY_BADGE_CLASS[issue.severity]}`}>
               {issue.severity}
             </span>
-            <span className="font-medium text-slate-900">{issue.title}</span>
+            <span className="font-medium text-theme-text">{issue.title}</span>
           </div>
-          <p className="mt-1 text-sm text-slate-600">{issue.message}</p>
-          <p className="mt-1 text-xs text-slate-400">
+          <p className="mt-1 text-sm text-theme-text-dim">{issue.message}</p>
+          <p className="mt-1 text-xs text-theme-text-dim">
             {issue.source} — raised {formatDate(issue.raisedAt)}
             {issue.resolvedAt && ` — resolved ${formatDate(issue.resolvedAt)}`}
           </p>
@@ -156,7 +156,7 @@ function IssueRow({ issue, resolvable }: { issue: StoredIssue; resolvable: boole
             type="button"
             onClick={handleResolve}
             disabled={isPending}
-            className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+            className="shrink-0 rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-xs font-medium text-theme-text transition-colors hover:bg-theme-surface-raised disabled:opacity-50"
           >
             {isPending ? "Resolving…" : "Resolve"}
           </button>
@@ -184,7 +184,7 @@ export function IssuesClient({ open, resolved }: { open: StoredIssue[]; resolved
           <button
             type="button"
             onClick={() => setShowResolved((v) => !v)}
-            className="text-xs font-medium text-slate-500 hover:underline"
+            className="text-xs font-medium text-theme-text-dim hover:underline"
           >
             {showResolved ? "Hide" : "Show"} {resolved.length} resolved issue{resolved.length === 1 ? "" : "s"}
           </button>

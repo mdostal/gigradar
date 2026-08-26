@@ -215,6 +215,13 @@ export interface Config {
    */
   appIcon?: string;
   /**
+   * ui-theme-system epic: which visual theme to render Dashboard/Config/
+   * Issues in. Omitted defaults to "radar" — same "meaningful, valid
+   * do-nothing default, no migration needed for existing installs" pattern
+   * as appIcon above. Not a secret, cosmetic only.
+   */
+  uiTheme?: "radar" | "editorial" | "terminal";
+  /**
    * llm-provider-harness epic (supersedes llm-credential-modes' original
    * "oauth-token" kind -- live-tested and found non-functional). "api-key"
    * (today's only real behavior -- a raw key for `llmProvider` below, sent

@@ -29,16 +29,19 @@ const STATUS_LABEL: Record<GigStatus, string> = {
   ignored: "Ignored",
 };
 
-// Tailwind color-coding for the tier badge — green/yellow/red map onto the
-// same GREEN/YELLOW/RED role-area classification described in
-// src/lib/types.ts / docs/ARCHITECTURE.md. A gig with no tier yet (Gig.tier
-// is optional) gets the neutral slate style, never a guessed color.
-const TIER_BADGE_CLASS: Record<string, string> = {
-  green: "bg-green-100 text-green-800 ring-1 ring-inset ring-green-300",
-  yellow: "bg-yellow-100 text-yellow-800 ring-1 ring-inset ring-yellow-300",
-  red: "bg-red-100 text-red-800 ring-1 ring-inset ring-red-300",
+// Tier badge colors read from the theme-invariant CSS custom properties
+// (globals.css root) rather than hardcoded Tailwind green/yellow/red
+// utilities — ui-theme-system epic: tier color must read identically no
+// matter which visual theme (radar/editorial/terminal) is active, so this
+// maps to inline custom-property references, not per-theme classes. A gig
+// with no tier yet (Gig.tier is optional) gets the neutral fallback, never
+// a guessed color.
+const TIER_BADGE_STYLE: Record<string, { color: string; background: string }> = {
+  green: { color: "var(--tier-green)", background: "color-mix(in srgb, var(--tier-green) 16%, transparent)" },
+  yellow: { color: "var(--tier-yellow)", background: "color-mix(in srgb, var(--tier-yellow) 16%, transparent)" },
+  red: { color: "var(--tier-red)", background: "color-mix(in srgb, var(--tier-red) 16%, transparent)" },
 };
-const TIER_BADGE_FALLBACK = "bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-300";
+const TIER_BADGE_FALLBACK_STYLE = { color: "var(--text-secondary, #64748b)", background: "var(--surface-bg-raised, #f1f5f9)" };
 
 function formatRate(rate: StoredGig["rate"]): string {
   if (!rate) return "—";
@@ -55,7 +58,7 @@ function formatDate(iso: string): string {
 }
 
 const filterInputClass =
-  "w-full rounded border border-slate-300 px-1.5 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-500 focus:outline-none";
+  "w-full rounded border border-theme-surface-border px-1.5 py-1 text-xs text-theme-text placeholder:text-theme-text-dim focus:border-slate-500 focus:outline-none";
 
 /**
  * Per-column filter control shape — driven by each ColumnDef's own `meta`
@@ -168,7 +171,7 @@ function ColumnFilterCell({
               }}
               className={[
                 "rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors",
-                active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+                active ? "bg-slate-900 text-white" : "bg-slate-100 text-theme-text-dim hover:bg-slate-200",
               ].join(" ")}
             >
               {STATUS_LABEL[s]}
@@ -324,7 +327,7 @@ export function DashboardClient({
           href={row.original.url}
           target="_blank"
           rel="noreferrer noopener"
-          className="font-medium text-slate-900 hover:underline"
+          className="font-medium text-theme-text hover:underline"
         >
           {row.original.title}
         </a>
@@ -352,9 +355,8 @@ export function DashboardClient({
         const tier = row.original.tier;
         return (
           <span
-            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-              tier ? TIER_BADGE_CLASS[tier] : TIER_BADGE_FALLBACK
-            }`}
+            className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-current/30"
+            style={tier ? TIER_BADGE_STYLE[tier] : TIER_BADGE_FALLBACK_STYLE}
           >
             {tier ?? "unrated"}
           </span>
@@ -420,7 +422,7 @@ export function DashboardClient({
               disabled={isPending}
               onChange={(e) => handleStatusChange(gig.key, e.target.value as GigStatus)}
               aria-label={`Change status for ${gig.title}`}
-              className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-900 disabled:opacity-50"
+              className="rounded-md border border-theme-surface-border px-2 py-1 text-sm text-theme-text disabled:opacity-50"
             >
               {ALL_STATUSES.map((s) => (
                 <option key={s} value={s}>
@@ -448,7 +450,7 @@ export function DashboardClient({
               type="button"
               disabled={generatingKeys.has(gig.key)}
               onClick={() => handleGenerateDraft(gig.key)}
-              className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              className="whitespace-nowrap rounded-md border border-theme-surface-border bg-theme-surface px-2 py-1 text-sm font-medium text-theme-text hover:bg-theme-surface-raised disabled:opacity-50"
             >
               {generatingKeys.has(gig.key) ? "Generating…" : draftButtonLabel(draftedGigKeys.has(gig.key))}
             </button>
@@ -474,18 +476,18 @@ export function DashboardClient({
               type="button"
               disabled={generatingPrepKeys.has(gig.key)}
               onClick={() => handleGeneratePrep(gig.key)}
-              className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              className="whitespace-nowrap rounded-md border border-theme-surface-border bg-theme-surface px-2 py-1 text-sm font-medium text-theme-text hover:bg-theme-surface-raised disabled:opacity-50"
             >
               {generatingPrepKeys.has(gig.key) ? "Generating…" : packet ? "Regenerate prep packet" : "Generate prep packet"}
             </button>
             {prepErrorByKey[gig.key] && <p className="mt-1 max-w-[16rem] text-xs text-red-600">{prepErrorByKey[gig.key]}</p>}
             {packet && (
-              <div className="mt-1 max-w-[20rem] text-xs text-slate-700">
+              <div className="mt-1 max-w-[20rem] text-xs text-theme-text">
                 <p className="font-medium">
                   Fit score: {packet.score}/100 — {packet.recommendation}
                 </p>
                 <details className="mt-1">
-                  <summary className="cursor-pointer text-slate-500 hover:underline">Full prep packet</summary>
+                  <summary className="cursor-pointer text-theme-text-dim hover:underline">Full prep packet</summary>
                   <div className="mt-1 flex flex-col gap-1">
                     <p>{packet.rationale}</p>
                     {packet.topStrengths.length > 0 && (
@@ -508,7 +510,7 @@ export function DashboardClient({
                         <span className="font-medium">STARLA story prompts:</span> {packet.starlaStories.join("; ")}
                       </p>
                     )}
-                    <p className="mt-1 border-t border-slate-200 pt-1 font-medium">
+                    <p className="mt-1 border-t border-theme-surface-border pt-1 font-medium">
                       ATS keyword match: {packet.atsScore.keywordOverlapScore}/100 (vs. your tracked skills/roles)
                     </p>
                     {packet.atsScore.matchedKeywords.length > 0 && (
@@ -545,7 +547,7 @@ export function DashboardClient({
                         <p className="text-green-700">No resume format issues found.</p>
                       )
                     ) : (
-                      <p className="text-slate-500">
+                      <p className="text-theme-text-dim">
                         No resume format check — save a resume on /config to get a real ATS-parseability read.
                       </p>
                     )}
@@ -575,7 +577,7 @@ export function DashboardClient({
 
   return (
     <div className="mt-6 flex flex-col gap-3">
-      <p className="text-sm text-slate-500">
+      <p className="text-sm text-theme-text-dim">
         {rows.length} of {gigs.length} gig{gigs.length === 1 ? "" : "s"}
       </p>
 
@@ -602,9 +604,9 @@ export function DashboardClient({
         scrolls away with the body, avoiding fragile two-row sticky offset
         math for a modest UX tradeoff (set filters before scrolling).
       */}
-      <div className="max-h-[70vh] overflow-auto rounded-lg border border-slate-200 shadow-sm">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-theme-surface-border shadow-sm">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
-          <thead className="bg-slate-50">
+          <thead className="bg-theme-surface-raised">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
@@ -612,17 +614,17 @@ export function DashboardClient({
                   return (
                     <th
                       key={header.id}
-                      className="sticky top-0 z-[1] isolate bg-slate-50 px-3 py-2 text-left font-semibold text-slate-600"
+                      className="sticky top-0 z-[1] isolate bg-theme-surface-raised px-3 py-2 text-left font-semibold text-theme-text-dim"
                     >
                       {header.column.getCanSort() ? (
                         <button
                           type="button"
                           onClick={header.column.getToggleSortingHandler()}
                           aria-sort={sortDirection ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
-                          className="flex items-center gap-1 hover:text-slate-900"
+                          className="flex items-center gap-1 hover:text-theme-text"
                         >
                           {flexRender(header.column.columnDef.header, header.getContext())}
-                          <span className="text-slate-400">
+                          <span className="text-theme-text-dim">
                             {sortDirection ? (sortDirection === "asc" ? "▲" : "▼") : ""}
                           </span>
                         </button>
@@ -636,7 +638,7 @@ export function DashboardClient({
             ))}
             <tr>
               {table.getFlatHeaders().map((header) => (
-                <th key={`filter-${header.id}`} className="bg-slate-50 px-3 pb-2">
+                <th key={`filter-${header.id}`} className="bg-theme-surface-raised px-3 pb-2">
                   <ColumnFilterCell
                     filterKind={header.column.columnDef.meta?.filterKind ?? "none"}
                     selectOptions={header.column.columnDef.meta?.selectOptions}
@@ -650,11 +652,11 @@ export function DashboardClient({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 bg-white">
+          <tbody className="divide-y divide-slate-100 bg-theme-surface">
             {rows.map((row) => (
-              <tr key={row.original.key} className="odd:bg-white even:bg-slate-50/60 hover:bg-slate-100">
+              <tr key={row.original.key} className="odd:bg-theme-surface even:bg-theme-surface-raised/60 hover:bg-slate-100">
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-3 py-2 text-slate-600">
+                  <td key={cell.id} className="px-3 py-2 text-theme-text-dim">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
@@ -662,7 +664,7 @@ export function DashboardClient({
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={columns.length} className="px-3 py-6 text-center text-slate-400">
+                <td colSpan={columns.length} className="px-3 py-6 text-center text-theme-text-dim">
                   No gigs match the current filters.
                 </td>
               </tr>

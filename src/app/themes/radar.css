@@ -1,0 +1,59 @@
+/*
+ * ui-theme-system epic: the radar / mission-control theme, the default.
+ * Token values are pulled directly from the verified, owner-approved swarm
+ * mockup rather than reinvented -- same hex values, same font stacks.
+ * Dark-first (matches the mockup default), with a light variant for
+ * prefers-color-scheme or an explicit light choice, so a future light/dark
+ * toggle would compose correctly with theme switching.
+ *
+ * Tier and status colors are not redefined here -- those are
+ * theme-invariant, defined once in globals.css root (tier/status color
+ * must read identically across every theme).
+ */
+[data-theme="radar"] {
+  --page-bg: #0a1011;
+  --surface-bg: #10191b;
+  --surface-bg-raised: #16262a;
+  --surface-border: #223335;
+  --surface-border-strong: #33494c;
+  --text-primary: #dbeae7;
+  --text-secondary: #86a6a2;
+  --text-faint: #51706c;
+  --accent: #4cd6e6;
+  --accent-ink: #06181a;
+  --accent-dim: rgba(76, 214, 230, 0.14);
+
+  --font-heading: "Arial Narrow", "Helvetica Neue Condensed", Arial, sans-serif;
+  --font-body: "Arial Narrow", "Helvetica Neue Condensed", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  [data-theme="radar"]:not([data-theme-mode="dark"]) {
+    --page-bg: #eef2f1;
+    --surface-bg: #ffffff;
+    --surface-bg-raised: #e7edec;
+    --surface-border: #c7d4d2;
+    --surface-border-strong: #a7bcb9;
+    --text-primary: #0f201f;
+    --text-secondary: #46615d;
+    --text-faint: #7c928e;
+    --accent: #0c8fa3;
+    --accent-ink: #ffffff;
+    --accent-dim: rgba(12, 143, 163, 0.09);
+  }
+}
+
+[data-theme="radar"][data-theme-mode="light"] {
+  --page-bg: #eef2f1;
+  --surface-bg: #ffffff;
+  --surface-bg-raised: #e7edec;
+  --surface-border: #c7d4d2;
+  --surface-border-strong: #a7bcb9;
+  --text-primary: #0f201f;
+  --text-secondary: #46615d;
+  --text-faint: #7c928e;
+  --accent: #0c8fa3;
+  --accent-ink: #ffffff;
+  --accent-dim: rgba(12, 143, 163, 0.09);
+}

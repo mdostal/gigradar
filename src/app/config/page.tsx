@@ -87,8 +87,8 @@ export default async function ConfigPage() {
 
   return (
     <main className="mx-auto max-w-4xl p-6">
-      <h1 className="text-2xl font-bold tracking-tight text-slate-900">Configure gigradar</h1>
-      <p className="text-sm text-slate-500">{subtitle}</p>
+      <h1 className="text-2xl font-bold tracking-tight text-theme-text">Configure gigradar</h1>
+      <p className="text-sm text-theme-text-dim">{subtitle}</p>
       <ConfigClient initial={initial} portunusAvailable={portunusAvailable} sessionReadiness={sessionReadiness} />
     </main>
   );

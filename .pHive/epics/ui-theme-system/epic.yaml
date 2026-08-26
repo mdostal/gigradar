@@ -1,0 +1,28 @@
+name: ui-theme-system
+title: Themeable UI (radar/editorial/terminal) + Config Sources feature additions
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: theme-architecture-and-radar
+    title: Token-driven theme architecture, Config.uiTheme, ThemePicker, radar theme (default)
+    complexity: high
+    depends_on: []
+  - id: editorial-theme
+    title: Editorial "the ledger" theme, selectable
+    complexity: medium
+    depends_on: [theme-architecture-and-radar]
+  - id: terminal-theme
+    title: Terminal/tmux theme, selectable
+    complexity: medium
+    depends_on: [theme-architecture-and-radar]
+  - id: source-status-features
+    title: Session-health note on Connected badges + inline Run login capture on Needs-login badges
+    complexity: medium
+    depends_on: [theme-architecture-and-radar]

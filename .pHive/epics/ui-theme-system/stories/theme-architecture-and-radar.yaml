@@ -1,0 +1,104 @@
+id: theme-architecture-and-radar
+epic: ui-theme-system
+title: Token-driven theme architecture, Config.uiTheme, ThemePicker, radar theme (default)
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Foundational slice — must leave the app in a fully working, shippable state
+  on its own (radar as the one theme, applied and selectable, before editorial/
+  terminal exist). Extends the existing Tailwind v4 @theme block in globals.css
+  (currently chrome-only) rather than replacing it. New Config.uiTheme field
+  follows the exact existing Config.appIcon precedent: optional, raw-read in
+  layout.tsx (already force-dynamic), defaults to "radar" when absent, applied
+  as a data-theme attribute on <html>. ThemePicker lives in config-client.tsx's
+  existing Appearance section, sibling to IconPicker, same draft/save pattern.
+
+  Applies the radar direction's palette/typography/badge treatment to
+  Dashboard, Config (Sources list), and Issues -- the three pages the design
+  swarm actually covered. Reference source of truth for the visual target:
+  .pHive/epics/ui-theme-system/docs/design-discussion.md and the verified
+  radar mockup (published artifact, owner-confirmed favorite).
+
+acceptance_criteria:
+  - "Given no config.json uiTheme field is set (existing installs), when the app loads, then it renders the radar theme by default -- no migration needed."
+  - "Given the owner picks a theme in Config > Appearance and saves, then Dashboard/Config/Issues immediately reflect it on next navigation (force-dynamic already covers this, no extra revalidation work needed)."
+  - "Existing dashboard sort/filter, status-change dropdown, and Config's Capture Login / Test extraction / save flows all still work -- this is a presentation change, not a functional rewrite. npm test must still pass in full."
+  - "npm test and npx tsc --noEmit both pass; new tests cover Config.uiTheme default-when-absent and round-trip through save."
+
+steps:
+  - id: implement
+    description: |
+      1. Add Config.uiTheme?: "radar" | "editorial" | "terminal" to types.ts,
+      matching schema.ts's z.enum(["radar","editorial","terminal"]).optional().
+      2. layout.tsx: read raw.uiTheme (default "radar"), stamp
+      data-theme="..." on <html>, same pattern as its existing
+      resolveAppIcon(raw.appIcon) call.
+      3. Extend globals.css's @theme block / add src/app/themes/radar.css
+      (imported from globals.css, guarded by [data-theme="radar"]) with the
+      radar palette (dark instrument-panel ground, cyan accent kept separate
+      from green/yellow/red tier semantics, signage-vs-readout type pairing)
+      -- pull token values from the verified radar mockup, don't reinvent.
+      4. Apply the theme to Dashboard (page.tsx/dashboard-client.tsx), Config
+      Sources list (config-client.tsx), and Issues (issues-client.tsx) --
+      palette, typography, badge/status styling, table styling. Keep every
+      existing interactive element (sort, filter, dropdowns, buttons, forms)
+      functionally unchanged -- swap classes/tokens, not structure or
+      handlers, except where the mockup's structure genuinely requires it
+      (e.g. badge markup).
+      5. Add ThemePicker component in config-client.tsx's Appearance section
+      (three options: radar/editorial/terminal, even though only radar is
+      fully implemented yet -- selecting editorial/terminal before their
+      stories ship is fine, they'll just look unstyled/fall back to base
+      tokens until their own stories land).
+      6. Wire draft.uiTheme through save (edits.uiTheme = draft.uiTheme in
+      saveConfigAction), matching appIcon's exact pattern.
+    agent: developer
+  - id: test
+    description: |
+      Unit tests: Config.uiTheme defaults to "radar" when absent (layout.tsx's
+      resolution logic), round-trips through saveConfigAction. Run full
+      npm test to confirm zero regressions in existing dashboard/config/issues
+      test coverage. npm run build to confirm no static/dynamic route
+      regressions. Live-verify through a real running instance: Dashboard,
+      Config Sources list, and Issues visually match the radar mockup's
+      distinctive elements (palette, badge styling, table treatment); existing
+      interactions (sort a column, change a gig's status, save config) still
+      work.
+    agent: tester
+  - id: review
+    description: |
+      Confirm no functional regression in the three re-skinned pages --
+      diff against what existed before for handler/logic changes vs. pure
+      class/token changes. Confirm Config.uiTheme absent-case truly defaults
+      to radar with no migration step required for existing installs.
+    agent: reviewer
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/globals.css
+      purpose: Existing @theme block (chrome-only brand tokens) to extend
+    - path: src/app/layout.tsx
+      purpose: "Resolves Config.appIcon today (exact precedent) -- add the same pattern for uiTheme, stamp data-theme on <html>"
+    - path: src/lib/types.ts
+      purpose: "Config.appIcon?: string at line 216 -- add uiTheme sibling field"
+    - path: src/lib/config/schema.ts
+      purpose: "appIcon: z.string().optional() at line 142 -- add uiTheme as a z.enum"
+    - path: src/app/config/config-client.tsx
+      purpose: "Appearance section at line 2334 hosts IconPicker -- add ThemePicker here, same draft/save wiring"
+    - path: src/app/page.tsx
+      purpose: Dashboard Server Component (already force-dynamic)
+    - path: src/app/dashboard-client.tsx
+      purpose: Dashboard table/filter client component to re-skin
+    - path: src/app/issues/issues-client.tsx
+      purpose: Issues list client component to re-skin
+
+references:
+  - path: .pHive/epics/ui-theme-system/docs/design-discussion.md
+    relevant_excerpt: "Full architecture rationale, §3a-3b."

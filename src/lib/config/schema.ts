@@ -140,6 +140,8 @@ export const ConfigSchema = z.object({
   notifyOnGreenMatch: z.boolean().optional(),
   autoFire: AutoFireConfigSchema.optional(),
   appIcon: z.string().optional(),
+  // ui-theme-system epic: see types.ts's Config.uiTheme doc comment.
+  uiTheme: z.enum(["radar", "editorial", "terminal"]).optional(),
   /**
    * llm-provider-harness epic (supersedes llm-credential-modes' original
    * "oauth-token" kind -- live-tested and found non-functional: a
