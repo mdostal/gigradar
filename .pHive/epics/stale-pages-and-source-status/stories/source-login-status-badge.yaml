@@ -1,0 +1,137 @@
+id: source-login-status-badge
+epic: stale-pages-and-source-status
+title: Add a per-source auth/login status badge to the Config UI
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  The /config UI's Sources section shows each source's raw settings but gives
+  no at-a-glance signal distinguishing: (a) sources needing no login at all
+  (auth:"none"), (b) browser-session sources with an already-captured session,
+  and (c) browser-session sources with no captured session yet. User's own
+  words: "how can i tell which ones have the full setup and login and which
+  don't... i'm kind of confused... it seems everything is setup but it claims
+  not".
+
+  Research confirmed (see design-discussion.md §4) no existing function
+  answers this. checkCaptureReadiness() is a live-browser LLM check usable
+  only mid-Capture-Login (needs an open Playwright Page) -- wrong tool, not
+  reusable for a passive badge. showsCaptureLogin() (config-client.tsx:222-225)
+  IS the correct existing predicate for "does this source need browser-session
+  auth at all" and should gate the badge. src/app/config/page.tsx already
+  computes one live server-side signal (isPortunusAvailable()) and threads it
+  into ConfigClient as a plain prop (page.tsx:57,73) -- this is the precedent
+  to follow, avoiding a new Server Action for the initial-render case.
+
+  The <sourceId>-session.json naming convention is inlined once today, in
+  finishCapture() (session-capture.ts:356) -- extract it into a shared helper
+  so both the existing capture-finish code and the new readiness check use one
+  source of truth rather than risking template-string drift between two call
+  sites.
+
+acceptance_criteria:
+  - "Given a source with auth:\"none\" (e.g. braintrust, linkedin), when viewing /config, then its row shows a \"No login needed\" indicator -- no Capture Login control implied."
+  - "Given a source with customAuth:\"browser-session\" and a real, parseable session file on disk (e.g. gofractional, ateam, gun-io in the real config), when viewing /config, then its row shows \"Connected\"."
+  - "Given a source with customAuth:\"browser-session\" and NO session file on disk (e.g. wellfound in the real config), when viewing /config, then its row shows \"Needs login\"."
+  - "Given a source using the Portunus session backend, when readiness is computed, then it uses a Portunus-aware check (not a raw local-file existence check that would always report false for a Portunus-backed source)."
+  - "The badge computation must not spawn a browser or make an LLM call -- file-exists + parses + isStorageStateShape() only (see design-discussion.md §7 open question 1 -- expiry-awareness is explicitly out of scope for this story)."
+  - "npm test and npx tsc --noEmit both pass; new tests cover the readiness helper's three states plus the local-vs-portunus branch."
+
+steps:
+  - id: implement
+    description: |
+      1. Extract the session file path convention (currently inlined at
+      session-capture.ts:356 as
+      `path.join(getDefaultDataDir(), \`${sourceId}-session.json\`)`) into a
+      small exported helper (e.g. sessionStatePathFor(sourceId) in
+      session-capture.ts or path.ts) and use it from both finishCapture() and
+      the new readiness check -- do not leave two copies of the template
+      string.
+      2. Add a new lightweight readiness function, e.g.
+      `checkSessionReadiness(cfg: SourceConfig): "none" | "connected" | "needs-login"`
+      -- branches on whether the source needs browser-session auth at all
+      (reuse showsCaptureLogin()'s logic), then on sessionBackendFrom(cfg):
+      local backend -> fs.existsSync + JSON.parse + isStorageStateShape()
+      (reuse the existing exported isStorageStateShape() from
+      browser-session.ts, do NOT call the hard-throwing
+      readStorageStateFile() which does a real decrypt + migrate side effect
+      on every render); portunus backend -> a lightweight probe via the
+      existing Portunus read path, same cost class as the existing
+      isPortunusAvailable() call already paid on every /config render.
+      3. Compute a per-source readiness map in src/app/config/page.tsx
+      (same place/pattern as the existing portunusAvailable computation at
+      page.tsx:57), thread it into ConfigClient as a new prop.
+      4. Render a badge on each source row's top line in config-client.tsx
+      (~lines 1888-1967, alongside the existing Enabled/Custom (LLM)/Gmail
+      digest checkboxes) -- gated on showsCaptureLogin(source): sources that
+      don't need login show "No login needed"; sources that do show
+      "Connected" or "Needs login" per the readiness map.
+    agent: developer
+  - id: test
+    description: |
+      Unit tests for the new readiness helper: all three states (none,
+      connected, needs-login), plus the local-vs-portunus branch, plus the
+      "file exists but isn't valid JSON / wrong shape" case (should report
+      needs-login, not crash or false-positive as connected). Manually verify
+      against the real config: gofractional/ateam/gun-io show "Connected",
+      wellfound shows "Needs login", braintrust/builtin/linkedin/etc show "No
+      login needed".
+    agent: tester
+  - id: review
+    description: |
+      Confirm the readiness check never spawns a browser or calls an LLM
+      (must stay cheap enough to run on every /config render). Confirm the
+      session-file-path helper extraction didn't change finishCapture()'s
+      actual write behavior (same path, same convention, just de-duplicated).
+      Confirm the badge is gated correctly by showsCaptureLogin() so
+      non-browser-session sources never show a misleading login-status badge.
+    agent: reviewer
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    framework: next.js 15 (App Router)
+    language: typescript
+  key_files:
+    - path: src/lib/auth/browser-session.ts
+      purpose: "isStorageStateShape() (exported, pure shape check) is reusable; readStorageStateFile() (hard-throwing, real decrypt+migrate side effect) is NOT the right tool for a passive badge check"
+    - path: src/lib/auth/session-backend.ts
+      purpose: sessionBackendFrom(cfg) resolves local vs portunus; isPortunusAvailable() is the existing precedent for a live server-side check threaded as a prop
+    - path: src/lib/auth/session-capture.ts
+      purpose: "finishCapture() at line 356 inlines the <sourceId>-session.json path convention -- extract into a shared helper here"
+    - path: src/app/config/page.tsx
+      purpose: "Server Component parent -- already computes portunusAvailable server-side (line 57) and threads it into ConfigClient as a prop (line 73); follow the same pattern for the new readiness map"
+    - path: src/app/config/config-client.tsx
+      purpose: "showsCaptureLogin(source) at lines 222-225 is the correct existing predicate for badge gating; Sources section starts at line 1882, per-source row top line at 1888-1967 is the insertion point; ConfigClient's prop signature is at line 1223"
+    - path: src/lib/auth/capture-guidance.ts
+      purpose: "checkCaptureReadiness() -- confirmed the WRONG tool to reuse (live-browser LLM check, mid-capture only); do not call this from the idle Sources list"
+
+code_examples:
+  - title: Existing server-side-computed-prop precedent to follow
+    file: src/app/config/page.tsx
+    snippet: |
+      const portunusAvailable = await isPortunusAvailable();
+      // ...
+      return <ConfigClient initial={initial} portunusAvailable={portunusAvailable} />;
+
+design_decisions:
+  - decision: file-exists + parses + right-shape only, no cookie-expiry check
+    rationale: |
+      Ships the simple version now; a wrong "Connected" for an expired
+      session self-heals the same way a failed scan already fails gracefully
+      (clear error, not a crash) -- consistent with this session's
+      custom-source-recipe.ts validation fix. Expiry-awareness is a real,
+      explicitly-flagged fast-follow, not silently dropped. See
+      design-discussion.md §7 open question 1.
+
+references:
+  - path: .pHive/epics/stale-pages-and-source-status/docs/design-discussion.md
+    relevant_excerpt: |
+      §4-5 cover the full research (why checkCaptureReadiness() is the wrong
+      tool, the showsCaptureLogin()/portunusAvailable precedents) and the
+      approach with reasoning.

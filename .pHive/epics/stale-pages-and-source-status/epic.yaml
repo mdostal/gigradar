@@ -1,0 +1,20 @@
+name: stale-pages-and-source-status
+title: Fix stale static pages and add per-source login-status indicator
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: patch
+sidecar_retention: transient
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: fix-stale-static-pages
+    title: Mark data-reading pages dynamic so they never serve a frozen build-time snapshot
+    complexity: medium
+    depends_on: []
+  - id: source-login-status-badge
+    title: Add a per-source auth/login status badge to the Config UI
+    complexity: medium
+    depends_on: []

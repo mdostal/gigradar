@@ -2,6 +2,12 @@ import { getGig, listDrafts } from "@/lib/store";
 import { DraftsClient } from "./drafts-client";
 import type { DraftListItem } from "./drafts-filter";
 
+// Single-user local app, no CDN — see src/app/page.tsx's header comment.
+// Here specifically: the scheduler's auto-draft/auto-fire path writes drafts
+// from outside any Next.js request, so this route needs the same fix as
+// dashboard/issues even though in-app draft edits already revalidate it.
+export const dynamic = "force-dynamic";
+
 // The review/approve UI (`draft-review-ui` story, `assisted-apply-drafting`
 // epic) — a Server Component that reads every draft via listDrafts() (see
 // src/lib/store/drafts.ts) and, for each, its linked gig via getGig() (the

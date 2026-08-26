@@ -1,0 +1,123 @@
+id: fix-stale-static-pages
+epic: stale-pages-and-source-status
+title: Mark data-reading pages dynamic so they never serve a frozen build-time snapshot
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  None of the six src/app/*/page.tsx files (nor the shared layout.tsx) export
+  `dynamic`, so Next 15 statically prerenders each one at `next build` time and
+  serves that frozen snapshot forever, until an explicit revalidatePath() call
+  from inside a live request targets that exact route. Confirmed live: a real
+  gigs.db with 1,347 gigs was completely invisible on the Dashboard, which
+  showed the CI build machine's own empty state instead.
+
+  Root cause detail (see .pHive/epics/stale-pages-and-source-status/docs/design-discussion.md
+  §2-3 for full research): the scheduler (src/scheduler/index.ts) writes gigs/
+  issues/drafts from a standalone Node process with no Next.js request context,
+  so it can NEVER call revalidatePath() even in principle -- there is no
+  cross-process signal today. In-app Server Actions cover SOME routes
+  (dashboard, drafts, config) but /issues only revalidates on RESOLVING an
+  issue, never on the scheduler's raiseIssue() call that creates one, and
+  /profile-assist has ZERO revalidatePath coverage of any kind.
+
+  Fix: mark the affected routes `export const dynamic = "force-dynamic"` so
+  there is no cache to invalidate in the first place -- this fixes both the
+  scheduler's out-of-process-write problem and the in-app "forgot a
+  revalidatePath call" fragility (e.g. /profile-assist) in one uniform move.
+  This is a single-user, 127.0.0.1-bound, locally-packaged app with cheap
+  local SQLite/file reads -- there is no CDN/edge-cache benefit from static
+  optimization being given up here.
+
+acceptance_criteria:
+  - "Given the scheduler has written new gigs/issues/drafts to disk while the app is already running, when the user loads /, /issues, or /drafts without restarting the app, then the new data is visible immediately (no stale empty state)."
+  - "Given a new custom-llm source with customAuth:browser-session is added via /config while the app is running, when the user navigates to /profile-assist, then it appears in the session picker without a rebuild."
+  - "Given /chat has no live data dependency, when this story ships, then /chat remains statically optimized (unchanged) -- do not blanket-apply force-dynamic to a route that doesn't need it."
+  - "npm test and npx tsc --noEmit both pass."
+
+steps:
+  - id: implement
+    description: |
+      Add `export const dynamic = "force-dynamic";` to src/app/page.tsx,
+      src/app/issues/page.tsx, src/app/drafts/page.tsx,
+      src/app/profile-assist/page.tsx, src/app/config/page.tsx, and
+      src/app/layout.tsx. Leave src/app/chat/page.tsx untouched (no live data
+      read at all -- confirmed via research, see design-discussion.md §2 route
+      table). Place the export directly after the imports, before the
+      component definition, matching how next.config.js/other repo files
+      place directive comments -- add a short comment explaining WHY (this is
+      a single-user local app with no CDN, not a default to copy elsewhere
+      without the same reasoning).
+    agent: developer
+  - id: test
+    description: |
+      Run `npm run build` and confirm the build output's route table shows
+      `ƒ (Dynamic)` for the five affected routes and `○ (Static)` still for
+      /chat and /_not-found. Run `npm test` (existing suite covers
+      readRawConfig/listGigs/listIssues/listDrafts logic already -- this
+      story doesn't need new unit tests, since the fix is a rendering-mode
+      directive, not new logic). Manually verify: with a local dev server
+      running, insert a row into gigs.db directly (bypassing the app), reload
+      /, confirm it appears without restarting the server.
+    agent: developer
+  - id: review
+    description: |
+      Verify the six-route audit from design-discussion.md §2 was applied
+      correctly -- exactly 5 of 6 pages force-dynamic, /chat untouched, no
+      other pages missed. Confirm no route was made dynamic that didn't need
+      it (unnecessary force-dynamic on a truly static route is a real,
+      flaggable regression, not just an omission risk).
+    agent: reviewer
+  - id: integrate
+    description: Commit and push to the epic branch.
+    agent: developer
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    framework: next.js 15 (App Router)
+    language: typescript
+  key_files:
+    - path: src/app/page.tsx
+      purpose: Dashboard -- reads listGigs()/listDrafts()/readRawConfig(); needs force-dynamic
+    - path: src/app/issues/page.tsx
+      purpose: Issues -- reads listIssues(); needs force-dynamic (headline bug -- raising an issue never revalidates today)
+    - path: src/app/drafts/page.tsx
+      purpose: Drafts -- reads listDrafts()/getGig(); needs force-dynamic
+    - path: src/app/profile-assist/page.tsx
+      purpose: Profile assist -- reads readRawConfig(); needs force-dynamic (zero existing revalidatePath coverage)
+    - path: src/app/config/page.tsx
+      purpose: Config -- reads readRawConfig()/isPortunusAvailable(); already best-covered by in-app revalidatePath calls, included for completeness at near-zero cost
+    - path: src/app/layout.tsx
+      purpose: |
+        Shared root layout -- reads listIssues()/readRawConfig() directly (feeds
+        the nav issues badge). DELIBERATELY NOT marked dynamic: caught during
+        implementation that Next.js cascades a layout's `dynamic` config to
+        every child route (layout+page render as one unit for static/dynamic
+        classification), which would have forced /chat dynamic too, violating
+        this story's own /chat-stays-static acceptance criterion. Since 5 of 6
+        pages are already force-dynamic, their shared layout renders fresh on
+        every request to those routes for free -- verified via `npm run build`
+        route table (/chat stayed ○ Static, the other 5 show ƒ Dynamic).
+    - path: src/app/chat/page.tsx
+      purpose: No live data read at all -- confirmed safe to leave static, do NOT touch
+    - path: src/scheduler/index.ts
+      purpose: Standalone background process that writes gigs/issues/drafts -- cannot call revalidatePath() from outside a Next.js request context, which is why force-dynamic (not an on-demand revalidation endpoint) is the chosen fix
+
+design_decisions:
+  - decision: force-dynamic over an on-demand revalidation HTTP endpoint
+    rationale: |
+      Single-user local app, no CDN/edge cache to protect via static
+      optimization; underlying reads are cheap local SQLite/file reads: going
+      dynamic fixes both the scheduler's out-of-process problem AND the
+      in-app fragile-revalidatePath-bookkeeping problem in one move, with no
+      new endpoint to build/secure/remember to call. Full reasoning in
+      design-discussion.md §3.
+
+references:
+  - path: .pHive/epics/stale-pages-and-source-status/docs/design-discussion.md
+    relevant_excerpt: |
+      §2-3 cover the full per-route research findings and the force-dynamic
+      vs on-demand-revalidation-endpoint decision with reasoning.

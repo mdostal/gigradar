@@ -3,6 +3,15 @@ import { listDrafts, listGigs } from "@/lib/store";
 import { DashboardClient } from "./dashboard-client";
 import { computeStatusStrip } from "@/lib/status/status-strip";
 
+// gigradar is a single-user, 127.0.0.1-bound local app with no CDN/edge cache
+// in front of it — static optimization here has no benefit and one real cost:
+// gigs/drafts written by the standalone scheduler process (which has no
+// Next.js request context and so can never call revalidatePath()) would
+// otherwise be invisible until an unrelated in-app mutation happened to
+// revalidate this route. force-dynamic removes the cache entirely rather than
+// chasing every write path with a revalidatePath() call.
+export const dynamic = "force-dynamic";
+
 // The real dashboard (dashboard-results-view story). A Server Component that
 // reads the full gig set via listGigs() — no server-side filter/pagination:
 // listGigs() has none today, and tier/status/search filtering all happen

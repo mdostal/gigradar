@@ -4,6 +4,14 @@ import { readRawConfig } from "@/lib/config/save";
 import type { Config } from "@/lib/types";
 import { ConfigClient } from "./config-client";
 
+// Single-user local app, no CDN — see src/app/page.tsx's header comment.
+// This route already has the best in-app revalidatePath() coverage of the
+// six pages (every mutating config action revalidates it), so this is a
+// near-zero-cost completeness fix for the residual gap: config.json edited
+// out-of-band, or Portunus installed/uninstalled, while the server is
+// already running.
+export const dynamic = "force-dynamic";
+
 /**
  * The blank/empty-shaped starting document for first-run setup — never
  * written to disk on its own (the user has to actually submit the form),
