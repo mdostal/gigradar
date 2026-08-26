@@ -2,6 +2,7 @@
 
 import { type ChangeEvent, type FormEvent, useEffect, useState, useTransition } from "react";
 import { APP_ICONS, DEFAULT_APP_ICON_ID } from "@/lib/app-icons";
+import type { SessionReadiness } from "@/lib/auth/session-readiness";
 import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
 import type { ConfigEdits } from "@/lib/config/save";
 import { mergeDedupe } from "@/lib/profile-ingestion/merge";
@@ -222,6 +223,25 @@ function settingsToPairs(settings: Record<string, unknown> | undefined): Setting
 function showsCaptureLogin(source: DraftSource): boolean {
   if (source.id in SOURCE_ORIGINS) return true;
   return source.isCustom && source.settings.some((p) => p.key === "customAuth" && p.value === "browser-session");
+}
+
+/**
+ * source-login-status-badge story: an at-a-glance login-status pill per
+ * source row, gated on showsCaptureLogin() (a source that doesn't need
+ * login at all always shows "No login needed", regardless of the
+ * server-computed readiness map). `readiness` comes from
+ * checkSessionReadiness() (session-readiness.ts), computed server-side in
+ * page.tsx — this component only renders it, never re-derives it
+ * client-side.
+ */
+function SourceStatusBadge({ source, readiness }: { source: DraftSource; readiness: SessionReadiness | undefined }) {
+  if (!showsCaptureLogin(source)) {
+    return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">No login needed</span>;
+  }
+  if (readiness === "connected") {
+    return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Connected</span>;
+  }
+  return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Needs login</span>;
 }
 
 function sourceToDraft(source: SourceConfig): DraftSource {
@@ -1220,7 +1240,15 @@ function AutoFireRulesEditor({
  * on Save — the same `{ok,error}` Server Action convention
  * `updateGigStatusAction` established (src/app/actions.ts).
  */
-export function ConfigClient({ initial, portunusAvailable }: { initial: Config; portunusAvailable: boolean }) {
+export function ConfigClient({
+  initial,
+  portunusAvailable,
+  sessionReadiness,
+}: {
+  initial: Config;
+  portunusAvailable: boolean;
+  sessionReadiness: Record<string, SessionReadiness>;
+}) {
   const [draft, setDraft] = useState<DraftConfig>(() => configToDraft(initial));
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -1925,6 +1953,7 @@ export function ConfigClient({ initial, portunusAvailable }: { initial: Config; 
                     </select>
                   )}
                 </label>
+                <SourceStatusBadge source={source} readiness={sessionReadiness[source.id]} />
                 <CheckboxField
                   label="Enabled"
                   checked={source.enabled}
