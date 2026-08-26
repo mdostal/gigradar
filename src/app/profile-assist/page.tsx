@@ -2,6 +2,12 @@ import { KNOWN_SOURCES } from "@/lib/sources/origins";
 import { readRawConfig } from "@/lib/config/save";
 import { ProfileAssistClient } from "./profile-assist-client";
 
+// Single-user local app, no CDN — see src/app/page.tsx's header comment.
+// Here specifically: this route had ZERO revalidatePath() coverage of any
+// kind before this fix — a source added via /config never appeared in the
+// picker list below without a full rebuild/redeploy.
+export const dynamic = "force-dynamic";
+
 /**
  * profile-assist epic, profile-assist-persistent-session-manual-mode
  * story. A Server Component only to compute the source picker's option

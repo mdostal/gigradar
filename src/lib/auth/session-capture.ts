@@ -276,6 +276,17 @@ export function getCapturePage(captureId: string): Page {
   return page;
 }
 
+/**
+ * The local-backend session file path convention for `sourceId`:
+ * `<getDefaultDataDir()>/<sourceId>-session.json`. Extracted so
+ * `finishCapture()` below and the readiness check in
+ * `session-readiness.ts` share one source of truth rather than risking the
+ * template string drifting between two call sites.
+ */
+export function sessionStatePathFor(sourceId: string): string {
+  return path.join(getDefaultDataDir(), `${sourceId}-session.json`);
+}
+
 /** finishCapture()'s result — discriminated on which backend the session was persisted to. Never both, never a silent fallback from one to the other (oauth-session-capture-v2 epic, portunus-session-backend story). */
 export type FinishCaptureResult =
   | { backend: "local"; path: string }
@@ -353,7 +364,7 @@ export async function finishCapture(captureId: string, sessionBackend: SessionBa
       return { backend: "portunus", site: entry.sourceId, account: PORTUNUS_SESSION_ACCOUNT };
     }
 
-    const destPath = path.join(getDefaultDataDir(), `${entry.sourceId}-session.json`);
+    const destPath = sessionStatePathFor(entry.sourceId);
     writeStorageStateAtomically(destPath, filtered);
     return { backend: "local", path: destPath };
   } finally {

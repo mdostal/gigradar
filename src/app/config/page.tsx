@@ -1,8 +1,17 @@
 import { isPortunusAvailable } from "@/lib/auth/session-backend";
+import { checkSessionReadiness, type SessionReadiness } from "@/lib/auth/session-readiness";
 import { ConfigSchema } from "@/lib/config/schema";
 import { readRawConfig } from "@/lib/config/save";
 import type { Config } from "@/lib/types";
 import { ConfigClient } from "./config-client";
+
+// Single-user local app, no CDN — see src/app/page.tsx's header comment.
+// This route already has the best in-app revalidatePath() coverage of the
+// six pages (every mutating config action revalidates it), so this is a
+// near-zero-cost completeness fix for the residual gap: config.json edited
+// out-of-band, or Portunus installed/uninstalled, while the server is
+// already running.
+export const dynamic = "force-dynamic";
 
 /**
  * The blank/empty-shaped starting document for first-run setup — never
@@ -56,6 +65,16 @@ export default async function ConfigPage() {
   // posture for OSS users without Portunus installed.
   const portunusAvailable = await isPortunusAvailable();
 
+  // source-login-status-badge story: computed here, server-side, and
+  // threaded down as a plain prop — same pattern as portunusAvailable
+  // directly above. checkSessionReadiness() never spawns a browser or calls
+  // an LLM, so this is cheap enough to run once per source on every render
+  // (same cost class as the isPortunusAvailable() check itself).
+  const sessionReadiness: Record<string, SessionReadiness> = {};
+  for (const source of initial.sources) {
+    sessionReadiness[source.id] = await checkSessionReadiness(source);
+  }
+
   let subtitle: string;
   if (!configExists) {
     subtitle = "No config.json found yet — fill in the form below to create one (first-run setup).";
@@ -70,7 +89,7 @@ export default async function ConfigPage() {
     <main className="mx-auto max-w-4xl p-6">
       <h1 className="text-2xl font-bold tracking-tight text-slate-900">Configure gigradar</h1>
       <p className="text-sm text-slate-500">{subtitle}</p>
-      <ConfigClient initial={initial} portunusAvailable={portunusAvailable} />
+      <ConfigClient initial={initial} portunusAvailable={portunusAvailable} sessionReadiness={sessionReadiness} />
     </main>
   );
 }
