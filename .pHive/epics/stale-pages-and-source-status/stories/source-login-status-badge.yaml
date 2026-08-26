@@ -1,7 +1,7 @@
 id: source-login-status-badge
 epic: stale-pages-and-source-status
 title: Add a per-source auth/login status badge to the Config UI
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

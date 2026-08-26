@@ -1,7 +1,7 @@
 id: fix-stale-static-pages
 epic: stale-pages-and-source-status
 title: Mark data-reading pages dynamic so they never serve a frozen build-time snapshot
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
