@@ -51,7 +51,7 @@ export function NavHeader({
   return (
     <header className="sticky top-0 z-10 border-b border-brand-border bg-brand-bg/95 backdrop-blur supports-[backdrop-filter]:bg-brand-bg/90">
       <nav className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
-        <span className="flex items-center gap-2 text-sm font-bold tracking-tight text-brand-text">
+        <Link href="/" className="flex items-center gap-2 text-sm font-bold tracking-tight text-brand-text">
           {iconSrc && (
             <img
               src={iconSrc}
@@ -62,7 +62,7 @@ export function NavHeader({
             />
           )}
           gigradar
-        </span>
+        </Link>
         <div className="flex items-center gap-1">
           {NAV_LINKS.map((link) => {
             const active = pathname === link.href;
