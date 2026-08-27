@@ -788,4 +788,46 @@ describe("startScheduler: runCycle raises an issue per source error (notificatio
     const open = listIssues({ open: true });
     expect(open.map((i) => i.title).sort()).toEqual(["Needs human verification", "Source fetch failed"]);
   });
+
+  it("source-status-features epic: a source that errors then SUCCEEDS on a later cycle has its open issue auto-resolved -- no manual click needed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let call = 0;
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => {
+      call += 1;
+      return {
+        results: [],
+        passed: [],
+        errors: call === 1 ? [{ sourceId: "braintrust", message: "transient network blip" }] : [],
+        newlyInsertedKeys: [],
+      };
+    });
+    const config = makeConfig({ schedule: "*/1 * * * * *" });
+    // Jump the injected clock forward an hour between triggers -- otherwise
+    // cycle 2 falls inside braintrust's own just-recorded backoff window,
+    // buildCycleConfig() excludes it from cycleConfig.sources entirely, and
+    // neither the mock runRadarFn nor the auto-resolve loop ever sees it.
+    let nowMs = 0;
+    const nowFn = () => (nowMs += 60 * 60 * 1000);
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn(), now: nowFn });
+    await (handle.getJob() as Cron).trigger(); // cycle 1: errors, raises the issue
+    const { listIssues } = await import("../../lib/notify/issues.js");
+    expect(listIssues({ open: true })).toHaveLength(1);
+
+    await (handle.getJob() as Cron).trigger(); // cycle 2: succeeds
+
+    expect(listIssues({ open: true })).toHaveLength(0);
+    expect(listIssues({ open: false })).toHaveLength(1);
+  });
+
+  it("a source with no prior issue succeeding is a silent no-op -- resolveIssuesForSource() never throws when there's nothing to resolve", async () => {
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: [], passed: [], errors: [], newlyInsertedKeys: [] }));
+    const config = makeConfig({ schedule: "*/1 * * * * *" });
+    const exitFn = vi.fn();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(exitFn).not.toHaveBeenCalled(); // no fatal error boundary fired
+  });
 });

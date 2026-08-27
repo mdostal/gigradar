@@ -8,7 +8,7 @@ const sendDesktopNotificationMock = vi.fn(async (_n: { title: string; body: stri
 vi.mock("../desktop.js", () => ({ sendDesktopNotification: (n: { title: string; body: string }) => sendDesktopNotificationMock(n) }));
 
 import { closeDb, getDb } from "../../store/db.js";
-import { listIssues, raiseIssue, resolveIssue } from "../issues.js";
+import { listIssues, raiseIssue, resolveIssue, resolveIssuesForSource } from "../issues.js";
 
 let tmpDir: string;
 let db: DatabaseSync;
@@ -122,6 +122,63 @@ describe("resolveIssue", () => {
 
   it("throws for a nonexistent id", () => {
     expect(() => resolveIssue("nonexistent-id", { db })).toThrow(/no issue with id/);
+  });
+});
+
+describe("resolveIssuesForSource", () => {
+  it("resolves every open issue whose context.sourceId matches, leaves others untouched", async () => {
+    const gofractionalId = await raiseIssue(
+      { severity: "warning", source: "runRadar:gofractional", title: "Source fetch failed", message: "m", context: { sourceId: "gofractional" } },
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+    const ateamId = await raiseIssue(
+      { severity: "warning", source: "runRadar:ateam", title: "Source fetch failed", message: "m", context: { sourceId: "ateam" } },
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+
+    const count = resolveIssuesForSource("gofractional", { db, now: "2026-01-02T00:00:00.000Z" });
+
+    expect(count).toBe(1);
+    expect(listIssues({ open: true }, { db }).map((i) => i.id)).toEqual([ateamId]);
+    expect(listIssues({ open: false }, { db })[0]?.id).toBe(gofractionalId);
+  });
+
+  it("resolves multiple open issues for the same source (e.g. a fetch-failed issue AND a needs-verification issue)", async () => {
+    await raiseIssue(
+      { severity: "warning", source: "runRadar:gofractional", title: "Source fetch failed", message: "m", context: { sourceId: "gofractional" } },
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+    await raiseIssue(
+      { severity: "warning", source: "runRadar:gofractional", title: "Needs human verification", message: "m", context: { sourceId: "gofractional" } },
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+
+    const count = resolveIssuesForSource("gofractional", { db });
+
+    expect(count).toBe(2);
+    expect(listIssues({ open: true }, { db })).toHaveLength(0);
+  });
+
+  it("is a no-op (never throws) when the source has no open issues", () => {
+    expect(resolveIssuesForSource("never-had-an-issue", { db })).toBe(0);
+  });
+
+  it("never resolves an issue with no context (context.sourceId is undefined, never matches)", async () => {
+    await raiseIssue({ severity: "warning", source: "a", title: "X", message: "m" }, { db, now: "2026-01-01T00:00:00.000Z" });
+
+    expect(resolveIssuesForSource("a", { db })).toBe(0);
+    expect(listIssues({ open: true }, { db })).toHaveLength(1);
+  });
+
+  it("already-resolved issues for the source are untouched (not double-resolved, not counted)", async () => {
+    const id = await raiseIssue(
+      { severity: "warning", source: "runRadar:gofractional", title: "Source fetch failed", message: "m", context: { sourceId: "gofractional" } },
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+    resolveIssue(id, { db, now: "2026-01-01T12:00:00.000Z" });
+
+    expect(resolveIssuesForSource("gofractional", { db })).toBe(0);
+    expect(listIssues({ open: false }, { db })[0]?.resolvedAt).toBe("2026-01-01T12:00:00.000Z");
   });
 });
 

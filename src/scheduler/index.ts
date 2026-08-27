@@ -43,7 +43,7 @@ import { runRadar, stageApplication } from "../lib/apply/runner.js";
 import { loadConfig } from "../lib/config/load.js";
 import { resolveLlmCredential } from "../lib/config/env-store.js";
 import { sendDesktopNotification } from "../lib/notify/desktop.js";
-import { raiseIssue } from "../lib/notify/issues.js";
+import { raiseIssue, resolveIssuesForSource } from "../lib/notify/issues.js";
 import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting } from "../lib/store/index.js";
 import { getSubmitAdapter } from "../lib/submit/adapter.js";
 import type { ApplyProfileConfig, Config, MatchResult, SourceConfig } from "../lib/types.js";
@@ -442,6 +442,18 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
         if (!source.enabled) continue;
         if (erroredIds.has(source.id)) tracker.recordFailure(source.id);
         else tracker.recordSuccess(source.id);
+      }
+
+      // source-status-features epic, auto-resolve-stale-issues story: every
+      // source that succeeded THIS cycle gets any of its still-open issues
+      // cleared -- a transient failure (network blip, rate limit) that
+      // self-heals on a later scan shouldn't sit in the Issues list forever
+      // waiting for a manual "mark resolved" click. A source that's still
+      // failing keeps its open issue untouched (raiseIssue() below dedupes
+      // it, never re-raises a duplicate).
+      for (const source of cycleConfig.sources as SourceConfig[]) {
+        if (!source.enabled || erroredIds.has(source.id)) continue;
+        resolveIssuesForSource(source.id);
       }
 
       logCycleSummary(result, tracker, skippedSourceIds);

@@ -1,5 +1,32 @@
+import { readRawConfig } from "@/lib/config/save";
 import { listIssues } from "@/lib/notify/issues";
+import { SOURCE_ORIGINS } from "@/lib/sources/origins";
 import { IssuesClient } from "./issues-client";
+
+/**
+ * Same eligibility rule as /config's own `showsCaptureLogin()`
+ * (config-client.tsx): every `SOURCE_ORIGINS`-registered source, OR a
+ * custom source explicitly declared `settings.customAuth: "browser-session"`
+ * — read from the RAW (unresolved) config document, never `loadConfig()`
+ * (CLAUDE.md's Secret handling contract: this is a read-only UI-gating
+ * check, not the pipeline runner). Reused here so a "Source fetch failed" /
+ * "Needs human verification" issue on one of these sources can offer an
+ * inline "Capture login" action, not just "Resolve."
+ */
+function captureEligibleSourceIds(): string[] {
+  const raw = readRawConfig();
+  const sources = Array.isArray(raw.sources) ? raw.sources : [];
+  const ids: string[] = [];
+  for (const s of sources) {
+    if (typeof s !== "object" || s === null) continue;
+    const entry = s as Record<string, unknown>;
+    const id = typeof entry.id === "string" ? entry.id : undefined;
+    if (!id) continue;
+    const settings = typeof entry.settings === "object" && entry.settings !== null ? (entry.settings as Record<string, unknown>) : undefined;
+    if (id in SOURCE_ORIGINS || settings?.customAuth === "browser-session") ids.push(id);
+  }
+  return ids;
+}
 
 // Single-user local app, no CDN — see src/app/page.tsx's header comment for
 // the full reasoning. Here specifically: raiseIssue() is called only from
@@ -23,7 +50,7 @@ export default function IssuesPage() {
       <p className="text-sm text-theme-text-dim">
         {open.length === 0 ? "Nothing needs attention right now." : `${open.length} open issue${open.length === 1 ? "" : "s"}.`}
       </p>
-      <IssuesClient open={open} resolved={resolved} />
+      <IssuesClient open={open} resolved={resolved} captureEligibleSourceIds={captureEligibleSourceIds()} />
     </main>
   );
 }

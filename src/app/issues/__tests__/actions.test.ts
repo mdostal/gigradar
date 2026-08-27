@@ -10,10 +10,19 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // actually shells out to osascript/notify-send.
 vi.mock("@/lib/notify/desktop", () => ({ sendDesktopNotification: vi.fn(async () => undefined) }));
 
+// retrySourceAction() genuinely calls loadConfig()/runRadar() (see its own
+// doc comment -- "resolving is the exception" case) -- mocked here the same
+// way agent-chat-loop.test.ts mocks runRadar for its own run_scan tool test.
+const runRadarMock = vi.fn();
+vi.mock("@/lib/apply/runner", () => ({ runRadar: (...args: unknown[]) => runRadarMock(...args) }));
+const loadConfigMock = vi.fn();
+vi.mock("@/lib/config/load", () => ({ loadConfig: () => loadConfigMock() }));
+vi.mock("@/lib/config/env-store", () => ({ resolveLlmCredential: () => undefined }));
+
 import { revalidatePath } from "next/cache";
 import { closeDb, getDb } from "@/lib/store/db";
 import { listIssues, raiseIssue } from "@/lib/notify/issues";
-import { resolveIssueAction } from "../actions";
+import { resolveIssueAction, retrySourceAction } from "../actions";
 
 let tmpDir: string;
 
@@ -26,6 +35,8 @@ beforeEach(() => {
   vi.stubEnv("GIGRADAR_DB_PATH", path.join(tmpDir, "gigs.db"));
   getDb();
   vi.mocked(revalidatePath).mockClear();
+  runRadarMock.mockReset();
+  loadConfigMock.mockReset();
 });
 
 afterEach(() => {
@@ -53,5 +64,63 @@ describe("resolveIssueAction", () => {
     if (result.ok) throw new Error("expected failure");
     expect(result.error).toMatch(/no issue with id/);
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+function stubbedConfig() {
+  return {
+    profile: { name: "Test User", roles: [], skills: [], timezone: "UTC" },
+    needs: { engagementProfiles: [], freshStageOnly: false, remoteOnly: false },
+    sources: [{ id: "braintrust", enabled: true }],
+  };
+}
+
+describe("retrySourceAction", () => {
+  it("re-runs just this source, resolves its open issue on success, and revalidates both routes", async () => {
+    loadConfigMock.mockReturnValue(stubbedConfig());
+    runRadarMock.mockResolvedValue({ results: [{}, {}], passed: [], errors: [], newlyInsertedKeys: [] });
+    await raiseIssue(
+      { severity: "warning", source: "runRadar:braintrust", title: "Source fetch failed", message: "timeout", context: { sourceId: "braintrust" } },
+    );
+
+    const result = await retrySourceAction("braintrust");
+
+    expect(result).toEqual({ ok: true, data: { ok: true, foundCount: 2 } });
+    expect(listIssues({ open: true })).toHaveLength(0);
+    expect(revalidatePath).toHaveBeenCalledWith("/issues");
+    expect(revalidatePath).toHaveBeenCalledWith("/");
+    // Only the ONE targeted source was passed through, regardless of what else config.sources holds.
+    expect(runRadarMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sources: [{ id: "braintrust", enabled: true }] }),
+      {},
+      expect.anything(),
+    );
+  });
+
+  it("returns {ok:false} with the real failure message and leaves the issue open when the retry itself still fails", async () => {
+    loadConfigMock.mockReturnValue(stubbedConfig());
+    runRadarMock.mockResolvedValue({ results: [], passed: [], errors: [{ sourceId: "braintrust", message: "still down" }], newlyInsertedKeys: [] });
+    await raiseIssue(
+      { severity: "warning", source: "runRadar:braintrust", title: "Source fetch failed", message: "timeout", context: { sourceId: "braintrust" } },
+    );
+
+    const result = await retrySourceAction("braintrust");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toBe("still down");
+    expect(listIssues({ open: true })).toHaveLength(1);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("returns {ok:false} for a source id not present in config, without ever calling runRadar", async () => {
+    loadConfigMock.mockReturnValue(stubbedConfig());
+
+    const result = await retrySourceAction("never-configured");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toMatch(/no source configured/);
+    expect(runRadarMock).not.toHaveBeenCalled();
   });
 });
