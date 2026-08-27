@@ -2,11 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { actionErr, actionOk } from "@/lib/actions/result";
+import { runRadar } from "@/lib/apply/runner";
 import { checkCaptureReadiness, type CaptureReadiness } from "@/lib/auth/capture-guidance";
 import { closeCopilotSession, getCopilotPage, openCopilotSession } from "@/lib/auth/verification-copilot-session";
+import { loadConfig } from "@/lib/config/load";
 import { resolveLlmCredential } from "@/lib/config/env-store";
 import { readRawConfig } from "@/lib/config/save";
-import { resolveIssue } from "@/lib/notify/issues";
+import { resolveIssue, resolveIssuesForSource } from "@/lib/notify/issues";
 import type { ActionResult } from "@/lib/actions/result";
 
 /**
@@ -129,4 +131,61 @@ export async function finishCopilotSessionAction(sessionId: string, issueId: str
   revalidatePath("/issues");
   revalidatePath("/");
   return actionOk(null);
+}
+
+// ---------------------------------------------------------------------------
+// "Retry now" (source-status-features epic, inline-issue-actions story) —
+// the real ACTION this page was missing: instead of only ever being able to
+// "mark resolved" a "Source fetch failed" / "Needs human verification"
+// issue, re-run THAT ONE source's fetch right now and report what actually
+// happened. On success, resolves every open issue for that source the same
+// way the scheduler's own auto-resolve loop does (resolveIssuesForSource())
+// -- no need to wait for the next scheduled cycle to confirm a fix (e.g.
+// right after Capture Login) worked.
+// ---------------------------------------------------------------------------
+
+export interface RetrySourceResult {
+  ok: true;
+  foundCount: number;
+}
+
+/**
+ * Resolves the FULL config via `loadConfig()` (this action genuinely runs
+ * the pipeline for one source -- the "resolving is the exception" case
+ * CLAUDE.md's Secret handling section carves out, same as the scheduler's
+ * own runRadarFn call) and re-fetches ONLY `sourceId`, ignoring every other
+ * source's enabled state. Persists via the same `runRadar()`/`recordScan()`
+ * path a real scheduled cycle uses, so a newly found gig actually shows up
+ * on the dashboard, not just a dry-run preview (contrast
+ * `testCustomSourceExtractionAction()` in config/actions.ts, which
+ * deliberately never persists).
+ *
+ * A thrown/returned error's message is a `src.fetch()`-authored string --
+ * same convention every other action in this file already follows -- never
+ * a resolved secret (no code path here ever returns `runOpts.credential` or
+ * any config value that isn't already a public-shaped error string).
+ */
+export async function retrySourceAction(sourceId: string): Promise<ActionResult<RetrySourceResult>> {
+  const config = loadConfig();
+  const source = config.sources.find((s) => s.id === sourceId);
+  if (!source) {
+    return actionErr(new Error(`gigradar issues: no source configured with id "${sourceId}".`));
+  }
+
+  const singleSourceConfig = { ...config, sources: [{ ...source, enabled: true }] };
+
+  try {
+    const result = await runRadar(singleSourceConfig, {}, { credential: resolveLlmCredential() });
+    const failure = result.errors.find((e) => e.sourceId === sourceId);
+    if (failure) {
+      return actionErr(new Error(failure.message));
+    }
+
+    resolveIssuesForSource(sourceId);
+    revalidatePath("/issues");
+    revalidatePath("/");
+    return actionOk({ ok: true, foundCount: result.results.length });
+  } catch (e) {
+    return actionErr(e);
+  }
 }
