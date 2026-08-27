@@ -114,3 +114,29 @@ export function listIssues(filter: { open?: boolean } = {}, opts: DbOption = {})
   const rows = db.prepare(`SELECT * FROM issues ${where} ORDER BY raised_at DESC`).all() as unknown as IssueRow[];
   return rows.map(toStoredIssue);
 }
+
+/**
+ * source-status-features epic, auto-resolve-stale-issues story: resolves
+ * every OPEN issue whose `context.sourceId` matches `sourceId` -- called by
+ * the scheduler for every source that succeeded this cycle (see
+ * src/scheduler/index.ts's runCycle()), so a transient failure that
+ * self-heals on a later scan stops sitting in the Issues list forever
+ * waiting for a manual "mark resolved" click. Live-verified this story:
+ * builtin/linkedin/fractionaljobs/fractionus/braintrust had all
+ * successfully re-fetched days after their "Source fetch failed" issue was
+ * raised, with nothing to ever clear it.
+ *
+ * A no-op (never throws) when there's nothing open for this source --
+ * every scan cycle calls this for every successful source, so "nothing to
+ * resolve" is the common case, not an error.
+ */
+export function resolveIssuesForSource(sourceId: string, opts: DbOption & { now?: string } = {}): number {
+  const open = listIssues({ open: true }, opts);
+  let resolvedCount = 0;
+  for (const issue of open) {
+    if (issue.context?.sourceId !== sourceId) continue;
+    resolveIssue(issue.id, opts);
+    resolvedCount++;
+  }
+  return resolvedCount;
+}
