@@ -1,7 +1,7 @@
 id: real-retry-integration-test
 epic: runner-registry-and-sidecar-lifecycle
 title: Real (non-mocked-runRadar) test proving retry works against the actual registry
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: [shared-source-registration]

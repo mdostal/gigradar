@@ -8,15 +8,28 @@
 // screen that navigates later" pattern, to keep this story's own scope
 // minimal (see structured-outline.md's elicitation notes).
 use std::net::{TcpListener, TcpStream};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
-use tauri_plugin_shell::process::CommandEvent;
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 mod updater;
 use updater::{get_update_channel, get_update_status, install_update, snooze_update, UpdateState};
+
+/// runner-registry-and-sidecar-lifecycle epic: the spawned Node sidecar's
+/// `CommandChild` handle, stashed here so the RunEvent::Exit handler
+/// (bottom of `run()`) can kill it explicitly. Confirmed necessary by
+/// direct code reading, not assumed: `CommandChild` has no `Drop` impl
+/// that kills the underlying OS process, and this file's own prior
+/// comment claiming "Tauri kills child processes on app.exit() by
+/// default" does not hold -- checked against the vendored
+/// tauri/tauri-plugin-shell crate sources. Confirmed live too: killing
+/// the Tauri process left an orphaned sidecar still holding port 3000.
+#[derive(Default)]
+struct SidecarHandle(Mutex<Option<CommandChild>>);
 
 const SERVER_HOST: &str = "127.0.0.1";
 /// gigradar's documented default port (docs/gmail-oauth-setup.md tells users
@@ -111,6 +124,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(UpdateState::default())
+        .manage(SidecarHandle::default())
         .invoke_handler(tauri::generate_handler![
             get_update_channel,
             get_update_status,
@@ -187,6 +201,10 @@ pub fn run() {
             // with ZERO code change needed in browser-session.ts (live-
             // verified this story) -- just point it at the bundled browser.
             let browsers_dir = resource_dir.join("resources/playwright-browsers");
+            // runner-registry-and-sidecar-lifecycle epic: orphan self-
+            // detection preload (see that file's own header comment) --
+            // staged alongside server.js by scripts/prepare-tauri-sidecars.sh.
+            let parent_liveness_guard = resource_dir.join("resources/server/parent-liveness-guard.cjs");
 
             // Prefer DEFAULT_PORT (or a GIGRADAR_PORT override), falling back
             // to any OS-assigned free port -- see resolve_server_port()'s own
@@ -208,13 +226,18 @@ pub fn run() {
                 .sidecar("node")
                 .expect("gigradar: bundled node sidecar not found — did scripts/prepare-tauri-sidecars.sh run?")
                 .args([server_entry.to_string_lossy().to_string()])
-                .env("NODE_OPTIONS", "--experimental-sqlite")
+                .env(
+                    "NODE_OPTIONS",
+                    format!("--experimental-sqlite --require {}", parent_liveness_guard.to_string_lossy()),
+                )
+                .env("GIGRADAR_PARENT_PID", std::process::id().to_string())
                 .env("PLAYWRIGHT_BROWSERS_PATH", browsers_dir.to_string_lossy().to_string())
                 .env("PORT", server_port.to_string());
 
-            let (mut rx, _child) = sidecar
+            let (mut rx, child) = sidecar
                 .spawn()
                 .expect("gigradar: failed to spawn the bundled node sidecar");
+            *app.state::<SidecarHandle>().0.lock().expect("gigradar: sidecar handle mutex poisoned") = Some(child);
 
             // Mirror the spawned server's own stdout/stderr into this
             // process's log output (same "the terminal shows the server's
@@ -276,8 +299,39 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // runner-registry-and-sidecar-lifecycle epic: RunEvent::Exit
+            // fires for every Tauri-originated shutdown -- closing the
+            // window, Cmd+Q, the tray's Quit item, and the updater's own
+            // app.restart() (install_update / the grace-period timeout in
+            // updater.rs) all funnel through here. Killing the sidecar
+            // during an app.restart()'s own teardown is correct, not a
+            // conflict: the freshly-relaunched process spawns its own new
+            // sidecar on its own startup.
+            //
+            // What this does NOT cover: an external SIGKILL/force-quit
+            // sent directly to this OS process never reaches Tauri's own
+            // event loop at all, so RunEvent::Exit never fires -- that
+            // case is handled independently, on the CHILD side, by the
+            // sidecar's own parent-liveness self-check (see
+            // GIGRADAR_PARENT_PID in the sidecar's env below and the
+            // server bootstrap's own poll).
+            if let RunEvent::Exit = event {
+                let child = app_handle
+                    .state::<SidecarHandle>()
+                    .0
+                    .lock()
+                    .expect("gigradar: sidecar handle mutex poisoned")
+                    .take();
+                if let Some(child) = child {
+                    if let Err(err) = child.kill() {
+                        log::error!("gigradar: failed to kill sidecar on exit: {err}");
+                    }
+                }
+            }
+        });
 }
 
 #[cfg(test)]

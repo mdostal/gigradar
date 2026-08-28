@@ -1,7 +1,7 @@
 id: sidecar-orphan-self-detection
 epic: runner-registry-and-sidecar-lifecycle
 title: Sidecar self-exits if its recorded parent process disappears
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

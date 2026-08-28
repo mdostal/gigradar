@@ -1,7 +1,7 @@
 id: shared-source-registration
 epic: runner-registry-and-sidecar-lifecycle
 title: Extract shared registerAllSources() helper, fix the Retry now bug
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

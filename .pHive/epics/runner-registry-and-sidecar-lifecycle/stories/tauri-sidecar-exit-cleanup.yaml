@@ -1,7 +1,7 @@
 id: tauri-sidecar-exit-cleanup
 epic: runner-registry-and-sidecar-lifecycle
 title: Kill the spawned Node sidecar on every graceful Tauri exit
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
