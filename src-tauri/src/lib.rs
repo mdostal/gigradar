@@ -16,6 +16,7 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 mod updater;
+use updater::{get_update_channel, get_update_status, install_update, snooze_update, UpdateState};
 
 const SERVER_HOST: &str = "127.0.0.1";
 /// gigradar's documented default port (docs/gmail-oauth-setup.md tells users
@@ -109,6 +110,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(UpdateState::default())
+        .invoke_handler(tauri::generate_handler![
+            get_update_channel,
+            get_update_status,
+            install_update,
+            snooze_update,
+        ])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

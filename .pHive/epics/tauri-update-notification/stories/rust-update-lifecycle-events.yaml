@@ -1,0 +1,106 @@
+id: rust-update-lifecycle-events
+epic: tauri-update-notification
+title: Rust emits a real update lifecycle instead of silent auto-restart
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  check_for_updates() (src-tauri/src/updater.rs, verified this session) goes
+  straight from update.download_and_install(...) to app.restart() with zero
+  signal to the webview -- no Tauri event is ever emitted from lib.rs or
+  updater.rs today (grep-verified: no `app.emit` calls anywhere in either
+  file). This story adds a real lifecycle: Checking -> Available -> Downloading
+  -> ReadyToInstall -> (restart, after a grace period OR an explicit
+  install_update command) -> UpToDate / Error, each transition emitted as a
+  `gigradar://update-status` event so the frontend (next story) can render
+  it. Downloading still starts automatically the moment an update is found
+  (owner-confirmed: "Auto-download + notify-before-restart") -- only the
+  install+restart step now waits.
+
+acceptance_criteria:
+  - "Given an update is found, when check_for_updates() runs, then it emits Available{version}, then Downloading, then ReadyToInstall{version} -- never calling install()/restart() directly inline."
+  - "Given ReadyToInstall was emitted and no explicit install_update command arrives, when 30 minutes elapse, then the app installs and restarts automatically (the grace-period fallback)."
+  - "Given the frontend calls the new install_update Tauri command, when it's invoked, then the pending update installs and the app restarts immediately, regardless of how much grace-period time remains."
+  - "Given the frontend calls the new snooze_update command, when it's invoked, then the grace-period timer resets for another hour (does not re-download, does not re-check)."
+  - "Given no update is available, when check_for_updates() runs, then it emits UpToDate and nothing else happens (unchanged from today's behavior, just now observable)."
+  - "Given a NEW frontend listener attaches (e.g. UpdateNotifier mounts after the check already ran), when it calls listen(), then it immediately receives the CURRENT status, not just future transitions -- a late-attaching listener must not miss an already-ready update."
+  - "cargo test passes for the new pure-logic tests (status enum (de)serialization, grace-period-remaining calculation) added to the existing #[cfg(test)] module in lib.rs or a new one in updater.rs."
+
+steps:
+  - id: research
+    description: Re-confirm the exact current updater.rs/lib.rs structure before editing (it was read in full during planning -- re-read to catch any drift) and check whether Tauri v2's app.emit / app.manage / State patterns used elsewhere in this codebase (there are none yet) match the plugin-updater crate version pinned in Cargo.toml (tauri-plugin-updater = "2").
+    agent: researcher
+  - id: implement
+    description: |
+      In updater.rs: define `#[derive(Clone, Serialize)] #[serde(tag = "status", rename_all = "camelCase")] enum UpdateStatus { Checking, Available { version: String }, Downloading, ReadyToInstall { version: String }, UpToDate, Error { message: String } }`.
+      Add `pub struct UpdateState { current: Mutex<UpdateStatus> }` managed via `app.manage(UpdateState::default())` in lib.rs's `.setup()`.
+      Add a small helper `fn set_status(app: &AppHandle, status: UpdateStatus)` that updates the managed Mutex AND calls `app.emit("gigradar://update-status", status)` -- single choke point so "current status" and "last emitted event" can never drift apart (this is what makes the late-listener acceptance criterion possible: a fresh `listen()` can be answered by a NEW #[tauri::command] `get_update_status` that just reads the Mutex, called once by the frontend right after it subscribes).
+      Rewrite check_for_updates() to call set_status() at each lifecycle point instead of logging. On Some(update): set_status(Available), then set_status(Downloading), call `update.download_and_install(...)` (unchanged download mechanics), then set_status(ReadyToInstall) INSTEAD of calling app.restart() inline. Store the `Update` handle itself (the downloaded-and-verified object, which is what actually knows how to install) in a second managed `Mutex<Option<Update>>` (or fold into UpdateState) so the new install_update command can call `.install()` on it later without re-downloading.
+      Add `#[tauri::command] async fn install_update(app: AppHandle, state: State<'_, UpdateState>) -> Result<(), String>` -- takes the stored Update handle, calls its install method, then app.restart(). Add `#[tauri::command] fn snooze_update(state: State<'_, UpdateState>)` -- resets/extends the grace-period deadline (a stored Instant/SystemTime in UpdateState).
+      Grace-period auto-install: after ReadyToInstall is set, spawn a `tauri::async_runtime::spawn` task that sleeps until the stored deadline, re-checking the deadline after waking (in case a snooze extended it while sleeping) before calling install.
+      In lib.rs: register both new commands in `tauri::generate_handler![...]` (extend the existing invoke handler list -- check if one exists yet; if not, this story adds the first one).
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: |
+      Add tests to the existing `#[cfg(test)] mod tests` in lib.rs (or a sibling module in updater.rs) covering: UpdateStatus serializes to the expected `{"status": "available", "version": "0.28.0"}` JSON shape (a snapshot-style assert_eq! against a literal string); grace-period-remaining math (given a deadline and a "now," the remaining duration is computed correctly, including the post-snooze-extension case). Run `cd src-tauri && cargo test` and confirm a clean pass -- this is the one place in the repo Rust tests actually run, per this story's own research finding.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for correctness (no deadlock between the Mutex used by set_status() and the async grace-period task; the download-then-wait-for-install split doesn't leave a downloaded update stuck if the app quits before the grace period elapses -- confirm this is acceptable, since the NEXT launch's own check_for_updates() will just re-download, a wasted-bandwidth-but-not-broken outcome worth noting rather than solving in this story) and convention compliance (doc comments matching this file's existing header-comment density, e.g. updater.rs's own multi-paragraph rationale comments).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic's feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    backend: Rust (Tauri v2), tauri-plugin-updater 2.x
+  key_files:
+    - path: src-tauri/src/updater.rs
+      purpose: "Owns Channel/endpoint resolution and check_for_updates() -- the exact function this story rewrites."
+    - path: src-tauri/src/lib.rs
+      purpose: "Owns the tray menu (Check for Updates / channel toggle), app.manage() setup, and the existing #[cfg(test)] module this story extends."
+
+files_to_modify:
+  - file: src-tauri/src/updater.rs
+    change: "Add UpdateStatus enum, UpdateState managed struct, set_status() choke point, install_update/snooze_update/get_update_status commands, rewrite check_for_updates() to emit lifecycle events instead of calling app.restart() directly."
+  - file: src-tauri/src/lib.rs
+    change: "app.manage(UpdateState::default()) in .setup(); register the 3 new commands via tauri::generate_handler![...]; no change to the existing tray menu wiring (still calls check_for_updates(), now non-terminal)."
+
+code_examples:
+  - title: "Existing check_for_updates() this story replaces (verified this session, current as of dev branch)"
+    file: src-tauri/src/updater.rs
+    snippet: |
+      match updater.check().await? {
+          Some(update) => {
+              update.download_and_install(|_c,_l|{}, || log::info!("...")).await?;
+              app.restart();  // <-- this story: NOT called here anymore
+          }
+          None => log::info!("gigradar: no update available on the {:?} channel", channel),
+      }
+
+design_decisions:
+  - decision: "Auto-download starts immediately on finding an update; only install+restart waits for a command or grace-period timeout."
+    rationale: "Owner-confirmed this session: preserves 'the ability to auto update' (nothing to click to fetch bytes) while still giving a real notification window before anything disruptive (a restart) happens."
+  - decision: "30-minute grace period, extendable once via a 1-hour snooze."
+    rationale: "Owner-confirmed via the same design-discussion gate; generous relative to any single in-app action, avoids indefinite silent staleness for a user who never looks at the tray."
+
+risks:
+  - severity: medium
+    description: "A downloaded-but-not-yet-installed update is lost if the app quits before the grace period elapses (Update handle lives only in memory)."
+    mitigation: "Acceptable per design_decisions above -- next launch's check_for_updates() just re-downloads. Noted for reviewer awareness, not a blocker."
+  - severity: low
+    description: "Mutex misuse could deadlock the async grace-period task against set_status()'s own lock acquisition."
+    mitigation: "Keep lock scope minimal (acquire, read/write, drop immediately) in set_status() -- never hold the Mutex guard across an .await point."
+
+references:
+  - path: docs/ARCHITECTURE.md
+    relevant_excerpt: |
+      "Two distinct 'signing' concepts... the update BUNDLE carries a real
+      Tauri-updater ed25519 signature... that part is real and working."

@@ -7,6 +7,7 @@ import { listIssues } from "@/lib/notify/issues";
 import { resolveUiTheme } from "@/lib/ui-theme";
 import { issuesBadgeInfo } from "./issues-badge";
 import { NavHeader } from "./nav-header";
+import { UpdateNotifier } from "./update-notifier";
 
 /**
  * Dynamic (not a static `export const metadata`) so the favicon reflects
@@ -44,6 +45,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="theme-body min-h-screen antialiased">
         <NavHeader issuesBadge={issuesBadgeInfo(openIssues)} iconSrc={icon.path} />
         {children}
+        <UpdateNotifier />
       </body>
     </html>
   );
