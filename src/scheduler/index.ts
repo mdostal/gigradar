@@ -44,6 +44,7 @@ import { loadConfig } from "../lib/config/load.js";
 import { resolveLlmCredential } from "../lib/config/env-store.js";
 import { sendDesktopNotification } from "../lib/notify/desktop.js";
 import { raiseIssue, resolveIssuesForSource } from "../lib/notify/issues.js";
+import { registerAllSources } from "../lib/sources/register-all.js";
 import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting } from "../lib/store/index.js";
 import { getSubmitAdapter } from "../lib/submit/adapter.js";
 import type { ApplyProfileConfig, Config, MatchResult, SourceConfig } from "../lib/types.js";
@@ -560,31 +561,17 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
   };
 }
 
-// CLI entrypoint: `npm run scheduler`. Registers every built-in source's
-// side-effecting registerSource() call — runRadar() only ever looks sources
-// up by id (getSource()), so without this every configured source would
-// report "no such registered source" no matter what's in config.json. Same
-// dynamic-import-inside-main(), NOT top-level-of-module, pattern
-// src/lib/apply/runner.ts's own CLI main() uses, for the identical reason
-// documented there: this module's own tests import startScheduler()
-// directly and register their own network-free test-double sources under
-// the SAME ids — a top-level import here would collide with "duplicate
-// source id" in that same test process. (This registers every one of the
-// project's current adapters — matching runner.ts's real, current main()
-// exactly is the actual "reuse this exact pattern" bar, not a fixed
-// headcount that will go stale as more adapters ship.)
+// CLI entrypoint: `npm run scheduler`. runner-registry-and-sidecar-lifecycle
+// epic: registration is now shared with src/lib/apply/runner.ts's own CLI
+// main() (and src/app/issues/actions.ts's retrySourceAction) via
+// register-all.ts — see that file's own doc comment for why this must stay
+// a dynamic-import call inside a function, never a static top-level import
+// of this module (this module's own tests import startScheduler() directly
+// and register their own network-free test-double sources under the SAME
+// ids — a top-level import here would collide with "duplicate source id"
+// in that same test process).
 async function main(): Promise<void> {
-  await Promise.all([
-    import("../lib/sources/braintrust.js"),
-    import("../lib/sources/builtin.js"),
-    import("../lib/sources/gofractional.js"),
-    import("../lib/sources/ateam.js"),
-    import("../lib/sources/fractionaljobs.js"),
-    import("../lib/sources/fractionus.js"),
-    import("../lib/sources/fractionalfinders.js"),
-    import("../lib/sources/wellfound.js"),
-    import("../lib/sources/linkedin.js"),
-  ]);
+  await registerAllSources();
 
   startScheduler();
 }

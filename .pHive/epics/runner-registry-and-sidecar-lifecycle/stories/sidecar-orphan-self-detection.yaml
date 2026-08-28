@@ -1,0 +1,58 @@
+id: sidecar-orphan-self-detection
+epic: runner-registry-and-sidecar-lifecycle
+title: Sidecar self-exits if its recorded parent process disappears
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  RunEvent::Exit (tauri-sidecar-exit-cleanup story) cannot fire for an
+  external SIGKILL/force-quit sent directly to the OS process -- that's
+  exactly what produced the orphan actually observed this session (a
+  deliberate `pkill -f ".../MacOS/app"` used as a debugging shortcut). The
+  robust fix for that case lives on the CHILD side: the spawned sidecar
+  polls whether its recorded parent PID is still alive and self-exits if
+  not. `electron/main.ts` has the identical "cleanup only runs on graceful
+  quit" limitation as the Tauri side did before the sibling story -- same
+  fix applies to both GUI-spawned-child entry points.
+
+acceptance_criteria:
+  - "Given the sidecar was launched with GIGRADAR_PARENT_PID set, when that PID stops existing (parent force-killed or crashed), then the sidecar self-exits within the poll interval (~10s)."
+  - "Given a plain `npm run dev`/`npm run start` terminal session (GIGRADAR_PARENT_PID unset), when running, then this self-detection is a complete no-op -- normal Ctrl+C/shell job-control behavior is unaffected."
+  - "Given src-tauri/src/lib.rs's sidecar spawn, when it launches the child, then it passes GIGRADAR_PARENT_PID=<this process's own pid>."
+  - "Given electron/main.ts's child spawn, when it launches the child, then it ALSO passes GIGRADAR_PARENT_PID=<this process's own pid> -- same fix, both entry points, not just Tauri."
+  - "npm test and npx tsc --noEmit pass; cargo check passes."
+
+steps:
+  - id: implement
+    description: |
+      Find this app's real Next.js server bootstrap entrypoint (the file scripts/prepare-tauri-sidecars.sh stages as resources/server/server.js -- likely a thin wrapper around `next start` or the standalone server output; confirm the exact file during research, don't guess). Add a small, self-contained liveness poll, gated on `process.env.GIGRADAR_PARENT_PID`: every 10s, `try { process.kill(Number(process.env.GIGRADAR_PARENT_PID), 0); } catch { process.exit(0); }` (signal 0 checks liveness without sending a real signal; throws ESRCH once that PID no longer exists). Only activate the interval when the env var is actually set and parses as a positive integer.
+      In src-tauri/src/lib.rs's sidecar spawn: add `.env("GIGRADAR_PARENT_PID", std::process::id().to_string())` to the existing `.env(...)` chain.
+      In electron/main.ts's child spawn: add the equivalent env var, this process's own `process.pid`.
+    agent: developer
+  - id: test
+    description: A real (not mocked) test spawning a tiny child Node process with GIGRADAR_PARENT_PID set to a PID that is then killed, asserting the child exits on its own within a bounded wait -- mirrors electron/__tests__/server-ready.test.ts's own precedent for testing real process behavior in this repo (not everything here is mocked). Confirm the env-var-unset case is a true no-op (no interval ever created -- verifiable via a short-lived process that exits cleanly on its own without needing to be killed).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the poll interval is unref'd or otherwise doesn't itself keep the process alive when everything else is done, and that the interval is coarse enough (10s) not to add meaningful overhead.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic's feature branch.
+    agent: developer
+    depends_on: [review]
+
+files_to_modify:
+  - file: src-tauri/src/lib.rs
+    change: "Pass GIGRADAR_PARENT_PID=<own pid> to the spawned sidecar."
+  - file: electron/main.ts
+    change: "Pass GIGRADAR_PARENT_PID=<own pid> to the spawned child, same reasoning as the Tauri side."
+  - file: "(server bootstrap entrypoint, exact path confirmed during research)"
+    change: "Add the gated parent-liveness poll that self-exits on orphan detection."
+
+risks:
+  - severity: low
+    description: "Signal 0 liveness checks can behave differently across platforms; this repo is macOS-scoped today (see docs/ARCHITECTURE.md's Windows caveats elsewhere), so cross-platform correctness is not this story's concern."
+    mitigation: "Scope explicitly to the macOS/POSIX behavior already assumed everywhere else in this codebase's process-management code."

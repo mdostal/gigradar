@@ -1,0 +1,38 @@
+id: real-retry-integration-test
+epic: runner-registry-and-sidecar-lifecycle
+title: Real (non-mocked-runRadar) test proving retry works against the actual registry
+status: pending
+complexity: low
+methodology: classic
+depends_on: [shared-source-registration]
+
+description: |
+  src/app/issues/__tests__/actions.test.ts's retrySourceAction tests mock
+  "@/lib/apply/runner" entirely, so the exact code path that had the "no
+  such registered source" bug was never exercised by the test suite --
+  npm test stayed green the whole time the bug was live in production.
+  Add a test that does NOT mock runner.ts, registers a real (network-free
+  test-double) source under a test-only id, and proves retrySourceAction
+  succeeds end-to-end against the real getSource() registry.
+
+acceptance_criteria:
+  - "Given a real (unmocked) runner.ts and a network-free test-double source registered under a test-only id, when retrySourceAction is called for that id, then it succeeds and resolves the issue -- proving the real getSource()/registerAllSources() wiring works, not a mock that assumes the problem away."
+  - "Given this new test existed BEFORE the shared-source-registration fix, it would have failed with 'no such registered source' -- confirm this by checking it against git stash / a manual revert if practical, so the test is proven to actually catch this class of regression."
+
+steps:
+  - id: implement
+    description: |
+      In a new describe block in src/app/issues/__tests__/actions.test.ts (or a sibling test file), keep the existing mocked-runRadar tests as-is (they're still useful for the "source not configured" / "still failing" branches), and add ONE new test that: does NOT mock @/lib/apply/runner or @/lib/sources/source, registers a tiny test-double Source (id: "test-retry-source", auth: "none", fetch: async () => []) via registerSource() from @/lib/sources/source, seeds a config via the real loadConfig mock returning a config whose sources include that id, raises an issue for it, calls the REAL retrySourceAction, and asserts success + the issue resolved.
+    agent: developer
+  - id: review
+    description: Confirm this test genuinely does not mock runner.ts/source.ts, and would have failed against the pre-fix code (spot check by temporarily reverting the fix locally, running just this test, and confirming it fails, then restoring the fix).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to the epic's feature branch.
+    agent: developer
+    depends_on: [review]
+
+files_to_modify:
+  - file: src/app/issues/__tests__/actions.test.ts
+    change: "Add one real (non-mocked-runRadar) integration-style test for retrySourceAction."
