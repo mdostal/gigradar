@@ -353,12 +353,32 @@ export function DashboardClient({
       accessorFn: (g) => g.tier ?? "",
       cell: ({ row }) => {
         const tier = row.original.tier;
+        // Tier (matching/tiering.ts) is a role-AREA classifier only — title/
+        // description keyword matching, completely independent of whether
+        // this gig actually cleared any of your engagement-type/rate
+        // profiles (matching/gate.ts). A tier="green" full-time listing
+        // that no configured profile accepts is real and expected (found
+        // live: "Software Engineer II" reqs tiering green purely off a
+        // broad keyword like "agentic" appearing in the description) — this
+        // marker is what makes that visible instead of green silently
+        // implying "matches what you'd accept."
+        const clearedAProfile = (row.original.matchedProfileIds?.length ?? 0) > 0;
         return (
-          <span
-            className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-current/30"
-            style={tier ? TIER_BADGE_STYLE[tier] : TIER_BADGE_FALLBACK_STYLE}
-          >
-            {tier ?? "unrated"}
+          <span className="inline-flex items-center gap-1">
+            <span
+              className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-current/30"
+              style={tier ? TIER_BADGE_STYLE[tier] : TIER_BADGE_FALLBACK_STYLE}
+            >
+              {tier ?? "unrated"}
+            </span>
+            {tier && tier !== "red" && !clearedAProfile && (
+              <span
+                title="Role-area match only — this gig didn't clear any of your configured engagement-type/rate profiles (Config → Needs)"
+                className="cursor-help text-xs text-theme-text-dim"
+              >
+                ⚠
+              </span>
+            )}
           </span>
         );
       },
