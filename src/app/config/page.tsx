@@ -5,6 +5,7 @@ import { readRawConfig } from "@/lib/config/save";
 import { listIssues } from "@/lib/notify/issues";
 import type { Config } from "@/lib/types";
 import { ConfigClient } from "./config-client";
+import { TauriVersionReadout } from "./tauri-version-readout";
 
 // Single-user local app, no CDN — see src/app/page.tsx's header comment.
 // This route already has the best in-app revalidatePath() coverage of the
@@ -103,6 +104,7 @@ export default async function ConfigPage() {
     <main className="mx-auto max-w-4xl p-6">
       <h1 className="text-2xl font-bold tracking-tight text-theme-text">Configure gigradar</h1>
       <p className="text-sm text-theme-text-dim">{subtitle}</p>
+      <TauriVersionReadout />
       <ConfigClient
         initial={initial}
         portunusAvailable={portunusAvailable}
