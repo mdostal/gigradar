@@ -4,6 +4,7 @@ import { getSource } from "../sources/source.js";
 import { VerificationChallengeError } from "../sources/verification-challenge.js";
 import { customLlmSource } from "../sources/custom-llm-source.js";
 import { gmailDigestSource } from "../sources/gmail-digest-source.js";
+import { registerAllSources } from "../sources/register-all.js";
 import { gate } from "../matching/gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
 import { gigKey, recordScan, saveDraft } from "../store/index.js";
@@ -206,26 +207,12 @@ export async function stageApplication(
 // GitHub Pages site; `npm run radar` had silently done nothing since the
 // project's first epic.
 async function main(): Promise<void> {
-  // Registering every built-in source's side-effecting registerSource() call
-  // — runRadar() only ever looks sources up by id (getSource()), so without
-  // this the registry is empty and every configured source would report "no
-  // such registered source" no matter what's in config.json. Deliberately
-  // done here (inside main(), the CLI-only path), NOT as a top-level import
-  // of this module: runner.test.ts imports runRadar() directly and registers
-  // its own network-free test doubles under the SAME ids (e.g. "braintrust")
-  // — a top-level import here would load the real adapters into that same
-  // test process and crash on "duplicate source id".
-  await Promise.all([
-    import("../sources/braintrust.js"),
-    import("../sources/builtin.js"),
-    import("../sources/gofractional.js"),
-    import("../sources/ateam.js"),
-    import("../sources/fractionaljobs.js"),
-    import("../sources/fractionus.js"),
-    import("../sources/fractionalfinders.js"),
-    import("../sources/wellfound.js"),
-    import("../sources/linkedin.js"),
-  ]);
+  // runner-registry-and-sidecar-lifecycle epic: shared with scheduler/
+  // index.ts (and, now, src/app/issues/actions.ts's retrySourceAction) via
+  // register-all.ts — see that file's own doc comment for why this must
+  // stay a dynamic-import call inside a function, never a static top-level
+  // import of this module.
+  await registerAllSources();
 
   const config = loadConfig();
   const { passed, errors } = await runRadar(config, {}, { credential: resolveLlmCredential() });

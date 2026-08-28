@@ -9,6 +9,7 @@ import { loadConfig } from "@/lib/config/load";
 import { resolveLlmCredential } from "@/lib/config/env-store";
 import { readRawConfig } from "@/lib/config/save";
 import { resolveIssue, resolveIssuesForSource } from "@/lib/notify/issues";
+import { registerAllSources } from "@/lib/sources/register-all";
 import type { ActionResult } from "@/lib/actions/result";
 
 /**
@@ -164,8 +165,17 @@ export interface RetrySourceResult {
  * same convention every other action in this file already follows -- never
  * a resolved secret (no code path here ever returns `runOpts.credential` or
  * any config value that isn't already a public-shaped error string).
+ *
+ * runner-registry-and-sidecar-lifecycle epic: `registerAllSources()` is
+ * called FIRST, unconditionally -- this is a Next.js Server Action, and
+ * unlike the CLI/scheduler/MCP entry points, the app-server process has no
+ * other startup hook that ever registers the adapter modules. Without
+ * this, `runRadar()` below reports "no such registered source" for every
+ * genuinely valid, already-configured source (live-verified this session
+ * against "fractionus" before this fix).
  */
 export async function retrySourceAction(sourceId: string): Promise<ActionResult<RetrySourceResult>> {
+  await registerAllSources();
   const config = loadConfig();
   const source = config.sources.find((s) => s.id === sourceId);
   if (!source) {

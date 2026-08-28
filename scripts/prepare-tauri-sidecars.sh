@@ -69,6 +69,13 @@ if [ -d public ]; then
   cp -r public "$RES_DIR/public"
 fi
 
+# runner-registry-and-sidecar-lifecycle epic: the orphan-self-detection
+# preload (see that file's own header comment) -- staged here, NOT part
+# of .next/standalone, since it's a repo-owned file, not Next build
+# output. lib.rs resolves this exact path via resource_dir and loads it
+# with NODE_OPTIONS=--require.
+cp scripts/parent-liveness-guard.cjs "$RES_DIR/parent-liveness-guard.cjs"
+
 # llm-provider-harness epic: @anthropic-ai/claude-agent-sdk's query()
 # resolves its native `claude` CLI binary via a require.resolve()-style
 # lookup for @anthropic-ai/claude-agent-sdk-<platform>-<arch> (an

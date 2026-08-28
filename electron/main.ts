@@ -89,9 +89,24 @@ async function main(): Promise<void> {
     return;
   }
 
+  // runner-registry-and-sidecar-lifecycle epic: killChild() below already
+  // handles GRACEFUL Electron quits (process group SIGTERM); this env var
+  // pair covers the case killChild() structurally cannot -- an external
+  // SIGKILL/force-quit sent directly to THIS process, which never runs
+  // killChild() at all. parent-liveness-guard.cjs (loaded via
+  // NODE_OPTIONS=--require, same mechanism the Tauri sidecar uses in
+  // src-tauri/src/lib.rs) polls GIGRADAR_PARENT_PID and self-exits once
+  // it's gone -- `npm run start` inherits both env vars down to the real
+  // `next start` node process the same way it already inherits PORT.
+  const parentLivenessGuard = path.join(REPO_ROOT, "scripts", "parent-liveness-guard.cjs");
   child = spawn("npm", ["run", "start"], {
     cwd: REPO_ROOT,
-    env: { ...process.env, NODE_OPTIONS: "--experimental-sqlite", PORT: String(port) },
+    env: {
+      ...process.env,
+      NODE_OPTIONS: `--experimental-sqlite --require ${parentLivenessGuard}`,
+      GIGRADAR_PARENT_PID: String(process.pid),
+      PORT: String(port),
+    },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });

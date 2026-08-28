@@ -1,0 +1,40 @@
+name: runner-registry-and-sidecar-lifecycle
+title: Fix source-registry bootstrap gap + orphaned sidecar processes
+description: |
+  Two real bugs found live this session. (1) retrySourceAction ("Retry
+  now" on /issues) calls runRadar() from the Next.js server process, which
+  has never bootstrapped the source-adapter registry the way runner.ts's
+  CLI/scheduler/MCP entry points each independently do -- confirmed via a
+  real "no such registered source" error against a genuinely valid,
+  already-registered source (fractionus). The test suite didn't catch it
+  because retrySourceAction's own tests mock runRadar() entirely. (2) the
+  packaged Tauri app's spawned Node sidecar survives after the app quits
+  or is killed -- confirmed live (an orphaned process from an earlier kill
+  this session was still holding port 3000). Neither Rust's exit path nor
+  the child process itself ever cleans this up today.
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: patch
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: shared-source-registration
+    title: Extract shared registerAllSources() helper, fix the Retry now bug
+    complexity: low
+    depends_on: []
+  - id: real-retry-integration-test
+    title: Real (non-mocked-runRadar) test proving retry works against the actual registry
+    complexity: low
+    depends_on: [shared-source-registration]
+  - id: tauri-sidecar-exit-cleanup
+    title: Kill the spawned Node sidecar on every graceful Tauri exit
+    complexity: medium
+    depends_on: []
+  - id: sidecar-orphan-self-detection
+    title: Sidecar self-exits if its recorded parent process disappears
+    complexity: medium
+    depends_on: []

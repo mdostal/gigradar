@@ -1,0 +1,73 @@
+id: shared-source-registration
+epic: runner-registry-and-sidecar-lifecycle
+title: Extract shared registerAllSources() helper, fix the Retry now bug
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  getSource(id) (src/lib/sources/source.ts) only finds an adapter if its
+  module was imported in the CURRENT process -- each adapter's
+  registerSource() call is a module-load side effect. runner.ts's CLI
+  main() and scheduler/index.ts each hand-maintain their own list of 9
+  dynamic import() calls before calling runRadar(); retrySourceAction
+  (src/app/issues/actions.ts) never did, so "Retry now" fails with "no
+  such registered source" for every source, confirmed live against
+  "fractionus". Extract the shared list into one helper and wire it into
+  the missing call site.
+
+acceptance_criteria:
+  - "Given retrySourceAction is called for any of the 9 registered adapters, when it runs, then getSource() finds it -- no more 'no such registered source' for a genuinely registered id."
+  - "Given src/lib/sources/register-all.ts's registerAllSources(), when called multiple times in one process, then it does not throw 'duplicate source id' (Node's module cache makes repeated import() calls idempotent -- verify this holds, not just assumed)."
+  - "Given runner.test.ts's existing test-double registration under ids like 'braintrust', when the full suite runs, then nothing collides -- register-all.ts must use dynamic import(), never a static top-level import."
+  - "Given runner.ts's main() and scheduler/index.ts, when refactored, then both use the shared helper instead of their own hand-copied import lists, and their existing tests still pass unchanged."
+  - "npx tsc --noEmit and npm test both pass."
+
+steps:
+  - id: implement
+    description: |
+      New file src/lib/sources/register-all.ts:
+        export async function registerAllSources(): Promise<void> {
+          await Promise.all([
+            import("./braintrust.js"), import("./builtin.js"), import("./gofractional.js"),
+            import("./ateam.js"), import("./fractionaljobs.js"), import("./fractionus.js"),
+            import("./fractionalfinders.js"), import("./wellfound.js"), import("./linkedin.js"),
+          ]);
+        }
+      Update src/lib/apply/runner.ts's main() to call registerAllSources() instead of its own inline Promise.all list. Update src/scheduler/index.ts's equivalent startup call the same way. Update src/app/issues/actions.ts's retrySourceAction to call `await registerAllSources();` before `runRadar(...)`. Leave src/mcp/server.ts's static top-level imports untouched (no collision risk there, different import style is fine to leave as-is).
+    agent: developer
+  - id: test
+    description: Run the full suite (npm test) and npx tsc --noEmit. Confirm runner.test.ts and scheduler's own tests are unaffected by the refactor (they should be -- same registration behavior, just deduplicated).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm register-all.ts uses dynamic import() (not static), and that mcp/server.ts was deliberately left alone.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic's feature branch.
+    agent: developer
+    depends_on: [review]
+
+files_to_modify:
+  - file: src/lib/sources/register-all.ts
+    change: "New file: shared registerAllSources() helper."
+  - file: src/lib/apply/runner.ts
+    change: "main() calls the shared helper instead of its own inline import list."
+  - file: src/scheduler/index.ts
+    change: "Startup calls the shared helper instead of its own inline import list."
+  - file: src/app/issues/actions.ts
+    change: "retrySourceAction calls registerAllSources() before runRadar() -- the actual bug fix."
+
+references:
+  - path: src/lib/apply/runner.ts
+    relevant_excerpt: |
+      // ... runner.test.ts imports runRadar() directly and registers
+      // its own network-free test doubles under the SAME ids (e.g. "braintrust")
+      // -- a top-level import here would load the real adapters into that same
+      // test process and crash on "duplicate source id".
+      await Promise.all([
+        import("../sources/braintrust.js"),
+        import("../sources/builtin.js"),
+        ...
