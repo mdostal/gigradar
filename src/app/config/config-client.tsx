@@ -930,13 +930,27 @@ function CheckboxField({
   label,
   checked,
   onChange,
+  labelClassName = "text-theme-text",
 }: {
   label: string;
   checked: boolean;
   onChange: (next: boolean) => void;
+  /**
+   * Defaults to the theme-driven text color, correct on this component's
+   * normal (theme) surface. The kill-switch checkbox below sits on a
+   * hardcoded `bg-red-50` alert box instead — same as every other
+   * red/amber alert box in this file (e.g. the two other `bg-red-50`
+   * blocks and the `bg-amber-50` ones), all of which pair their fixed
+   * light background with a fixed dark text color rather than a theme
+   * token. This one was the sole exception (found live: `text-theme-text`
+   * resolves to a pale color in the dark "radar" theme, unreadable
+   * against a light-pink box regardless of theme) — pass `text-red-900`
+   * at that one call site instead of changing every CheckboxField user.
+   */
+  labelClassName?: string;
 }) {
   return (
-    <label className="flex items-center gap-1.5 text-sm text-theme-text">
+    <label className={`flex items-center gap-1.5 text-sm ${labelClassName}`}>
       <input
         type="checkbox"
         checked={checked}
@@ -2392,6 +2406,7 @@ export function ConfigClient({
             label="Kill switch — force-disable ALL auto-fire, regardless of the rules below"
             checked={draft.autoFire.killSwitch}
             onChange={(killSwitch) => setDraft({ ...draft, autoFire: { ...draft.autoFire, killSwitch } })}
+            labelClassName="text-red-900"
           />
         </div>
 
