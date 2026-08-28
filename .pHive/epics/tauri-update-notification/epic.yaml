@@ -1,0 +1,33 @@
+name: tauri-update-notification
+title: Real in-app update notification + user-controlled auto-update restart
+description: |
+  task #54 shipped a genuinely working updater backend (signed ed25519 update
+  bundles, dev/prod channel toggle, launch-time + manual check, CI publish
+  pipeline for both channels) -- verified fresh this session, not assumed.
+  What's missing is the user-facing half: check_for_updates() today goes
+  straight from "found an update" to a silent download+install+app.restart(),
+  with zero notification anywhere the user can see. This epic adds a real
+  Tauri-event-driven update lifecycle, an in-app toast surfaced from a new
+  UpdateNotifier component, and a version/channel readout in Config.
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories:
+  - id: rust-update-lifecycle-events
+    title: Rust emits a real update lifecycle instead of silent auto-restart
+    complexity: medium
+    depends_on: []
+  - id: frontend-update-notifier
+    title: In-app toast for update available/downloading/ready-to-restart
+    complexity: medium
+    depends_on: [rust-update-lifecycle-events]
+  - id: config-version-channel-readout
+    title: Show current app version + update channel in Config
+    complexity: low
+    depends_on: [rust-update-lifecycle-events]

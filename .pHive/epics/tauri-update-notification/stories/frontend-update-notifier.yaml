@@ -1,0 +1,88 @@
+id: frontend-update-notifier
+epic: tauri-update-notification
+title: In-app toast for update available/downloading/ready-to-restart
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [rust-update-lifecycle-events]
+
+description: |
+  @tauri-apps/plugin-updater is an installed npm dependency with ZERO
+  references anywhere in src/app or src/lib (grep-verified this session) --
+  the webview UI has no code path that knows an updater exists at all. This
+  story adds a small always-mounted client component that listens for the
+  prior story's `gigradar://update-status` Tauri event and renders a real
+  toast for the states a human should see, wired to the prior story's
+  install_update/snooze_update commands.
+
+acceptance_criteria:
+  - "Given the app is NOT running inside Tauri (npm run dev, npm run start, or Electron mode), when the page renders, then UpdateNotifier renders nothing and never throws (feature-detected, not assumed)."
+  - "Given the app IS running inside Tauri and an update becomes Available/Downloading, when those events fire, then a toast appears reading roughly 'Update v{version} available -- downloading...' with no action buttons yet (nothing to click during download)."
+  - "Given the update reaches ReadyToInstall, when that event fires, then the toast changes to 'Update v{version} ready -- restarting in {countdown} to install.' with two buttons: 'Restart now' and 'Snooze 1h'."
+  - "Given the user clicks 'Restart now', when clicked, then invoke('install_update') fires and the toast shows a brief 'Restarting...' state (the app process exits shortly after -- no need to handle a response)."
+  - "Given the user clicks 'Snooze 1h', when clicked, then invoke('snooze_update') fires and the toast's countdown resets to reflect the new deadline."
+  - "Given the app reaches Checking or UpToDate, when those events fire, then no toast is shown at all (no noise for the common case)."
+  - "Given an Error event fires, when it fires, then it is logged to the browser console only -- no toast, no user interruption (mirrors this repo's existing 'flag, don't fail' convention for transient issues)."
+  - "Given UpdateNotifier mounts AFTER an update already reached ReadyToInstall (e.g. the toast was dismissed by a page navigation, or this is a fresh page load), when it mounts, then it calls the prior story's get_update_status command to recover the current state immediately, rather than waiting for a future event that may never re-fire."
+
+steps:
+  - id: research
+    description: Confirm the exact event name/payload shape landed by rust-update-lifecycle-events (read the actual merged updater.rs, not the story's proposed shape, in case implementation details shifted during that story's own review) and check this repo's existing dynamic-import-for-optional-runtime pattern (electron/main.ts and browser-session.ts both have precedent for runtime-conditional code; follow whichever convention fits a Next.js client component importing a Tauri-only package).
+    agent: researcher
+  - id: implement
+    description: |
+      New file src/app/update-notifier.tsx ("use client"). Feature-detection: wrap the dynamic imports of `@tauri-apps/api/event` (`listen`) and `@tauri-apps/api/core` (`invoke`) in a try/catch inside a `useEffect`, OR check `typeof window !== "undefined" && "__TAURI_INTERNALS__" in window` before importing at all -- prefer the explicit window-flag check (cheaper, no thrown-and-caught exception on every non-Tauri page load).
+      State: a small discriminated union mirroring the Rust UpdateStatus enum's JSON shape (`{status: "checking"} | {status: "available", version} | {status: "downloading"} | {status: "readyToInstall", version} | {status: "upToDate"} | {status: "error", message}`), held in useState.
+      On mount (Tauri-detected branch only): call `invoke("get_update_status")` once to seed current state (the late-mount acceptance criterion), then `listen("gigradar://update-status", (event) => setState(event.payload))`, cleaning up the unlisten function on unmount.
+      Render: null for checking/upToDate; a fixed-position toast (bottom-right, matching this app's existing theme tokens -- reuse `bg-theme-surface-raised`/`border-theme-surface-border` etc. from issues-client.tsx's own action buttons, not new one-off colors) for available/downloading/readyToInstall, with the two buttons only in the readyToInstall state. A `useEffect` interval (1s tick) recomputes a human-readable countdown string from a deadline the readyToInstall payload should probably carry (coordinate with the prior story if it doesn't already -- confirm during research/implement whether ReadyToInstall's payload needs a `deadline: string` ISO timestamp field added).
+      Mount `<UpdateNotifier />` in src/app/layout.tsx, alongside `<NavHeader .../>`.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: |
+      This repo has no React Testing Library / DOM-rendering test infra (confirmed precedent: src/app/__tests__/nav-header.test.ts tests NAV_LINKS as plain exported data, not a rendered DOM, with an explicit comment explaining why). Follow the same convention: extract the state-transition/countdown-formatting logic into plain, exported, unit-testable functions (e.g. `formatCountdown(deadlineIso: string, nowIso: string): string`, `shouldShowToast(status: UpdateStatusPayload): boolean`) in update-notifier.tsx, and write src/app/__tests__/update-notifier.test.ts asserting on those functions directly -- no component render needed. `npx tsc --noEmit` must also pass (this repo has no dedicated component-test runner beyond vitest's plain-function tests).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for the feature-detection guard being genuinely bulletproof (no top-level, non-conditional import of any @tauri-apps/* package that would break `npm run dev`/`npm run build` in browser mode -- verify by actually running `npm run build` once, not just reading the code) and for matching this repo's existing theme-token usage rather than introducing new hardcoded colors.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic's feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  tech_stack:
+    frontend: Next.js 15 (App Router), React 19, Tailwind v4 theme tokens
+  key_files:
+    - path: src/app/layout.tsx
+      purpose: "Root layout where NavHeader already mounts app-wide chrome -- UpdateNotifier mounts alongside it."
+    - path: src/app/issues/issues-client.tsx
+      purpose: "Existing precedent for a self-contained client component with its own useState/useTransition-driven action buttons and theme-token styling to mirror (actionButtonClass pattern)."
+    - path: src/app/__tests__/nav-header.test.ts
+      purpose: "Precedent for this repo's 'test the exported plain data/function, not the rendered DOM' convention -- this story's test step follows the same shape."
+
+files_to_modify:
+  - file: src/app/update-notifier.tsx
+    change: "New file: the feature-detected, event-listening toast component."
+  - file: src/app/layout.tsx
+    change: "Mount <UpdateNotifier /> alongside the existing <NavHeader .../>."
+  - file: src/app/__tests__/update-notifier.test.ts
+    change: "New file: unit tests for the extracted pure formatting/decision functions."
+
+design_decisions:
+  - decision: "Feature-detect via window.__TAURI_INTERNALS__ rather than a build-time env flag."
+    rationale: "The SAME Next.js build serves all three runtime modes (browser/Electron/Tauri) per this repo's established 'one server, three shells' architecture -- a build-time flag would require three separate builds, which doesn't match how this repo ships today."
+
+risks:
+  - severity: low
+    description: "If the prior story's ReadyToInstall payload doesn't carry a deadline timestamp, the countdown UI has nothing to count down from."
+    mitigation: "Flagged explicitly in the implement step -- confirm the payload shape during this story's own research step against whatever actually landed, not the other story's as-planned shape."
+
+references:
+  - path: src/app/issues/issues-client.tsx
+    relevant_excerpt: |
+      const actionButtonClass =
+        "rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-xs font-medium text-theme-text transition-colors hover:bg-theme-surface-raised disabled:opacity-50";

@@ -1,0 +1,70 @@
+id: config-version-channel-readout
+epic: tauri-update-notification
+title: Show current app version + update channel in Config
+status: pending
+complexity: low
+methodology: classic
+depends_on: [rust-update-lifecycle-events]
+
+description: |
+  No UI anywhere in this app shows which version is actually running or
+  which update channel (Dev/Prod) it's on -- confirmed absent this session
+  by grep. This directly caused real confusion this session: a packaged
+  .app running old code was mistaken for current, and the user had no way
+  to check from inside the app itself. Adds a small, real readout to
+  Config, Tauri-only (matches the tray menu's own Tauri-only scope -- no
+  meaningful "channel" concept exists in browser/Electron mode).
+
+acceptance_criteria:
+  - "Given the app is running inside Tauri, when Config renders, then it shows the current version (e.g. 'v0.28.0') and current channel (Dev or Prod) near the other installer-level state already on that page."
+  - "Given the app is NOT running inside Tauri, when Config renders, then this section does not appear at all (feature-detected, same guard as UpdateNotifier)."
+  - "Given the version/channel readout, when the update channel is Dev, then the readout visually distinguishes it (e.g. a small amber/warning-toned label) from Prod, since Dev means more frequent, less-vetted updates -- matching this app's existing severity-color conventions (SEVERITY_BADGE_CLASS in issues-client.tsx) rather than inventing a new palette."
+
+steps:
+  - id: research
+    description: Confirm Config's current page/client-component structure (src/app/config/page.tsx + config-client.tsx) to find the right existing section to extend, and confirm Tauri's own getVersion() API (@tauri-apps/api/app) resolves the SAME version string as tauri.conf.json's version field / CFBundleShortVersionString.
+    agent: researcher
+  - id: implement
+    description: |
+      Add `#[tauri::command] fn get_update_channel() -> String` to updater.rs (thin wrapper around the existing read_channel(), serialized as "dev"/"prod") if not already exposed as a command by the first story -- coordinate rather than duplicate. Register it in lib.rs's generate_handler![...] alongside the other three.
+      In config-client.tsx (or a small new sibling component it renders), Tauri-feature-detected (same window.__TAURI_INTERNALS__ guard as UpdateNotifier -- extract the guard into one small shared helper both components import, e.g. src/lib/is-tauri.ts, rather than duplicating the check twice): call `getVersion()` (@tauri-apps/api/app) and `invoke("get_update_channel")`, render both as a small read-only line, channel styled amber for Dev / neutral for Prod.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit test the shared src/lib/is-tauri.ts helper's own logic if it has any branching worth testing (likely trivial -- a single window-property check may not warrant a dedicated test beyond `npx tsc --noEmit` passing). Confirm no regression in config-client.tsx's existing tests.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review that the new section doesn't clutter Config's existing layout and genuinely disappears (not just visually hidden) outside Tauri.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to the epic's feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "Existing Config UI this story extends with a small version/channel readout."
+
+files_to_modify:
+  - file: src-tauri/src/updater.rs
+    change: "Add get_update_channel command if not already added by rust-update-lifecycle-events."
+  - file: src/lib/is-tauri.ts
+    change: "New file: shared Tauri-runtime feature-detection helper, extracted so this story and frontend-update-notifier don't duplicate the same window-property check."
+  - file: src/app/config/config-client.tsx
+    change: "Add a small Tauri-only version/channel readout near existing installer-level state."
+
+design_decisions:
+  - decision: "Share one is-tauri.ts helper between this story and frontend-update-notifier rather than each duplicating the window.__TAURI_INTERNALS__ check."
+    rationale: "Two independent copies of the same runtime-detection logic is exactly the kind of drift this codebase's CLAUDE.md/architecture docs consistently flag as worth avoiding."
+
+references:
+  - path: src/app/issues/issues-client.tsx
+    relevant_excerpt: |
+      const SEVERITY_BADGE_CLASS: Record<StoredIssue["severity"], string> = {
+        warning: "bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-300",
+        error: "bg-red-100 text-red-800 ring-1 ring-inset ring-red-300",
+      };
