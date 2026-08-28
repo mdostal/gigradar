@@ -1,7 +1,7 @@
 id: rust-update-lifecycle-events
 epic: tauri-update-notification
 title: Rust emits a real update lifecycle instead of silent auto-restart
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

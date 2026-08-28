@@ -1,7 +1,7 @@
 id: frontend-update-notifier
 epic: tauri-update-notification
 title: In-app toast for update available/downloading/ready-to-restart
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [rust-update-lifecycle-events]
