@@ -11,12 +11,15 @@ import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
 import { SOURCE_PRESETS, sourceConfigFromPreset } from "@/lib/sources/source-presets";
 import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
 import {
+  assignGmailConnectionAction,
   cancelCaptureAction,
   checkCaptureReadinessAction,
+  type ConnectedGmailSource,
   disconnectGmailAction,
   extractProfileFromResumeAction,
   finishCaptureAction,
   getAutoFireApprovedCountAction,
+  listConnectedGmailSourcesAction,
   removeResumeAction,
   saveConfigAction,
   setLlmApiKeyAction,
@@ -1566,6 +1569,43 @@ export function ConfigClient({
     setGmailConnectState((prev) => ({ ...prev, [i]: { status: "idle" } }));
   }
 
+  // product-review-followups epic, gmail-oauth-reuse-via-portunus story --
+  // owner's own words: "the gmail oauth SHOULD be able to be re-used
+  // across the board... that should be an easy option to just assign it."
+  // Deliberately a SEPARATE state map from gmailConnectState above (a
+  // fetch-then-pick flow, not a single connecting/disconnecting toggle).
+  const [gmailAssignState, setGmailAssignState] = useState<
+    Record<
+      number,
+      | { status: "idle" }
+      | { status: "loading" }
+      | { status: "picking"; options: ConnectedGmailSource[] }
+      | { status: "assigning"; fromSourceId: string }
+      | { status: "error"; message: string }
+    >
+  >({});
+
+  async function handleShowAssignOptions(i: number, sourceId: string) {
+    setGmailAssignState((prev) => ({ ...prev, [i]: { status: "loading" } }));
+    const result = await listConnectedGmailSourcesAction(sourceId);
+    if (!result.ok) {
+      setGmailAssignState((prev) => ({ ...prev, [i]: { status: "error", message: result.error } }));
+      return;
+    }
+    setGmailAssignState((prev) => ({ ...prev, [i]: { status: "picking", options: result.data } }));
+  }
+
+  async function handleAssignGmailConnection(i: number, fromSourceId: string, toSourceId: string) {
+    setGmailAssignState((prev) => ({ ...prev, [i]: { status: "assigning", fromSourceId } }));
+    const result = await assignGmailConnectionAction(fromSourceId, toSourceId);
+    if (!result.ok) {
+      setGmailAssignState((prev) => ({ ...prev, [i]: { status: "error", message: result.error } }));
+      return;
+    }
+    setGmailConnectedSourceIds((prev) => new Set(prev).add(toSourceId));
+    setGmailAssignState((prev) => ({ ...prev, [i]: { status: "idle" } }));
+  }
+
   // -- LLM API key ("resume-link-ui" story, generalized by llm-provider-harness) --
   // Writes straight to .env via setLlmApiKeyAction, independent of
   // draft/Save — see design_decisions in
@@ -2127,14 +2167,51 @@ export function ConfigClient({
                       {gmailConnectState[i]?.status === "disconnecting" ? "Disconnecting…" : "Disconnect"}
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => handleConnectGmail(i, source.id)}
-                      disabled={gmailConnectState[i]?.status === "connecting" || !source.id}
-                      className={`${captureButtonClass} mt-1`}
-                    >
-                      {gmailConnectState[i]?.status === "connecting" ? "Connecting…" : "Connect Gmail"}
-                    </button>
+                    <div className="mt-1 flex flex-wrap items-start gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleConnectGmail(i, source.id)}
+                        disabled={gmailConnectState[i]?.status === "connecting" || !source.id}
+                        className={captureButtonClass}
+                      >
+                        {gmailConnectState[i]?.status === "connecting" ? "Connecting…" : "Connect Gmail"}
+                      </button>
+                      {(gmailAssignState[i]?.status ?? "idle") === "idle" && (
+                        <button
+                          type="button"
+                          onClick={() => handleShowAssignOptions(i, source.id)}
+                          disabled={!source.id}
+                          className={captureButtonClass}
+                        >
+                          Use existing connection
+                        </button>
+                      )}
+                      {gmailAssignState[i]?.status === "loading" && <p className="text-xs text-theme-text-dim">Checking for existing connections…</p>}
+                      {gmailAssignState[i]?.status === "picking" && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          {gmailAssignState[i]?.options.length === 0 ? (
+                            <p className="text-xs text-theme-text-dim">No other Gmail source is connected yet.</p>
+                          ) : (
+                            gmailAssignState[i]?.options.map((opt) => (
+                              <button
+                                key={opt.sourceId}
+                                type="button"
+                                onClick={() => handleAssignGmailConnection(i, opt.sourceId, source.id)}
+                                className={captureButtonClass}
+                              >
+                                Use {opt.sourceId}&rsquo;s connection
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                      {gmailAssignState[i]?.status === "assigning" && <p className="text-xs text-theme-text-dim">Assigning…</p>}
+                      {gmailAssignState[i]?.status === "error" && (
+                        <p role="alert" className="text-xs text-red-700">
+                          {gmailAssignState[i]?.message}
+                        </p>
+                      )}
+                    </div>
                   )}
                   {gmailConnectedSourceIds.has(source.id) && (
                     <p role="status" className="mt-1 text-xs text-green-700">
