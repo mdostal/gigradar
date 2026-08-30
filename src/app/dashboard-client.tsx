@@ -30,6 +30,35 @@ const STATUS_LABEL: Record<GigStatus, string> = {
   ignored: "Ignored",
 };
 
+/**
+ * Pipeline tabs (product-review-followups epic, dashboard-redesign story) --
+ * the owner's own words: "this ALSO doesn't show the ones I've already
+ * applied, passed, etc" and "this can be a clean process with gigs to
+ * apply, once we apply we can see the applied, the interviewing and
+ * packets etc." The underlying data already had every status visible (the
+ * status-multi column filter below defaulted to all of them checked) -- the
+ * actual gap was presentation: one flat table with no way to land on "just
+ * what I need to act on right now." Each tab is nothing more than a canned
+ * preset for the EXISTING status column filter (same Set<GigStatus> value
+ * the manual per-status chips below already drive), so it rides the exact
+ * same filter/sort/persistence machinery instead of adding a parallel one.
+ * "Archived" folds in "ignored" too -- both are terminal/inactive states
+ * from the pipeline's point of view; the manual chips still let someone
+ * split them back apart if they want that distinction.
+ */
+const PIPELINE_TABS: { key: string; label: string; statuses: GigStatus[] }[] = [
+  { key: "review", label: "To review", statuses: ["new"] },
+  { key: "applied", label: "Applied", statuses: ["applied"] },
+  { key: "interviewing", label: "Interviewing", statuses: ["interview"] },
+  { key: "archived", label: "Archived", statuses: ["archived", "ignored"] },
+  { key: "all", label: "All", statuses: ALL_STATUSES },
+];
+
+function sameStatusSet(a: ReadonlySet<GigStatus> | undefined, statuses: GigStatus[]): boolean {
+  if (!a || a.size !== statuses.length) return false;
+  return statuses.every((s) => a.has(s));
+}
+
 // Tier badge colors read from the theme-invariant CSS custom properties
 // (globals.css root) rather than hardcoded Tailwind green/yellow/red
 // utilities — ui-theme-system epic: tier color must read identically no
@@ -215,8 +244,13 @@ export function DashboardClient({
 }) {
   const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
+  // Default landing view is the "To review" pipeline tab (status: new only)
+  // -- a fresh install/cleared-prefs visit lands on "what do I need to act
+  // on," not the old all-statuses-mixed-together default. Any real prior
+  // visit overrides this via the persisted-prefs useEffect below, same as
+  // before this change.
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([
-    { id: "status", value: new Set(ALL_STATUSES) },
+    { id: "status", value: new Set<GigStatus>(["new"]) },
   ]);
 
   // product-review-followups epic: read any previously-saved sort/filter
@@ -270,6 +304,26 @@ export function DashboardClient({
   const [prepByKey, setPrepByKey] = useState<Record<string, PrepPacketContent>>({});
 
   const sources = useMemo(() => distinctSources(gigs), [gigs]);
+
+  // Counts are over the FULL `gigs` array, not the currently-filtered rows
+  // -- a tab needs to say how many gigs are waiting in it regardless of
+  // which tab (or manual filter) happens to be active right now.
+  const countByStatus = useMemo(() => {
+    const counts: Record<GigStatus, number> = { new: 0, applied: 0, interview: 0, archived: 0, ignored: 0 };
+    for (const g of gigs) counts[g.status]++;
+    return counts;
+  }, [gigs]);
+
+  const statusFilterValue = columnFilters.find((f) => f.id === "status")?.value as ReadonlySet<GigStatus> | undefined;
+  const activeTabKey = PIPELINE_TABS.find((t) => sameStatusSet(statusFilterValue, t.statuses))?.key;
+
+  function handleTabSelect(statuses: GigStatus[]) {
+    setColumnFilters((prev) => {
+      const next = prev.filter((f) => f.id !== "status");
+      next.push({ id: "status", value: new Set(statuses) });
+      return next;
+    });
+  }
 
   function handleStatusChange(key: string, status: GigStatus) {
     setErrorByKey((prev) => {
@@ -633,6 +687,29 @@ export function DashboardClient({
 
   return (
     <div className="mt-6 flex flex-col gap-3">
+      <nav aria-label="Pipeline stage" className="flex flex-wrap gap-1.5 border-b border-theme-surface-border pb-3">
+        {PIPELINE_TABS.map((tab) => {
+          const count = tab.statuses.reduce((sum, s) => sum + countByStatus[s], 0);
+          const active = activeTabKey === tab.key;
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              aria-pressed={active}
+              onClick={() => handleTabSelect(tab.statuses)}
+              className={[
+                "rounded-full px-3 py-1.5 text-sm font-medium transition-colors",
+                active
+                  ? "bg-slate-900 text-white"
+                  : "border border-theme-surface-border bg-theme-surface text-theme-text-dim hover:bg-theme-surface-raised",
+              ].join(" ")}
+            >
+              {tab.label} <span className={active ? "text-white/70" : "text-theme-text-dim/70"}>{count}</span>
+            </button>
+          );
+        })}
+      </nav>
+
       <p className="text-sm text-theme-text-dim">
         {rows.length} of {gigs.length} gig{gigs.length === 1 ? "" : "s"}
       </p>
