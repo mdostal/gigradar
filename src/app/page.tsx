@@ -1,5 +1,6 @@
 import { readRawConfig } from "@/lib/config/save";
-import { listDrafts, listGigs } from "@/lib/store";
+import { listDrafts, listGigs, listInterviewPrep } from "@/lib/store";
+import type { PrepPacketContent } from "@/lib/apply/prep";
 import { DashboardClient } from "./dashboard-client";
 import { computeStatusStrip } from "@/lib/status/status-strip";
 
@@ -39,6 +40,17 @@ export default function HomePage() {
   // gate (that's tier-only, canGenerateDraft()). Cheap: listDrafts() has no
   // pagination either, same tradeoff listGigs() already accepts here.
   const draftedGigKeys = new Set(listDrafts().map((d) => d.gigKey));
+  // dashboard-redesign story, prep-packet-integration slice: owner's own
+  // words, "once we apply we can see the applied, the interviewing and
+  // packets etc." A prep packet already persists (interview_prep table,
+  // saveInterviewPrep()) once generated, but the dashboard never LOADED
+  // existing ones -- dashboard-client.tsx's prepByKey state started empty
+  // every render, so a reload (or a different browser/session) made an
+  // already-generated packet invisible again until "Regenerate" was
+  // clicked. listInterviewPrep() has no pagination either, same accepted
+  // tradeoff listGigs()/listDrafts() already make on this page.
+  const prepByGigKey: Record<string, PrepPacketContent> = {};
+  for (const p of listInterviewPrep()) prepByGigKey[p.gigKey] = p.content;
 
   return (
     <main className="mx-auto max-w-[88rem] p-6">
@@ -53,7 +65,7 @@ export default function HomePage() {
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.profileLabel}</span>
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.lastScanLabel}</span>
       </div>
-      <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} />
+      <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} initialPrepByGigKey={prepByGigKey} />
     </main>
   );
 }

@@ -239,9 +239,12 @@ function sortingFnFor(field: SortField) {
 export function DashboardClient({
   gigs,
   draftedGigKeys = new Set(),
+  initialPrepByGigKey = {},
 }: {
   gigs: StoredGig[];
   draftedGigKeys?: ReadonlySet<string>;
+  /** Prep packets already persisted (interview_prep table) as of this page's own listGigs()-sibling fetch in page.tsx -- see that file's comment for why this now loads instead of starting empty. */
+  initialPrepByGigKey?: Readonly<Record<string, PrepPacketContent>>;
 }) {
   const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -302,7 +305,7 @@ export function DashboardClient({
   const [, startPrepTransition] = useTransition();
   const [generatingPrepKeys, setGeneratingPrepKeys] = useState<ReadonlySet<string>>(new Set());
   const [prepErrorByKey, setPrepErrorByKey] = useState<Record<string, string>>({});
-  const [prepByKey, setPrepByKey] = useState<Record<string, PrepPacketContent>>({});
+  const [prepByKey, setPrepByKey] = useState<Record<string, PrepPacketContent>>(initialPrepByGigKey);
 
   // Row-by-row detail browsing (job-detail-row-browsing story). Tracked by
   // KEY, not array index -- a status change made from inside the panel
