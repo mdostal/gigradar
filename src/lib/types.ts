@@ -194,6 +194,26 @@ export interface Config {
    */
   notifyOnGreenMatch?: boolean;
   /**
+   * Opt-in: when true, marking a gig "applied" (dashboard's status change,
+   * updateGigStatusAction) best-effort auto-generates and persists its
+   * interview prep packet (generatePrepPacket()/saveInterviewPrep(), same
+   * call the dashboard's own "Generate prep packet" button makes) if one
+   * doesn't already exist — never regenerates an existing one, never blocks
+   * or fails the status change itself if generation errors (missing API
+   * key, LLM failure): the failure is swallowed, same "best-effort,
+   * status-change-is-the-one-thing-that-must-succeed" discipline as
+   * notifyOnGreenMatch's own notification-failure handling above.
+   * Omitted/false => no behavior change from before this flag existed —
+   * same "meaningful, valid do-nothing default" pattern as
+   * autoDraftOnScan/notifyOnGreenMatch. Owner's own words: "when the
+   * research and that happens can be manually or automated (make it a
+   * configuration so we can change in settings)" — "research" here is this
+   * prep packet (fit/gap analysis, predicted questions, ATS check), the
+   * one piece of per-gig "figure out what I'm getting into" work this
+   * codebase does; dashboard-redesign story, product-review-followups epic.
+   */
+  autoPrepOnApply?: boolean;
+  /**
    * Opt-in, per-`(sourceId, tier)` real submission automation
    * (graduated-auto-fire-trust epic) — see `src/lib/apply/autofire.ts`'s
    * `evaluateAutoFire()`. Omitted => auto-fire never runs for anything, the

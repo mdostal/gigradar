@@ -189,6 +189,8 @@ interface DraftConfig {
    */
   autoDraftOnScan: boolean;
   notifyOnGreenMatch: boolean;
+  /** dashboard-redesign story — same "omitted/false are identical" no-tri-state pattern as autoDraftOnScan/notifyOnGreenMatch above; see types.ts's Config.autoPrepOnApply doc comment for what this actually triggers (a status change, not a scan). */
+  autoPrepOnApply: boolean;
   autoFire: DraftAutoFire;
   /** An `APP_ICONS` id (src/lib/app-icons.ts) — like autoDraftOnScan/notifyOnGreenMatch, always sent as-is, no enabled-flag tri-state needed (it always has a value, defaulting to DEFAULT_APP_ICON_ID). */
   appIcon: string;
@@ -328,6 +330,7 @@ function configToDraft(config: Config): DraftConfig {
     schedule: config.schedule ?? "",
     autoDraftOnScan: config.autoDraftOnScan ?? false,
     notifyOnGreenMatch: config.notifyOnGreenMatch ?? false,
+    autoPrepOnApply: config.autoPrepOnApply ?? false,
     appIcon: config.appIcon ?? DEFAULT_APP_ICON_ID,
     uiTheme: config.uiTheme ?? DEFAULT_UI_THEME,
     llmCredentialKind: config.llmCredentialKind ?? "api-key",
@@ -506,6 +509,7 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
   // these two don't need roleArea/schedule's enabled-flag tri-state.
   edits.autoDraftOnScan = draft.autoDraftOnScan;
   edits.notifyOnGreenMatch = draft.notifyOnGreenMatch;
+  edits.autoPrepOnApply = draft.autoPrepOnApply;
   edits.appIcon = draft.appIcon;
   edits.uiTheme = draft.uiTheme;
   edits.llmCredentialKind = draft.llmCredentialKind;
@@ -2368,7 +2372,19 @@ export function ConfigClient({
             checked={draft.notifyOnGreenMatch}
             onChange={(v) => setDraft({ ...draft, notifyOnGreenMatch: v })}
           />
+          <CheckboxField
+            label="Auto-generate a prep packet when marking a gig Applied"
+            checked={draft.autoPrepOnApply}
+            onChange={(v) => setDraft({ ...draft, autoPrepOnApply: v })}
+          />
         </div>
+        {draft.autoPrepOnApply && (
+          <p className="mt-2 text-xs text-theme-text-dim">
+            Off by default — this makes a real LLM call the moment a gig's status changes to Applied (skipped if
+            one already exists). Turn off any time; you can still generate a prep packet manually from the
+            dashboard.
+          </p>
+        )}
       </section>
 
       <section className={sectionClass}>

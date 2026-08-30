@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getGig, saveInterviewPrep, setStatus } from "@/lib/store";
+import { getGig, getInterviewPrep, saveInterviewPrep, setStatus } from "@/lib/store";
 import type { GigStatus } from "@/lib/store";
 import { actionErr, actionOk, type ActionResult } from "@/lib/actions/result";
 import { stageApplication } from "@/lib/apply/runner";
@@ -27,6 +27,21 @@ import type { MatchResult } from "@/lib/types";
  * succeeded — this exact divergence is why this story required verifying
  * under both `next dev` and `next build && next start`, not just dev's
  * looser caching.
+ *
+ * dashboard-redesign story: marking a gig "applied" also best-effort
+ * auto-generates its prep packet when `Config.autoPrepOnApply` is on and
+ * one doesn't already exist yet (`getInterviewPrep()` check — never
+ * regenerates/overwrites one the owner may have since edited-by-hand
+ * expectations around, though today nothing edits a packet in place).
+ * AWAITED, not fire-and-forget: the row's status `<select>` is already
+ * disabled for the duration of this action (dashboard-client.tsx's
+ * `isPending`), so the extra LLM-call latency rides the same "this was
+ * already a pending mutation" UX cost — and awaiting means the
+ * `revalidatePath()` below picks up the freshly-generated packet
+ * immediately, no separate refresh/poll needed. A generation failure
+ * (missing API key, LLM error) is swallowed here: the status change is
+ * the one thing that MUST succeed, same discipline `notifyOnGreenMatch`'s
+ * own notification-failure handling uses.
  */
 export async function updateGigStatusAction(
   key: string,
@@ -37,6 +52,19 @@ export async function updateGigStatusAction(
   } catch (e) {
     return actionErr(e);
   }
+
+  if (status === "applied") {
+    const config = ConfigSchema.safeParse(readRawConfig());
+    if (config.success && config.data.autoPrepOnApply && !getInterviewPrep(key)) {
+      await runPrepPacketGeneration(key).catch(() => {
+        // Best-effort — see doc comment above. runPrepPacketGeneration()
+        // already returns an {ok:false} ActionResult for its own known
+        // failure modes rather than throwing; this catch only guards
+        // against something genuinely unexpected.
+      });
+    }
+  }
+
   revalidatePath("/");
   return actionOk({ key, status });
 }
@@ -146,9 +174,11 @@ export async function generateDraftAction(key: string): Promise<ActionResult<{ g
  * `generatePrepPacket()`, persists via `saveInterviewPrep()`.
  * `applyProfile` is optional here (unlike `generateDraftAction()`, which
  * requires it) — a prep packet's fit/gap analysis is still meaningful from
- * `Profile` alone.
+ * `Profile` alone. No `revalidatePath()` here — callers own that, since
+ * `updateGigStatusAction`'s best-effort auto-prep call below already does
+ * its own regardless of whether generation succeeded.
  */
-export async function generatePrepPacketAction(key: string): Promise<ActionResult<PrepPacketContent>> {
+async function runPrepPacketGeneration(key: string): Promise<ActionResult<PrepPacketContent>> {
   const gig = getGig(key);
   if (!gig) {
     return actionErr(new Error(`gigradar career-crm: no gig found for key "${key}".`));
@@ -176,6 +206,11 @@ export async function generatePrepPacketAction(key: string): Promise<ActionResul
   }
 
   saveInterviewPrep(key, content);
-  revalidatePath("/");
   return actionOk(content);
+}
+
+export async function generatePrepPacketAction(key: string): Promise<ActionResult<PrepPacketContent>> {
+  const result = await runPrepPacketGeneration(key);
+  if (result.ok) revalidatePath("/");
+  return result;
 }

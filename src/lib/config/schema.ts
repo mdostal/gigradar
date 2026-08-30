@@ -94,9 +94,10 @@ export const SourceConfigSchema = z.object({
 
 /**
  * Mirrors `Config` in src/lib/types.ts exactly. `roleArea`, `schedule`,
- * `applyProfile`, `autoDraftOnScan`, and `notifyOnGreenMatch` MUST stay
- * `.optional()` — see the file-level comment above and types.ts's doc
- * comments for why defaulting or requiring them would be wrong.
+ * `applyProfile`, `autoDraftOnScan`, `notifyOnGreenMatch`, and
+ * `autoPrepOnApply` MUST stay `.optional()` — see the file-level comment
+ * above and types.ts's doc comments for why defaulting or requiring them
+ * would be wrong.
  */
 /** Mirrors `Tier` in src/lib/types.ts (matching/tiering.ts's own green/yellow/red). */
 const TierSchema = z.enum(["green", "yellow", "red"]);
@@ -138,6 +139,8 @@ export const ConfigSchema = z.object({
   applyProfile: ApplyProfileConfigSchema.optional(),
   autoDraftOnScan: z.boolean().optional(),
   notifyOnGreenMatch: z.boolean().optional(),
+  // dashboard-redesign story: see types.ts's Config.autoPrepOnApply doc comment.
+  autoPrepOnApply: z.boolean().optional(),
   autoFire: AutoFireConfigSchema.optional(),
   appIcon: z.string().optional(),
   // ui-theme-system epic: see types.ts's Config.uiTheme doc comment.
