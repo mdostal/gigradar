@@ -1,0 +1,20 @@
+name: product-review-followups
+title: Roadmap for the owner's live product-review brain-dump (2026-08-30)
+description: |
+  Six areas (A-F, see docs/design-discussion.md) from one consolidated
+  owner review session. This epic is the durable roadmap reference only --
+  each area is executed as its own sub-epic under .pHive/epics/, planned
+  just-in-time immediately before it's worked, not all six planned in
+  exhaustive detail up front. Sequencing: A (scraper/session fixes, fast,
+  unblocks F) first, then B/C (independent, low-risk) opportunistically,
+  then D (wizard) and E (dashboard redesign, largest), then F (depends on A).
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: none
+sidecar_retention: committed
+
+git_flow:
+  base_branch: dev
+  branch_strategy: per-epic
+
+stories: []

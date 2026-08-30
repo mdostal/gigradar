@@ -50,6 +50,7 @@ function fakeRecipeResult(listings: unknown[]) {
 function setUpFakeBrowser() {
   const page = {
     goto: vi.fn().mockResolvedValue(undefined),
+    waitForLoadState: vi.fn().mockResolvedValue(undefined),
     content: vi.fn().mockResolvedValue("<html><body></body></html>"),
     // deriveRecipeAndExtract() validates listItemSelector against the live
     // page via locator(...).count() before ever returning/caching a recipe

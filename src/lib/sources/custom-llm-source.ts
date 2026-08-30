@@ -106,6 +106,18 @@ function sessionStatePathFrom(cfg: SourceConfig): string {
  * changes single-page-source behavior.
  */
 async function extractViaRecipeOrDerive(page: Page, cfg: SourceConfig, hint: string | undefined, credential: LlmCredential | undefined): Promise<Gig[]> {
+  // product-review-followups epic, scraper-session-fixes story: both
+  // callers' page.goto(url) above has no `waitUntil`, so it resolves as
+  // soon as the initial document (+ subresources) loads -- BEFORE a
+  // client-rendered SPA's own async data fetch has painted anything.
+  // Live-verified against gun-io: the exact same session/URL produced
+  // "only <head>" without this wait, and the real page (25KB body, real
+  // listings) with it. "networkidle" is the strongest available signal
+  // that a SPA's own data-fetch-then-render cycle has settled; swallowed
+  // on timeout (not every site's network ever goes fully idle -- e.g.
+  // polling/websockets) so a slow-but-real page still falls through to
+  // extraction with whatever DOM exists, rather than failing outright.
+  await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
   const cached = readRecipe(cfg.id);
   if (cached) {
     const viaRecipe = await extractWithRecipe(page, cfg.id, cached);
