@@ -13,9 +13,13 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const buildAuthorizationUrlMock = vi.fn();
 const deleteTokenSetMock = vi.fn();
+const loadTokenSetMock = vi.fn();
+const storeTokenSetMock = vi.fn();
 vi.mock("@/lib/auth/oauth2", () => ({
   buildAuthorizationUrl: (...args: unknown[]) => buildAuthorizationUrlMock(...args),
   deleteTokenSet: (...args: unknown[]) => deleteTokenSetMock(...args),
+  loadTokenSet: (...args: unknown[]) => loadTokenSetMock(...args),
+  storeTokenSet: (...args: unknown[]) => storeTokenSetMock(...args),
 }));
 
 const resolveOAuthClientCredentialsMock = vi.fn();
@@ -30,7 +34,7 @@ vi.mock("@/lib/auth/session-backend", () => ({
 
 import { revalidatePath } from "next/cache";
 import { getConfigPath } from "@/lib/config/load";
-import { disconnectGmailAction, startGmailOAuthAction } from "../actions";
+import { assignGmailConnectionAction, disconnectGmailAction, listConnectedGmailSourcesAction, startGmailOAuthAction } from "../actions";
 
 let tmpDir: string;
 let keyTmpDir: string;
@@ -47,6 +51,8 @@ beforeEach(() => {
   vi.mocked(revalidatePath).mockClear();
   buildAuthorizationUrlMock.mockReset();
   deleteTokenSetMock.mockReset();
+  loadTokenSetMock.mockReset();
+  storeTokenSetMock.mockReset();
   resolveOAuthClientCredentialsMock.mockReset();
   sessionBackendFromMock.mockReset().mockReturnValue("local");
 });
@@ -128,6 +134,82 @@ describe("disconnectGmailAction", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.error).toMatch(/portunus unavailable/);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+// product-review-followups epic, gmail-oauth-reuse-via-portunus story.
+describe("listConnectedGmailSourcesAction", () => {
+  it("lists only gmail-digest sources whose loadTokenSet() actually succeeds, excluding the caller's own source id", async () => {
+    writeConfig({
+      profile: {},
+      needs: {},
+      sources: [
+        { id: "gmail-primary", enabled: true, kind: "gmail-digest", settings: {} },
+        { id: "gmail-secondary", enabled: true, kind: "gmail-digest", settings: {} },
+        { id: "gmail-broken", enabled: true, kind: "gmail-digest", settings: {} },
+        { id: "braintrust", enabled: true, settings: {} },
+      ],
+    });
+    loadTokenSetMock.mockImplementation(async (_provider: unknown, sourceId: string) => {
+      if (sourceId === "gmail-broken") throw new Error("not connected");
+      return { accessToken: "a", refreshToken: "r", expiresAt: 0, scope: "s" };
+    });
+
+    const result = await listConnectedGmailSourcesAction("gmail-secondary");
+
+    expect(result).toEqual({ ok: true, data: [{ sourceId: "gmail-primary" }] });
+  });
+
+  it("returns an empty list (not an error) when no other gmail-digest source is connected", async () => {
+    writeConfig({ profile: {}, needs: {}, sources: [{ id: "gmail-primary", enabled: true, kind: "gmail-digest", settings: {} }] });
+    loadTokenSetMock.mockRejectedValue(new Error("not connected"));
+
+    const result = await listConnectedGmailSourcesAction("gmail-primary");
+
+    expect(result).toEqual({ ok: true, data: [] });
+  });
+});
+
+describe("assignGmailConnectionAction", () => {
+  it("copies the FROM source's token set onto the TO source's own configured backend", async () => {
+    writeConfig({
+      profile: {},
+      needs: {},
+      sources: [
+        { id: "gmail-primary", enabled: true, kind: "gmail-digest", settings: { sessionBackend: "portunus" } },
+        { id: "gmail-secondary", enabled: true, kind: "gmail-digest", settings: {} },
+      ],
+    });
+    const tokenSet = { accessToken: "a", refreshToken: "r", expiresAt: 123, scope: "s" };
+    loadTokenSetMock.mockResolvedValue(tokenSet);
+    sessionBackendFromMock.mockImplementation((sc: { settings?: { sessionBackend?: string } }) => sc.settings?.sessionBackend ?? "local");
+
+    const result = await assignGmailConnectionAction("gmail-primary", "gmail-secondary");
+
+    expect(result).toEqual({ ok: true, data: null });
+    expect(loadTokenSetMock).toHaveBeenCalledWith(expect.objectContaining({ id: "gmail" }), "gmail-primary", "portunus");
+    expect(storeTokenSetMock).toHaveBeenCalledWith(expect.objectContaining({ id: "gmail" }), "gmail-secondary", tokenSet, "local");
+    expect(revalidatePath).toHaveBeenCalledWith("/config");
+  });
+
+  it("returns {ok:false} without writing anything when the FROM source has no valid token to copy", async () => {
+    writeConfig({
+      profile: {},
+      needs: {},
+      sources: [
+        { id: "gmail-primary", enabled: true, kind: "gmail-digest", settings: {} },
+        { id: "gmail-secondary", enabled: true, kind: "gmail-digest", settings: {} },
+      ],
+    });
+    loadTokenSetMock.mockRejectedValue(new Error("gigradar oauth2: no gmail connection found for source \"gmail-primary\""));
+
+    const result = await assignGmailConnectionAction("gmail-primary", "gmail-secondary");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toMatch(/no gmail connection found/);
+    expect(storeTokenSetMock).not.toHaveBeenCalled();
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

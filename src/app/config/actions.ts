@@ -6,7 +6,7 @@ import { approvedCount } from "@/lib/apply/autofire";
 import { checkCaptureReadiness, type CaptureReadiness } from "@/lib/auth/capture-guidance";
 import { cancelCapture, finishCapture, getCapturePage, startCapture } from "@/lib/auth/session-capture";
 import { sessionBackendFrom } from "@/lib/auth/session-backend";
-import { buildAuthorizationUrl, deleteTokenSet } from "@/lib/auth/oauth2";
+import { buildAuthorizationUrl, deleteTokenSet, loadTokenSet, storeTokenSet } from "@/lib/auth/oauth2";
 import { resolveOAuthClientCredentials } from "@/lib/auth/oauth-credentials";
 import { GMAIL_PROVIDER } from "@/lib/auth/oauth-providers/gmail";
 import { resolveLlmCredential, setEnvVar } from "@/lib/config/env-store";
@@ -658,6 +658,90 @@ export async function disconnectGmailAction(sourceId: string): Promise<ActionRes
     const sc = rawSourceConfigFor(raw.sources, sourceId);
     const backend = sessionBackendFrom(sc);
     await deleteTokenSet(GMAIL_PROVIDER, sourceId, backend);
+  } catch (e) {
+    return actionErr(e);
+  }
+  revalidatePath("/config");
+  return actionOk(null);
+}
+
+// ---------------------------------------------------------------------------
+// Gmail OAuth REUSE across sources (product-review-followups epic,
+// gmail-oauth-reuse-via-portunus story). Owner's own words: "the gmail
+// oauth SHOULD be able to be re-used across the board... that should be an
+// easy option to just assign it." Today's storage is keyed per (provider,
+// sourceId) -- see oauth2.ts's portunusSite()/localTokenPath() -- so every
+// gmail-digest source independently repeats the FULL Google consent
+// screen, even when they're really all the same Google account already
+// connected elsewhere. Rather than re-keying storage by account (a bigger,
+// riskier change than this story needs), "assign" copies the already-
+// stored token set from one already-connected source onto a new one --
+// pragmatically the same outcome ("this source now uses that account"),
+// without touching oauth2.ts's existing per-sourceId storage scheme at all.
+//
+// Scoped to gmail-digest sources specifically, the ONLY real consumer of
+// GMAIL_PROVIDER today, per oauth2.ts's own header comment ("Gmail is the
+// first concrete OAuthProvider, not the only one this module is built to
+// support") -- if a second Google-OAuth-consuming feature appears later,
+// generalize this to listConnectedOAuthSourcesAction(provider) rather than
+// duplicating it, but there is exactly one consumer to generalize FROM
+// today, so this stays Gmail-specific for now (no speculative design).
+// ---------------------------------------------------------------------------
+
+export interface ConnectedGmailSource {
+  sourceId: string;
+}
+
+/**
+ * Every OTHER gmail-digest source (never `excludeSourceId` itself -- the
+ * row asking "what can I assign FROM" never offers to assign from its own,
+ * possibly-not-yet-connected, self) that currently has a valid stored
+ * token, checked via `loadTokenSet()` itself (not just "a file/secret
+ * exists") -- so a source whose token got deleted out-of-band, or whose
+ * stored value fails `isOAuthTokenSetShape()`, is correctly excluded, not
+ * offered as a source to copy a broken connection FROM.
+ */
+export async function listConnectedGmailSourcesAction(excludeSourceId: string): Promise<ActionResult<ConnectedGmailSource[]>> {
+  try {
+    const raw = readRawConfig();
+    const sources = Array.isArray(raw.sources) ? raw.sources : [];
+    const connected: ConnectedGmailSource[] = [];
+    for (const entry of sources) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const sc = entry as Record<string, unknown>;
+      if (sc.kind !== "gmail-digest" || typeof sc.id !== "string" || sc.id === excludeSourceId) continue;
+      const sourceId = sc.id;
+      try {
+        await loadTokenSet(GMAIL_PROVIDER, sourceId, sessionBackendFrom(rawSourceConfigFor(sources, sourceId)));
+        connected.push({ sourceId });
+      } catch {
+        // Not connected (or its stored token is gone/malformed) -- not an
+        // option to assign FROM. Not an error for this action as a whole.
+      }
+    }
+    return actionOk(connected);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Copies `fromSourceId`'s already-stored, already-valid Gmail token set
+ * onto `toSourceId` -- no new Google consent screen, no new top-level
+ * navigation. Writes via `toSourceId`'s OWN configured backend
+ * (`sessionBackendFrom()`), not necessarily the same backend `fromSourceId`
+ * happens to use -- each source's local-vs-Portunus choice is independent,
+ * set via the same Settings editor every other per-source setting uses.
+ */
+export async function assignGmailConnectionAction(fromSourceId: string, toSourceId: string): Promise<ActionResult<null>> {
+  try {
+    const raw = readRawConfig();
+    const sources = Array.isArray(raw.sources) ? raw.sources : [];
+    const fromBackend = sessionBackendFrom(rawSourceConfigFor(sources, fromSourceId));
+    const tokenSet = await loadTokenSet(GMAIL_PROVIDER, fromSourceId, fromBackend);
+
+    const toBackend = sessionBackendFrom(rawSourceConfigFor(sources, toSourceId));
+    await storeTokenSet(GMAIL_PROVIDER, toSourceId, tokenSet, toBackend);
   } catch (e) {
     return actionErr(e);
   }
