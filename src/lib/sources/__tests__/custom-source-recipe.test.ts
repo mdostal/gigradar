@@ -279,6 +279,23 @@ describe("deriveRecipeAndExtract: single-shot LLM call, raw HTML", () => {
     expect(prompt).toContain("truncated");
   });
 
+  it("strips <head> before truncating, so a huge <head> (bigger than the whole truncation budget) doesn't crowd out real <body> content -- live-verified against gun.io's real page (a 458,128-char <head>, real listings starting past that)", async () => {
+    const hugeHead = `<head>${"x".repeat(200_000)}</head>`;
+    const realBody = "<body><div class=\"job-card\">REAL LISTING MARKER</div></body>";
+    await deriveRecipeAndExtract(fakePage(`<html>${hugeHead}${realBody}</html>`) as never, "monster", undefined, FAKE_CREDENTIAL);
+
+    const prompt = promptSentToLLM();
+    expect(prompt).toContain("REAL LISTING MARKER");
+  });
+
+  it("falls back to the untouched full HTML when no <body> tag is present at all (a malformed/fragment page) -- same truncation behavior as before this fix", async () => {
+    const hugeHtml = `<html>${"x".repeat(500_000)}</html>`;
+    await deriveRecipeAndExtract(fakePage(hugeHtml) as never, "monster", undefined, FAKE_CREDENTIAL);
+
+    const prompt = promptSentToLLM();
+    expect(prompt).toContain("truncated");
+  });
+
   it("throws a clear, specific error (and never returns a recipe to cache) when the model reports prose instead of a real CSS selector", async () => {
     const notASelector = "UNVERIFIED — no listing/card markup was present in the supplied HTML (only <head> meta/CSS was given, no <body> content)";
     mockGenerateText.mockResolvedValueOnce(fakeRecipeResult([], { listItemSelector: notASelector, titleSelector: "UNVERIFIED", urlSelector: "UNVERIFIED" }));

@@ -53,7 +53,7 @@ function customSourceCfg(settings: Record<string, unknown> = {}): SourceConfig {
 }
 
 function setUpFakeBrowser() {
-  const page = { goto: vi.fn().mockResolvedValue(undefined) };
+  const page = { goto: vi.fn().mockResolvedValue(undefined), waitForLoadState: vi.fn().mockResolvedValue(undefined) };
   const browser = { newPage: vi.fn().mockResolvedValue(page), close: vi.fn().mockResolvedValue(undefined) };
   launchMock.mockResolvedValue(browser);
   return { browser, page };
@@ -90,6 +90,27 @@ describe("customLlmSource.fetch: settings.url", () => {
     await customLlmSource.fetch(customSourceCfg({ url: "https://example.com/truck-jobs" }), PROFILE, FAKE_CREDENTIAL);
 
     expect(page.goto).toHaveBeenCalledWith("https://example.com/truck-jobs");
+  });
+
+  it("waits for the page to go networkidle before extracting -- live-verified against gun-io: without this, a client-rendered SPA's data hasn't painted yet when the DOM is read", async () => {
+    const { page } = setUpFakeBrowser();
+    readRecipeMock.mockReturnValue(FAKE_RECIPE);
+    extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
+
+    await customLlmSource.fetch(customSourceCfg(), PROFILE, FAKE_CREDENTIAL);
+
+    expect(page.waitForLoadState).toHaveBeenCalledWith("networkidle", expect.objectContaining({ timeout: expect.any(Number) }));
+  });
+
+  it("does not let a networkidle timeout (a site that never fully quiesces) abort extraction", async () => {
+    const { page } = setUpFakeBrowser();
+    page.waitForLoadState.mockRejectedValue(new Error("Timeout 8000ms exceeded"));
+    readRecipeMock.mockReturnValue(FAKE_RECIPE);
+    extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
+
+    const gigs = await customLlmSource.fetch(customSourceCfg(), PROFILE, FAKE_CREDENTIAL);
+
+    expect(gigs).toBe(FAKE_GIGS);
   });
 });
 
@@ -275,13 +296,14 @@ describe("customLlmSource.fetch: settings.customAuth === \"browser-session\"", (
   });
 
   it("the withBrowserSession() callback runs the SAME cache-then-derive extraction as the no-auth path", async () => {
-    withBrowserSessionMock.mockImplementation(async (_options: unknown, run: (page: unknown) => Promise<Gig[]>) => run({ fakePage: true }));
+    const fakePage = { fakePage: true, waitForLoadState: vi.fn().mockResolvedValue(undefined) };
+    withBrowserSessionMock.mockImplementation(async (_options: unknown, run: (page: unknown) => Promise<Gig[]>) => run(fakePage));
     readRecipeMock.mockReturnValue(FAKE_RECIPE);
     extractWithRecipeMock.mockResolvedValue(FAKE_GIGS);
 
     const gigs = await customLlmSource.fetch(authedCfg(), PROFILE, FAKE_CREDENTIAL);
 
-    expect(extractWithRecipeMock).toHaveBeenCalledWith({ fakePage: true }, "monster", FAKE_RECIPE);
+    expect(extractWithRecipeMock).toHaveBeenCalledWith(fakePage, "monster", FAKE_RECIPE);
     expect(gigs).toBe(FAKE_GIGS);
   });
 });

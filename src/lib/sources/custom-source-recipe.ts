@@ -239,8 +239,23 @@ export async function deriveRecipeAndExtract(
   credential: LlmCredential,
 ): Promise<{ gigs: Gig[]; recipe: CustomSourceRecipe }> {
   const fullHtml = await page.content();
-  const truncated = fullHtml.length > MAX_HTML_CHARS;
-  const html = truncated ? fullHtml.slice(0, MAX_HTML_CHARS) : fullHtml;
+  // product-review-followups epic, scraper-session-fixes story: strip
+  // everything before <body> BEFORE truncating, not after. Live-verified
+  // root cause against gun-io: its <head> alone (inline hydration
+  // state/scripts) was 458,128 characters -- bigger than the ENTIRE
+  // 150,000-char truncation budget below, so the untouched-head version
+  // of this slice() sent the LLM 150K characters that were 100% <head>,
+  // never reaching <body> at all (exactly matching the real error this
+  // produced: "no job-card markup was present... only <head> content was
+  // included"). <head> is essentially never useful signal for listing
+  // extraction on ANY site, not just gun.io -- this is a general
+  // improvement to the shared truncation strategy, not a gun-io special
+  // case. Falls back to the untouched full string when no <body> tag is
+  // found (a malformed/fragment page), same as before this fix.
+  const bodyStart = fullHtml.search(/<body[\s>]/i);
+  const htmlFromBody = bodyStart >= 0 ? fullHtml.slice(bodyStart) : fullHtml;
+  const truncated = htmlFromBody.length > MAX_HTML_CHARS;
+  const html = truncated ? htmlFromBody.slice(0, MAX_HTML_CHARS) : htmlFromBody;
 
   const prompt = [
     "Extract every real job/gig listing visible on this page's HTML, AND report a reusable CSS-selector " +
