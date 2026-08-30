@@ -11,15 +11,17 @@ import { NAV_LINKS } from "../nav-header";
 // `/drafts` was added by the `draft-review-ui` story
 // (`assisted-apply-drafting` epic); `/issues` by the `notifications-epic`;
 // `/profile-assist` by the `profile-assist` epic; `/chat` by the
-// `agent-chat` epic.
+// `agent-chat` epic; `/setup` by the `setup-wizard` story
+// (`product-review-followups` epic).
 describe("NAV_LINKS", () => {
-  it("has working links to /, /drafts, /profile-assist, /chat, /issues, and /config, in that order", () => {
+  it("has working links to /, /drafts, /profile-assist, /chat, /issues, /setup, and /config, in that order", () => {
     expect(NAV_LINKS).toEqual([
       { href: "/", label: "Dashboard" },
       { href: "/drafts", label: "Drafts" },
       { href: "/profile-assist", label: "Profile assist" },
       { href: "/chat", label: "Chat" },
       { href: "/issues", label: "Issues" },
+      { href: "/setup", label: "Setup" },
       { href: "/config", label: "Config" },
     ]);
   });

@@ -12,6 +12,10 @@
 // highlighting needs to know the current route, which a Server Component
 // can't read directly. This is the only reason this file is a Client
 // Component — it renders no interactive state of its own otherwise.
+//
+// `/setup` (product-review-followups epic, setup-wizard story) sits right
+// before `/config` -- it's the guided subset of the same settings, so it
+// belongs next to the full editor, not off on its own.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { IssuesBadgeInfo } from "./issues-badge";
@@ -23,6 +27,7 @@ export const NAV_LINKS = [
   { href: "/profile-assist", label: "Profile assist" },
   { href: "/chat", label: "Chat" },
   { href: "/issues", label: "Issues" },
+  { href: "/setup", label: "Setup" },
   { href: "/config", label: "Config" },
 ] as const;
 
