@@ -19,10 +19,11 @@ import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
 import { DASHBOARD_PREFS_STORAGE_KEY, deserializeDashboardPrefs, serializeDashboardPrefs } from "./dashboard-prefs";
 import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, type SeenWindow } from "./dashboard-filter";
 import { compareByField, type SortField } from "./dashboard-sort";
+import { GigDetailPanel } from "./gig-detail-panel";
 
-const ALL_STATUSES: GigStatus[] = ["new", "applied", "interview", "archived", "ignored"];
+export const ALL_STATUSES: GigStatus[] = ["new", "applied", "interview", "archived", "ignored"];
 
-const STATUS_LABEL: Record<GigStatus, string> = {
+export const STATUS_LABEL: Record<GigStatus, string> = {
   new: "New",
   applied: "Applied",
   interview: "Interview",
@@ -66,14 +67,14 @@ function sameStatusSet(a: ReadonlySet<GigStatus> | undefined, statuses: GigStatu
 // maps to inline custom-property references, not per-theme classes. A gig
 // with no tier yet (Gig.tier is optional) gets the neutral fallback, never
 // a guessed color.
-const TIER_BADGE_STYLE: Record<string, { color: string; background: string }> = {
+export const TIER_BADGE_STYLE: Record<string, { color: string; background: string }> = {
   green: { color: "var(--tier-green)", background: "color-mix(in srgb, var(--tier-green) 16%, transparent)" },
   yellow: { color: "var(--tier-yellow)", background: "color-mix(in srgb, var(--tier-yellow) 16%, transparent)" },
   red: { color: "var(--tier-red)", background: "color-mix(in srgb, var(--tier-red) 16%, transparent)" },
 };
-const TIER_BADGE_FALLBACK_STYLE = { color: "var(--text-secondary, #64748b)", background: "var(--surface-bg-raised, #f1f5f9)" };
+export const TIER_BADGE_FALLBACK_STYLE = { color: "var(--text-secondary, #64748b)", background: "var(--surface-bg-raised, #f1f5f9)" };
 
-function formatRate(rate: StoredGig["rate"]): string {
+export function formatRate(rate: StoredGig["rate"]): string {
   if (!rate) return "—";
   const { min, max, unit } = rate;
   if (min != null && max != null) return `$${min}–$${max}/${unit}`;
@@ -82,7 +83,7 @@ function formatRate(rate: StoredGig["rate"]): string {
   return `/${unit}`;
 }
 
-function formatDate(iso: string): string {
+export function formatDate(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 }
@@ -303,6 +304,15 @@ export function DashboardClient({
   const [prepErrorByKey, setPrepErrorByKey] = useState<Record<string, string>>({});
   const [prepByKey, setPrepByKey] = useState<Record<string, PrepPacketContent>>({});
 
+  // Row-by-row detail browsing (job-detail-row-browsing story). Tracked by
+  // KEY, not array index -- a status change made from inside the panel
+  // (e.g. "To review" -> mark Applied) can remove the gig from the
+  // CURRENTLY ACTIVE pipeline tab's filtered rows entirely; re-deriving
+  // `selectedIndex` from `rows` by key on every render (below, once `rows`
+  // exists) means the panel just closes itself via the effect further down
+  // rather than pointing at a stale/wrong index into a shifted array.
+  const [selectedGigKey, setSelectedGigKey] = useState<string | null>(null);
+
   const sources = useMemo(() => distinctSources(gigs), [gigs]);
 
   // Counts are over the FULL `gigs` array, not the currently-filtered rows
@@ -398,7 +408,139 @@ export function DashboardClient({
     });
   }
 
+  /**
+   * Shared cell content for the "Draft" column -- factored out so the
+   * job-detail-row-browsing panel (gig-detail-panel.tsx) can render the
+   * EXACT same control + inline error, keyed off the SAME
+   * generatingKeys/draftErrorByKey state, instead of a second copy that
+   * could drift out of sync with the table's own row.
+   */
+  function renderDraftSection(gig: StoredGig) {
+    if (!canGenerateDraft(gig.tier)) return null;
+    return (
+      <>
+        <button
+          type="button"
+          disabled={generatingKeys.has(gig.key)}
+          onClick={() => handleGenerateDraft(gig.key)}
+          className="whitespace-nowrap rounded-md border border-theme-surface-border bg-theme-surface px-2 py-1 text-sm font-medium text-theme-text hover:bg-theme-surface-raised disabled:opacity-50"
+        >
+          {generatingKeys.has(gig.key) ? "Generating…" : draftButtonLabel(draftedGigKeys.has(gig.key))}
+        </button>
+        {draftErrorByKey[gig.key] && <p className="mt-1 max-w-[16rem] text-xs text-red-600">{draftErrorByKey[gig.key]}</p>}
+      </>
+    );
+  }
+
+  /** Same rationale as renderDraftSection() above, for the "Prep" column. */
+  function renderPrepSection(gig: StoredGig) {
+    const packet = prepByKey[gig.key];
+    return (
+      <>
+        <button
+          type="button"
+          disabled={generatingPrepKeys.has(gig.key)}
+          onClick={() => handleGeneratePrep(gig.key)}
+          className="whitespace-nowrap rounded-md border border-theme-surface-border bg-theme-surface px-2 py-1 text-sm font-medium text-theme-text hover:bg-theme-surface-raised disabled:opacity-50"
+        >
+          {generatingPrepKeys.has(gig.key) ? "Generating…" : packet ? "Regenerate prep packet" : "Generate prep packet"}
+        </button>
+        {prepErrorByKey[gig.key] && <p className="mt-1 max-w-[16rem] text-xs text-red-600">{prepErrorByKey[gig.key]}</p>}
+        {packet && (
+          <div className="mt-1 max-w-[20rem] text-xs text-theme-text">
+            <p className="font-medium">
+              Fit score: {packet.score}/100 — {packet.recommendation}
+            </p>
+            <details className="mt-1">
+              <summary className="cursor-pointer text-theme-text-dim hover:underline">Full prep packet</summary>
+              <div className="mt-1 flex flex-col gap-1">
+                <p>{packet.rationale}</p>
+                {packet.topStrengths.length > 0 && (
+                  <p>
+                    <span className="font-medium">Top strengths:</span> {packet.topStrengths.join("; ")}
+                  </p>
+                )}
+                {packet.keyGaps.length > 0 && (
+                  <p>
+                    <span className="font-medium">Key gaps:</span> {packet.keyGaps.join("; ")}
+                  </p>
+                )}
+                {packet.predictedQuestions.length > 0 && (
+                  <p>
+                    <span className="font-medium">Predicted questions:</span> {packet.predictedQuestions.join("; ")}
+                  </p>
+                )}
+                {packet.starlaStories.length > 0 && (
+                  <p>
+                    <span className="font-medium">STARLA story prompts:</span> {packet.starlaStories.join("; ")}
+                  </p>
+                )}
+                <p className="mt-1 border-t border-theme-surface-border pt-1 font-medium">
+                  ATS keyword match: {packet.atsScore.keywordOverlapScore}/100 (vs. your tracked skills/roles)
+                </p>
+                {packet.atsScore.matchedKeywords.length > 0 && (
+                  <p>
+                    <span className="font-medium">Matched keywords:</span> {packet.atsScore.matchedKeywords.join("; ")}
+                  </p>
+                )}
+                {packet.atsScore.missingKeywords.length > 0 && (
+                  <p>
+                    <span className="font-medium">Missing keywords:</span> {packet.atsScore.missingKeywords.join("; ")}
+                  </p>
+                )}
+                {packet.atsScore.resumeTweaks.length > 0 && (
+                  <div>
+                    <span className="font-medium">Tweaks to close the gap:</span>
+                    <ul className="ml-4 list-disc">
+                      {packet.atsScore.resumeTweaks.map((tweak) => (
+                        <li key={tweak}>{tweak}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {packet.atsScore.resumeChecked ? (
+                  packet.atsScore.parseabilityIssues.length > 0 ? (
+                    <div>
+                      <span className="font-medium">Resume format issues (from your saved resume):</span>
+                      <ul className="ml-4 list-disc">
+                        {packet.atsScore.parseabilityIssues.map((issue) => (
+                          <li key={issue}>{issue}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="text-green-700">No resume format issues found.</p>
+                  )
+                ) : (
+                  <p className="text-theme-text-dim">
+                    No resume format check — save a resume on /config to get a real ATS-parseability read.
+                  </p>
+                )}
+              </div>
+            </details>
+          </div>
+        )}
+      </>
+    );
+  }
+
   const columns: ColumnDef<StoredGig>[] = [
+    {
+      id: "view",
+      header: "",
+      enableSorting: false,
+      enableColumnFilter: false,
+      cell: ({ row }) => (
+        <button
+          type="button"
+          onClick={() => setSelectedGigKey(row.original.key)}
+          className="whitespace-nowrap rounded-md border border-theme-surface-border px-2 py-1 text-xs font-medium text-theme-text hover:bg-theme-surface-raised"
+        >
+          View →
+        </button>
+      ),
+      meta: { filterKind: "none" },
+    },
     {
       id: "source",
       header: "Source",
@@ -551,25 +693,7 @@ export function DashboardClient({
       header: "Draft",
       enableSorting: false,
       enableColumnFilter: false,
-      cell: ({ row }) => {
-        const gig = row.original;
-        if (!canGenerateDraft(gig.tier)) return null;
-        return (
-          <>
-            <button
-              type="button"
-              disabled={generatingKeys.has(gig.key)}
-              onClick={() => handleGenerateDraft(gig.key)}
-              className="whitespace-nowrap rounded-md border border-theme-surface-border bg-theme-surface px-2 py-1 text-sm font-medium text-theme-text hover:bg-theme-surface-raised disabled:opacity-50"
-            >
-              {generatingKeys.has(gig.key) ? "Generating…" : draftButtonLabel(draftedGigKeys.has(gig.key))}
-            </button>
-            {draftErrorByKey[gig.key] && (
-              <p className="mt-1 max-w-[16rem] text-xs text-red-600">{draftErrorByKey[gig.key]}</p>
-            )}
-          </>
-        );
-      },
+      cell: ({ row }) => renderDraftSection(row.original),
       meta: { filterKind: "none" },
     },
     {
@@ -577,97 +701,7 @@ export function DashboardClient({
       header: "Prep",
       enableSorting: false,
       enableColumnFilter: false,
-      cell: ({ row }) => {
-        const gig = row.original;
-        const packet = prepByKey[gig.key];
-        return (
-          <>
-            <button
-              type="button"
-              disabled={generatingPrepKeys.has(gig.key)}
-              onClick={() => handleGeneratePrep(gig.key)}
-              className="whitespace-nowrap rounded-md border border-theme-surface-border bg-theme-surface px-2 py-1 text-sm font-medium text-theme-text hover:bg-theme-surface-raised disabled:opacity-50"
-            >
-              {generatingPrepKeys.has(gig.key) ? "Generating…" : packet ? "Regenerate prep packet" : "Generate prep packet"}
-            </button>
-            {prepErrorByKey[gig.key] && <p className="mt-1 max-w-[16rem] text-xs text-red-600">{prepErrorByKey[gig.key]}</p>}
-            {packet && (
-              <div className="mt-1 max-w-[20rem] text-xs text-theme-text">
-                <p className="font-medium">
-                  Fit score: {packet.score}/100 — {packet.recommendation}
-                </p>
-                <details className="mt-1">
-                  <summary className="cursor-pointer text-theme-text-dim hover:underline">Full prep packet</summary>
-                  <div className="mt-1 flex flex-col gap-1">
-                    <p>{packet.rationale}</p>
-                    {packet.topStrengths.length > 0 && (
-                      <p>
-                        <span className="font-medium">Top strengths:</span> {packet.topStrengths.join("; ")}
-                      </p>
-                    )}
-                    {packet.keyGaps.length > 0 && (
-                      <p>
-                        <span className="font-medium">Key gaps:</span> {packet.keyGaps.join("; ")}
-                      </p>
-                    )}
-                    {packet.predictedQuestions.length > 0 && (
-                      <p>
-                        <span className="font-medium">Predicted questions:</span> {packet.predictedQuestions.join("; ")}
-                      </p>
-                    )}
-                    {packet.starlaStories.length > 0 && (
-                      <p>
-                        <span className="font-medium">STARLA story prompts:</span> {packet.starlaStories.join("; ")}
-                      </p>
-                    )}
-                    <p className="mt-1 border-t border-theme-surface-border pt-1 font-medium">
-                      ATS keyword match: {packet.atsScore.keywordOverlapScore}/100 (vs. your tracked skills/roles)
-                    </p>
-                    {packet.atsScore.matchedKeywords.length > 0 && (
-                      <p>
-                        <span className="font-medium">Matched keywords:</span> {packet.atsScore.matchedKeywords.join("; ")}
-                      </p>
-                    )}
-                    {packet.atsScore.missingKeywords.length > 0 && (
-                      <p>
-                        <span className="font-medium">Missing keywords:</span> {packet.atsScore.missingKeywords.join("; ")}
-                      </p>
-                    )}
-                    {packet.atsScore.resumeTweaks.length > 0 && (
-                      <div>
-                        <span className="font-medium">Tweaks to close the gap:</span>
-                        <ul className="ml-4 list-disc">
-                          {packet.atsScore.resumeTweaks.map((tweak) => (
-                            <li key={tweak}>{tweak}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {packet.atsScore.resumeChecked ? (
-                      packet.atsScore.parseabilityIssues.length > 0 ? (
-                        <div>
-                          <span className="font-medium">Resume format issues (from your saved resume):</span>
-                          <ul className="ml-4 list-disc">
-                            {packet.atsScore.parseabilityIssues.map((issue) => (
-                              <li key={issue}>{issue}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : (
-                        <p className="text-green-700">No resume format issues found.</p>
-                      )
-                    ) : (
-                      <p className="text-theme-text-dim">
-                        No resume format check — save a resume on /config to get a real ATS-parseability read.
-                      </p>
-                    )}
-                  </div>
-                </details>
-              </div>
-            )}
-          </>
-        );
-      },
+      cell: ({ row }) => renderPrepSection(row.original),
       meta: { filterKind: "none" },
     },
   ];
@@ -684,6 +718,27 @@ export function DashboardClient({
   });
 
   const rows = table.getRowModel().rows;
+
+  const selectedIndex = selectedGigKey == null ? -1 : rows.findIndex((r) => r.original.key === selectedGigKey);
+  const selectedGig = selectedIndex >= 0 ? (rows[selectedIndex]?.original ?? null) : null;
+
+  // Auto-close when the selected gig falls out of the current view (filter
+  // change, tab switch, or a status change made from inside the panel
+  // itself moved it to a different pipeline stage) -- see the state
+  // declaration above for why this is keyed off identity, not index.
+  useEffect(() => {
+    if (selectedGigKey != null && selectedIndex === -1) setSelectedGigKey(null);
+  }, [selectedGigKey, selectedIndex]);
+
+  function handlePrev() {
+    const prev = selectedIndex > 0 ? rows[selectedIndex - 1] : undefined;
+    if (prev) setSelectedGigKey(prev.original.key);
+  }
+
+  function handleNext() {
+    const next = selectedIndex >= 0 && selectedIndex < rows.length - 1 ? rows[selectedIndex + 1] : undefined;
+    if (next) setSelectedGigKey(next.original.key);
+  }
 
   return (
     <div className="mt-6 flex flex-col gap-3">
@@ -805,6 +860,38 @@ export function DashboardClient({
           </tbody>
         </table>
       </div>
+
+      {selectedGig && (
+        <GigDetailPanel
+          gig={selectedGig}
+          position={{ index: selectedIndex, total: rows.length }}
+          onClose={() => setSelectedGigKey(null)}
+          onPrev={handlePrev}
+          onNext={handleNext}
+          canPrev={selectedIndex > 0}
+          canNext={selectedIndex >= 0 && selectedIndex < rows.length - 1}
+          statusChangeSection={
+            <>
+              <select
+                value={selectedGig.status}
+                disabled={isPending}
+                onChange={(e) => handleStatusChange(selectedGig.key, e.target.value as GigStatus)}
+                aria-label={`Change status for ${selectedGig.title}`}
+                className="rounded-md border border-theme-surface-border px-2 py-1 text-sm text-theme-text disabled:opacity-50"
+              >
+                {ALL_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {STATUS_LABEL[s]}
+                  </option>
+                ))}
+              </select>
+              {errorByKey[selectedGig.key] && <p className="mt-1 text-xs text-red-600">{errorByKey[selectedGig.key]}</p>}
+            </>
+          }
+          draftSection={renderDraftSection(selectedGig)}
+          prepSection={renderPrepSection(selectedGig)}
+        />
+      )}
     </div>
   );
 }
