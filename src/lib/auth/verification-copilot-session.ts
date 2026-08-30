@@ -23,6 +23,7 @@ import type { Browser, BrowserContext, Page } from "playwright";
 import { filterStorageStateToAllowlist, readStorageStateFile } from "./browser-session.js";
 import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
 import { resolveEnvString } from "../config/load.js";
+import { sendDesktopNotification } from "../notify/desktop.js";
 import { SOURCE_ORIGINS } from "../sources/origins.js";
 
 const MODULE_PREFIX = "gigradar verification-copilot-session";
@@ -132,6 +133,16 @@ export async function openCopilotSession(
       `${MODULE_PREFIX}: failed to open the blocked page for source "${sourceId}" at "${url}": ${e instanceof Error ? e.message : String(e)}`,
     );
   }
+
+  // product-review-followups epic, notifications-and-filter-persistence
+  // story: same reasoning as session-capture.ts's startCapture() -- a real,
+  // visible Chrome window just opened, and nothing told the user until
+  // now. Best-effort/fire-and-forget (sendDesktopNotification() never
+  // throws).
+  void sendDesktopNotification({
+    title: "gigradar: browser opened to help clear a verification",
+    body: `A browser window opened for ${sourceId} -- clear whatever it's showing, then use "Check if it looks cleared" or "I'm done" in gigradar.`,
+  });
 
   const sessionId = crypto.randomUUID();
 

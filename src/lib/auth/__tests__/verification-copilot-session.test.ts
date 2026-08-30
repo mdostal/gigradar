@@ -29,6 +29,11 @@ vi.mock("../real-chrome.js", () => ({
   closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
 }));
 
+// product-review-followups epic: openCopilotSession() now fires a real
+// desktop notification when the browser opens -- mocked so this suite
+// never shells out to osascript/notify-send.
+vi.mock("../../notify/desktop.js", () => ({ sendDesktopNotification: vi.fn(async () => undefined) }));
+
 const readStorageStateFileMock = vi.fn();
 const filterStorageStateToAllowlistMock = vi.fn();
 vi.mock("../browser-session.js", () => ({
@@ -84,7 +89,7 @@ function setUpFakeBrowserChain() {
   return { page, context, browser };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-verification-copilot-session-test-"));
   process.env.XDG_DATA_HOME = tmpDataDir;
   spawnRealChromeMock.mockReset();
@@ -92,6 +97,7 @@ beforeEach(() => {
   closeRealChromeMock.mockReset();
   readStorageStateFileMock.mockReset().mockReturnValue(FAKE_STORAGE_STATE);
   filterStorageStateToAllowlistMock.mockReset().mockReturnValue(FAKE_STORAGE_STATE);
+  vi.mocked((await import("../../notify/desktop.js")).sendDesktopNotification).mockClear();
 });
 
 afterEach(async () => {
@@ -130,6 +136,16 @@ describe("openCopilotSession / getCopilotPage / closeCopilotSession: happy path"
     expect(browser.close).toHaveBeenCalledTimes(1);
     expect(browser.off).toHaveBeenCalledWith("disconnected", expect.any(Function));
     expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
+  });
+
+  it("fires a desktop notification once the browser window is genuinely open (product-review-followups epic)", async () => {
+    setUpFakeBrowserChain();
+    const { sendDesktopNotification } = await import("../../notify/desktop.js");
+
+    await openCopilotSession(SOURCE_ID, BLOCKED_URL, "storage-state.json");
+
+    expect(sendDesktopNotification).toHaveBeenCalledTimes(1);
+    expect(sendDesktopNotification).toHaveBeenCalledWith(expect.objectContaining({ body: expect.stringContaining(SOURCE_ID) }));
   });
 });
 

@@ -10,12 +10,13 @@ import {
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { GigStatus, StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
+import { DASHBOARD_PREFS_STORAGE_KEY, deserializeDashboardPrefs, serializeDashboardPrefs } from "./dashboard-prefs";
 import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, type SeenWindow } from "./dashboard-filter";
 import { compareByField, type SortField } from "./dashboard-sort";
 
@@ -217,6 +218,41 @@ export function DashboardClient({
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([
     { id: "status", value: new Set(ALL_STATUSES) },
   ]);
+
+  // product-review-followups epic: read any previously-saved sort/filter
+  // preference ONCE on mount and apply it -- deliberately not read
+  // directly into the useState initializer above (localStorage doesn't
+  // exist during Next's server render; reading it there would either throw
+  // or produce a server/client hydration mismatch). Falls back silently
+  // (stays on the hardcoded defaults above) for a first-ever visit, a
+  // corrupted/foreign value, or a private-browsing context where
+  // localStorage access itself throws.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DASHBOARD_PREFS_STORAGE_KEY);
+      if (!raw) return;
+      const prefs = deserializeDashboardPrefs(raw);
+      if (!prefs) return;
+      setSorting(prefs.sorting);
+      setColumnFilters(prefs.columnFilters);
+    } catch {
+      // localStorage unavailable (private browsing, etc.) -- stay on defaults.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persists on every real change. A late write right after the mount-only
+  // read above (still holding the pre-restore defaults) is expected and
+  // harmless -- the very next write, once the restored values actually
+  // land in state, corrects it.
+  useEffect(() => {
+    try {
+      localStorage.setItem(DASHBOARD_PREFS_STORAGE_KEY, serializeDashboardPrefs({ sorting, columnFilters }));
+    } catch {
+      // Storage full/unavailable -- not persisting a preference is never fatal.
+    }
+  }, [sorting, columnFilters]);
+
   const [isPending, startTransition] = useTransition();
   const [errorByKey, setErrorByKey] = useState<Record<string, string>>({});
   const [, startDraftTransition] = useTransition();

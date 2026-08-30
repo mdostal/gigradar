@@ -44,6 +44,12 @@ vi.mock("../real-chrome.js", () => ({
   closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
 }));
 
+// product-review-followups epic: startCapture() now fires a real desktop
+// notification when the browser opens -- mocked so this suite never shells
+// out to osascript/notify-send (same reasoning every other test touching a
+// notification-firing code path in this repo already documents).
+vi.mock("../../notify/desktop.js", () => ({ sendDesktopNotification: vi.fn(async () => undefined) }));
+
 const FAKE_REAL_CHROME_HANDLE = { process: { kill: vi.fn() }, cdpPort: 54732, userDataDir: "/fake/tmp/gigradar-real-chrome" };
 
 import { SOURCE_ORIGINS } from "../../sources/origins.js";
@@ -149,7 +155,7 @@ const GOOD_STORAGE_STATE = {
 
 const EMPTY_STORAGE_STATE = { cookies: [], origins: [] };
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-session-capture-test-"));
   tmpKeyDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-session-capture-test-key-"));
   process.env.XDG_DATA_HOME = tmpDataDir;
@@ -157,6 +163,7 @@ beforeEach(() => {
   spawnRealChromeMock.mockReset();
   attachToRealChromeMock.mockReset();
   closeRealChromeMock.mockReset();
+  vi.mocked((await import("../../notify/desktop.js")).sendDesktopNotification).mockClear();
 });
 
 afterEach(async () => {
@@ -263,6 +270,16 @@ describe("startCapture / finishCapture: happy path", () => {
     await startCapture(SOURCE_ID, LOGIN_URL);
 
     expect(page.goto).toHaveBeenCalledWith(LOGIN_URL);
+  });
+
+  it("fires a desktop notification once the browser window is genuinely open (product-review-followups epic)", async () => {
+    setUpFakeBrowserChain(GOOD_STORAGE_STATE);
+    const { sendDesktopNotification } = await import("../../notify/desktop.js");
+
+    await startCapture(SOURCE_ID, LOGIN_URL);
+
+    expect(sendDesktopNotification).toHaveBeenCalledTimes(1);
+    expect(sendDesktopNotification).toHaveBeenCalledWith(expect.objectContaining({ body: expect.stringContaining(SOURCE_ID) }));
   });
 
   it("propagates a spawnRealChrome() failure (e.g. real Chrome not installed) and never attempts to attach", async () => {
