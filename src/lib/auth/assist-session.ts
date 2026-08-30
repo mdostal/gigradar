@@ -36,6 +36,7 @@ import { filterStorageStateToAllowlist, readStorageStateFile, type StorageState 
 import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
 import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
 import { resolveEnvString } from "../config/load.js";
+import { sendDesktopNotification } from "../notify/desktop.js";
 import { resolveAllowedOrigins, resolveProfileUrl } from "../sources/origins.js";
 import type { SourceConfig } from "../types.js";
 
@@ -195,6 +196,18 @@ export async function startAssistSession(
     throw new Error(
       `${MODULE_PREFIX}: failed to open the profile page for source "${sourceId}" at "${profileUrl}": ${e instanceof Error ? e.message : String(e)}`,
     );
+  }
+
+  // product-review-followups epic, notifications-and-filter-persistence
+  // story: same reasoning as session-capture.ts/verification-copilot-
+  // session.ts -- a real, visible Chrome window just opened. Only for
+  // "manual"/"guided" -- "full-auto" means no human is expected to look at
+  // this window at all, by design, so notifying there would just be noise.
+  if (mode !== "full-auto") {
+    void sendDesktopNotification({
+      title: "gigradar: browser opened to help with your profile",
+      body: `A browser window opened for ${sourceId} in ${mode} mode -- follow along and help where needed.`,
+    });
   }
 
   const sessionId = crypto.randomUUID();

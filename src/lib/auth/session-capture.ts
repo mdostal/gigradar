@@ -64,6 +64,7 @@ import type { Browser, BrowserContext, Page } from "playwright";
 import { hasAnyEncryptedFile } from "../config/load.js";
 import { encrypt, getOrCreateKey } from "../security/vault.js";
 import { SOURCE_ORIGINS } from "../sources/origins.js";
+import { sendDesktopNotification } from "../notify/desktop.js";
 import { getDefaultDataDir } from "../store/path.js";
 import { filterStorageStateToAllowlist, type StorageState } from "./browser-session.js";
 import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
@@ -202,6 +203,17 @@ export async function startCapture(sourceId: string, loginUrl: string, allowedOr
       `${MODULE_PREFIX}: failed to open the login page for source "${sourceId}" at "${loginUrl}": ${e instanceof Error ? e.message : String(e)}`,
     );
   }
+
+  // product-review-followups epic, notifications-and-filter-persistence
+  // story: a real, visible Chrome window just opened on the user's screen
+  // -- nothing told them that until now (confirmed absent by grep before
+  // this change). Fire-and-forget/best-effort (sendDesktopNotification()
+  // never throws) -- a failed OS notification must never fail a real
+  // capture that's already succeeded.
+  void sendDesktopNotification({
+    title: "gigradar: browser opened for login",
+    body: `Log in to ${sourceId} in the window that just opened, then come back to gigradar to finish.`,
+  });
 
   const captureId = crypto.randomUUID();
 
