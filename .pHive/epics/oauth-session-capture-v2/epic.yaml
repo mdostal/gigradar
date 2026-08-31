@@ -17,3 +17,7 @@ stories:
     title: "LLM-guided capture readiness check (read-only, advisory)"
     complexity: low
     depends_on: [real-chrome-spawn-attach]
+  - id: google-sso-session-persistence
+    title: "Google/SSO login persists across separate capture sessions -- and reuses across every SSO-gated source"
+    complexity: high
+    depends_on: [real-chrome-spawn-attach]

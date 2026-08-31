@@ -1,5 +1,23 @@
 # A.Team session/selector investigation — findings, not a fix (2026-08-30)
 
+> **RESOLVED 2026-08-31 — see `fix/ateam-session-capture-and-selectors`
+> (merged to `dev`).** The "working theory" below (a failing client-side
+> refresh-token exchange) turned out not to be the actual blocker: a live
+> session captured via a real interactive Google login and immediately
+> replayed authenticated cleanly, reached real Mission Control content,
+> and — once the selectors below were fixed against real DOM (see that
+> PR) — scraped 51 real gigs end-to-end via the actual production
+> `ateamSource.fetch()` path. The real, separate bug this doc's
+> investigation never isolated: `scrapeListings()`'s selectors were
+> guessed against a wrong URL pattern (`/missions/{slug}` instead of the
+> real `/mission/{id}`) and read the DOM before the SPA's async card
+> render finished — not a session/auth problem at all. What's still
+> genuinely open (a NEW story, not this one): Google's own sign-in state
+> doesn't survive between two SEPARATE Capture Login attempts on the same
+> machine, even with a persistent Chrome profile — tracked at
+> `.pHive/epics/oauth-session-capture-v2/stories/
+> google-sso-session-persistence.yaml`.
+
 ## What's confirmed, live-verified
 
 1. **The captured session's auth cookies are NOT short-lived.** Read via
