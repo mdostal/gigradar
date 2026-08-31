@@ -67,19 +67,71 @@ description: |
   (a.team today; wellfound and any future Google-SSO source too) --
   mirroring the "assign an existing connection" UI pattern already built
   for Gmail OAuth reuse this same session (config/actions.ts's
-  listConnectedGmailSourcesAction/assignGmailConnectionAction). That's a
-  DIFFERENT mechanism than a shared browser profile: it would mean
-  capturing Google's OWN session (not scoped to any one source) via
-  gigradar's ALREADY-PROVEN storageState capture/replay technique, then
-  INJECTING it into a fresh context at the start of a new source's
-  Capture Login flow (`context.addCookies()` / a Google-scoped
-  storageState fed to a first navigation to accounts.google.com before
-  redirecting into the target source) -- sidestepping whatever Chrome's
-  own native profile persistence is silently failing to do, by reusing
-  the SAME mechanism that already reliably works for per-source sessions.
-  This is worth seriously considering as the PRIMARY fix, not just a
-  fallback, once the root cause research above either confirms or rules
-  out the native-persistence path.
+  listConnectedGmailSourcesAction/assignGmailConnectionAction).
+
+  RESEARCHED 2026-08-31 -- CONFIRMED, NOT A GUESS: the owner's own
+  instinct ("we SHOULD be able to get portunus to do a google auth as an
+  account") is technically sound. Checked the REAL installed `portunus`
+  CLI directly (v0.27.0): `portunus session store <site> <account>
+  --ttl-seconds N --stdin` takes completely FREE-FORM `site`/`account`
+  strings and an arbitrary JSON payload -- nothing about Portunus's own
+  session mechanism ties it to any specific target website. Storing a
+  Google-scoped session under `site="google"` is not a hack or a misuse;
+  Portunus already supports exactly this shape today
+  (`portunus session list --json` currently returns `[]` -- gigradar has
+  never actually used the Portunus backend for ANY session yet, only the
+  local-vault default). THE GAP IS ENTIRELY ON GIGRADAR'S SIDE, not
+  Portunus's:
+    1. No capture flow exists that scopes a session to Google's own
+       domains (accounts.google.com etc.) rather than one target source.
+    2. No injection mechanism exists that seeds a FRESH capture's browser
+       context with a previously-saved session before navigating to a
+       new target source's login page.
+    3. The existing origin-scoping boundary
+       (browser-session.ts's filterStorageStateToAllowlist()/
+       domainMatchesAllowlist()) deliberately EXCLUDES Google/Clerk SSO
+       from every per-source allowlist today (see wellfound.ts's own
+       comment) -- a real, intentional security boundary that needs a
+       deliberate, reviewed design for how a shared Google identity
+       relaxes it, not a quick bypass.
+
+  RECOMMENDED PRIMARY MECHANISM (supersedes the native-Chrome-profile-
+  persistence hypotheses above as the first thing to try -- this
+  sidesteps needing to understand WHY Chrome's own persistence silently
+  fails, by reusing the SAME explicit capture/replay technique that
+  already reliably works for every per-source session today):
+    a. A NEW capture entry point (e.g. `startGoogleCapture()` in
+       session-capture.ts, or a variant of `startCapture()`) that
+       navigates directly to `https://accounts.google.com` (not any
+       target source's login page) and captures storageState scoped to
+       a NEW, deliberate Google-only allowlist (accounts.google.com,
+       google.com -- a real, separate constant, not reusing any source's
+       existing allowlist).
+    b. Persist it via the ALREADY-BUILT Portunus session backend
+       (`writeSessionViaPortunus("google", <account-label>, filtered,
+       ttl)`) -- Slice 2 (portunus-session-backend, done) already has
+       everything this needs; this story is a NEW CALLER of that
+       existing mechanism, not new backend plumbing.
+    c. When starting a NEW source's Capture Login for a source that
+       offers "Continue with Google," offer "Use your saved Google
+       connection" -- inject the saved Google-scoped storageState into
+       the fresh context (Playwright's `context.addCookies()`, or
+       constructing the context WITH that storageState from the start)
+       BEFORE navigating to the target source's login URL, so "Continue
+       with Google" recognizes the already-authenticated browser instead
+       of demanding a full re-login. Whatever the target source's own
+       redirect establishes afterward gets captured/filtered exactly as
+       every existing per-source capture already does -- unchanged.
+    d. UI: mirrors the Gmail "assign existing connection" pattern already
+       built (config/actions.ts) -- a real Settings affordance to view/
+       manage/re-capture the shared Google connection, not just a
+       backend mechanism with no visibility.
+
+  The Keychain/risk-engine/other-profile-state hypotheses further above
+  remain worth understanding eventually (they may explain OTHER real
+  friction even after this mechanism ships), but are no longer the
+  critical path -- don't block starting (a)-(d) on root-causing them
+  first.
 
 acceptance_criteria:
   - "Root cause of Google sign-in not surviving between two real-chrome launches on the SAME persistent profile is identified and documented (not guessed) -- a live repro that isolates the exact failure point (Keychain prompt? risk engine? some other profile state?)."
