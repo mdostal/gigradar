@@ -97,7 +97,7 @@ describe("SOURCE_LOGIN_URLS", () => {
   });
 
   it("ateam: the real, live-confirmed URL (Mission Control itself, which redirects to Sign In when unauthenticated) — not an unverified /login guess", () => {
-    expect(SOURCE_LOGIN_URLS["ateam"]).toBe("https://platform.a.team/mission-control");
+    expect(SOURCE_LOGIN_URLS["ateam"]).toBe("https://platform.a.team/mission-control/all");
   });
 
   it("wellfound: Wellfound's own real, live-confirmed dedicated login route — a dedicated session, never gofractional's or ateam's URL", () => {

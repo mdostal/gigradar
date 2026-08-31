@@ -1,27 +1,27 @@
 [
   {
-    "href": "/missions/fractional-cto-acme-robotics",
+    "href": "/mission/fractional-cto-acme-robotics",
     "title": "Fractional CTO",
     "client": "Acme Robotics",
     "locationType": "Remote",
     "commitment": "10-20 hrs/week"
   },
   {
-    "href": "/missions/staff-backend-engineer-northwind-health",
+    "href": "/mission/staff-backend-engineer-northwind-health",
     "title": "Staff Backend Engineer",
     "client": "Northwind Health",
     "locationType": "Hybrid",
     "commitment": "20-30 hrs/week"
   },
   {
-    "href": "/missions/principal-architect-vertex-logistics",
+    "href": "/mission/principal-architect-vertex-logistics",
     "title": "Principal Architect",
     "client": "Vertex Logistics",
     "locationType": "Remote",
     "commitment": "40 hrs/week"
   },
   {
-    "href": "/missions/product-design-lead-harbor-fintech",
+    "href": "/mission/product-design-lead-harbor-fintech",
     "title": "Product Design Lead",
     "client": "Harbor Fintech",
     "locationType": "On-site",

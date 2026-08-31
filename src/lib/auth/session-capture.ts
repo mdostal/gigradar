@@ -30,17 +30,20 @@
 // Node process, so `??=` finds and reuses the existing Map instead of
 // replacing it.
 //
-// NO DEBUG CAPTURE, EVER. The launched context has tracing, HAR recording,
-// video, and console/network event logging all explicitly OFF — a hard
-// constraint on this code path (not a default to reconsider later), since
-// any future debug aid here could persist credential-bearing form data
-// (the user's actual login page) to disk. Concretely: browser.newContext()
-// below is called with no options at all — no `recordHar`, no
-// `recordVideo`, no `context.tracing.start()`, no
-// `page.on("console"|"request"|"response", ...)` anywhere in this file.
-// The browser itself comes from real-chrome.ts's spawnRealChrome() (a real,
-// independently-launched Chrome, headed, attached over CDP) which carries
-// the same no-debug-option discipline.
+// NO DEBUG CAPTURE, EVER. The context has tracing, HAR recording, video, and
+// console/network event logging all explicitly OFF — a hard constraint on
+// this code path (not a default to reconsider later), since any future
+// debug aid here could persist credential-bearing form data (the user's
+// actual login page) to disk. Concretely: whichever of the two context
+// paths below runs (a fresh `browser.newContext()`, or reusing the
+// persistent profile's own default context — see startCapture()'s own doc
+// comment on why the latter exists), it's always called/acquired with no
+// debug options at all — no `recordHar`, no `recordVideo`, no
+// `context.tracing.start()`, no `page.on("console"|"request"|"response",
+// ...)` anywhere in this file. The browser itself comes from
+// real-chrome.ts's spawnRealChrome() (a real, independently-launched
+// Chrome, headed, attached over CDP) which carries the same
+// no-debug-option discipline.
 //
 // SANITY-CHECK BEFORE WRITE, NEVER WRITE-THEN-HOPE.
 // filterStorageStateToAllowlist() was only ever proven against
@@ -183,10 +186,25 @@ export async function startCapture(sourceId: string, loginUrl: string, allowedOr
 
   let context: BrowserContext;
   try {
-    // No storageState passed in, no other options: a fresh context that
-    // creates a session via a real login. Same "no debug capture"
-    // constraint as spawnRealChrome() above.
-    context = await browser.newContext();
+    // LIVE-VERIFIED 2026-08-31 (product-review-followups epic,
+    // ateam-session-lifetime-blocker story): `browser.newContext()` always
+    // creates a fresh, ISOLATED, incognito-style context -- regardless of
+    // `--user-data-dir` being the shared persistent profile
+    // (real-chrome.ts's own default now). Confirmed live: even with the
+    // exact same persistent profile reused launch after launch, a fresh
+    // `newContext()` call discarded Google's own sign-in every single
+    // time, because it never actually shared cookies with the profile's
+    // own default browsing context in the first place -- the persistent
+    // `--user-data-dir` was only ever helping Chrome's own prefs/extension
+    // state, never login continuity, which was the entire point of making
+    // it persistent. Fix: when the profile IS persistent, reuse its real
+    // default context (`browser.contexts()[0]`, the one Chrome itself
+    // already has open) instead of creating a new isolated one -- THAT
+    // context is what actually carries Google/SSO cookies across separate
+    // startCapture() calls. Falls back to `newContext()` when not
+    // persistent (today's original behavior, unchanged) or if the
+    // persistent profile somehow has no context yet.
+    context = realChrome.persistent ? (browser.contexts()[0] ?? (await browser.newContext())) : await browser.newContext();
   } catch (e) {
     await safeCloseBrowser(browser, realChrome);
     throw new Error(

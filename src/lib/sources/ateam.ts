@@ -16,53 +16,49 @@ import { SOURCE_ORIGINS } from "./origins.js";
  * owned there, not duplicated here), built to the identical pattern as the
  * immediately-prior `gofractional.ts` adapter.
  *
- * *** LIVE VERIFICATION IS EXPLICITLY DEFERRED — READ BEFORE TOUCHING THIS
- * FILE ***. Unlike GoFractional (live-verified against a real, valid
- * session), A.Team's stored session was confirmed LOGGED OUT during this
- * epic's planning (both headless and headed, against both `mat.json` and the
- * broader `gf.json` — see
- * .pHive/epics/browser-session-auth/docs/research-brief.md §7). Completing a
- * fresh interactive Google/Github OAuth login is not something the executing
- * agent can do on the owner's behalf. Per `ateam-adapter.yaml`'s explicit,
- * bifurcated acceptance criteria, this story's DoD covers code correctness,
- * pattern parity with `gofractional.ts`, and fixture-based tests only — real
- * live scraping results (`Gig[]` from an actually-authenticated session) are
- * a STANDING FOLLOW-UP owned by the project owner (mdostal), tracked in
- * docs/ARCHITECTURE.md's roadmap, not a blocker for this story.
+ * *** LIVE-VERIFIED 2026-08-30 — see product-review-followups epic,
+ * ateam-session-lifetime-blocker story ***. This adapter went a long time
+ * with live verification explicitly deferred (no reachable authenticated
+ * session — see git history on this file for that original standing
+ * caveat). That changed: the owner's own real account, a real Google-SSO
+ * login, and a genuinely-authenticated Mission Control session confirmed
+ * `MISSION_CONTROL_URL`, the real `/mission/{id}` href shape, and
+ * `scrapeListings()`'s field-extraction approach all against real DOM —
+ * see those declarations' own doc comments for exactly what was observed
+ * and how confident each piece is.
  *
- * FIXTURE / STRUCTURAL ASSUMPTIONS ARE STRUCTURE-DERIVED, NOT LIVE-CAPTURED.
- * The research brief documents the legacy tool's *architecture*
- * (`sources.mjs`'s subprocess-and-stdout-scrape integration, which this
- * adapter deliberately does NOT port — see the module-level parallel in
- * gofractional.ts) but does not carry recorded per-listing DOM markup for
- * A.Team's Mission Control board (no valid session was ever reachable to
- * capture it live). Every raw-listing field name, CSS-selector assumption,
- * and the `MISSION_CONTROL_URL`/per-listing href shape below are therefore a
- * best-effort structural approximation — informed by A.Team's own public
- * "Mission Control" branding and gofractional.ts's card-scraping pattern,
- * NOT a recorded live capture. A future maintainer with a valid session MUST
- * re-verify every one of these against the real page before trusting live
- * output; the fixture in
- * src/lib/sources/__tests__/fixtures/ateam-mission-control-listings.json
- * carries the same warning.
+ * WHAT'S STILL UNCONFIRMED. Only TWO real cards were observed (both on the
+ * "All Missions" board, both showing the "Actively looking for builders"
+ * badge) — `locationType`/`commitment` (hours/remote) were not visible
+ * anywhere in this board view for either, so they're left `null` rather
+ * than guessed; a card layout WITHOUT that badge, or the mission DETAIL
+ * page's own markup (which likely carries hours/remote/rate), are natural
+ * follow-ups, not blockers. Separately (still genuinely open): the
+ * session's own lifetime after capture appears short — a fresh capture
+ * scraped real listings successfully, but a SEPARATE process reconnecting
+ * to the saved session file some minutes later failed
+ * `isAuthenticatedATeam()` — consistent with a short-TTL token needing an
+ * active refresh this bare cookie-replay never exercises. Not yet fixed;
+ * tracked as its own open item (product-review-followups epic).
  *
- * THE ONE PIECE OF GENUINELY CONFIRMED, LIVE-OBSERVED DATA — used exactly as
- * observed, not paraphrased — is A.Team's real sign-in-page shape (research
- * brief §7): page title exactly `"Sign In"`, body text containing both
- * `"Continue with Google"` and `"Continue with Github"` (that exact,
- * non-standard capitalization — not "GitHub" — is what was actually
- * recorded live). See isSignInPage()/isAuthenticatedATeam() below.
+ * A.Team's real sign-in-page shape (still exactly as originally recorded):
+ * page title exactly `"Sign In"`, body text containing both `"Continue
+ * with Google"` and `"Continue with Github"` (that exact, non-standard
+ * capitalization — not "GitHub"). See isSignInPage()/isAuthenticatedATeam()
+ * below.
  */
 
 /**
- * BEST-GUESS URL, NOT LIVE-CONFIRMED — see file-level comment. A.Team's own
- * "Mission Control" branding for its matched-engagement board is public; the
- * exact path was never reachable during this epic (every live attempt
- * landed on Sign In before any board content could be observed). Chosen as
- * the most plausible board URL under `platform.a.team` pending live
- * re-verification.
+ * LIVE-VERIFIED 2026-08-30 (product-review-followups epic,
+ * ateam-session-lifetime-blocker story) — the owner's own real account,
+ * real Google-SSO login, first genuinely-authenticated session this
+ * adapter has ever had. Bare `/mission-control` redirects (when
+ * authenticated) to `/mission-control/recommended`, a personalized subset
+ * — this points directly at "All Missions" instead, the comprehensive
+ * board this adapter actually wants to scan (matches gofractional.ts's own
+ * "scrape the full open board" scope, not a narrowed recommendation feed).
  */
-const MISSION_CONTROL_URL = "https://platform.a.team/mission-control";
+const MISSION_CONTROL_URL = "https://platform.a.team/mission-control/all";
 const ORIGIN_BASE = "https://platform.a.team";
 
 /**
@@ -92,7 +88,7 @@ const ALLOWED_ORIGINS = SOURCE_ORIGINS["ateam"]!;
  * GoFractionalRawCard in gofractional.ts).
  */
 interface ATeamRawListing {
-  /** e.g. "/missions/fractional-cto-acme-corp" — assumed site-relative from the listing's own anchor href; unverified real shape. */
+  /** e.g. "/mission/6a758de15ebba7b792fb976e" — LIVE-VERIFIED 2026-08-30 real shape (singular "mission", a Mongo-style id, not the earlier guessed "/missions/{slug}"). */
   href: string;
   title: string;
   /** The engaging client/company name, if the card surfaces one. */
@@ -135,13 +131,13 @@ function toWeeklyHours(commitment: string | null): number | undefined {
 }
 
 /**
- * `href` is assumed to always be "/missions/{slug}" (unverified real shape —
- * see file-level comment). The whole slug is used as `externalId` — stable
- * and unique either way, same convention as gofractional.ts's
- * externalIdFromHref().
+ * `href` is LIVE-VERIFIED (2026-08-30) to be "/mission/{id}" (singular,
+ * Mongo-style id — see ATeamRawListing's own doc comment). The whole id is
+ * used as `externalId` — stable and unique, same convention as
+ * gofractional.ts's externalIdFromHref().
  */
 function externalIdFromHref(href: string): string | undefined {
-  const m = /^\/missions\/([^/?#]+)/.exec(href);
+  const m = /^\/mission\/([^/?#]+)/.exec(href);
   return m ? m[1] : undefined;
 }
 
@@ -223,44 +219,58 @@ async function isAuthenticatedATeam(page: Page): Promise<boolean> {
 }
 
 /**
- * Extracts raw listing data from the Mission Control board's DOM via
- * `page.$$eval` — mirrors gofractional.ts's scrapeCards() shape exactly (an
- * anchor-href selector, climbing to the nearest ancestor that looks like a
- * card container, pulling flat text fields off it) so the two adapters stay
- * structurally comparable, per this story's "pattern parity" acceptance
- * criterion. The selector/field assumptions themselves are unverified — see
- * file-level comment — but the EXTRACTION APPROACH follows the proven
- * pattern rather than inventing a new one.
+ * Extracts raw listing data from the Mission Control board's DOM.
+ * LIVE-VERIFIED 2026-08-30 (product-review-followups epic,
+ * ateam-session-lifetime-blocker story) against the owner's own real,
+ * authenticated account — the first time this adapter has ever seen real
+ * Mission Control markup (see file-level comment for the full history).
+ *
+ * `a[href^="/mission/"]` (singular) is the real card anchor selector —
+ * gofractional.ts-style card-container-climbing was abandoned in favor of
+ * this: two real cards observed both had NO stable `data-testid`/class name
+ * anywhere in their subtree (a React app with hashed/generated class
+ * names), so climbing to find one would have been guessing blind. Instead
+ * this reads every genuinely-leaf, non-empty TEXT node inside the anchor in
+ * document order — icons/images contribute no `textContent`, so they drop
+ * out naturally without any class-name assumption at all. Live-observed
+ * order across both real cards: `[company, mission tagline, role title,
+ * "Actively looking for builders" (badge, not always present), "Matched on
+ * ... skills" (not always present)]`. `client` (index 0) and `title` (index
+ * 2, the role) are used with high confidence — that ordering matched both
+ * observed cards exactly. `locationType`/`commitment` are left `null`
+ * (unknown, never fabricated) because NEITHER real card showed an
+ * hours/remote figure anywhere in this board view — unlike gofractional's
+ * confirmed absence of a $ rate, this is a genuine "not observed yet, not
+ * confirmed absent" gap, worth re-checking against the mission DETAIL page
+ * (`/mission/{id}`) in a future pass rather than guessing here.
  */
 async function scrapeListings(page: Page): Promise<ATeamRawListing[]> {
+  // LIVE-VERIFIED 2026-08-31: `withBrowserSession()`'s own `page.goto(url)`
+  // has no `waitUntil` option (defaults to the "load" event) and no
+  // follow-up wait — Mission Control is a React SPA whose mission cards
+  // render via an async API call AFTER "load" fires, so scraping
+  // immediately found the selector fix above still returning ZERO
+  // listings against a genuinely-authenticated session. Exact same root
+  // cause (and fix) as custom-llm-source.ts's gun-io fix earlier this
+  // epic — a real content wait, not a fixed sleep. Best-effort: a
+  // never-quite-idle page (background polling, analytics beacons) should
+  // still get scraped with whatever DID render, not fail outright.
+  await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+
   return page.evaluate(() => {
-    const anchors = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/missions/"]')].filter(
-      (a) => !a.getAttribute("href")!.startsWith("/missions/board") && a.getAttribute("href") !== "/missions/",
-    );
+    const anchors = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/mission/"]')];
 
     return anchors.map((anchor) => {
-      // Climb from the title anchor to the smallest ancestor whose text
-      // includes both "hrs/week" and either "Remote"/"Hybrid"/"On-site" —
-      // the assumed card container, same climbing approach as
-      // gofractional.ts's scrapeCards() (no single stable data-testid/class
-      // assumed, since none was ever confirmed live for A.Team).
-      let card: Element = anchor;
-      for (let i = 0; i < 12 && card.parentElement; i++) {
-        card = card.parentElement;
-        const t = card.textContent ?? "";
-        if (t.includes("hrs/week") && /Remote|Hybrid|On-site/.test(t)) break;
-      }
-
       const href = anchor.getAttribute("href")!;
-      const title = (anchor.textContent ?? "").trim();
-      const clientEl = card.querySelector("[data-testid='client-name'], .client-name");
-      const client = clientEl ? (clientEl.textContent ?? "").trim() : null;
-      const locationMatch = /(Remote|Hybrid|On-site)/.exec(card.textContent ?? "");
-      const locationType = locationMatch ? locationMatch[1]! : null;
-      const commitmentMatch = /(\d+(?:-\d+)?\s*hrs\/week)/.exec(card.textContent ?? "");
-      const commitment = commitmentMatch ? commitmentMatch[1]! : null;
 
-      return { href, title, client, locationType, commitment };
+      const texts = [...anchor.querySelectorAll("*")]
+        .filter((el) => el.children.length === 0 && (el.textContent ?? "").trim().length > 0)
+        .map((el) => (el.textContent ?? "").trim());
+
+      const client = texts[0] ?? null;
+      const title = texts[2] ?? texts[1] ?? texts[0] ?? "";
+
+      return { href, title, client, locationType: null, commitment: null };
     });
   });
 }
