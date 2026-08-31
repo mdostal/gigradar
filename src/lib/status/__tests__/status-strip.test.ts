@@ -58,37 +58,53 @@ describe("computeSourceCounts", () => {
     expect(computeSourceCounts({})).toEqual({ configured: 0, needingAttention: 0 });
   });
 
-  it("counts an enabled source with no settings as needing attention", () => {
-    const result = computeSourceCounts({ sources: [{ id: "braintrust", enabled: true }] });
+  it("counts an enabled source (that genuinely needs settings) with no settings as needing attention", () => {
+    // "gofractional" is a real KNOWN_SOURCES id with auth: "browser-session"
+    // -- it genuinely needs settings.sessionStatePath to function.
+    const result = computeSourceCounts({ sources: [{ id: "gofractional", enabled: true }] });
     expect(result).toEqual({ configured: 1, needingAttention: 1 });
   });
 
-  it("counts an enabled source with an empty settings object as needing attention", () => {
-    const result = computeSourceCounts({ sources: [{ id: "braintrust", enabled: true, settings: {} }] });
+  it("counts an enabled source (that genuinely needs settings) with an empty settings object as needing attention", () => {
+    const result = computeSourceCounts({ sources: [{ id: "gofractional", enabled: true, settings: {} }] });
     expect(result).toEqual({ configured: 1, needingAttention: 1 });
   });
 
   it("does not flag an enabled source with non-empty settings", () => {
     const result = computeSourceCounts({
-      sources: [{ id: "braintrust", enabled: true, settings: { apiKey: "env:BRAINTRUST_KEY" } }],
+      sources: [{ id: "gofractional", enabled: true, settings: { sessionStatePath: "/some/path.json" } }],
     });
     expect(result).toEqual({ configured: 1, needingAttention: 0 });
   });
 
   it("does not flag a disabled source regardless of settings", () => {
-    const result = computeSourceCounts({ sources: [{ id: "braintrust", enabled: false }] });
+    const result = computeSourceCounts({ sources: [{ id: "gofractional", enabled: false }] });
     expect(result).toEqual({ configured: 1, needingAttention: 0 });
+  });
+
+  it("NEVER flags a KNOWN_SOURCES entry with auth:'none' for missing settings -- live-verified 2026-08-31: this was a real false positive against the owner's own config (6 of 9 real, working public-board sources were wrongly flagged)", () => {
+    // braintrust/builtin/fractionaljobs/fractionus/fractionalfinders/linkedin
+    // are all real KNOWN_SOURCES entries with auth: "none" -- genuinely
+    // zero-config sources, checked here via one representative id.
+    const result = computeSourceCounts({ sources: [{ id: "braintrust", enabled: true }] });
+    expect(result).toEqual({ configured: 1, needingAttention: 0 });
+  });
+
+  it("still flags a source NOT present in KNOWN_SOURCES at all (a hand-added custom-llm/gmail-digest source) when it has no settings -- those genuinely need their own config", () => {
+    const result = computeSourceCounts({ sources: [{ id: "my-custom-llm-source", enabled: true }] });
+    expect(result).toEqual({ configured: 1, needingAttention: 1 });
   });
 
   it("mixes configured/needing-attention across multiple sources", () => {
     const result = computeSourceCounts({
       sources: [
-        { id: "a", enabled: true, settings: { apiKey: "x" } },
-        { id: "b", enabled: true },
+        { id: "gofractional", enabled: true, settings: { sessionStatePath: "/x.json" } },
+        { id: "ateam", enabled: true },
+        { id: "braintrust", enabled: true }, // auth: "none" -- never flagged
         { id: "c", enabled: false },
       ],
     });
-    expect(result).toEqual({ configured: 3, needingAttention: 1 });
+    expect(result).toEqual({ configured: 4, needingAttention: 1 });
   });
 
   it("does not throw on a malformed sources entry", () => {
