@@ -15,6 +15,7 @@
 //     raw/unvalidated, every field here is read defensively (unknown shape
 //     in, never throws).
 import type { StoredGig } from "@/lib/store";
+import { KNOWN_SOURCES } from "@/lib/sources/origins";
 
 export interface StatusStripView {
   /** e.g. "3 sources configured (1 needs attention)" or "0 sources configured". */
@@ -54,11 +55,32 @@ export interface SourceCounts {
   needingAttention: number;
 }
 
+/** `id -> auth` lookup over KNOWN_SOURCES, built once at module load — same registry the setup wizard and Capture Login button already read from, never a second copy. */
+const KNOWN_SOURCE_AUTH: ReadonlyMap<string, string> = new Map(KNOWN_SOURCES.map((s) => [s.id, s.auth]));
+
 /**
  * "Needs attention" is a best-effort, glance-level heuristic (not a health
  * check, per the story's `risks` block): a source counts as needing
- * attention when it's `enabled: true` but has no non-empty `settings` object
- * — i.e. nothing that could plausibly be a resolvable session/credential.
+ * attention when it's `enabled: true`, has no non-empty `settings` object,
+ * AND genuinely needs one to function.
+ *
+ * FIXED 2026-08-31 (live-verified against the owner's own real config):
+ * the original version flagged EVERY enabled source with empty settings,
+ * including plain `auth: "none"` public boards (braintrust, builtin,
+ * fractionaljobs, fractionus, fractionalfinders, linkedin — six of the
+ * owner's nine real sources) that need ZERO configuration to work and
+ * were working fine — a real, actively misleading false-positive ("6 need
+ * attention" on a dashboard whose Issues page correctly showed zero open
+ * issues). Now cross-references `KNOWN_SOURCES` (src/lib/sources/
+ * origins.ts, the same registry the setup wizard and Capture Login button
+ * already read from): a hand-built adapter with `auth: "none"` is NEVER
+ * flagged for missing settings, regardless of whether it has any. Every
+ * other case is unchanged — a `browser-session` KNOWN_SOURCES entry
+ * (gofractional/ateam/wellfound) missing settings.sessionStatePath, and
+ * any source NOT in KNOWN_SOURCES at all (a custom-llm/gmail-digest
+ * source added by hand, which genuinely needs its own settings), still
+ * count toward `needingAttention` exactly as before.
+ *
  * Malformed source entries (not an object) are counted toward `configured`
  * (the array length) but never toward `needingAttention`, and never crash.
  */
@@ -72,7 +94,9 @@ export function computeSourceCounts(rawConfig: Record<string, unknown>): SourceC
     const enabled = source.enabled === true;
     const settings = source.settings;
     const hasSettings = isRecord(settings) && Object.keys(settings).length > 0;
-    if (enabled && !hasSettings) needingAttention++;
+    const id = typeof source.id === "string" ? source.id : undefined;
+    const needsNoSettings = id !== undefined && KNOWN_SOURCE_AUTH.get(id) === "none";
+    if (enabled && !hasSettings && !needsNoSettings) needingAttention++;
   }
 
   return { configured: sources.length, needingAttention };
