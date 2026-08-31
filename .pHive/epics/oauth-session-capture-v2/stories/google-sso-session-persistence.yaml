@@ -1,0 +1,115 @@
+id: google-sso-session-persistence
+epic: oauth-session-capture-v2
+title: "Google/SSO login persists across separate capture sessions -- and reuses across every SSO-gated source"
+status: pending
+complexity: high
+methodology: classic
+depends_on: [real-chrome-spawn-attach]
+
+description: |
+  Live-debugging session 2026-08-31 (product-review-followups epic,
+  ateam-session-lifetime-blocker story) surfaced a real, still-open gap:
+  every real-chrome-based Capture Login demands a FULL interactive Google
+  sign-in (password + 2FA, not just a "continue as X" click) -- even
+  immediately after a previous capture on the SAME machine. Owner's own
+  words: "why do i have to keep logging in?" and the original ask,
+  "CAPTURE THE GOOGLE AUTH WITH PORTUNUS AND THEN RE-USE IT."
+
+  IMPORTANT SCOPING NOTE: this is NOT the same gap `portunus-session-
+  backend` (already done) closes. That story is about WHERE one source's
+  OWN filtered, scoped session gets stored (local vault vs Portunus).
+  This story is about Google's OWN sign-in state never surviving between
+  two separate real-chrome launches in the first place -- upstream of
+  which backend anything gets saved to.
+
+  TWO FIXES SHIPPED THIS SESSION, NEITHER FULLY SOLVED IT (see
+  fix/ateam-session-capture-and-selectors, merged to dev):
+    1. real-chrome.ts: spawnRealChrome() now reuses ONE persistent
+       --user-data-dir across launches instead of a fresh temp dir every
+       time (real, load-bearing fix for Chrome-level prefs/extension
+       continuity, and closeRealChrome() reliability -- see that PR).
+    2. session-capture.ts: startCapture() reuses the persistent profile's
+       own default browser context (`browser.contexts()[0]`) instead of
+       always creating a fresh, isolated one via `newContext()` --
+       confirmed live that `newContext()` never shared cookies with the
+       profile's own default context at all, which fully explained why
+       fix #1 alone didn't help.
+  Live-tested AFTER both fixes landed: still required a full Google
+  re-login on the very next capture attempt. Root cause genuinely
+  unknown as of this story's creation -- do not assume either fix above
+  was wasted (both are real, correct, and load-bearing for OTHER reasons
+  documented in their own PR), just that neither is sufficient alone.
+
+  HYPOTHESES NOT YET RULED OUT (research step for whoever picks this up):
+    - macOS Keychain: Chrome encrypts cookies at rest via an OS Keychain-
+      backed key ("Chrome Safe Storage"). A non-default --user-data-dir
+      launched via child_process.spawn() (not through a signed, Finder-
+      launched .app bundle) may trigger a Keychain access-permission
+      prompt EVERY launch that never gets answered in this non-
+      interactive spawn context -- Chrome would then silently fail to
+      decrypt any previously-stored cookies rather than erroring loudly.
+      Check for a macOS security/keychain prompt (visible or hidden
+      behind the Chrome window) during a live repro.
+    - Google's own risk engine: independent of cookie continuity, Google
+      may be detecting the CDP-attached (even passively-attached, not
+      launched-with-automation-flags) browser as untrusted and forcing
+      re-verification regardless. Would need a real side-by-side: does
+      Google behave differently for a `connectOverCDP()`-attached tab vs.
+      a human directly opening a new tab in the exact same running
+      profile?
+    - Some other on-disk profile state not surviving between launches --
+      re-check Local State's own device-bound encryption key, "exit_type"
+      after prior abrupt kills possibly triggering a Chrome-side reset of
+      sensitive state on the next launch (crash-recovery heuristics).
+
+  BROADER ASK, STILL OPEN REGARDLESS OF ROOT CAUSE: the owner wants ONE
+  Google identity captured once and reused ACROSS EVERY SSO-gated source
+  (a.team today; wellfound and any future Google-SSO source too) --
+  mirroring the "assign an existing connection" UI pattern already built
+  for Gmail OAuth reuse this same session (config/actions.ts's
+  listConnectedGmailSourcesAction/assignGmailConnectionAction). That's a
+  DIFFERENT mechanism than a shared browser profile: it would mean
+  capturing Google's OWN session (not scoped to any one source) via
+  gigradar's ALREADY-PROVEN storageState capture/replay technique, then
+  INJECTING it into a fresh context at the start of a new source's
+  Capture Login flow (`context.addCookies()` / a Google-scoped
+  storageState fed to a first navigation to accounts.google.com before
+  redirecting into the target source) -- sidestepping whatever Chrome's
+  own native profile persistence is silently failing to do, by reusing
+  the SAME mechanism that already reliably works for per-source sessions.
+  This is worth seriously considering as the PRIMARY fix, not just a
+  fallback, once the root cause research above either confirms or rules
+  out the native-persistence path.
+
+acceptance_criteria:
+  - "Root cause of Google sign-in not surviving between two real-chrome launches on the SAME persistent profile is identified and documented (not guessed) -- a live repro that isolates the exact failure point (Keychain prompt? risk engine? some other profile state?)."
+  - "A owner-approved fix (native profile persistence made to actually work, OR a Google-scoped storageState capture/inject mechanism, OR both) is live-verified: two SEPARATE Capture Login attempts for two DIFFERENT SSO-gated sources (e.g. a.team then wellfound) in the SAME session, second one requiring at most a lightweight 'continue as X' click -- never a full password/2FA re-entry."
+  - "Whatever mechanism is chosen has a real Settings/Config UI affordance to view/manage the shared Google connection, mirroring the Gmail 'assign existing connection' pattern -- not just a backend mechanism with no visibility."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/real-chrome.ts
+      purpose: persistent-profile spawn + reliable kill, shipped this session -- read its header comment and isProfileLocked()/killByUserDataDir() before touching further
+    - path: src/lib/auth/session-capture.ts
+      purpose: startCapture()'s persistent-context-reuse fix, shipped this session but NOT confirmed sufficient -- see its own doc comment
+    - path: src/lib/auth/browser-session.ts
+      purpose: filterStorageStateToAllowlist()/domainMatchesAllowlist() -- the existing origin-scoping mechanism any Google-scoped-storageState approach would need to extend past (Google's own origins are explicitly EXCLUDED from every current source's allowlist, by design -- see wellfound.ts's comment. A shared-Google-identity mechanism needs its own, deliberate design for how much of that boundary it's safe to relax, and how.)
+    - path: src/app/config/actions.ts
+      purpose: listConnectedGmailSourcesAction/assignGmailConnectionAction -- the UI/UX precedent for "assign an existing connection" to mirror for Google/SSO reuse across sources
+
+design_decisions:
+  - decision: This story does NOT reopen or duplicate portunus-session-backend (already done) -- Portunus is a legitimate STORAGE choice for whatever session artifact this story produces, not the mechanism that solves the login-persistence problem itself.
+    rationale: "Conflating 'where does it get saved' with 'why doesn't it survive at all' was the actual mistake made live this session (chased a persistent-profile fix and a context-reuse fix, both real and correct, before the true remaining gap was properly separated out) -- keeping this story scoped prevents repeating that."
+
+risks:
+  - severity: high
+    description: A Google-scoped storageState-injection approach means touching cookies for accounts.google.com specifically -- CLAUDE.md's core/user-layer boundary and this codebase's existing origin-scoping discipline (browser-session.ts's domainMatchesAllowlist(), deliberately EXCLUDING Google/Clerk SSO from every per-source allowlist today) both need explicit, careful reconsideration before broadening scope here, not a quick bypass.
+    mitigation: "Design review before implementation -- this is exactly the kind of security-boundary change that should get a real design-discussion pass, not a live hot-fix."
+  - severity: medium
+    description: The three hypotheses listed above are genuinely unconfirmed guesses, not research findings -- whoever picks this up may need to add NEW diagnostic instrumentation (a live repro with visibility into Keychain prompts, Google's own network responses during the failed re-auth, etc.) rather than assuming any one of them is correct going in.
+    mitigation: "Budget real research time before attempting a fix; do not skip straight to implementation against an unconfirmed theory a third time."
+
+references:
+  - path: .pHive/epics/product-review-followups/docs/ateam-investigation-findings.md
+    relevant_excerpt: "Original a.team session-lifetime investigation this story's fixes grew out of."
