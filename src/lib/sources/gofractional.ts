@@ -220,7 +220,7 @@ async function hasDashboardLink(page: Page): Promise<boolean> {
  * waits, so the bounded timeout below only ever adds latency to the
  * genuine-failure path, never a false positive.
  */
-async function isAuthenticatedGoFractional(page: Page): Promise<boolean> {
+export async function isAuthenticatedGoFractional(page: Page): Promise<boolean> {
   const deadline = Date.now() + AUTH_CHECK_POLL_TIMEOUT_MS;
   for (;;) {
     if (await hasDashboardLink(page)) return true;
