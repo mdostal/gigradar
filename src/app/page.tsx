@@ -2,6 +2,7 @@ import { readRawConfig } from "@/lib/config/save";
 import { listDrafts, listGigs, listInterviewPrep } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { DashboardClient } from "./dashboard-client";
+import { SyncGoFractionalButton } from "./sync-gofractional-button";
 import { computeStatusStrip } from "@/lib/status/status-strip";
 
 // gigradar is a single-user, 127.0.0.1-bound local app with no CDN/edge cache
@@ -60,10 +61,11 @@ export default function HomePage() {
           {gigs.length} gig{gigs.length === 1 ? "" : "s"} tracked
         </p>
       </div>
-      <div className="mt-3 flex flex-wrap gap-2 text-sm text-theme-text-dim">
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-theme-text-dim">
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.sourcesLabel}</span>
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.profileLabel}</span>
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.lastScanLabel}</span>
+        <SyncGoFractionalButton />
       </div>
       <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} initialPrepByGigKey={prepByGigKey} />
     </main>

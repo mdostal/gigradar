@@ -6,9 +6,11 @@ import type { GigStatus } from "@/lib/store";
 import { actionErr, actionOk, type ActionResult } from "@/lib/actions/result";
 import { stageApplication } from "@/lib/apply/runner";
 import { generatePrepPacket, type PrepPacketContent } from "@/lib/apply/prep";
+import { loadConfig } from "@/lib/config/load";
 import { resolveLlmCredential } from "@/lib/config/env-store";
 import { readRawConfig } from "@/lib/config/save";
 import { ConfigSchema } from "@/lib/config/schema";
+import { reconcileGoFractionalStatuses, type ReconciliationResult } from "@/lib/sources/gofractional-status";
 import type { MatchResult } from "@/lib/types";
 
 /**
@@ -213,4 +215,38 @@ export async function generatePrepPacketAction(key: string): Promise<ActionResul
   const result = await runPrepPacketGeneration(key);
   if (result.ok) revalidatePath("/");
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// GoFractional status reconciliation (product-review-followups epic,
+// status-reconciliation-from-platforms story, first source). Dashboard
+// button action -- resolves the FULL config via loadConfig() (this action
+// genuinely needs the real, working session-state settings, same
+// "resolve here, never echo back" discipline runPrepPacketGeneration()'s
+// own credential resolution above already follows) and hands the resolved
+// "gofractional" source entry to reconcileGoFractionalStatuses(), which
+// scrapes the owner's own real application-status dashboard and updates
+// any locally-tracked gig whose status has genuinely changed.
+// ---------------------------------------------------------------------------
+
+export async function reconcileGoFractionalStatusesAction(): Promise<ActionResult<ReconciliationResult>> {
+  let config;
+  try {
+    config = loadConfig();
+  } catch (e) {
+    return actionErr(e);
+  }
+
+  const source = config.sources.find((s) => s.id === "gofractional");
+  if (!source) {
+    return actionErr(new Error('gigradar status-reconciliation: no "gofractional" source configured.'));
+  }
+
+  try {
+    const result = await reconcileGoFractionalStatuses(source);
+    if (result.updated.length > 0) revalidatePath("/");
+    return actionOk(result);
+  } catch (e) {
+    return actionErr(e);
+  }
 }
