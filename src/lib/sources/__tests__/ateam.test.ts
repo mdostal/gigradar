@@ -22,20 +22,25 @@
 //   4. throw-on-any-failure, never silent-empty, per this repo's
 //      no-silent-zero convention.
 //
-// *** FIXTURE IS STRUCTURE-DERIVED, NOT LIVE-CAPTURED. ***  Unlike
-// gofractional-jobs-cards.json (captured live from a real, valid session),
-// no valid A.Team session was ever reachable during this epic (the stored
-// session is confirmed logged out — see the story YAML and ateam.ts's
-// file-level comment). `fixtures/ateam-mission-control-listings.json` is a
-// best-effort structural approximation of A.Team's Mission Control board —
-// field names/values are plausible, NOT recorded from the real site. A
-// future maintainer with a valid session MUST re-verify the adapter's real
-// selector/field assumptions (see ateam.ts's scrapeListings()) and refresh
-// this fixture from a genuine live capture before trusting production
-// output. The ONE exception is the sign-in-page fixture data used in the
-// "isAuthenticated predicate" describe block below — that content (title
-// "Sign In", "Continue with Google"/"Continue with Github") IS real,
-// confirmed, live-observed data, not structure-derived.
+// FIXTURE NOTE (updated 2026-08-30, product-review-followups epic,
+// ateam-session-lifetime-blocker story). This file mocks `page.evaluate()`
+// to return `fixtures/ateam-mission-control-listings.json` directly —
+// meaning scrapeListings()'s REAL in-browser extraction logic (the
+// querySelectorAll/leaf-text-node walk, see that function's own doc
+// comment for what was actually live-verified) is NOT exercised by these
+// tests at all, same as before this update — only toGig()'s pure
+// field-mapping logic (href -> externalId/url, remote/weeklyHours parsing)
+// is. The fixture's `href` shape (`/mission/{id}`, singular) now matches
+// the REAL, live-verified shape; its `locationType`/`commitment` values
+// stay hand-picked test data exercising toGig()'s mapping logic across
+// Remote/On-site/Hybrid and range/single-figure hours — scrapeListings()
+// itself always produces `null` for both today (neither was visible on
+// either of the two real cards observed live — see ateam.ts's own doc
+// comments), so this fixture is deliberately a superset of what real
+// scraping currently returns, kept for toGig()'s own coverage. The
+// sign-in-page fixture data used in the "isAuthenticated predicate"
+// describe block below remains real, confirmed, live-observed content
+// (title "Sign In", "Continue with Google"/"Continue with Github").
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,6 +88,10 @@ function createFakePage(opts: { title?: string; evaluateResult?: unknown; bodyTe
     title: vi.fn().mockResolvedValue(opts.title ?? "Mission Control | A.Team"),
     evaluate: vi.fn().mockResolvedValue(opts.evaluateResult ?? STRUCTURE_DERIVED_LISTINGS),
     textContent: vi.fn().mockResolvedValue(opts.bodyText ?? ""),
+    // scrapeListings() waits for network idle before evaluating (see that
+    // function's own doc comment) -- mocked resolved so the fake page
+    // doesn't need a real network stack.
+    waitForLoadState: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -119,15 +128,15 @@ describe("ateamSource", () => {
       externalId: "fractional-cto-acme-robotics",
       title: "Fractional CTO",
       company: "Acme Robotics",
-      url: "https://platform.a.team/missions/fractional-cto-acme-robotics",
+      url: "https://platform.a.team/mission/fractional-cto-acme-robotics",
       remote: true,
       weeklyHours: 20, // upper bound of "10-20 hrs/week"
     });
 
     // Real per-listing url, never the board's own list-view page.
     for (const g of gigs) {
-      expect(g.url).toMatch(/^https:\/\/platform\.a\.team\/missions\//);
-      expect(g.url).not.toBe("https://platform.a.team/mission-control");
+      expect(g.url).toMatch(/^https:\/\/platform\.a\.team\/mission\//);
+      expect(g.url).not.toBe("https://platform.a.team/mission-control/all");
       expect(g.url).not.toMatch(/[?&]/); // no query-string search-page shape either
     }
   });
@@ -185,7 +194,7 @@ describe("ateamSource", () => {
     expect(options?.allowedOrigins).not.toContain("github.com");
     expect(options?.allowedOrigins.join(",")).not.toMatch(/google|clerk|github/i);
     expect(options?.sourceId).toBe("ateam");
-    expect(options?.url).toBe("https://platform.a.team/mission-control");
+    expect(options?.url).toBe("https://platform.a.team/mission-control/all");
   });
 
   describe("isAuthenticated predicate (A.Team's REAL, live-observed sign-in-page shape — confirmed during epic planning, not structure-derived)", () => {
@@ -232,7 +241,7 @@ describe("ateamSource", () => {
 
   it("propagates (never swallows) the auth-failure error withBrowserSession throws for an invalid/expired session", async () => {
     withBrowserSessionMock.mockRejectedValue(
-      new Error('gigradar browser-session: session expired/invalid for source "ateam" (checked against "https://platform.a.team/mission-control").'),
+      new Error('gigradar browser-session: session expired/invalid for source "ateam" (checked against "https://platform.a.team/mission-control/all").'),
     );
 
     await expect(ateamSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" })).rejects.toThrow(/session expired\/invalid for source "ateam"/);

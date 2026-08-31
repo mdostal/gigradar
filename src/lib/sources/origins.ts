@@ -49,21 +49,19 @@ export const SOURCE_ORIGINS: Record<string, readonly string[]> = {
  * same source.
  *
  * `ateam`: deliberately the SAME URL as `ateam.ts`'s own
- * `MISSION_CONTROL_URL` (`https://platform.a.team/mission-control`), NOT a
- * separate "/login" guess. A.Team has no confirmed dedicated login route
- * anywhere in this project's research; the one thing actually
- * LIVE-CONFIRMED (`browser-session-auth`'s research brief §7) is that
- * navigating to Mission Control itself while unauthenticated redirects to
- * A.Team's real sign-in page (page title exactly "Sign In", body containing
- * both "Continue with Google" and "Continue with Github" — see `ateam.ts`'s
- * `isSignInPage()`). Reusing the one URL that has actually been observed to
- * work is more honest than inventing an unverified `/login` path on top of
- * an already-unverified board URL (see `ateam.ts`'s file-level comment on
- * `MISSION_CONTROL_URL` itself being best-guess, not live-confirmed).
+ * `MISSION_CONTROL_URL` (`https://platform.a.team/mission-control/all`,
+ * live-verified 2026-08-30 — see that constant's own doc comment), NOT a
+ * separate "/login" guess. A.Team has no dedicated login route; navigating
+ * to a Mission Control URL while unauthenticated redirects to A.Team's real
+ * sign-in page (page title exactly "Sign In", body containing both
+ * "Continue with Google" and "Continue with Github" — see `ateam.ts`'s
+ * `isSignInPage()`), which is what Capture Login actually needs. Reusing
+ * the one URL this adapter itself navigates to for scraping is more honest
+ * than inventing a second, possibly-diverging guess.
  */
 export const SOURCE_LOGIN_URLS: Record<string, string> = {
   gofractional: "https://www.gofractional.com/login",
-  ateam: "https://platform.a.team/mission-control",
+  ateam: "https://platform.a.team/mission-control/all",
   // `wellfound`: `https://wellfound.com/login` — Wellfound's own real,
   // dedicated login route (LIVE-CONFIRMED while building wellfound.ts, not a
   // guess: HTTP 200, page title exactly "Log In | Wellfound", body content

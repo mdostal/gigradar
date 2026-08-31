@@ -105,10 +105,13 @@ function createFakeContext(page: unknown, storageStateResult: unknown) {
  * `off` was called and `removeAllListeners` was NOT, as a regression guard
  * against that exact bug recurring.
  */
-function createFakeBrowser(context: unknown) {
+function createFakeBrowser(context: unknown, existingContexts: unknown[] = []) {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   return {
     newContext: vi.fn().mockResolvedValue(context),
+    // startCapture() reuses this (persistent-profile path) instead of
+    // newContext() -- see that function's own doc comment.
+    contexts: vi.fn(() => existingContexts),
     close: vi.fn().mockResolvedValue(undefined),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       if (!listeners.has(event)) listeners.set(event, new Set());
@@ -255,13 +258,38 @@ describe("startCapture / finishCapture: happy path", () => {
     expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
   });
 
-  it("launches a FRESH context — no storageState passed into newContext()", async () => {
+  it("launches a FRESH context — no storageState passed into newContext() — when the profile is NOT persistent", async () => {
     const { browser } = setUpFakeBrowserChain(GOOD_STORAGE_STATE);
 
     await startCapture(SOURCE_ID, LOGIN_URL);
 
     expect(browser.newContext).toHaveBeenCalledTimes(1);
     expect(browser.newContext).toHaveBeenCalledWith();
+  });
+
+  it("reuses the persistent profile's own EXISTING default context instead of a fresh isolated one — this is the actual fix for Google/SSO sign-in being discarded on every capture (live-verified 2026-08-31)", async () => {
+    const page = createFakePage({});
+    const existingContext = createFakeContext(page, GOOD_STORAGE_STATE);
+    const browser = createFakeBrowser(/* newContext() result, should never be used */ "unused", [existingContext]);
+    spawnRealChromeMock.mockResolvedValue({ ...FAKE_REAL_CHROME_HANDLE, persistent: true });
+    attachToRealChromeMock.mockResolvedValue(browser);
+
+    await startCapture(SOURCE_ID, LOGIN_URL);
+
+    expect(browser.newContext).not.toHaveBeenCalled();
+    expect(browser.contexts).toHaveBeenCalled();
+    // The page/navigation happened on the REUSED context, not a fresh one.
+    expect(page.goto).toHaveBeenCalledWith(LOGIN_URL);
+  });
+
+  it("falls back to newContext() when persistent but Chrome unexpectedly has no existing context yet", async () => {
+    const { browser } = setUpFakeBrowserChain(GOOD_STORAGE_STATE);
+    spawnRealChromeMock.mockResolvedValue({ ...FAKE_REAL_CHROME_HANDLE, persistent: true });
+    // createFakeBrowser() defaults existingContexts to [] -- contexts()[0] is undefined.
+
+    await startCapture(SOURCE_ID, LOGIN_URL);
+
+    expect(browser.newContext).toHaveBeenCalledTimes(1);
   });
 
   it("navigates the page to loginUrl", async () => {
