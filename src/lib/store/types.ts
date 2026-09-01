@@ -111,6 +111,8 @@ export interface GigFilter {
   sourceId?: string;
   /** true = only currently-unavailable gigs, false = only currently-available, omit = both. */
   unavailable?: boolean;
+  /** multi-group-architecture epic — only gigs whose matchedGroupIds contains this group id. */
+  groupId?: string;
 }
 
 /**

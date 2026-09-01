@@ -27,11 +27,17 @@ export const dynamic = "force-dynamic";
 function blankConfig(): Config {
   return {
     profile: { name: "", roles: [], skills: [], timezone: "" },
-    needs: {
-      engagementProfiles: [],
-      freshStageOnly: false,
-      remoteOnly: false,
-    },
+    groups: [
+      {
+        id: "default-search-1",
+        label: "Default Search 1",
+        needs: {
+          engagementProfiles: [],
+          freshStageOnly: false,
+          remoteOnly: false,
+        },
+      },
+    ],
     sources: [],
   };
 }

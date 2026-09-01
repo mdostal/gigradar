@@ -1,0 +1,40 @@
+name: multi-group-architecture
+title: Support multiple independent groups (searches) in one gigradar install
+description: |
+  A gig can match zero, one, or many owner-defined "groups" (e.g.
+  fractional CTO search, full-time SWE search, drone photography search)
+  at once, mirroring the existing matchedProfileIds pattern one level up.
+  Sources are shared across groups by default. Application state (status,
+  drafts, outcome) stays exactly one per gig regardless of how many
+  groups it matches -- "apply once."
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: none
+
+stories:
+  - id: mga-1-group-types-and-config-migration
+    title: Group types, config schema, and migrate-on-read for legacy flat configs
+    complexity: medium
+    depends_on: []
+  - id: mga-2-gig-store-group-columns
+    title: Add matched_group_ids and matched_group_tiers to the gig store
+    complexity: low
+    depends_on: [mga-1-group-types-and-config-migration]
+  - id: mga-3-group-aware-matching-pipeline
+    title: matchGroups() + rewire runRadar() to evaluate every gig against every in-scope group
+    complexity: medium
+    depends_on: [mga-1-group-types-and-config-migration, mga-2-gig-store-group-columns]
+
+# Slice 1 only (mga-1..3) -- per the owner's own sequencing decision,
+# 2026-09-01: Slice 1 ships and gets live-verified against the real
+# database ALONE before Slice 2 (Config UI: real group management) is
+# even planned in detail. Slices 2-4's stories are deliberately NOT
+# written yet -- see vertical-plan.md for their scope.
+deferred_slices:
+  - slice: 2
+    title: "Config UI: real group management"
+    gated_on: "mga-1..3 shipped + live-verified against real production data"
+  - slice: 3
+    title: "Dashboard UI: /[group]/ routing and per-group views"
+  - slice: 4
+    title: "MCP server group support"

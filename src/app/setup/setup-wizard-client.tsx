@@ -61,8 +61,12 @@ interface WizardState {
 }
 
 function initialState(existing: Config | null): WizardState {
-  const hourly = existing?.needs.engagementProfiles.find((p) => p.rateUnit === "hour");
-  const fullTime = existing?.needs.engagementProfiles.find((p) => p.rateUnit === "year");
+  // Slice 1 of the multi-group-architecture epic has no group-management UI
+  // yet (Slice 2) — the wizard only ever reads/writes the FIRST/primary
+  // group, same convention as ./actions.ts's saveWizardConfigAction().
+  const group = existing?.groups[0];
+  const hourly = group?.needs.engagementProfiles.find((p) => p.rateUnit === "hour");
+  const fullTime = group?.needs.engagementProfiles.find((p) => p.rateUnit === "year");
   return {
     name: existing?.profile.name ?? "",
     rolesText: arrayToLines(existing?.profile.roles ?? []),
@@ -75,10 +79,10 @@ function initialState(existing: Config | null): WizardState {
     hourlyMaxHoursAtHighRate: hourly?.maxHoursAtHighRate != null ? String(hourly.maxHoursAtHighRate) : "40",
     fullTimeEnabled: !!fullTime,
     fullTimeMinRate: fullTime ? String(fullTime.minRate) : "",
-    remoteOnly: existing?.needs.remoteOnly ?? true,
-    coreTitlesText: arrayToLines(existing?.roleArea?.coreTitles ?? []),
-    keywordsText: arrayToLines(existing?.roleArea?.keywords ?? []),
-    redKeywordsText: arrayToLines(existing?.roleArea?.redKeywords ?? []),
+    remoteOnly: group?.needs.remoteOnly ?? true,
+    coreTitlesText: arrayToLines(group?.roleArea?.coreTitles ?? []),
+    keywordsText: arrayToLines(group?.roleArea?.keywords ?? []),
+    redKeywordsText: arrayToLines(group?.roleArea?.redKeywords ?? []),
     enabledSourceIds: new Set((existing?.sources ?? []).filter((s) => s.enabled && KNOWN_SOURCES.some((k) => k.id === s.id)).map((s) => s.id)),
   };
 }

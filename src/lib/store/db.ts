@@ -105,6 +105,8 @@ function openConnection(dbPath: string, busyTimeoutMs: number): DatabaseSyncType
   ensureColumn(db, "gigs", "matched_profile_ids", "TEXT");
   ensureColumn(db, "gigs", "outcome_reason", "TEXT");
   ensureColumn(db, "gigs", "outcome_note", "TEXT");
+  ensureColumn(db, "gigs", "matched_group_ids", "TEXT");
+  ensureColumn(db, "gigs", "matched_group_tiers", "TEXT");
   ensureDraftsSubmittingStatus(db);
   return db;
 }

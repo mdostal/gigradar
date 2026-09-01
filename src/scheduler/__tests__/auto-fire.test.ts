@@ -91,7 +91,9 @@ function fakeStageApplicationFn() {
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
     profile: { name: "t", roles: [], skills: [], timezone: "UTC" },
-    needs: { engagementProfiles: [], freshStageOnly: false, remoteOnly: false },
+    groups: [
+      { id: "g1", label: "Group 1", needs: { engagementProfiles: [], freshStageOnly: false, remoteOnly: false } },
+    ],
     sources: [],
     autoDraftOnScan: true,
     applyProfile: APPLY_PROFILE,

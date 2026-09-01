@@ -110,30 +110,38 @@ const validConfig = {
     skills: ["TypeScript", "Architecture"],
     timezone: "America/Chicago",
   },
-  needs: {
-    engagementProfiles: [
-      {
-        id: "fractional-contract",
-        label: "Fractional/contract",
-        types: ["contract", "fractional"],
-        minRate: 150,
-        highRate: 250,
-        maxHours: 20,
-        maxHoursAtHighRate: 40,
-        rateUnit: "hour",
+  groups: [
+    {
+      id: "g1",
+      label: "Group 1",
+      needs: {
+        engagementProfiles: [
+          {
+            id: "fractional-contract",
+            label: "Fractional/contract",
+            types: ["contract", "fractional"],
+            minRate: 150,
+            highRate: 250,
+            maxHours: 20,
+            maxHoursAtHighRate: 40,
+            rateUnit: "hour",
+          },
+        ],
+        freshStageOnly: true,
+        remoteOnly: true,
       },
-    ],
-    freshStageOnly: true,
-    remoteOnly: true,
-  },
+    },
+  ],
   sources: [{ id: "braintrust", enabled: true }],
 };
 
 describe("loadConfig: happy path (legacy plaintext input, migrate-on-read)", () => {
   it("returns a Config object matching a valid, legacy-plaintext config.json's contents, validated against the zod schema", () => {
+    const group = validConfig.groups[0];
+    if (!group) throw new Error("test fixture: expected at least one group");
     const full = {
       ...validConfig,
-      roleArea: { coreTitles: ["CTO"], keywords: ["fractional"], redKeywords: ["junior"] },
+      groups: [{ ...group, roleArea: { coreTitles: ["CTO"], keywords: ["fractional"], redKeywords: ["junior"] } }],
       schedule: "0 9 * * *",
     };
     writePlaintextConfig(JSON.stringify(full));
@@ -220,12 +228,12 @@ describe("loadConfig: optional fields", () => {
     const config = loadConfig();
 
     expect(config.profile).toEqual(validConfig.profile);
-    expect(config.needs).toEqual(validConfig.needs);
+    expect(config.groups).toEqual(validConfig.groups);
     expect(config.sources).toEqual(validConfig.sources);
-    expect(config.roleArea).toBeUndefined();
+    expect(config.groups[0]?.roleArea).toBeUndefined();
     expect(config.schedule).toBeUndefined();
     expect(config.applyProfile).toBeUndefined();
-    expect("roleArea" in config ? config.roleArea : undefined).toBeUndefined();
+    expect(config.groups[0] && "roleArea" in config.groups[0] ? config.groups[0].roleArea : undefined).toBeUndefined();
     expect("applyProfile" in config ? config.applyProfile : undefined).toBeUndefined();
   });
 
@@ -275,12 +283,15 @@ describe("loadConfig: needs.engagementProfiles migration from the deprecated fla
     };
   }
 
-  it("a real, pre-existing config.json in the old flat shape (allowContractToHire: false) loads successfully into one synthesized profile covering contract+fractional only", () => {
+  it("a real, pre-existing config.json in the old flat shape (allowContractToHire: false) loads successfully into one synthesized profile covering contract+fractional only, wrapped into a single default group", () => {
     writePlaintextConfig(JSON.stringify(legacyFlatConfig(false)));
 
     const config = loadConfig();
 
-    expect(config.needs.engagementProfiles).toEqual([
+    expect(config.groups).toHaveLength(1);
+    expect(config.groups[0]?.id).toBe("default-search-1");
+    expect(config.groups[0]?.label).toBe("Default Search 1");
+    expect(config.groups[0]?.needs.engagementProfiles).toEqual([
       {
         id: "default",
         label: "Contract/fractional",
@@ -292,8 +303,8 @@ describe("loadConfig: needs.engagementProfiles migration from the deprecated fla
         rateUnit: "hour",
       },
     ]);
-    expect(config.needs.freshStageOnly).toBe(true);
-    expect(config.needs.remoteOnly).toBe(true);
+    expect(config.groups[0]?.needs.freshStageOnly).toBe(true);
+    expect(config.groups[0]?.needs.remoteOnly).toBe(true);
   });
 
   it("allowContractToHire: true migrates 'contract-to-hire' into the synthesized profile's types", () => {
@@ -301,7 +312,7 @@ describe("loadConfig: needs.engagementProfiles migration from the deprecated fla
 
     const config = loadConfig();
 
-    expect(config.needs.engagementProfiles[0]?.types).toEqual(["contract", "fractional", "contract-to-hire"]);
+    expect(config.groups[0]?.needs.engagementProfiles[0]?.types).toEqual(["contract", "fractional", "contract-to-hire"]);
   });
 
   it("does nothing (passes the document through unchanged) when engagementProfiles is already present — never double-migrates", () => {
@@ -329,7 +340,7 @@ describe("loadConfig: needs.engagementProfiles migration from the deprecated fla
 
     const config = loadConfig();
 
-    expect(config.needs.engagementProfiles).toEqual(already.needs.engagementProfiles);
+    expect(config.groups[0]?.needs.engagementProfiles).toEqual(already.needs.engagementProfiles);
   });
 
   it("an already-encrypted legacy-shape config.json also migrates correctly (migration runs after decryption, before validation)", () => {
@@ -337,8 +348,8 @@ describe("loadConfig: needs.engagementProfiles migration from the deprecated fla
 
     const config = loadConfig();
 
-    expect(config.needs.engagementProfiles).toHaveLength(1);
-    expect(config.needs.engagementProfiles[0]?.minRate).toBe(150);
+    expect(config.groups[0]?.needs.engagementProfiles).toHaveLength(1);
+    expect(config.groups[0]?.needs.engagementProfiles[0]?.minRate).toBe(150);
   });
 });
 
@@ -369,15 +380,22 @@ describe("loadConfig: invalid JSON", () => {
 
 describe("loadConfig: zod validation failure", () => {
   it("throws a specific, field-level zod error when a required Needs field is missing — not a generic 'invalid config' message", () => {
-    const { needs, ...rest } = validConfig;
-    const { engagementProfiles, ...needsWithoutProfiles } = needs;
-    writePlaintextConfig(JSON.stringify({ ...rest, needs: needsWithoutProfiles }));
+    const group = validConfig.groups[0];
+    if (!group) throw new Error("test fixture: expected at least one group");
+    const { engagementProfiles, ...needsWithoutProfiles } = group.needs;
+    writePlaintextConfig(JSON.stringify({ ...validConfig, groups: [{ ...group, needs: needsWithoutProfiles }] }));
 
-    expect(() => loadConfig()).toThrow(/needs\.engagementProfiles/);
+    expect(() => loadConfig()).toThrow(/groups\.0\.needs\.engagementProfiles/);
   });
 
-  it("throws when required top-level fields (e.g. needs) are missing entirely", () => {
-    const { needs, ...rest } = validConfig;
+  it("throws a specific, actionable error when groups is present but empty (min(1) violation) — a malformed/hand-edited config, not silently accepted as 'no groups'", () => {
+    writePlaintextConfig(JSON.stringify({ ...validConfig, groups: [] }));
+
+    expect(() => loadConfig()).toThrow(/groups/);
+  });
+
+  it("throws when required top-level fields (e.g. groups) are missing entirely", () => {
+    const { groups, ...rest } = validConfig;
     writePlaintextConfig(JSON.stringify(rest));
 
     try {
@@ -385,7 +403,7 @@ describe("loadConfig: zod validation failure", () => {
       throw new Error("expected loadConfig() to throw");
     } catch (e) {
       expect((e as Error).message).not.toMatch(/^gigradar config: .* failed validation:\s*$/);
-      expect((e as Error).message).toContain("needs");
+      expect((e as Error).message).toContain("groups");
     }
   });
 });

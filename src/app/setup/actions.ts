@@ -63,7 +63,28 @@ export async function saveWizardConfigAction(input: WizardSaveInput): Promise<Ac
   try {
     const raw = readRawConfig();
     const sources = mergeEnabledKnownSources(raw.sources, new Set(input.enabledSourceIds));
-    const result = saveConfig({ profile: input.profile, needs: input.needs, roleArea: input.roleArea, sources });
+
+    // Slice 1 of the multi-group-architecture epic has no group-management
+    // UI yet (Slice 2) — the wizard only ever edits the FIRST/primary group,
+    // preserving its existing id/label (a re-run must update that group, not
+    // spawn a second one) and falling back to the same migration default
+    // (migrateFlatNeedsRoleAreaToGroups() in load.ts) on true first-run.
+    const rawGroups = Array.isArray(raw.groups) ? (raw.groups as unknown[]) : [];
+    const existingGroup = rawGroups[0];
+    const groupId =
+      existingGroup && typeof existingGroup === "object" && typeof (existingGroup as Record<string, unknown>).id === "string"
+        ? ((existingGroup as Record<string, unknown>).id as string)
+        : "default-search-1";
+    const groupLabel =
+      existingGroup && typeof existingGroup === "object" && typeof (existingGroup as Record<string, unknown>).label === "string"
+        ? ((existingGroup as Record<string, unknown>).label as string)
+        : "Default Search 1";
+
+    const result = saveConfig({
+      profile: input.profile,
+      groups: [{ id: groupId, label: groupLabel, needs: input.needs, roleArea: input.roleArea }],
+      sources,
+    });
     if (!result.ok) return result;
     revalidatePath("/config");
     revalidatePath("/");

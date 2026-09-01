@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS gigs (
   tier              TEXT                -- 'green' | 'yellow' | 'red', nullable (not yet classified); see matching/tiering.ts
                       CHECK (tier IS NULL OR tier IN ('green', 'yellow', 'red')),
   matched_profile_ids TEXT,             -- JSON-stringified string[] of EngagementProfile.id -- nullable (not yet classified); see db.ts's ensureColumn() for the ALTER TABLE path this same column needs on a pre-existing DB
+  matched_group_ids TEXT,               -- JSON-stringified string[] of GroupConfig.id -- nullable (not yet evaluated against groups, or evaluated and cleared none); multi-group-architecture epic, mirrors matched_profile_ids exactly; see db.ts's ensureColumn()
+  matched_group_tiers TEXT,             -- JSON-stringified Record<groupId, Tier> -- every group's OWN tier result, independent of whether that group's gate passed; nullable; see db.ts's ensureColumn()
   status            TEXT NOT NULL DEFAULT 'new'
                       CHECK (status IN ('new', 'applied', 'interview', 'archived', 'ignored')),
   outcome_reason    TEXT,               -- 'rejected' | 'withdrawn' | 'expired_unapplied', nullable; see types.ts's OutcomeReason and db.ts's ensureColumn() for the ALTER TABLE path this needs on a pre-existing DB

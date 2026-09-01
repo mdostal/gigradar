@@ -21,13 +21,19 @@ import { endChatSessionAction, resolveChatApprovalAction, sendChatMessageAction,
 function baseConfigEdits(): ConfigEdits {
   return {
     profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
-    needs: {
-      engagementProfiles: [
-        { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
-      ],
-      freshStageOnly: false,
-      remoteOnly: false,
-    },
+    groups: [
+      {
+        id: "g1",
+        label: "Group 1",
+        needs: {
+          engagementProfiles: [
+            { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+          ],
+          freshStageOnly: false,
+          remoteOnly: false,
+        },
+      },
+    ],
     sources: [{ id: "braintrust", enabled: true }],
   };
 }
