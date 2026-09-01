@@ -1,25 +1,33 @@
 "use client";
 
 // product-review-followups epic, status-reconciliation-from-platforms
-// story (first source: GoFractional). Owner's own words: "go through, the
-// ones i've applied to, especially go fractional -- ones i was passed on,
-// etc so we fully update statuses." A single dashboard button rather than
-// a scheduled/automatic sync -- matches this feature's own "manual OR
-// automated, configurable" framing from the original brain-dump; manual
-// first, a Settings toggle for automating it is a natural, separate
-// follow-up once this is proven out.
+// story. Generalized from the original GoFractional-only button (owner's
+// own words: "ALL of them should have their status sync setup as well") --
+// one reusable button component, parameterized by source label + its own
+// reconciliation Server Action, rather than a copy-pasted component per
+// source. A single dashboard button per source rather than a scheduled/
+// automatic sync -- matches this feature's own "manual OR automated,
+// configurable" framing; an automation toggle is a natural follow-up once
+// this is proven out across more sources.
 import { useState } from "react";
-import { reconcileGoFractionalStatusesAction } from "./actions";
+import type { ActionResult } from "@/lib/actions/result";
 import type { ReconciliationResult } from "@/lib/sources/gofractional-status";
 
-export function SyncGoFractionalButton() {
+export function SyncStatusButton({
+  sourceLabel,
+  action,
+}: {
+  /** e.g. "GoFractional", "Wellfound" -- used in the button's own label. */
+  sourceLabel: string;
+  action: () => Promise<ActionResult<ReconciliationResult>>;
+}) {
   const [state, setState] = useState<
     { status: "idle" } | { status: "syncing" } | { status: "done"; result: ReconciliationResult } | { status: "error"; message: string }
   >({ status: "idle" });
 
   async function handleClick() {
     setState({ status: "syncing" });
-    const result = await reconcileGoFractionalStatusesAction();
+    const result = await action();
     if (!result.ok) {
       setState({ status: "error", message: result.error });
       return;
@@ -35,7 +43,7 @@ export function SyncGoFractionalButton() {
         disabled={state.status === "syncing"}
         className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1 text-sm text-theme-text-dim transition-colors hover:bg-theme-surface-raised disabled:opacity-50"
       >
-        {state.status === "syncing" ? "Syncing GoFractional…" : "Sync GoFractional statuses"}
+        {state.status === "syncing" ? `Syncing ${sourceLabel}…` : `Sync ${sourceLabel} statuses`}
       </button>
       {state.status === "error" && <p className="text-xs text-red-600">{state.message}</p>}
       {state.status === "done" && (
