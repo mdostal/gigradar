@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
 import type { SourceConfig } from "../types.js";
-import { listGigs, setStatus } from "../store/index.js";
+import { gigKey, listGigs, recordScan, setStatus } from "../store/index.js";
 import type { GigStatus } from "../store/index.js";
 import { withBrowserSession } from "../auth/browser-session.js";
 import { sessionBackendFrom, type SessionBackend } from "../auth/session-backend.js";
@@ -36,6 +36,8 @@ export interface ApplicationStatusRow {
   title: string;
   statusLabel: string;
   updatedText: string;
+  /** e.g. "/jobs/applications/985900737-4618021" or ".../archived/{id}" — the real, live-verified per-application href (see this file's own header comment: unlike gofractional.ts's rows, these ARE real anchors). Used only for backfilling an unmatched row's Gig.url; still not usable to match back to the underlying job LISTING's own externalId. */
+  href: string;
 }
 
 /**
@@ -76,7 +78,16 @@ function normalizeTitle(t: string): string {
 export async function scrapeApplicationStatuses(page: Page): Promise<ApplicationStatusRow[]> {
   await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
   return page.evaluate(() => {
-    const anchors = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/jobs/applications/"]')];
+    // The "Ongoing"/"Archived" tab nav links themselves (bare
+    // "/jobs/applications" or "/jobs/applications/archived", no trailing
+    // "/{id}") also match this prefix — live-observed 2026-09-01 producing
+    // an empty-everything row. Excluded here rather than left to fall
+    // through to unknownStatusLabel, since it's not a real application row
+    // at all.
+    const anchors = [...document.querySelectorAll<HTMLAnchorElement>('a[href^="/jobs/applications/"]')].filter((a) => {
+      const href = a.getAttribute("href") ?? "";
+      return href !== "/jobs/applications" && href !== "/jobs/applications/archived";
+    });
     return anchors.map((anchor) => {
       const texts = [...anchor.querySelectorAll("*")]
         .filter((el) => el.children.length === 0 && (el.textContent ?? "").trim().length > 0)
@@ -86,6 +97,7 @@ export async function scrapeApplicationStatuses(page: Page): Promise<Application
         title: texts[1] ?? "",
         statusLabel: texts[2] ?? "",
         updatedText: texts[3] ?? "",
+        href: anchor.getAttribute("href") ?? "",
       };
     });
   });
@@ -94,6 +106,9 @@ export async function scrapeApplicationStatuses(page: Page): Promise<Application
 export interface ReconciliationResult {
   updated: { key: string; title: string; from: GigStatus; to: GigStatus }[];
   alreadyCurrent: { key: string; title: string; status: GigStatus }[];
+  /** A row with no locally-tracked gig got a NEW gig record, keyed off its own real application href — see reconcileWellfoundStatuses()'s own doc comment. */
+  backfilled: { key: string; title: string; status: GigStatus }[];
+  /** A row backfill genuinely could not handle (e.g. an empty title/href) — distinct from a normal backfill, which now covers what `noMatch` used to just report. */
   noMatch: ApplicationStatusRow[];
   ambiguous: (ApplicationStatusRow & { matchCount: number })[];
   unknownStatusLabel: ApplicationStatusRow[];
@@ -130,8 +145,19 @@ async function fetchApplicationsPage(url: string, sessionStatePath: string | und
  * "Archived") and updates locally-tracked gigs (sourceId "wellfound") whose
  * status has genuinely changed on the real platform. Same no-fabrication
  * discipline as gofractional-status.ts's reconcileGoFractionalStatuses():
- * an ambiguous (>1 local match) row is reported, never written; a row with
- * no local match at all is reported, never dropped silently.
+ * an ambiguous (>1 local match) row is reported, never written.
+ *
+ * BACKFILLS a row with no local match at all (owner's own words,
+ * 2026-08-31: "go through, get ALL of them... build out the full
+ * knowledgebase") — a real application gigradar never actually tracked
+ * gets a NEW gig record via `recordScan()` + an immediate `setStatus()`,
+ * rather than just being reported and dropped. Unlike gofractional-
+ * status.ts's synthetic id (that source's rows have no real href at all),
+ * Wellfound's own application `href` (e.g.
+ * "/jobs/applications/985900737-4618021") IS real and stable — used
+ * directly as `externalId`, and the full absolute URL as `Gig.url` (a
+ * real, honest link to the application itself, not a fabricated job-
+ * listing guess).
  */
 export async function reconcileWellfoundStatuses(cfg: SourceConfig): Promise<ReconciliationResult> {
   const sessionBackend = sessionBackendFrom(cfg);
@@ -144,7 +170,7 @@ export async function reconcileWellfoundStatuses(cfg: SourceConfig): Promise<Rec
   const rows = [...ongoing, ...archived];
 
   const localGigs = listGigs().filter((g) => g.sourceId === "wellfound");
-  const result: ReconciliationResult = { updated: [], alreadyCurrent: [], noMatch: [], ambiguous: [], unknownStatusLabel: [] };
+  const result: ReconciliationResult = { updated: [], alreadyCurrent: [], backfilled: [], noMatch: [], ambiguous: [], unknownStatusLabel: [] };
 
   for (const row of rows) {
     const newStatus = STATUS_LABEL_MAP[row.statusLabel.toLowerCase()];
@@ -157,7 +183,15 @@ export async function reconcileWellfoundStatuses(cfg: SourceConfig): Promise<Rec
     const matches = localGigs.filter((g) => normalizeTitle(g.title) === normalizedRowTitle);
 
     if (matches.length === 0) {
-      result.noMatch.push(row);
+      if (row.title.trim().length === 0 || row.href.trim().length === 0) {
+        result.noMatch.push(row);
+        continue;
+      }
+      const externalId = row.href.replace(/^\//, "");
+      recordScan([{ sourceId: "wellfound", gigs: [{ sourceId: "wellfound", externalId, title: row.title, company: row.company || undefined, url: `https://wellfound.com${row.href}` }] }]);
+      const key = gigKey("wellfound", externalId);
+      setStatus(key, newStatus);
+      result.backfilled.push({ key, title: row.title, status: newStatus });
       continue;
     }
     if (matches.length > 1) {
