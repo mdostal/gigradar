@@ -2,7 +2,7 @@
 // anything outside src/lib/store should use — see docs/ARCHITECTURE.md.
 export { DEFAULT_BUSY_TIMEOUT_MS, closeDb, getDb } from "./db.js";
 export { getDefaultDataDir, getDefaultDbPath } from "./path.js";
-export { getGig, gigKey, listGigs, recordScan, setStatus } from "./gigs.js";
+export { getGig, gigKey, listGigs, recordScan, setOutcome, setStatus } from "./gigs.js";
 export type { DbOption, RecordScanOptions } from "./gigs.js";
 export {
   getDraft,
@@ -22,6 +22,7 @@ export type {
   DraftStatus,
   GigFilter,
   GigStatus,
+  OutcomeReason,
   ScanSummary,
   SourceScanBatch,
   StoredAutoFireDecision,

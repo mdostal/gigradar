@@ -103,6 +103,8 @@ function openConnection(dbPath: string, busyTimeoutMs: number): DatabaseSyncType
   execWithBusyRetry(db, SCHEMA_SQL, busyTimeoutMs);
   ensureColumn(db, "gigs", "employment_type", "TEXT");
   ensureColumn(db, "gigs", "matched_profile_ids", "TEXT");
+  ensureColumn(db, "gigs", "outcome_reason", "TEXT");
+  ensureColumn(db, "gigs", "outcome_note", "TEXT");
   ensureDraftsSubmittingStatus(db);
   return db;
 }

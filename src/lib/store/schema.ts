@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS gigs (
   matched_profile_ids TEXT,             -- JSON-stringified string[] of EngagementProfile.id -- nullable (not yet classified); see db.ts's ensureColumn() for the ALTER TABLE path this same column needs on a pre-existing DB
   status            TEXT NOT NULL DEFAULT 'new'
                       CHECK (status IN ('new', 'applied', 'interview', 'archived', 'ignored')),
+  outcome_reason    TEXT,               -- 'rejected' | 'withdrawn' | 'expired_unapplied', nullable; see types.ts's OutcomeReason and db.ts's ensureColumn() for the ALTER TABLE path this needs on a pre-existing DB
+  outcome_note      TEXT,               -- freeform, usually the platform's own raw status-label text; nullable
   first_seen        TEXT NOT NULL,      -- ISO datetime, set once, never overwritten
   last_seen         TEXT NOT NULL,      -- ISO datetime, bumped every scan the gig appears in
   unavailable_since TEXT,               -- ISO datetime, null while believed available

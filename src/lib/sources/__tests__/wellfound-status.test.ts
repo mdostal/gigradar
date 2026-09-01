@@ -82,6 +82,27 @@ describe("reconcileWellfoundStatuses", () => {
     expect(getGig("wellfound:456-swe-platform")?.status).toBe("archived");
   });
 
+  it("'Expired' -> archived also stamps outcomeReason 'withdrawn' (the company let the role lapse without an explicit rejection), with the raw label as outcomeNote", async () => {
+    seedGig("456-swe-platform", "Software Engineer, Platform");
+    stubTwoPages([], [{ company: "Thoughtful AI", title: "Software Engineer, Platform", statusLabel: "Expired", updatedText: "Oct 23, 2024", href: "/jobs/applications/archived/3-4" }]);
+
+    await reconcileWellfoundStatuses(cfg);
+
+    const gig = getGig("wellfound:456-swe-platform");
+    expect(gig?.outcomeReason).toBe("withdrawn");
+    expect(gig?.outcomeNote).toBe("Expired");
+  });
+
+  it("'Withdrawn' maps to archived but leaves outcomeReason null -- genuinely ambiguous from the label alone", async () => {
+    seedGig("1-a", "Role A");
+    stubTwoPages([], [{ company: "X", title: "Role A", statusLabel: "Withdrawn", updatedText: "1 week", href: "/jobs/applications/archived/1-a" }]);
+
+    const result = await reconcileWellfoundStatuses(cfg);
+
+    expect(result.updated).toHaveLength(1);
+    expect(getGig("wellfound:1-a")?.outcomeReason).toBeNull();
+  });
+
   it("merges rows from BOTH pages in one result", async () => {
     seedGig("1-a", "Role A");
     seedGig("2-b", "Role B");
@@ -153,6 +174,9 @@ describe("reconcileWellfoundStatuses", () => {
     expect(result.backfilled).toEqual([
       { key: "wellfound:jobs/applications/archived/111-222", title: "An Old Untracked Role", status: "archived" },
     ]);
+    const backfilled = getGig("wellfound:jobs/applications/archived/111-222");
+    expect(backfilled?.outcomeReason).toBe("withdrawn");
+    expect(backfilled?.outcomeNote).toBe("Expired");
   });
 
   it("does not double-backfill: re-running reconciliation against the same unmatched row finds it via title match on the second pass", async () => {
