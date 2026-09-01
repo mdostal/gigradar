@@ -1,0 +1,59 @@
+id: mga-3-group-aware-matching-pipeline
+epic: multi-group-architecture
+title: matchGroups() + rewire runRadar() to evaluate every gig against every in-scope group
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [mga-1-group-types-and-config-migration, mga-2-gig-store-group-columns]
+
+description: |
+  New pure function matchGroups(gig, groups, profile) in a new file
+  src/lib/matching/group-match.ts: for each group, calls the EXISTING
+  gate() and tier() functions unchanged (no signature changes to either),
+  collecting {groupId, passed, tier} per group. Rewire runRadar()'s main
+  loop (src/lib/apply/runner.ts) to: resolve in-scope groups per source
+  (sourceConfig.groupIds ?? config.groups.map(g => g.id)), call
+  matchGroups(), persist matched_group_ids (every group that passed the
+  gate) and matched_group_tiers (every group's own tier result,
+  regardless of pass/fail — tier is informational even for a group a gig
+  didn't clear, matching how the existing flat tier column already works
+  today). The existing flat Gig.tier/matchedProfileIds continue to be
+  computed exactly as today (against config.groups[0], or the single
+  implicit group for a not-yet-multi-group install) for full backward
+  compatibility — nothing about today's single-group behavior changes
+  visibly.
+
+acceptance_criteria:
+  - "Given a single-group config (the common case immediately after Slice 1 ships), when a scan runs, then every gig's matched_group_ids is exactly [that one group's id] and matched_group_tiers is {that group: same value as the flat tier column} — byte-identical visible behavior to before this story"
+  - "Given a two-group config where a gig clears group A's gate but not group B's, when matched, then matched_group_ids is ['A'] but matched_group_tiers still records BOTH group's tier results (informational, independent of pass/fail)"
+  - "Given a source with groupIds: ['A'] configured, when a gig from that source is matched, then it is ONLY evaluated against group A, never group B, regardless of how many groups exist in config.groups"
+  - "Given a source with no groupIds set, when a gig from that source is matched, then it is evaluated against EVERY group in config.groups"
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/runner.ts
+      purpose: "runRadar()'s core loop (~lines 73-111) — the one real call-site rewire in this whole epic"
+    - path: src/lib/matching/gate.ts
+      purpose: "gate(gig, needs, profile) — UNCHANGED signature, called once per (gig, group) pair now instead of once per gig"
+    - path: src/lib/matching/tiering.ts
+      purpose: "tier(gig, roleAreaConfig) — UNCHANGED signature, same call-per-group pattern"
+
+design_decisions:
+  - decision: "gate.ts and tiering.ts get ZERO signature changes — matchGroups() is a new orchestration layer, not a rewrite of proven, already-tested matching logic"
+    rationale: "Minimizes risk to code this session has no reason to distrust; keeps the diff reviewable"
+  - decision: "matched_group_tiers records tier for EVERY group evaluated, not just groups the gig cleared"
+    rationale: "Mirrors today's existing flat tier column semantics, which is computed independent of gate pass/fail (a red-tier gig can still fail the gate, and vice versa) — this story must not silently change that existing, already-relied-upon independence"
+
+risks:
+  - severity: medium
+    description: "Performance: N groups × M gigs per scan cycle means N times more gate()/tier() calls than today"
+    mitigation: "Both are pure, in-memory, no I/O — live-verify real timing against the real ~344-gig/cycle scan volume before assuming this is a non-issue at larger N"
+
+references:
+  - path: src/lib/apply/runner.ts
+    relevant_excerpt: |
+      const gateResult = gate(g, config.needs, config.profile);
+      const tierResult = tier(g, config.roleArea ?? EMPTY_ROLE_AREA_CONFIG);
+      -- the exact two lines this story's rewire replaces with a
+      per-group loop.

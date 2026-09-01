@@ -1,0 +1,57 @@
+id: mga-1-group-types-and-config-migration
+epic: multi-group-architecture
+title: Group types, config schema, and migrate-on-read for legacy flat configs
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Add GroupConfig ({id, label, needs, roleArea?}) to src/lib/types.ts,
+  replacing Config's flat needs/roleArea fields with groups: GroupConfig[].
+  Add SourceConfig.groupIds?: string[] (absent = all groups). Update
+  config/schema.ts's zod validation (groups: min(1), mirroring Needs.
+  engagementProfiles's existing min(1) precedent). Add
+  migrateFlatNeedsRoleAreaToGroups() to config/load.ts, wired the same
+  way migrateNeedsEngagementProfiles() already is: a legacy config with
+  top-level needs/roleArea but no groups[] gets wrapped into one
+  GroupConfig (id: "default-search-1", label: "Default Search 1") on
+  every load, transparent to every existing caller. Update
+  config.example.json and its own drift-guard test.
+
+acceptance_criteria:
+  - "Given a legacy config.json with flat needs/roleArea and no groups[], when loadConfig()/readRawConfig() reads it, then the result has groups: [{id: 'default-search-1', label: 'Default Search 1', needs: <the original needs>, roleArea: <the original roleArea>}] and no top-level needs/roleArea fields"
+  - "Given a config.json that already has groups[] (post-migration or freshly authored), when read, then migrateFlatNeedsRoleAreaToGroups() is a no-op"
+  - "Given a config with zero groups (malformed/hand-edited), when validated against ConfigSchema, then it's rejected with a specific, actionable error"
+  - "config.example.json validates against the updated ConfigSchema and its own example-config.test.ts drift-guard test still passes"
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/types.ts
+      purpose: "Config, Needs, RoleAreaConfig, SourceConfig — add GroupConfig, rewire Config.groups"
+    - path: src/lib/config/load.ts
+      purpose: "migrateNeedsEngagementProfiles() is the exact precedent pattern to mirror for migrateFlatNeedsRoleAreaToGroups()"
+    - path: src/lib/config/schema.ts
+      purpose: "zod ConfigSchema — add GroupConfigSchema, groups: z.array(...).min(1)"
+    - path: config.example.json
+      purpose: "shipped example config — must be updated to the new groups[] shape"
+
+design_decisions:
+  - decision: "Default migration placeholder label is 'Default Search 1' (numbered, generic) — never attempts to derive a name from existing RoleAreaConfig keywords"
+    rationale: "Owner's own decision, 2026-09-01 — safe against guessing wrong on real production data during a non-interactive, one-time migration"
+  - decision: "LLM-assisted auto-fill for group labels is explicitly OUT of scope for this story — it belongs to Slice 2's group-creation UI, not the migration path"
+    rationale: "Owner's own words: auto-fill should apply 'when we're using some sort of AI tool' — i.e. interactive group creation, not the non-interactive migration"
+
+risks:
+  - severity: high
+    description: "Migration logic has a bug that drops or corrupts the owner's real needs/roleArea on their real config.json"
+    mitigation: "Test against a COPY of the real config.json (encrypted, via readRawConfig()) before touching the real file; the real file itself is only ever touched by the real, already-tested saveConfig()/loadConfig() path, never a one-off script"
+
+references:
+  - path: src/lib/config/load.ts
+    relevant_excerpt: |
+      migrateNeedsEngagementProfiles() — the existing precedent this story's
+      migrateFlatNeedsRoleAreaToGroups() must mirror exactly: same trigger
+      condition (shape detection on the raw parsed document), same
+      transparent-to-every-caller wiring point.

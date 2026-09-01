@@ -1,0 +1,47 @@
+id: mga-2-gig-store-group-columns
+epic: multi-group-architecture
+title: Add matched_group_ids and matched_group_tiers to the gig store
+status: pending
+complexity: low
+methodology: classic
+depends_on: [mga-1-group-types-and-config-migration]
+
+description: |
+  Add two nullable columns to the gigs table: matched_group_ids
+  (JSON-stringified string[], mirrors the existing matched_profile_ids
+  column exactly) and matched_group_tiers (JSON-stringified
+  Record<groupId, Tier>, per structured-outline.md Part 1g's per-group
+  tier resolution). Wire both through StoredGig/GigRow/toStoredGig() the
+  same way matchedProfileIds already is. Add GigFilter.groupId?: string,
+  filtering listGigs() by "matched_group_ids contains this id". Use the
+  existing ensureColumn() migration pattern in db.ts — additive,
+  non-destructive, safe on the real 1674-gig production database.
+
+acceptance_criteria:
+  - "Given the real production gigs.db (or a copy), when the app starts, then ensureColumn() adds both new columns without erroring or touching any existing row's data"
+  - "Given a StoredGig with matchedGroupIds: ['a', 'b'] and matchedGroupTiers: {a: 'green', b: 'yellow'}, when persisted and re-read, then both round-trip exactly"
+  - "Given listGigs({groupId: 'a'}), when called, then only gigs whose matched_group_ids contains 'a' are returned"
+  - "Given a gig with matchedGroupIds: undefined (not yet evaluated against groups), when read, then matchedGroupIds is undefined, not an empty array or a crash"
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/schema.ts
+      purpose: "gigs table DDL — add the two new columns next to the existing matched_profile_ids"
+    - path: src/lib/store/db.ts
+      purpose: "ensureColumn() migration entries — mirror the existing matched_profile_ids/employment_type entries exactly"
+    - path: src/lib/store/gigs.ts
+      purpose: "GigRow interface, toStoredGig(), upsertOne(), listGigs()'s GigFilter handling"
+    - path: src/lib/store/types.ts
+      purpose: "StoredGig.matchedGroupIds/matchedGroupTiers, GigFilter.groupId"
+
+risks:
+  - severity: high
+    description: "A malformed SQL filter for 'JSON array contains' silently returns wrong results (e.g. false positives on a substring match) rather than erroring"
+    mitigation: "Test with adversarial group ids that are substrings of each other (e.g. 'a' and 'a2') to prove the filter does real JSON containment, not string LIKE matching"
+
+references:
+  - path: src/lib/store/gigs.ts
+    relevant_excerpt: |
+      matched_profile_ids handling in toStoredGig()/upsertOne() is the
+      exact existing pattern both new columns must mirror.
