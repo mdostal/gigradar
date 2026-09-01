@@ -86,6 +86,39 @@ describe("reconcileGoFractionalStatuses", () => {
     expect(getGig("gofractional:staff-eng-northwind")?.status).toBe("archived");
   });
 
+  it("'Passed' -> archived also stamps outcomeReason 'rejected', with the platform's own raw label as outcomeNote", async () => {
+    seedGig("staff-eng-northwind", "Staff Backend Engineer");
+    stubWithBrowserSession([{ company: "Northwind", title: "Staff Backend Engineer", statusLabel: "Passed", updatedText: "1 month ago" }]);
+
+    await reconcileGoFractionalStatuses(cfg);
+
+    const gig = getGig("gofractional:staff-eng-northwind");
+    expect(gig?.outcomeReason).toBe("rejected");
+    expect(gig?.outcomeNote).toBe("Passed");
+  });
+
+  it("'Withdrawn' maps to archived but leaves outcomeReason null -- genuinely ambiguous (candidate- vs. company-withdrawn) from the label alone", async () => {
+    seedGig("fractional-cto-acme", "Fractional CTO");
+    stubWithBrowserSession([{ company: "Acme", title: "Fractional CTO", statusLabel: "Withdrawn", updatedText: "1 week ago" }]);
+
+    const result = await reconcileGoFractionalStatuses(cfg);
+
+    expect(result.updated).toEqual([{ key: "gofractional:fractional-cto-acme", title: "Fractional CTO", from: "new", to: "archived" }]);
+    expect(getGig("gofractional:fractional-cto-acme")?.outcomeReason).toBeNull();
+  });
+
+  it("re-stamps outcomeReason on an alreadyCurrent row too, not just on a real status transition", async () => {
+    seedGig("fractional-cto-acme", "Fractional CTO");
+    stubWithBrowserSession([{ company: "Acme", title: "Fractional CTO", statusLabel: "Passed", updatedText: "1 week ago" }]);
+    await reconcileGoFractionalStatuses(cfg); // first pass: new -> archived, outcomeReason "rejected"
+
+    const result = await reconcileGoFractionalStatuses(cfg); // second pass: already archived
+
+    expect(result.updated).toEqual([]);
+    expect(result.alreadyCurrent).toHaveLength(1);
+    expect(getGig("gofractional:fractional-cto-acme")?.outcomeReason).toBe("rejected");
+  });
+
   it("reports alreadyCurrent and does NOT call setStatus again when the local status already matches", async () => {
     seedGig("fractional-cto-acme", "Fractional CTO");
     stubWithBrowserSession([{ company: "Acme Robotics", title: "Fractional CTO", statusLabel: "Applied", updatedText: "6 days ago" }]);
@@ -114,13 +147,16 @@ describe("reconcileGoFractionalStatuses", () => {
     expect(backfilledGig?.url).toBe("https://app.gofractional.com/work");
   });
 
-  it("backfills with a status other than 'applied' too ('Passed' row with no local match -> archived)", async () => {
+  it("backfills with a status other than 'applied' too ('Passed' row with no local match -> archived), and stamps outcomeReason on the new record", async () => {
     stubWithBrowserSession([{ company: "Other Co", title: "Another Untracked Role", statusLabel: "Passed", updatedText: "3 weeks ago" }]);
 
     const result = await reconcileGoFractionalStatuses(cfg);
 
     expect(result.backfilled).toHaveLength(1);
     expect(result.backfilled[0]?.status).toBe("archived");
+    const backfilled = getGig(result.backfilled[0]!.key);
+    expect(backfilled?.outcomeReason).toBe("rejected");
+    expect(backfilled?.outcomeNote).toBe("Passed");
   });
 
   it("does not double-backfill: re-running reconciliation against the same unmatched row finds it via title match on the second pass", async () => {
@@ -146,8 +182,20 @@ describe("reconcileGoFractionalStatuses", () => {
   });
 
   it("reports ambiguous (never guesses) when a scraped title normalizes to MORE THAN ONE local gig", async () => {
-    seedGig("fractional-cto-a", "Fractional CTO");
-    seedGig("fractional-cto-b", "Fractional CTO"); // same title, two different real listings
+    // Both seeded in ONE recordScan() batch (not two seedGig() calls) --
+    // two separate calls would have the second flag the first delisted
+    // (gone from that scan's seenKeys), which now auto-archives a "new"
+    // gig (status-reconciliation-outcomes story) and would defeat this
+    // test's own "neither candidate got silently written" assertion below.
+    recordScan([
+      {
+        sourceId: "gofractional",
+        gigs: [
+          { sourceId: "gofractional", externalId: "fractional-cto-a", title: "Fractional CTO", url: "https://www.gofractional.com/job/fractional-cto-a" },
+          { sourceId: "gofractional", externalId: "fractional-cto-b", title: "Fractional CTO", url: "https://www.gofractional.com/job/fractional-cto-b" }, // same title, two different real listings
+        ],
+      },
+    ]);
     stubWithBrowserSession([{ company: "Some Co", title: "Fractional CTO", statusLabel: "Applied", updatedText: "2 days ago" }]);
 
     const result = await reconcileGoFractionalStatuses(cfg);

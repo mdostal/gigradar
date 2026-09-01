@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 import type { SourceConfig } from "../types.js";
-import { gigKey, listGigs, recordScan, setStatus } from "../store/index.js";
-import type { GigStatus } from "../store/index.js";
+import { gigKey, listGigs, recordScan, setOutcome, setStatus } from "../store/index.js";
+import type { GigStatus, OutcomeReason } from "../store/index.js";
 import { withBrowserSession } from "../auth/browser-session.js";
 import { sessionBackendFrom, type SessionBackend } from "../auth/session-backend.js";
 import { SOURCE_ORIGINS } from "./origins.js";
@@ -56,6 +56,25 @@ const STATUS_LABEL_MAP: Record<string, GigStatus> = {
   withdrawn: "archived",
   interviewing: "interview",
   interview: "interview",
+};
+
+/**
+ * A second, narrower map from the SAME raw label to WHY (status-
+ * reconciliation-outcomes story, product-review-followups epic — see
+ * gofractional-status.ts's own `OUTCOME_REASON_MAP` for the full owner-
+ * quote rationale, identical here). "expired" -> LIVE-VERIFIED semantics
+ * (the owner's real account, 2026-08-31/09-01): Wellfound marks an
+ * application "Expired" when the company never explicitly accepted or
+ * rejected it and the listing simply lapsed/closed -- the company-driven,
+ * no-explanation-given case this repo calls `"withdrawn"`, distinct from an
+ * explicit rejection. "withdrawn" (the label, lowercase) is deliberately
+ * left OUT — genuinely ambiguous whether the candidate or the company
+ * withdrew from this text alone, same reasoning as gofractional-status.ts.
+ */
+const OUTCOME_REASON_MAP: Record<string, OutcomeReason> = {
+  expired: "withdrawn",
+  rejected: "rejected",
+  declined: "rejected",
 };
 
 function normalizeTitle(t: string): string {
@@ -178,6 +197,7 @@ export async function reconcileWellfoundStatuses(cfg: SourceConfig): Promise<Rec
       result.unknownStatusLabel.push(row);
       continue;
     }
+    const outcomeReason = OUTCOME_REASON_MAP[row.statusLabel.toLowerCase()];
 
     const normalizedRowTitle = normalizeTitle(row.title);
     const matches = localGigs.filter((g) => normalizeTitle(g.title) === normalizedRowTitle);
@@ -191,6 +211,7 @@ export async function reconcileWellfoundStatuses(cfg: SourceConfig): Promise<Rec
       recordScan([{ sourceId: "wellfound", gigs: [{ sourceId: "wellfound", externalId, title: row.title, company: row.company || undefined, url: `https://wellfound.com${row.href}` }] }]);
       const key = gigKey("wellfound", externalId);
       setStatus(key, newStatus);
+      if (outcomeReason) setOutcome(key, outcomeReason, row.statusLabel);
       result.backfilled.push({ key, title: row.title, status: newStatus });
       continue;
     }
@@ -200,6 +221,12 @@ export async function reconcileWellfoundStatuses(cfg: SourceConfig): Promise<Rec
     }
 
     const gig = matches[0]!;
+    // An explicit, real status label from the platform is more authoritative
+    // than any prior outcomeReason (e.g. one recordScan()'s own delisting
+    // heuristic auto-stamped) -- re-stamp it even when status itself didn't
+    // change (the alreadyCurrent branch below), not just on a real transition.
+    if (outcomeReason) setOutcome(gig.key, outcomeReason, row.statusLabel);
+
     if (gig.status === newStatus) {
       result.alreadyCurrent.push({ key: gig.key, title: gig.title, status: gig.status });
       continue;

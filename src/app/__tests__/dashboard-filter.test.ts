@@ -9,6 +9,8 @@ function makeGig(overrides: Partial<StoredGig> & { key: string }): StoredGig {
     title: "Fractional CTO",
     url: `https://example.test/${overrides.key}`,
     status: "new",
+    outcomeReason: null,
+    outcomeNote: null,
     firstSeen: "2026-01-01T00:00:00.000Z",
     lastSeen: "2026-01-01T00:00:00.000Z",
     unavailableSince: null,

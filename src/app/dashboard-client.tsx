@@ -12,7 +12,7 @@ import {
 } from "@tanstack/react-table";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { GigStatus, StoredGig } from "@/lib/store";
+import type { GigStatus, OutcomeReason, StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
@@ -29,6 +29,20 @@ export const STATUS_LABEL: Record<GigStatus, string> = {
   interview: "Interview",
   archived: "Archived",
   ignored: "Ignored",
+};
+
+/**
+ * status-reconciliation-outcomes story, product-review-followups epic --
+ * see store/types.ts's `OutcomeReason` for the full owner-quote rationale.
+ * Short labels, meant to sit next to STATUS_LABEL's own "Archived" (e.g.
+ * "Archived (Rejected)") -- the full raw platform text lives in
+ * `gig.outcomeNote`, surfaced as a tooltip/detail-panel field, not repeated
+ * here.
+ */
+export const OUTCOME_LABEL: Record<OutcomeReason, string> = {
+  rejected: "Rejected",
+  withdrawn: "Withdrawn/closed",
+  expired_unapplied: "Missed — closed before we applied",
 };
 
 /**
@@ -625,7 +639,15 @@ export function DashboardClient({
       id: "status",
       header: "Status",
       accessorFn: (g) => g.status,
-      cell: ({ row }) => STATUS_LABEL[row.original.status],
+      cell: ({ row }) => {
+        const gig = row.original;
+        if (!gig.outcomeReason) return STATUS_LABEL[gig.status];
+        return (
+          <span title={gig.outcomeNote ?? undefined}>
+            {STATUS_LABEL[gig.status]} <span className="text-theme-text-dim">({OUTCOME_LABEL[gig.outcomeReason]})</span>
+          </span>
+        );
+      },
       sortingFn: sortingFnFor("status"),
       filterFn: (row, _id, value) => {
         const checked = value as ReadonlySet<GigStatus> | undefined;

@@ -5,7 +5,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Gig } from "../types.js";
 import { getDb, withTransaction } from "./db.js";
-import type { GigFilter, GigStatus, ScanSummary, SourceScanBatch, StoredGig } from "./types.js";
+import type { GigFilter, GigStatus, OutcomeReason, ScanSummary, SourceScanBatch, StoredGig } from "./types.js";
 
 /** The store's primary key for a gig: stable across re-scans and sources. */
 export function gigKey(sourceId: string, externalId: string): string {
@@ -33,6 +33,8 @@ interface GigRow {
   tier: string | null;
   matched_profile_ids: string | null;
   status: string;
+  outcome_reason: string | null;
+  outcome_note: string | null;
   first_seen: string;
   last_seen: string;
   unavailable_since: string | null;
@@ -65,6 +67,8 @@ function toStoredGig(row: GigRow): StoredGig {
     tier: (row.tier as Gig["tier"] | null) ?? undefined,
     matchedProfileIds: row.matched_profile_ids !== null ? JSON.parse(row.matched_profile_ids) : undefined,
     status: row.status as GigStatus,
+    outcomeReason: (row.outcome_reason as OutcomeReason | null) ?? null,
+    outcomeNote: row.outcome_note ?? null,
     firstSeen: row.first_seen,
     lastSeen: row.last_seen,
     unavailableSince: row.unavailable_since,
@@ -176,6 +180,25 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
  * `seenKeys` this scan. Only call this for a source that returned >=1 gig —
  * see recordScan()'s doc for why a zero-result or errored source must never
  * reach here.
+ *
+ * ALSO auto-classifies WHY, for the two cases where a delisting itself is
+ * the only signal we'll ever get (status-reconciliation-outcomes story,
+ * product-review-followups epic — owner's own words, 2026-09-01: "any that
+ * we missed because they closed it or something (we didn't apply)" and
+ * "they removed the contract"):
+ *
+ * - A `"new"` gig disappearing means we never even applied before it was
+ *   gone — auto-archived with `outcomeReason: "expired_unapplied"`.
+ * - An `"applied"`/`"interview"` gig disappearing with no explicit rejection
+ *   (that would already have come through a status-reconciliation pass —
+ *   see gofractional-status.ts/wellfound-status.ts) means the company most
+ *   likely pulled or filled the role without telling us — auto-archived
+ *   with `outcomeReason: "withdrawn"`.
+ * - An already-`"archived"`/`"ignored"` gig going unavailable gets ONLY
+ *   `unavailable_since` touched — never overwrites an existing outcome
+ *   (e.g. one a status-reconciliation pass already set from a real,
+ *   explicit platform label, which is more authoritative than this
+ *   heuristic).
  */
 function flagUnavailableForSource(
   db: DatabaseSync,
@@ -184,16 +207,34 @@ function flagUnavailableForSource(
   now: string,
 ): string[] {
   const stillAvailable = db
-    .prepare("SELECT key FROM gigs WHERE source_id = ? AND unavailable_since IS NULL")
-    .all(sourceId) as { key: string }[];
+    .prepare("SELECT key, status FROM gigs WHERE source_id = ? AND unavailable_since IS NULL")
+    .all(sourceId) as { key: string; status: string }[];
 
   const flagged: string[] = [];
-  const flagStmt = db.prepare("UPDATE gigs SET unavailable_since = :now WHERE key = :key");
+  const flagOnlyStmt = db.prepare("UPDATE gigs SET unavailable_since = :now WHERE key = :key");
+  const flagAndArchiveStmt = db.prepare(
+    `UPDATE gigs SET unavailable_since = :now, status = 'archived', outcome_reason = :outcome_reason, outcome_note = :outcome_note WHERE key = :key`,
+  );
   for (const row of stillAvailable) {
-    if (!seenKeys.has(row.key)) {
-      flagStmt.run({ now, key: row.key });
-      flagged.push(row.key);
+    if (seenKeys.has(row.key)) continue;
+    if (row.status === "new") {
+      flagAndArchiveStmt.run({
+        now,
+        key: row.key,
+        outcome_reason: "expired_unapplied" satisfies OutcomeReason,
+        outcome_note: `Listing disappeared from ${sourceId} before we ever applied.`,
+      });
+    } else if (row.status === "applied" || row.status === "interview") {
+      flagAndArchiveStmt.run({
+        now,
+        key: row.key,
+        outcome_reason: "withdrawn" satisfies OutcomeReason,
+        outcome_note: `Listing disappeared from ${sourceId} while our application was in progress — likely withdrawn, filled, or cancelled by the company.`,
+      });
+    } else {
+      flagOnlyStmt.run({ now, key: row.key });
     }
+    flagged.push(row.key);
   }
   return flagged;
 }
@@ -300,5 +341,27 @@ export function setStatus(key: string, status: GigStatus, opts: DbOption = {}): 
   const result = db.prepare("UPDATE gigs SET status = :status WHERE key = :key").run({ status, key });
   if (Number(result.changes) === 0) {
     throw new Error(`gigradar store: setStatus: no gig with key "${key}"`);
+  }
+}
+
+/**
+ * Explicitly set (or clear, passing `null`) a gig's `outcomeReason` +
+ * `outcomeNote` — see `OutcomeReason`'s own doc comment (types.ts) for what
+ * each value means and who sets it. Independent of `setStatus()` on
+ * purpose: a status-reconciliation pass (gofractional-status.ts,
+ * wellfound-status.ts) determines status and outcome from the SAME scraped
+ * row but the two are conceptually separate axes, and `recordScan()`'s own
+ * auto-archival path (see flagUnavailableForSource()) sets both together
+ * via raw SQL rather than this function, so this stays a single-purpose
+ * primitive rather than growing setStatus()'s own signature. Throws if the
+ * key doesn't exist, same convention as setStatus().
+ */
+export function setOutcome(key: string, reason: OutcomeReason | null, note: string | null, opts: DbOption = {}): void {
+  const db = opts.db ?? getDb();
+  const result = db
+    .prepare("UPDATE gigs SET outcome_reason = :outcome_reason, outcome_note = :outcome_note WHERE key = :key")
+    .run({ outcome_reason: reason, outcome_note: note, key });
+  if (Number(result.changes) === 0) {
+    throw new Error(`gigradar store: setOutcome: no gig with key "${key}"`);
   }
 }

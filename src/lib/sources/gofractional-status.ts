@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 import type { SourceConfig } from "../types.js";
-import { gigKey, listGigs, recordScan, setStatus } from "../store/index.js";
-import type { GigStatus } from "../store/index.js";
+import { gigKey, listGigs, recordScan, setOutcome, setStatus } from "../store/index.js";
+import type { GigStatus, OutcomeReason } from "../store/index.js";
 import { withBrowserSession } from "../auth/browser-session.js";
 import { sessionBackendFrom } from "../auth/session-backend.js";
 import { SOURCE_ORIGINS } from "./origins.js";
@@ -57,6 +57,28 @@ const STATUS_LABEL_MAP: Record<string, GigStatus> = {
   interview: "interview",
   interviewing: "interview",
   shortlisted: "interview",
+};
+
+/**
+ * A second, narrower map from the SAME raw label to WHY (status-
+ * reconciliation-outcomes story, product-review-followups epic — owner's
+ * own words, 2026-09-01: "we can see if companies are all just withdrawing
+ * contracts (we may be getting replaced by AI or cheaper rates) OR we are
+ * getting passed up"). Deliberately NOT exhaustive over every
+ * `STATUS_LABEL_MAP` key that maps to `"archived"`: "withdrawn" is
+ * genuinely ambiguous from this label alone (candidate-withdrew vs.
+ * company-withdrew) and is left OUT here on purpose rather than guessed —
+ * a row whose label isn't in this map still gets its real GigStatus set,
+ * just no `outcomeReason` stamped. "passed" -> LIVE-VERIFIED (the owner's
+ * real account, 2026-08-31: this is GoFractional's own literal wording for
+ * "the company passed on you"). The rest are reasonable, unverified
+ * guesses, same discipline as `STATUS_LABEL_MAP` itself.
+ */
+const OUTCOME_REASON_MAP: Record<string, OutcomeReason> = {
+  passed: "rejected",
+  rejected: "rejected",
+  "not selected": "rejected",
+  declined: "rejected",
 };
 
 /** Lowercases and collapses non-alphanumeric runs to single spaces — tolerant of the two sides' formatting drifting apart (e.g. trailing category/location text accidentally concatenated) without being so loose it conflates two genuinely different titles. */
@@ -185,6 +207,7 @@ export async function reconcileGoFractionalStatuses(cfg: SourceConfig): Promise<
       result.unknownStatusLabel.push(row);
       continue;
     }
+    const outcomeReason = OUTCOME_REASON_MAP[row.statusLabel.toLowerCase()];
 
     const normalizedRowTitle = normalizeTitle(row.title);
     const matches = localGigs.filter((g) => normalizeTitle(g.title) === normalizedRowTitle);
@@ -198,6 +221,7 @@ export async function reconcileGoFractionalStatuses(cfg: SourceConfig): Promise<
       recordScan([{ sourceId: "gofractional", gigs: [{ sourceId: "gofractional", externalId, title: row.title, company: row.company || undefined, url: WORK_URL }] }]);
       const key = gigKey("gofractional", externalId);
       setStatus(key, newStatus);
+      if (outcomeReason) setOutcome(key, outcomeReason, row.statusLabel);
       result.backfilled.push({ key, title: row.title, status: newStatus });
       continue;
     }
@@ -207,6 +231,13 @@ export async function reconcileGoFractionalStatuses(cfg: SourceConfig): Promise<
     }
 
     const gig = matches[0]!;
+    // An explicit, real status label from the platform is more authoritative
+    // than any prior outcomeReason (e.g. one recordScan()'s own delisting
+    // heuristic auto-stamped) -- re-stamp it here even when status itself
+    // didn't change (the alreadyCurrent branch below), not just on a real
+    // transition.
+    if (outcomeReason) setOutcome(gig.key, outcomeReason, row.statusLabel);
+
     if (gig.status === newStatus) {
       result.alreadyCurrent.push({ key: gig.key, title: gig.title, status: gig.status });
       continue;

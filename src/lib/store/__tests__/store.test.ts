@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Gig } from "../../types.js";
 import { closeDb, getDb } from "../db.js";
-import { getGig, listGigs, recordScan } from "../gigs.js";
+import { getGig, listGigs, recordScan, setOutcome, setStatus } from "../gigs.js";
 import type { DatabaseSync } from "node:sqlite";
 
 // All tests use a fresh temp-file db per test (never :memory: for the whole
@@ -251,8 +251,48 @@ describe("listGigs", () => {
 
     expect(listGigs({ sourceId: "src-b" }, { db }).map((g) => g.key)).toEqual(["src-b:1"]);
     expect(listGigs({ unavailable: true }, { db }).map((g) => g.key)).toEqual(["src-a:1"]);
-    expect(listGigs({ status: "new" }, { db })).toHaveLength(3);
+    // src-a:1 was "new" when it went unavailable -- auto-archived with
+    // outcomeReason "expired_unapplied" (status-reconciliation-outcomes
+    // story), so only the other 2 gigs are still "new".
+    expect(listGigs({ status: "new" }, { db })).toHaveLength(2);
     expect(listGigs({}, { db })).toHaveLength(3); // no filter => everything
+
+    const delisted = listGigs({ sourceId: "src-a" }, { db }).find((g) => g.key === "src-a:1");
+    expect(delisted?.status).toBe("archived");
+    expect(delisted?.outcomeReason).toBe("expired_unapplied");
+    expect(delisted?.outcomeNote).toMatch(/we ever applied/);
+  });
+
+  it("auto-archives an 'applied'/'interview' gig that goes unavailable as outcomeReason 'withdrawn' -- never overwrites an existing outcome on an already-archived/ignored gig", () => {
+    recordScan(
+      [
+        { sourceId: "src-a", gigs: [makeGig({ sourceId: "src-a", externalId: "1" }), makeGig({ sourceId: "src-a", externalId: "2" }), makeGig({ sourceId: "src-a", externalId: "3" })] },
+      ],
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+    setStatus("src-a:1", "applied", { db });
+    setStatus("src-a:2", "archived", { db });
+    setOutcome("src-a:2", "rejected", "Passed", { db }); // an explicit, real reconciliation-set outcome
+    setStatus("src-a:3", "ignored", { db });
+
+    // All three drop out of this scan's results -- delisted.
+    recordScan([{ sourceId: "src-a", gigs: [makeGig({ sourceId: "src-a", externalId: "99" })] }], { db, now: "2026-01-02T00:00:00.000Z" });
+
+    const applied = getGig("src-a:1", { db });
+    expect(applied?.status).toBe("archived");
+    expect(applied?.outcomeReason).toBe("withdrawn");
+    expect(applied?.outcomeNote).toMatch(/application was in progress/);
+
+    // Already-archived, already had a real outcome -- untouched.
+    const alreadyArchived = getGig("src-a:2", { db });
+    expect(alreadyArchived?.status).toBe("archived");
+    expect(alreadyArchived?.outcomeReason).toBe("rejected");
+    expect(alreadyArchived?.outcomeNote).toBe("Passed");
+
+    // Already-ignored -- untouched, no outcome fabricated for a self-chosen skip.
+    const ignored = getGig("src-a:3", { db });
+    expect(ignored?.status).toBe("ignored");
+    expect(ignored?.outcomeReason).toBeNull();
   });
 });
 

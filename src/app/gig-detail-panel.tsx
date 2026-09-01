@@ -20,7 +20,7 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import type { StoredGig } from "@/lib/store";
-import { formatDate, formatRate, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "./dashboard-client";
+import { formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "./dashboard-client";
 
 export function GigDetailPanel({
   gig,
@@ -168,6 +168,12 @@ export function GigDetailPanel({
             <div>
               <p className="mb-1 text-xs font-medium text-theme-text-dim">Status</p>
               {statusChangeSection}
+              {gig.outcomeReason && (
+                <p className="mt-1 text-xs text-theme-text-dim">
+                  {OUTCOME_LABEL[gig.outcomeReason]}
+                  {gig.outcomeNote && <> — {gig.outcomeNote}</>}
+                </p>
+              )}
             </div>
             {draftSection && (
               <div>
