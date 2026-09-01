@@ -22,13 +22,15 @@ export interface DashboardPrefs {
 
 /**
  * TanStack's ColumnFiltersState allows any filter value shape per column --
- * this dashboard has exactly one column (`status`) whose filter value is a
- * `Set<GigStatus>` (see dashboard-client.tsx's "status-multi" filterKind).
- * `JSON.stringify`/`JSON.parse` don't round-trip a Set at all (it
- * serializes to `{}`), so every Set-valued filter is tagged with a small
- * `{__set: [...]}` marker on the way out and rehydrated back into a real
- * Set on the way in. Every other filter value (string/number/etc.) passes
- * through untouched.
+ * this dashboard has Set-valued filters on `status` (a `Set<GigStatus>`,
+ * see dashboard-client.tsx's "status-multi" filterKind) and `profile` (a
+ * `Set<string>` of engagement-profile ids plus the NO_PROFILE_MATCH
+ * sentinel, "profile-multi"). `JSON.stringify`/`JSON.parse` don't
+ * round-trip a Set at all (it serializes to `{}`), so every Set-valued
+ * filter -- generically, whichever column it's on -- is tagged with a
+ * small `{__set: [...]}` marker on the way out and rehydrated back into a
+ * real Set on the way in. Every other filter value (string/number/etc.)
+ * passes through untouched.
  */
 function serializeColumnFilters(filters: ColumnFiltersState): unknown[] {
   return filters.map((f) => ({

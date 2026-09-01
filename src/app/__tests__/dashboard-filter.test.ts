@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredGig } from "@/lib/store";
-import { distinctSources, isWithinSeenWindow } from "../dashboard-filter";
+import { distinctSources, isWithinSeenWindow, shortProfileLabel } from "../dashboard-filter";
 
 function makeGig(overrides: Partial<StoredGig> & { key: string }): StoredGig {
   return {
@@ -69,5 +69,26 @@ describe("isWithinSeenWindow", () => {
   it("exactly at the boundary counts as within the window (<=, not <)", () => {
     const exactlyOneDayAgo = new Date(NOW - 24 * 60 * 60 * 1000).toISOString();
     expect(isWithinSeenWindow(exactlyOneDayAgo, "24h", NOW)).toBe(true);
+  });
+});
+
+describe("shortProfileLabel", () => {
+  it("extracts the leading token before an em-dash separator (real owner label shape)", () => {
+    expect(shortProfileLabel("A — Fractional/Hourly ($150+)")).toBe("A");
+    expect(shortProfileLabel("B — Full-Time ($250k–$400k TC)")).toBe("B");
+    expect(shortProfileLabel("C — Fallback Hourly ($90–$200)")).toBe("C");
+  });
+
+  it("also splits on a plain hyphen or colon separator", () => {
+    expect(shortProfileLabel("Fractional - CTO roles")).toBe("Fractional");
+    expect(shortProfileLabel("Tier1: Senior roles")).toBe("Tier1");
+  });
+
+  it("uses the whole label when there is no separator", () => {
+    expect(shortProfileLabel("FullTimeOnly")).toBe("FullTimeOnly");
+  });
+
+  it("trims surrounding whitespace before extracting", () => {
+    expect(shortProfileLabel("  A — Fractional  ")).toBe("A");
   });
 });

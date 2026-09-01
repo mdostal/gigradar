@@ -24,6 +24,21 @@ export const SEEN_WINDOW_OPTIONS: { value: SeenWindow; label: string }[] = [
   { value: "30d", label: "Last 30 days" },
 ];
 
+/**
+ * A short, table-cell-sized label derived from a user-authored
+ * `EngagementProfile.label` (free text — this repo has no fixed "A/B/C"
+ * naming convention, that's a particular owner's own scheme, not a core
+ * assumption) — the leading token up to the first separator character.
+ * "A — Fractional/Hourly ($150+)" -> "A"; a label with no separator is
+ * used whole. The full label is always still available as a tooltip
+ * (`title`) wherever this is rendered, so a plain-language label never
+ * loses information, just table width.
+ */
+export function shortProfileLabel(label: string): string {
+  const match = /^[^\s\-–—:]+/.exec(label.trim());
+  return match ? match[0] : label.trim();
+}
+
 const SEEN_WINDOW_MS: Record<Exclude<SeenWindow, "any">, number> = {
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
