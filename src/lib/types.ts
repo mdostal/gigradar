@@ -145,19 +145,53 @@ export interface SourceConfig {
   kind?: "custom-llm" | "gmail-digest";
   /** Opaque per-source settings (session cookie ref, query, etc.). Never store raw secrets here in OSS — reference an env/keychain entry. */
   settings?: Record<string, unknown>;
+  /**
+   * multi-group-architecture epic: which group(s) this source's gigs get
+   * evaluated against. Omitted (the default) means EVERY group — a
+   * source is shared across every search unless deliberately scoped down
+   * (e.g. a drone-parts-specific board that obviously shouldn't be
+   * evaluated against a "fractional CTO" group's criteria at all).
+   */
+  groupIds?: string[];
+}
+
+/**
+ * One named "search" — its own accept-criteria (`needs`) and role-area
+ * classifier (`roleArea`), evaluated independently. multi-group-
+ * architecture epic — owner's own words, 2026-09-01: "I could do a
+ * software engineer full time role separately from the fractional CTO
+ * role separately from a drone photographer role... it can cross over
+ * and be in multiple lists but still if we apply, we only apply to the
+ * singular gig ONCE." A gig can clear zero, one, or several groups at
+ * once (see `matching/group-match.ts`'s `matchGroups()`) — a group never
+ * OWNS a gig, the same way an `EngagementProfile` never owns one today
+ * (`Gig.matchedProfileIds` already allows several). `Config.groups`
+ * replaces this interface's own pre-multi-group flat `needs`/`roleArea`
+ * fields — see `config/load.ts`'s `migrateFlatNeedsRoleAreaToGroups()`
+ * for how an existing single-search config.json upgrades transparently.
+ */
+export interface GroupConfig {
+  /** Stable slug, e.g. "default-search-1" — referenced by Gig.matchedGroupIds/matchedGroupTiers, never re-derived from label (which the user can freely rename). */
+  id: string;
+  /** User-facing name shown in the dashboard/config UI, e.g. "Fractional CTO Search". */
+  label: string;
+  needs: Needs;
+  /** Optional, same do-nothing-default semantics as the old Config.roleArea: omitted => every gig tiers "yellow" for this group. */
+  roleArea?: RoleAreaConfig;
 }
 
 /** Full user configuration. Lives in the user's own storage, never in the repo. */
 export interface Config {
   profile: Profile;
-  needs: Needs;
   sources: SourceConfig[];
   /**
-   * Optional role-area keyword config for the GREEN/YELLOW/RED classifier
-   * (matching/tiering.ts). Omitted => every gig tiers "yellow" (nothing to
-   * match against yet), which is the correct do-nothing default, not an error.
+   * At least one group is always required — there is no valid "zero
+   * groups" state (mirrors `Needs.engagementProfiles`'s own existing
+   * `.min(1)` precedent; a gig that can never match anything is a worse
+   * silent-failure mode than requiring at least one, even
+   * do-nothing-configured, group to exist).
    */
-  roleArea?: RoleAreaConfig;
+  groups: GroupConfig[];
   /** Cron cadence, e.g. "0 9 * * *" (daily 9am). */
   schedule?: string;
   /**
@@ -337,6 +371,22 @@ export interface Gig {
    * pattern as `tier` above. An adapter's `fetch()` never sets this.
    */
   matchedProfileIds?: string[];
+  /**
+   * multi-group-architecture epic — every `GroupConfig.id` this gig
+   * cleared (its gate passed), stamped on by the runner from
+   * `matchGroups()`. Same "optional, stamped after gate(), rides through
+   * the store's normal upsert path" pattern as `matchedProfileIds` above
+   * — a group never OWNS a gig, several can match at once.
+   */
+  matchedGroupIds?: string[];
+  /**
+   * Every group's OWN tier result (`Record<groupId, Tier>`), independent
+   * of whether that group's gate passed — mirrors how `tier` above is
+   * already independent of gate pass/fail. Lets a future per-group
+   * dashboard show "green for your fractional-CTO search, yellow for
+   * your SWE search" for the same real gig.
+   */
+  matchedGroupTiers?: Record<string, Tier>;
 }
 
 /**

@@ -63,22 +63,28 @@ const validConfig = {
     skills: ["TypeScript", "Architecture"],
     timezone: "America/Chicago",
   },
-  needs: {
-    engagementProfiles: [
-      {
-        id: "fractional-contract",
-        label: "Fractional/contract",
-        types: ["contract", "fractional"],
-        minRate: 150,
-        highRate: 250,
-        maxHours: 20,
-        maxHoursAtHighRate: 40,
-        rateUnit: "hour",
+  groups: [
+    {
+      id: "g1",
+      label: "Group 1",
+      needs: {
+        engagementProfiles: [
+          {
+            id: "fractional-contract",
+            label: "Fractional/contract",
+            types: ["contract", "fractional"],
+            minRate: 150,
+            highRate: 250,
+            maxHours: 20,
+            maxHoursAtHighRate: 40,
+            rateUnit: "hour",
+          },
+        ],
+        freshStageOnly: true,
+        remoteOnly: true,
       },
-    ],
-    freshStageOnly: true,
-    remoteOnly: true,
-  },
+    },
+  ],
   sources: [{ id: "braintrust", enabled: true }],
 };
 
@@ -102,29 +108,35 @@ describe("saveConfigAction: successful save (first-run, no config.json yet)", ()
 
 describe("saveConfigAction: validation failure", () => {
   it("returns {ok:false,error} with a specific field-level message, writes nothing, and never calls revalidatePath", async () => {
-    const { needs, ...rest } = validConfig; // omit required `needs`
+    const { groups, ...rest } = validConfig; // omit required `groups`
 
     const result = await saveConfigAction(rest);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("needs");
+    expect(result.error).toContain("groups");
     expect(fs.existsSync(getConfigPath())).toBe(false);
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it("rejects a Needs field emptied to an invalid type (a real form-clearing scenario) with a field-level error", async () => {
+    const group = validConfig.groups[0]!;
     const result = await saveConfigAction({
       ...validConfig,
-      needs: {
-        ...validConfig.needs,
-        engagementProfiles: [{ ...validConfig.needs.engagementProfiles[0], minRate: Number.NaN }],
-      },
+      groups: [
+        {
+          ...group,
+          needs: {
+            ...group.needs,
+            engagementProfiles: [{ ...group.needs.engagementProfiles[0], minRate: Number.NaN }],
+          },
+        },
+      ],
     });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("needs.engagementProfiles.0.minRate");
+    expect(result.error).toContain("groups.0.needs.engagementProfiles.0.minRate");
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
@@ -134,17 +146,23 @@ describe("saveConfigAction: validation failure", () => {
       "during this story's live browser verification: Number('') is 0 in JS, so a naive string->Number " +
       "coercion in the form would have silently saved 0 for a blank required field instead of failing",
     async () => {
+      const group = validConfig.groups[0]!;
       const result = await saveConfigAction({
         ...validConfig,
-        needs: {
-          ...validConfig.needs,
-          engagementProfiles: [{ ...validConfig.needs.engagementProfiles[0], minRate: "" }],
-        },
+        groups: [
+          {
+            ...group,
+            needs: {
+              ...group.needs,
+              engagementProfiles: [{ ...group.needs.engagementProfiles[0], minRate: "" }],
+            },
+          },
+        ],
       });
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected failure — a blank required Needs field must not silently become 0");
-      expect(result.error).toContain("needs.engagementProfiles.0.minRate");
+      expect(result.error).toContain("groups.0.needs.engagementProfiles.0.minRate");
       expect(fs.existsSync(getConfigPath())).toBe(false);
     },
   );
@@ -244,34 +262,35 @@ describe("saveConfigAction: roleArea/schedule optional semantics", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.data.roleArea).toBeUndefined();
+    expect(result.data.groups[0]?.roleArea).toBeUndefined();
     expect(result.data.schedule).toBeUndefined();
 
-    const onDisk = readOnDiskConfig() as Record<string, unknown>;
-    expect("roleArea" in onDisk).toBe(false);
+    const onDisk = readOnDiskConfig() as { groups: Array<Record<string, unknown>> };
+    expect("roleArea" in onDisk.groups[0]!).toBe(false);
     expect("schedule" in onDisk).toBe(false);
   });
 
   it("un-sets a previously-saved roleArea when an edit explicitly sends roleArea: undefined (the disabled-toggle case)", async () => {
+    const group = validConfig.groups[0]!;
     const withRoleArea = await saveConfigAction({
       ...validConfig,
-      roleArea: { coreTitles: ["CTO"], keywords: ["fractional"], redKeywords: ["junior"] },
+      groups: [{ ...group, roleArea: { coreTitles: ["CTO"], keywords: ["fractional"], redKeywords: ["junior"] } }],
     });
     expect(withRoleArea.ok).toBe(true);
     if (!withRoleArea.ok) throw new Error("expected ok");
-    expect(withRoleArea.data.roleArea).toBeDefined();
+    expect(withRoleArea.data.groups[0]?.roleArea).toBeDefined();
 
     // Mirrors draftToEdits()'s behavior when the "Configure role-area
     // filtering" checkbox is unchecked: roleArea is sent explicitly as
     // undefined rather than omitted from the object.
-    const unset = await saveConfigAction({ ...validConfig, roleArea: undefined });
+    const unset = await saveConfigAction({ ...validConfig, groups: [{ ...group, roleArea: undefined }] });
 
     expect(unset.ok).toBe(true);
     if (!unset.ok) throw new Error("expected ok");
-    expect(unset.data.roleArea).toBeUndefined();
+    expect(unset.data.groups[0]?.roleArea).toBeUndefined();
 
-    const onDisk = readOnDiskConfig() as Record<string, unknown>;
-    expect("roleArea" in onDisk).toBe(false);
+    const onDisk = readOnDiskConfig() as { groups: Array<Record<string, unknown>> };
+    expect("roleArea" in onDisk.groups[0]!).toBe(false);
   });
 });
 

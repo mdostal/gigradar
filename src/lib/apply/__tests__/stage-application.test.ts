@@ -37,30 +37,36 @@ const REAL_APPLY_PROFILE: ApplyProfileConfig = { email: "jane@example.com" };
 function makeConfig(applyProfile?: ApplyProfileConfig): Config {
   return {
     profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
-    needs: {
-      engagementProfiles: [
-        {
-          id: "any-hourly",
-          label: "Any (hourly)",
-          types: ["contract", "fractional", "contract-to-hire"],
-          minRate: 0,
-          highRate: 999_999,
-          maxHours: 999,
-          maxHoursAtHighRate: 999,
-          rateUnit: "hour",
+    groups: [
+      {
+        id: "g1",
+        label: "Group 1",
+        needs: {
+          engagementProfiles: [
+            {
+              id: "any-hourly",
+              label: "Any (hourly)",
+              types: ["contract", "fractional", "contract-to-hire"],
+              minRate: 0,
+              highRate: 999_999,
+              maxHours: 999,
+              maxHoursAtHighRate: 999,
+              rateUnit: "hour",
+            },
+            {
+              id: "any-salaried",
+              label: "Any (salaried)",
+              types: ["full-time"],
+              minRate: 0,
+              highRate: 999_999_999,
+              rateUnit: "year",
+            },
+          ],
+          freshStageOnly: false,
+          remoteOnly: false,
         },
-        {
-          id: "any-salaried",
-          label: "Any (salaried)",
-          types: ["full-time"],
-          minRate: 0,
-          highRate: 999_999_999,
-          rateUnit: "year",
-        },
-      ],
-      freshStageOnly: false,
-      remoteOnly: false,
-    },
+      },
+    ],
     sources: [{ id: "braintrust", enabled: true }],
     applyProfile,
   };

@@ -32,6 +32,8 @@ interface GigRow {
   raw: string | null;
   tier: string | null;
   matched_profile_ids: string | null;
+  matched_group_ids: string | null;
+  matched_group_tiers: string | null;
   status: string;
   outcome_reason: string | null;
   outcome_note: string | null;
@@ -66,6 +68,8 @@ function toStoredGig(row: GigRow): StoredGig {
     raw: row.raw !== null ? JSON.parse(row.raw) : undefined,
     tier: (row.tier as Gig["tier"] | null) ?? undefined,
     matchedProfileIds: row.matched_profile_ids !== null ? JSON.parse(row.matched_profile_ids) : undefined,
+    matchedGroupIds: row.matched_group_ids !== null ? JSON.parse(row.matched_group_ids) : undefined,
+    matchedGroupTiers: row.matched_group_tiers !== null ? JSON.parse(row.matched_group_tiers) : undefined,
     status: row.status as GigStatus,
     outcomeReason: (row.outcome_reason as OutcomeReason | null) ?? null,
     outcomeNote: row.outcome_note ?? null,
@@ -116,6 +120,8 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     raw: gig.raw === undefined ? null : JSON.stringify(gig.raw),
     tier: gig.tier ?? null,
     matched_profile_ids: gig.matchedProfileIds === undefined ? null : JSON.stringify(gig.matchedProfileIds),
+    matched_group_ids: gig.matchedGroupIds === undefined ? null : JSON.stringify(gig.matchedGroupIds),
+    matched_group_tiers: gig.matchedGroupTiers === undefined ? null : JSON.stringify(gig.matchedGroupTiers),
     now,
   };
 
@@ -124,11 +130,11 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
       `INSERT INTO gigs (
          key, source_id, external_id, title, company, url, rate_min, rate_max, rate_unit,
          weekly_hours, remote, contract_to_hire, employment_type, stage, posted_at, description, raw, tier,
-         matched_profile_ids, status, first_seen, last_seen, unavailable_since, reappeared_at
+         matched_profile_ids, matched_group_ids, matched_group_tiers, status, first_seen, last_seen, unavailable_since, reappeared_at
        ) VALUES (
          :key, :source_id, :external_id, :title, :company, :url, :rate_min, :rate_max, :rate_unit,
          :weekly_hours, :remote, :contract_to_hire, :employment_type, :stage, :posted_at, :description, :raw, :tier,
-         :matched_profile_ids, 'new', :now, :now, NULL, NULL
+         :matched_profile_ids, :matched_group_ids, :matched_group_tiers, 'new', :now, :now, NULL, NULL
        )`,
     ).run(params);
     return { key, inserted: true, reappeared: false };
@@ -146,6 +152,8 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
        employment_type = :employment_type,
        stage = :stage, posted_at = :posted_at, description = :description, raw = :raw, tier = :tier,
        matched_profile_ids = :matched_profile_ids,
+       matched_group_ids = :matched_group_ids,
+       matched_group_tiers = :matched_group_tiers,
        last_seen = :now,
        unavailable_since = NULL,
        reappeared_at = CASE WHEN :was_unavailable THEN :now ELSE reappeared_at END
@@ -167,6 +175,8 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     raw: params.raw,
     tier: params.tier,
     matched_profile_ids: params.matched_profile_ids,
+    matched_group_ids: params.matched_group_ids,
+    matched_group_tiers: params.matched_group_tiers,
     now: params.now,
     key: params.key,
     was_unavailable: wasUnavailable ? 1 : 0,
@@ -327,6 +337,15 @@ export function listGigs(filter: GigFilter = {}, opts: DbOption = {}): StoredGig
   }
   if (filter.unavailable === true) clauses.push("unavailable_since IS NOT NULL");
   if (filter.unavailable === false) clauses.push("unavailable_since IS NULL");
+  if (filter.groupId) {
+    // Real JSON-array containment (json_each over the stringified array),
+    // never a string LIKE/substring match -- a LIKE '%"a"%' style filter
+    // would false-positive on a group id like "a2" containing "a". A gig
+    // whose matched_group_ids is NULL (not yet evaluated against groups)
+    // never matches: json_each(NULL) yields zero rows.
+    clauses.push("EXISTS (SELECT 1 FROM json_each(matched_group_ids) WHERE json_each.value = :group_id)");
+    params.group_id = filter.groupId;
+  }
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = db

@@ -40,13 +40,19 @@ let tmpDir: string;
 function baseConfig(overrides: Record<string, unknown> = {}) {
   return {
     profile: { name: "Test", roles: [], skills: [], timezone: "UTC" },
-    needs: {
-      engagementProfiles: [
-        { id: "p1", label: "Hourly", types: ["contract"], minRate: 100, highRate: 150, maxHours: 20, maxHoursAtHighRate: 40, rateUnit: "hour" },
-      ],
-      freshStageOnly: false,
-      remoteOnly: true,
-    },
+    groups: [
+      {
+        id: "g1",
+        label: "Group 1",
+        needs: {
+          engagementProfiles: [
+            { id: "p1", label: "Hourly", types: ["contract"], minRate: 100, highRate: 150, maxHours: 20, maxHoursAtHighRate: 40, rateUnit: "hour" },
+          ],
+          freshStageOnly: false,
+          remoteOnly: true,
+        },
+      },
+    ],
     sources: [],
     ...overrides,
   };

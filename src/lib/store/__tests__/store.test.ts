@@ -109,6 +109,31 @@ describe("recordScan: basic upsert", () => {
     expect(stored?.matchedProfileIds).toBeUndefined();
     expect(stored?.employmentType).toBeUndefined();
   });
+
+  it("round-trips matchedGroupIds and matchedGroupTiers (multi-group-architecture epic, mga-2) through the store", () => {
+    const gig = makeGig({
+      sourceId: "src-a",
+      externalId: "5",
+      matchedGroupIds: ["a", "b"],
+      matchedGroupTiers: { a: "green", b: "yellow" },
+    });
+
+    recordScan([{ sourceId: "src-a", gigs: [gig] }], { db, now: "2026-01-01T00:00:00.000Z" });
+
+    const stored = getGig("src-a:5", { db });
+    expect(stored?.matchedGroupIds).toEqual(["a", "b"]);
+    expect(stored?.matchedGroupTiers).toEqual({ a: "green", b: "yellow" });
+  });
+
+  it("matchedGroupIds/matchedGroupTiers are undefined (never [] or {} or a crash) when the runner never set them", () => {
+    const gig = makeGig({ sourceId: "src-a", externalId: "6" });
+
+    recordScan([{ sourceId: "src-a", gigs: [gig] }], { db, now: "2026-01-01T00:00:00.000Z" });
+
+    const stored = getGig("src-a:6", { db });
+    expect(stored?.matchedGroupIds).toBeUndefined();
+    expect(stored?.matchedGroupTiers).toBeUndefined();
+  });
 });
 
 describe("recordScan: status and firstSeen survive a re-scan", () => {
@@ -293,6 +318,49 @@ describe("listGigs", () => {
     const ignored = getGig("src-a:3", { db });
     expect(ignored?.status).toBe("ignored");
     expect(ignored?.outcomeReason).toBeNull();
+  });
+});
+
+describe("listGigs: groupId filter (multi-group-architecture epic, mga-2)", () => {
+  it("returns only gigs whose matched_group_ids contains the given id", () => {
+    recordScan(
+      [
+        {
+          sourceId: "src-a",
+          gigs: [
+            makeGig({ sourceId: "src-a", externalId: "1", matchedGroupIds: ["a"] }),
+            makeGig({ sourceId: "src-a", externalId: "2", matchedGroupIds: ["b"] }),
+            makeGig({ sourceId: "src-a", externalId: "3", matchedGroupIds: ["a", "b"] }),
+            makeGig({ sourceId: "src-a", externalId: "4" }), // never evaluated against any group
+          ],
+        },
+      ],
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+
+    expect(listGigs({ groupId: "a" }, { db }).map((g) => g.key).sort()).toEqual(["src-a:1", "src-a:3"]);
+    expect(listGigs({ groupId: "b" }, { db }).map((g) => g.key).sort()).toEqual(["src-a:2", "src-a:3"]);
+  });
+
+  it("does real JSON containment, not a string LIKE/substring match, on adversarial group ids that are substrings of each other", () => {
+    recordScan(
+      [
+        {
+          sourceId: "src-a",
+          gigs: [
+            makeGig({ sourceId: "src-a", externalId: "1", matchedGroupIds: ["a"] }),
+            makeGig({ sourceId: "src-a", externalId: "2", matchedGroupIds: ["a2"] }),
+            makeGig({ sourceId: "src-a", externalId: "3", matchedGroupIds: ["a", "a2"] }),
+          ],
+        },
+      ],
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+
+    // A naive `LIKE '%"a"%'` or plain substring match would wrongly also
+    // match "a2"'s row -- json_each's exact-value comparison must not.
+    expect(listGigs({ groupId: "a" }, { db }).map((g) => g.key).sort()).toEqual(["src-a:1", "src-a:3"]);
+    expect(listGigs({ groupId: "a2" }, { db }).map((g) => g.key).sort()).toEqual(["src-a:2", "src-a:3"]);
   });
 });
 

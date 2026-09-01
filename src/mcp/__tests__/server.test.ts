@@ -46,22 +46,28 @@ afterEach(() => {
 function validConfigDoc(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     profile: { name: "Ada", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
-    needs: {
-      engagementProfiles: [
-        {
-          id: "fractional-contract",
-          label: "Fractional/contract",
-          types: ["contract", "fractional"],
-          minRate: 100,
-          highRate: 250,
-          maxHours: 20,
-          maxHoursAtHighRate: 40,
-          rateUnit: "hour",
+    groups: [
+      {
+        id: "g1",
+        label: "Group 1",
+        needs: {
+          engagementProfiles: [
+            {
+              id: "fractional-contract",
+              label: "Fractional/contract",
+              types: ["contract", "fractional"],
+              minRate: 100,
+              highRate: 250,
+              maxHours: 20,
+              maxHoursAtHighRate: 40,
+              rateUnit: "hour",
+            },
+          ],
+          freshStageOnly: false,
+          remoteOnly: false,
         },
-      ],
-      freshStageOnly: false,
-      remoteOnly: false,
-    },
+      },
+    ],
     sources: [],
     ...overrides,
   };

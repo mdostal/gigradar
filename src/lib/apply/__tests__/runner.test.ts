@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Config, Gig, RoleAreaConfig } from "../../types.js";
+import type { Config, EngagementProfile, Gig, RoleAreaConfig } from "../../types.js";
 import { registerSource } from "../../sources/source.js";
 import { VerificationChallengeError } from "../../sources/verification-challenge.js";
 import { closeDb, getDb, getGig, listGigs } from "../../store/index.js";
@@ -82,32 +82,38 @@ afterEach(() => {
 function makeConfig(roleArea?: RoleAreaConfig): Config {
   return {
     profile: { name: "Test User", roles: [], skills: [], timezone: "UTC" },
-    needs: {
-      engagementProfiles: [
-        {
-          id: "any-hourly",
-          label: "Any (hourly)",
-          types: ["contract", "fractional", "contract-to-hire"],
-          minRate: 0,
-          highRate: 999_999,
-          maxHours: 999,
-          maxHoursAtHighRate: 999,
-          rateUnit: "hour",
+    groups: [
+      {
+        id: "g1",
+        label: "Group 1",
+        needs: {
+          engagementProfiles: [
+            {
+              id: "any-hourly",
+              label: "Any (hourly)",
+              types: ["contract", "fractional", "contract-to-hire"],
+              minRate: 0,
+              highRate: 999_999,
+              maxHours: 999,
+              maxHoursAtHighRate: 999,
+              rateUnit: "hour",
+            },
+            {
+              id: "any-salaried",
+              label: "Any (salaried)",
+              types: ["full-time"],
+              minRate: 0,
+              highRate: 999_999_999,
+              rateUnit: "year",
+            },
+          ],
+          freshStageOnly: false,
+          remoteOnly: false,
         },
-        {
-          id: "any-salaried",
-          label: "Any (salaried)",
-          types: ["full-time"],
-          minRate: 0,
-          highRate: 999_999_999,
-          rateUnit: "year",
-        },
-      ],
-      freshStageOnly: false,
-      remoteOnly: false,
-    },
+        roleArea,
+      },
+    ],
     sources: [{ id: "braintrust", enabled: true }],
-    roleArea,
   };
 }
 
@@ -291,5 +297,74 @@ describe("runRadar: engagement-profiles integration", () => {
     expect(result.results[0]?.gig.matchedProfileIds).toEqual(["any-hourly"]);
     expect(result.results[0]?.matchedProfiles).toEqual(["any-hourly"]);
     expect(getGig("braintrust:1", { db })?.matchedProfileIds).toEqual(["any-hourly"]);
+  });
+});
+
+describe("runRadar: group-aware matching (multi-group-architecture epic, mga-3)", () => {
+  const PASSING_PROFILE: EngagementProfile = {
+    id: "any-hourly",
+    label: "Any (hourly)",
+    types: ["contract", "fractional", "contract-to-hire"],
+    minRate: 0,
+    highRate: 999_999,
+    maxHours: 999,
+    maxHoursAtHighRate: 999,
+    rateUnit: "hour",
+  };
+
+  /** Group A always clears its gate and tiers green on "Fractional CTO" titles; group B's gate can never pass (no configured engagementProfiles) and always tiers yellow (no roleArea keywords configured). */
+  function makeTwoGroupConfig(sourceGroupIds?: string[]): Config {
+    return {
+      profile: { name: "Test User", roles: [], skills: [], timezone: "UTC" },
+      groups: [
+        {
+          id: "A",
+          label: "Group A",
+          needs: { engagementProfiles: [PASSING_PROFILE], freshStageOnly: false, remoteOnly: false },
+          roleArea: { coreTitles: ["fractional cto"], keywords: [], redKeywords: [] },
+        },
+        {
+          id: "B",
+          label: "Group B",
+          needs: { engagementProfiles: [], freshStageOnly: false, remoteOnly: false },
+          roleArea: { coreTitles: [], keywords: [], redKeywords: [] },
+        },
+      ],
+      sources: [{ id: "braintrust", enabled: true, ...(sourceGroupIds ? { groupIds: sourceGroupIds } : {}) }],
+    };
+  }
+
+  it("single-group config (the common case immediately after Slice 1 ships): matchedGroupIds is exactly [that group's id] and matchedGroupTiers is {that group: same value as the flat tier column} — byte-identical to pre-multi-group behavior", async () => {
+    const roleArea: RoleAreaConfig = { coreTitles: ["fractional cto"], keywords: [], redKeywords: [] };
+    nextGigs = [makeGig("1", "Fractional CTO for a Seed-Stage Startup")];
+
+    await runRadar(makeConfig(roleArea), { db });
+
+    const stored = getGig("braintrust:1", { db });
+    expect(stored?.tier).toBe("green");
+    expect(stored?.matchedGroupIds).toEqual(["g1"]);
+    expect(stored?.matchedGroupTiers).toEqual({ g1: stored?.tier });
+  });
+
+  it("two-group config, source unscoped (evaluated against every group): a gig that clears group A's gate but not group B's has matchedGroupIds ['A'], but matchedGroupTiers still records BOTH groups' tier results (informational, independent of pass/fail)", async () => {
+    nextGigs = [makeGig("1", "Fractional CTO for a Seed-Stage Startup")];
+
+    await runRadar(makeTwoGroupConfig(), { db });
+
+    const stored = getGig("braintrust:1", { db });
+    expect(stored?.matchedGroupIds).toEqual(["A"]); // B's gate can never pass (no engagementProfiles)
+    expect(stored?.matchedGroupTiers).toEqual({ A: "green", B: "yellow" });
+    // The flat/legacy columns stay anchored to the first in-scope group ("primary group").
+    expect(stored?.tier).toBe("green");
+  });
+
+  it("a source scoped to groupIds: ['A'] is ONLY evaluated against group A, never group B, regardless of how many groups exist in config.groups", async () => {
+    nextGigs = [makeGig("1", "Fractional CTO for a Seed-Stage Startup")];
+
+    await runRadar(makeTwoGroupConfig(["A"]), { db });
+
+    const stored = getGig("braintrust:1", { db });
+    expect(stored?.matchedGroupIds).toEqual(["A"]);
+    expect(stored?.matchedGroupTiers).toEqual({ A: "green" }); // B never evaluated -- no key for it at all
   });
 });

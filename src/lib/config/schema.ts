@@ -66,6 +66,18 @@ export const RoleAreaConfigSchema = z.object({
 });
 
 /**
+ * Mirrors `GroupConfig` in src/lib/types.ts (multi-group-architecture
+ * epic). `roleArea` stays `.optional()`, same do-nothing-default pattern
+ * as the old top-level `Config.roleArea` it replaces.
+ */
+export const GroupConfigSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  needs: NeedsSchema,
+  roleArea: RoleAreaConfigSchema.optional(),
+});
+
+/**
  * Mirrors `ApplyProfileConfig` in src/lib/types.ts. Only `email` is
  * required within this object — the object itself is `.optional()` on
  * `Config` (see ConfigSchema below), same "omitted = not configured, not an
@@ -90,6 +102,8 @@ export const SourceConfigSchema = z.object({
   enabled: z.boolean(),
   kind: z.enum(["custom-llm", "gmail-digest"]).optional(),
   settings: z.record(z.string(), z.unknown()).optional(),
+  /** multi-group-architecture epic — see SourceConfig.groupIds's own doc comment in types.ts. Omitted = every group. */
+  groupIds: z.array(z.string()).optional(),
 });
 
 /**
@@ -132,9 +146,11 @@ export const AutoFireConfigSchema = z.object({
 
 export const ConfigSchema = z.object({
   profile: ProfileSchema,
-  needs: NeedsSchema,
   sources: z.array(SourceConfigSchema),
-  roleArea: RoleAreaConfigSchema.optional(),
+  // multi-group-architecture epic: replaces the old flat needs/roleArea
+  // fields. At least one group is always required -- mirrors
+  // Needs.engagementProfiles's own existing .min(1) precedent.
+  groups: z.array(GroupConfigSchema).min(1),
   schedule: z.string().optional(),
   applyProfile: ApplyProfileConfigSchema.optional(),
   autoDraftOnScan: z.boolean().optional(),

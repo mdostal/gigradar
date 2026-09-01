@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, type FormEvent, useEffect, useState, useTransition } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useRef, useState, useTransition } from "react";
 import { APP_ICONS, DEFAULT_APP_ICON_ID } from "@/lib/app-icons";
 import type { SessionReadiness } from "@/lib/auth/session-readiness";
 import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
@@ -294,7 +294,15 @@ function sourceToDraft(source: SourceConfig): DraftSource {
   };
 }
 
+// Slice 1 of the multi-group-architecture epic has no group-management UI
+// yet (Slice 2) — this form only ever reads/writes the FIRST/primary group
+// (config.groups[0]), same single-group convention as the setup wizard (see
+// src/app/setup/setup-wizard-client.tsx). Every existing single-search
+// config.json has exactly one group (migrateFlatNeedsRoleAreaToGroups() in
+// load.ts guarantees it), so this is byte-identical behavior for every
+// pre-multi-group install.
 function configToDraft(config: Config): DraftConfig {
+  const group = config.groups[0];
   return {
     profile: {
       name: config.profile.name,
@@ -307,7 +315,7 @@ function configToDraft(config: Config): DraftConfig {
       homeBaseLng: config.profile.homeBase ? String(config.profile.homeBase.lng) : "",
     },
     needs: {
-      engagementProfiles: config.needs.engagementProfiles.map((p) => ({
+      engagementProfiles: (group?.needs.engagementProfiles ?? []).map((p) => ({
         id: p.id,
         label: p.label,
         types: p.types,
@@ -317,15 +325,15 @@ function configToDraft(config: Config): DraftConfig {
         maxHoursAtHighRate: String(p.maxHoursAtHighRate),
         rateUnit: p.rateUnit,
       })),
-      freshStageOnly: config.needs.freshStageOnly,
-      remoteOnly: config.needs.remoteOnly,
+      freshStageOnly: group?.needs.freshStageOnly ?? false,
+      remoteOnly: group?.needs.remoteOnly ?? false,
     },
     sources: config.sources.map(sourceToDraft),
     roleArea: {
-      enabled: config.roleArea != null,
-      coreTitles: config.roleArea?.coreTitles ?? [],
-      keywords: config.roleArea?.keywords ?? [],
-      redKeywords: config.roleArea?.redKeywords ?? [],
+      enabled: group?.roleArea != null,
+      coreTitles: group?.roleArea?.coreTitles ?? [],
+      keywords: group?.roleArea?.keywords ?? [],
+      redKeywords: group?.roleArea?.redKeywords ?? [],
     },
     schedule: config.schedule ?? "",
     autoDraftOnScan: config.autoDraftOnScan ?? false,
@@ -444,8 +452,15 @@ function draftToSource(draft: DraftSource): SourceConfig {
  * simply stays absent — either way, the written document never gets a
  * defaulted `roleArea: {}` or `schedule: ""` per this story's acceptance
  * criteria.
+ *
+ * `groupId`/`groupLabel` identify the single group (Slice 1 has no
+ * group-management UI yet — see configToDraft()'s own comment) this draft's
+ * `needs`/`roleArea` get wrapped into. `groups` is then sent as a complete
+ * replacement array (same "always submits the complete current state"
+ * convention as `sources`), so an edit with `roleArea` disabled correctly
+ * un-sets it — see the tri-state comment above.
  */
-function draftToEdits(draft: DraftConfig): ConfigEdits {
+function draftToEdits(draft: DraftConfig, groupId: string, groupLabel: string): ConfigEdits {
   // NOT typed as `Profile`/`Needs` here on purpose: draftNumber() can return
   // the original (invalid) string for a blank/non-numeric field, which is
   // exactly what should reach ConfigSchema.safeParse() server-side to
@@ -489,18 +504,15 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
 
   const sources: SourceConfig[] = draft.sources.map(draftToSource);
 
-  const edits: ConfigEdits = { profile, needs, sources };
+  const roleArea: RoleAreaConfig | undefined = draft.roleArea.enabled
+    ? {
+        coreTitles: nonBlank(draft.roleArea.coreTitles),
+        keywords: nonBlank(draft.roleArea.keywords),
+        redKeywords: nonBlank(draft.roleArea.redKeywords),
+      }
+    : undefined;
 
-  if (draft.roleArea.enabled) {
-    const roleArea: RoleAreaConfig = {
-      coreTitles: nonBlank(draft.roleArea.coreTitles),
-      keywords: nonBlank(draft.roleArea.keywords),
-      redKeywords: nonBlank(draft.roleArea.redKeywords),
-    };
-    edits.roleArea = roleArea;
-  } else {
-    edits.roleArea = undefined;
-  }
+  const edits: ConfigEdits = { profile, groups: [{ id: groupId, label: groupLabel, needs, roleArea }], sources };
 
   const schedule = draft.schedule.trim();
   edits.schedule = schedule === "" ? undefined : schedule;
@@ -1337,6 +1349,14 @@ export function ConfigClient({
 }) {
   const sourcesWithOpenIssues = new Set(sourcesWithOpenIssuesList);
   const [draft, setDraft] = useState<DraftConfig>(() => configToDraft(initial));
+  // Slice 1 has no group-management UI yet (see configToDraft()'s own
+  // comment) — this form only ever edits the FIRST/primary group's id/label
+  // is preserved (never renamed by this form), and re-captured after each
+  // successful save so it always reflects what's actually on disk.
+  const primaryGroupRef = useRef({
+    id: initial.groups[0]?.id ?? "default-search-1",
+    label: initial.groups[0]?.label ?? "Default Search 1",
+  });
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -1700,7 +1720,7 @@ export function ConfigClient({
     e.preventDefault();
     setError(null);
     setSavedAt(null);
-    const edits = draftToEdits(draft);
+    const edits = draftToEdits(draft, primaryGroupRef.current.id, primaryGroupRef.current.label);
     startTransition(async () => {
       const result = await saveConfigAction(edits);
       if (!result.ok) {
@@ -1710,6 +1730,8 @@ export function ConfigClient({
       // Resync the form with the server's validated, written document —
       // e.g. a source added with a blank id/settings row got dropped.
       setDraft(configToDraft(result.data));
+      const savedGroup = result.data.groups[0];
+      if (savedGroup) primaryGroupRef.current = { id: savedGroup.id, label: savedGroup.label };
       setSavedAt(Date.now());
     });
   }

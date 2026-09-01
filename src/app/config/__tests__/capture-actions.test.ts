@@ -207,7 +207,7 @@ describe("finishCaptureAction: success", () => {
     expect(braintrust.settings.apiKey).toBe("env:BRAINTRUST_API_KEY");
 
     expect(onDisk.profile.name).toBe("Ada");
-    expect(onDisk.roleArea.coreTitles).toEqual(["CTO"]);
+    expect(onDisk.groups[0].roleArea.coreTitles).toEqual(["CTO"]);
   });
 
   it("appends a new minimal source entry when the source doesn't exist yet in the saved config (capture success is never lost)", async () => {

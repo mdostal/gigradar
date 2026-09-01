@@ -88,22 +88,28 @@ const validConfig = {
     skills: ["TypeScript", "Architecture"],
     timezone: "America/Chicago",
   },
-  needs: {
-    engagementProfiles: [
-      {
-        id: "fractional-contract",
-        label: "Fractional/contract",
-        types: ["contract", "fractional"],
-        minRate: 150,
-        highRate: 250,
-        maxHours: 20,
-        maxHoursAtHighRate: 40,
-        rateUnit: "hour",
+  groups: [
+    {
+      id: "g1",
+      label: "Group 1",
+      needs: {
+        engagementProfiles: [
+          {
+            id: "fractional-contract",
+            label: "Fractional/contract",
+            types: ["contract", "fractional"],
+            minRate: 150,
+            highRate: 250,
+            maxHours: 20,
+            maxHoursAtHighRate: 40,
+            rateUnit: "hour",
+          },
+        ],
+        freshStageOnly: true,
+        remoteOnly: true,
       },
-    ],
-    freshStageOnly: true,
-    remoteOnly: true,
-  },
+    },
+  ],
   sources: [{ id: "braintrust", enabled: true }],
 };
 
@@ -168,14 +174,15 @@ describe("saveConfig: happy path (overwrite existing file)", () => {
     };
     writeConfig(full);
 
-    // Only editing `needs` here — profile/sources/schedule should survive
-    // untouched via the merge against the freshly re-read raw document.
-    const editedProfiles = [{ ...full.needs.engagementProfiles[0]!, minRate: 200 }];
-    const result = saveConfig({ needs: { ...full.needs, engagementProfiles: editedProfiles } });
+    // Only editing group 0's `needs` here — profile/sources/schedule should
+    // survive untouched via the merge against the freshly re-read raw document.
+    const group = full.groups[0]!;
+    const editedProfiles = [{ ...group.needs.engagementProfiles[0]!, minRate: 200 }];
+    const result = saveConfig({ groups: [{ ...group, needs: { ...group.needs, engagementProfiles: editedProfiles } }] });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.data.needs.engagementProfiles[0]!.minRate).toBe(200);
+    expect(result.data.groups[0]!.needs.engagementProfiles[0]!.minRate).toBe(200);
     expect(result.data.profile).toEqual(full.profile);
     expect(result.data.sources).toEqual(full.sources);
     expect(result.data.schedule).toBe(full.schedule);
@@ -292,12 +299,12 @@ describe("saveConfig: validation failure writes nothing", () => {
   it("returns a field-level error and does not write anything when no config.json existed before", () => {
     expect(fs.existsSync(getConfigPath())).toBe(false);
 
-    const { needs, ...rest } = validConfig; // omit required `needs`
+    const { groups, ...rest } = validConfig; // omit required `groups`
     const result = saveConfig(rest);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("needs");
+    expect(result.error).toContain("groups");
     expect(fs.existsSync(getConfigPath())).toBe(false);
   });
 
@@ -307,17 +314,23 @@ describe("saveConfig: validation failure writes nothing", () => {
     const beforeStat = fs.statSync(getConfigPath());
 
     // minRate must be a number — send a string to fail schema validation.
+    const group = validConfig.groups[0]!;
     const result = saveConfig({
       ...validConfig,
-      needs: {
-        ...validConfig.needs,
-        engagementProfiles: [{ ...validConfig.needs.engagementProfiles[0], minRate: "not-a-number" }],
-      },
+      groups: [
+        {
+          ...group,
+          needs: {
+            ...group.needs,
+            engagementProfiles: [{ ...group.needs.engagementProfiles[0], minRate: "not-a-number" }],
+          },
+        },
+      ],
     });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
-    expect(result.error).toContain("needs.engagementProfiles.0.minRate");
+    expect(result.error).toContain("groups.0.needs.engagementProfiles.0.minRate");
 
     const after = fs.readFileSync(getConfigPath(), "utf8");
     const afterStat = fs.statSync(getConfigPath());
@@ -336,17 +349,23 @@ describe("saveConfig: validation failure writes nothing", () => {
       const beforeStat = fs.statSync(getConfigPath());
       expect(isEncryptedEnvelope(before)).toBe(false);
 
+      const group = validConfig.groups[0]!;
       const result = saveConfig({
         ...validConfig,
-        needs: {
-          ...validConfig.needs,
-          engagementProfiles: [{ ...validConfig.needs.engagementProfiles[0], minRate: "not-a-number" }],
-        },
+        groups: [
+          {
+            ...group,
+            needs: {
+              ...group.needs,
+              engagementProfiles: [{ ...group.needs.engagementProfiles[0], minRate: "not-a-number" }],
+            },
+          },
+        ],
       });
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected failure");
-      expect(result.error).toContain("needs.engagementProfiles.0.minRate");
+      expect(result.error).toContain("groups.0.needs.engagementProfiles.0.minRate");
 
       const after = fs.readFileSync(getConfigPath(), "utf8");
       const afterStat = fs.statSync(getConfigPath());
@@ -421,7 +440,7 @@ describe("readRawConfig: the config-editing UI's pre-populate read path", () => 
     expect(isEncryptedEnvelope(fs.readFileSync(configPath, "utf8"))).toBe(true);
   });
 
-  it("given a config.json still in the deprecated flat needs shape (minRate/allowContractToHire, no engagementProfiles), readRawConfig() returns it already migrated to a real profile — the config UI never sees the old shape", () => {
+  it("given a config.json still in the deprecated flat needs shape (minRate/allowContractToHire, no engagementProfiles), readRawConfig() returns it already migrated to groups with a real profile — the config UI never sees the old shape", () => {
     writeConfig({
       profile: { name: "Ada", roles: [], skills: [], timezone: "UTC" },
       needs: {
@@ -437,12 +456,12 @@ describe("readRawConfig: the config-editing UI's pre-populate read path", () => 
     });
 
     const raw = readRawConfig() as {
-      needs: { engagementProfiles: { minRate: number; types: string[] }[] };
+      groups: { needs: { engagementProfiles: { minRate: number; types: string[] }[] } }[];
     };
 
-    expect(raw.needs.engagementProfiles).toHaveLength(1);
-    expect(raw.needs.engagementProfiles[0]?.minRate).toBe(150);
-    expect(raw.needs.engagementProfiles[0]?.types).toEqual(["contract", "fractional"]);
+    expect(raw.groups[0]?.needs.engagementProfiles).toHaveLength(1);
+    expect(raw.groups[0]?.needs.engagementProfiles[0]?.minRate).toBe(150);
+    expect(raw.groups[0]?.needs.engagementProfiles[0]?.types).toEqual(["contract", "fractional"]);
   });
 
   it("given an already-encrypted config.json, readRawConfig() decrypts and returns the document with no further write", () => {
@@ -466,11 +485,11 @@ describe("saveConfig: no resolved secret ever appears in an error message", () =
     process.env.YET_ANOTHER_FAKE_SECRET = "must-not-leak-into-error-messages";
     envVarsTouchedByTests.add("YET_ANOTHER_FAKE_SECRET");
 
-    const { needs, ...rest } = validConfig;
+    const { groups, ...rest } = validConfig;
     const result = saveConfig({
       ...rest,
       sources: [{ id: "braintrust", enabled: true, settings: { apiKey: "env:YET_ANOTHER_FAKE_SECRET" } }],
-      // needs omitted -> validation failure
+      // groups omitted -> validation failure
     });
 
     expect(result.ok).toBe(false);

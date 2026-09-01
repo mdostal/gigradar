@@ -78,7 +78,9 @@ import { endChatSession, MAX_TURNS, resolveApproval, sendMessage, startChatSessi
 
 const FAKE_CONFIG: Config = {
   profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
-  needs: { engagementProfiles: [], freshStageOnly: false, remoteOnly: false },
+  groups: [
+    { id: "g1", label: "Group 1", needs: { engagementProfiles: [], freshStageOnly: false, remoteOnly: false } },
+  ],
   sources: [],
   applyProfile: { email: "jane@example.com" },
 };
@@ -506,13 +508,19 @@ describe("source-connection tools: propose then approve, no exceptions", () => {
     const { saveConfig } = await import("../../config/save.js");
     const seedResult = saveConfig({
       profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
-      needs: {
-        engagementProfiles: [
-          { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
-        ],
-        freshStageOnly: false,
-        remoteOnly: false,
-      },
+      groups: [
+        {
+          id: "g1",
+          label: "Group 1",
+          needs: {
+            engagementProfiles: [
+              { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+            ],
+            freshStageOnly: false,
+            remoteOnly: false,
+          },
+        },
+      ],
       sources: [{ id: "gofractional", enabled: true }],
     });
     expect(seedResult.ok).toBe(true);
@@ -687,13 +695,19 @@ describe("add_source: propose then approve, no exceptions", () => {
     const { saveConfig } = await import("../../config/save.js");
     const result = saveConfig({
       profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
-      needs: {
-        engagementProfiles: [
-          { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
-        ],
-        freshStageOnly: false,
-        remoteOnly: false,
-      },
+      groups: [
+        {
+          id: "g1",
+          label: "Group 1",
+          needs: {
+            engagementProfiles: [
+              { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+            ],
+            freshStageOnly: false,
+            remoteOnly: false,
+          },
+        },
+      ],
       sources: [],
     });
     expect(result.ok).toBe(true);
@@ -779,13 +793,19 @@ describe("add_source: propose then approve, no exceptions", () => {
     const { saveConfig } = await import("../../config/save.js");
     saveConfig({
       profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
-      needs: {
-        engagementProfiles: [
-          { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
-        ],
-        freshStageOnly: false,
-        remoteOnly: false,
-      },
+      groups: [
+        {
+          id: "g1",
+          label: "Group 1",
+          needs: {
+            engagementProfiles: [
+              { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+            ],
+            freshStageOnly: false,
+            remoteOnly: false,
+          },
+        },
+      ],
       sources: [{ id: "monster", enabled: true }],
     });
 

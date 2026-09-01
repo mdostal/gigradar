@@ -7,6 +7,7 @@ import { gmailDigestSource } from "../sources/gmail-digest-source.js";
 import { registerAllSources } from "../sources/register-all.js";
 import { gate } from "../matching/gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
+import { matchGroups } from "../matching/group-match.js";
 import { gigKey, recordScan, saveDraft } from "../store/index.js";
 import type { DbOption, RecordScanOptions, SourceScanBatch } from "../store/index.js";
 import { loadConfig } from "../config/load.js";
@@ -22,10 +23,20 @@ import { generateDraft } from "./draft.js";
  * tier() runs after gate() for every gig, independent of pass/fail — a
  * rejected gig still gets a GREEN/YELLOW/RED role-area classification, since
  * tiering answers a different question ("is this my kind of role?") than the
- * gate's hard constraints. config.roleArea is optional; when the user hasn't
- * configured one, EMPTY_ROLE_AREA_CONFIG makes every gig tier YELLOW rather
+ * gate's hard constraints. A group's roleArea is optional; when unset,
+ * EMPTY_ROLE_AREA_CONFIG makes every gig tier YELLOW for that group rather
  * than erroring. The tier is stamped onto the persisted Gig (gig.tier) so it
  * survives the trip through the store — see Gig.tier's doc in ../types.ts.
+ *
+ * multi-group-architecture epic: every gig also gets evaluated against
+ * EVERY one of the owner's configured Config.groups that this source is in
+ * scope for (SourceConfig.groupIds, default: every group) — see
+ * matching/group-match.ts's matchGroups(). Gig.matchedGroupIds/
+ * matchedGroupTiers carry that full per-group picture; the flat
+ * Gig.tier/matchedProfileIds fields (and this function's own MatchResult.
+ * pass/reasons/score) stay anchored to the FIRST in-scope group for
+ * backward compatibility — byte-identical to pre-multi-group behavior for
+ * a not-yet-multi-group install, which has exactly one group.
  *
  * `storeOpts` forwards straight to recordScan() (db/now overrides) — tests
  * use it to point at a temp database instead of the process-wide default.
@@ -98,6 +109,21 @@ export async function runRadar(
       continue;
     }
 
+    // multi-group-architecture epic: which of the owner's configured
+    // groups this source's gigs get evaluated against. Absent
+    // SourceConfig.groupIds means every group — a source is shared across
+    // every search unless deliberately scoped down. Resolved once per
+    // source (not per gig) since it never varies within one source's batch.
+    const scopedGroupIds = sc.groupIds ?? config.groups.map((grp) => grp.id);
+    const scopedGroups = config.groups.filter((grp) => scopedGroupIds.includes(grp.id));
+    // The first in-scope group anchors this gig's BACKWARD-COMPATIBLE flat
+    // tier/matchedProfileIds/reasons/score (Gig.tier, Gig.matchedProfileIds)
+    // — for a not-yet-multi-group install (exactly one group, every source
+    // scoped to it) this is byte-identical to pre-multi-group behavior. A
+    // real multi-group install's per-group detail lives in
+    // matchedGroupIds/matchedGroupTiers instead (see below), never lost.
+    const primaryGroup = scopedGroups[0];
+
     // Dedup this source's own fetch by key (defends against a single fetch
     // call returning the same externalId twice) before gating and persisting.
     const seenInBatch = new Set<string>();
@@ -107,17 +133,34 @@ export async function runRadar(
       if (seenInBatch.has(key)) continue;
       seenInBatch.add(key);
 
-      const gateResult = gate(g, config.needs, config.profile);
-      const tierResult = tier(g, config.roleArea ?? EMPTY_ROLE_AREA_CONFIG);
-      // Stamp tier + matchedProfileIds onto the persisted gig (not the
-      // original `g`, so a caller's own Gig object is never mutated) — this
-      // is the object that both the batch and the returned MatchResult
-      // reference, so the store and the in-memory result agree on both.
-      const gigWithTier: Gig = { ...g, tier: tierResult.tier, matchedProfileIds: gateResult.matchedProfiles };
+      const gateResult = primaryGroup
+        ? gate(g, primaryGroup.needs, config.profile)
+        : { gig: g, pass: false, reasons: ["no group in scope for this source"], score: 0, matchedProfiles: [] };
+      const tierResult = tier(g, primaryGroup?.roleArea ?? EMPTY_ROLE_AREA_CONFIG);
+      const { matchedGroupIds, groupTiers } = matchGroups(g, scopedGroups, config.profile);
+      // Stamp tier + matchedProfileIds/matchedGroupIds/matchedGroupTiers
+      // onto the persisted gig (not the original `g`, so a caller's own
+      // Gig object is never mutated) — this is the object that both the
+      // batch and the returned MatchResult reference, so the store and the
+      // in-memory result agree on all of it.
+      const gigWithTier: Gig = {
+        ...g,
+        tier: tierResult.tier,
+        matchedProfileIds: gateResult.matchedProfiles,
+        matchedGroupIds,
+        matchedGroupTiers: groupTiers,
+      };
 
       deduped.push(gigWithTier);
       results.push({
         ...gateResult,
+        // "pass" reflects whether this gig cleared ANY in-scope group, not
+        // just the primary one — the auto-draft/notify-on-green-match
+        // consumers of RunRadar()'s own `passed` list must react to a real
+        // match in ANY of the owner's groups, not just whichever happens
+        // to be first. Byte-identical to before for a single-group install
+        // (there IS only one group to check).
+        pass: matchedGroupIds.length > 0,
         gig: gigWithTier,
         tier: tierResult.tier,
         reasons: [...gateResult.reasons, ...tierResult.reasons],

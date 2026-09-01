@@ -30,22 +30,28 @@ let originalXdgConfigHome: string | undefined;
 function baseConfigEdits(applyProfile?: Record<string, unknown>): ConfigEdits {
   return {
     profile: { name: "Jane Doe", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "America/Chicago" },
-    needs: {
-      engagementProfiles: [
-        {
-          id: "any-hourly",
-          label: "Any (hourly)",
-          types: ["contract", "fractional", "contract-to-hire"],
-          minRate: 0,
-          highRate: 999_999,
-          maxHours: 999,
-          maxHoursAtHighRate: 999,
-          rateUnit: "hour",
+    groups: [
+      {
+        id: "g1",
+        label: "Group 1",
+        needs: {
+          engagementProfiles: [
+            {
+              id: "any-hourly",
+              label: "Any (hourly)",
+              types: ["contract", "fractional", "contract-to-hire"],
+              minRate: 0,
+              highRate: 999_999,
+              maxHours: 999,
+              maxHoursAtHighRate: 999,
+              rateUnit: "hour",
+            },
+          ],
+          freshStageOnly: false,
+          remoteOnly: false,
         },
-      ],
-      freshStageOnly: false,
-      remoteOnly: false,
-    },
+      },
+    ],
     sources: [{ id: "braintrust", enabled: true }],
     applyProfile,
   };

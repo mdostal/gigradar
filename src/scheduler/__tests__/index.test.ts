@@ -32,30 +32,36 @@ type RunRadarResult = {
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
     profile: { name: "Test User", roles: [], skills: [], timezone: "UTC" },
-    needs: {
-      engagementProfiles: [
-        {
-          id: "any-hourly",
-          label: "Any (hourly)",
-          types: ["contract", "fractional", "contract-to-hire"],
-          minRate: 0,
-          highRate: 999_999,
-          maxHours: 999,
-          maxHoursAtHighRate: 999,
-          rateUnit: "hour",
+    groups: [
+      {
+        id: "g1",
+        label: "Group 1",
+        needs: {
+          engagementProfiles: [
+            {
+              id: "any-hourly",
+              label: "Any (hourly)",
+              types: ["contract", "fractional", "contract-to-hire"],
+              minRate: 0,
+              highRate: 999_999,
+              maxHours: 999,
+              maxHoursAtHighRate: 999,
+              rateUnit: "hour",
+            },
+            {
+              id: "any-salaried",
+              label: "Any (salaried)",
+              types: ["full-time"],
+              minRate: 0,
+              highRate: 999_999_999,
+              rateUnit: "year",
+            },
+          ],
+          freshStageOnly: false,
+          remoteOnly: false,
         },
-        {
-          id: "any-salaried",
-          label: "Any (salaried)",
-          types: ["full-time"],
-          minRate: 0,
-          highRate: 999_999_999,
-          rateUnit: "year",
-        },
-      ],
-      freshStageOnly: false,
-      remoteOnly: false,
-    },
+      },
+    ],
     sources: [{ id: "braintrust", enabled: true }],
     ...overrides,
   };

@@ -38,13 +38,21 @@ export const dynamic = "force-dynamic";
  * profile-grouping story. `readRawConfig()` returns `Record<string,
  * unknown>` (see this file's own header comment on why raw, never
  * `loadConfig()`), so this is a defensive, tolerant extraction: a missing/
- * malformed `needs.engagementProfiles` (first-run, no config yet, a shape
- * this reader doesn't expect) yields `[]` rather than throwing — the
- * dashboard's own Profile column/filter degrades to "no profiles
+ * malformed `groups[0].needs.engagementProfiles` (first-run, no config yet,
+ * a shape this reader doesn't expect) yields `[]` rather than throwing —
+ * the dashboard's own Profile column/filter degrades to "no profiles
  * configured" instead of crashing the page.
+ *
+ * multi-group-architecture epic: Slice 1 has no group-management UI yet —
+ * this only ever reads the FIRST/primary group's needs (same single-group
+ * convention as the config UI and setup wizard).
  */
 function extractEngagementProfileSummaries(rawConfig: Record<string, unknown>): { id: string; label: string }[] {
-  const needs = rawConfig.needs;
+  const groups = rawConfig.groups;
+  if (!Array.isArray(groups)) return [];
+  const group = groups[0];
+  if (typeof group !== "object" || group === null) return [];
+  const needs = (group as Record<string, unknown>).needs;
   if (typeof needs !== "object" || needs === null) return [];
   const profiles = (needs as Record<string, unknown>).engagementProfiles;
   if (!Array.isArray(profiles)) return [];

@@ -240,6 +240,40 @@ export function migrateNeedsEngagementProfiles(parsed: unknown): unknown {
 }
 
 /**
+ * multi-group-architecture epic. `Config.groups` replaces the old flat
+ * top-level `needs`/`roleArea` fields with `GroupConfig[]` — a gig can
+ * now match zero, one, or several groups at once (see
+ * `matching/group-match.ts`), rather than one global search owning
+ * every gig. A legacy config with a top-level `needs` but no `groups`
+ * array gets its existing `needs`/`roleArea` wrapped into ONE group
+ * (id: "default-search-1", label: "Default Search 1" — owner's own
+ * decision, 2026-09-01: a generic, numbered placeholder they rename
+ * themselves, never an attempt to guess a name from existing
+ * `RoleAreaConfig` keywords) — every existing single-search config.json
+ * keeps working with ZERO manual editing. Read-time-only, exactly like
+ * `migrateNeedsEngagementProfiles()` above (whose own migration must run
+ * FIRST — this function is always chained after it at both call sites,
+ * so `needs.engagementProfiles` is already guaranteed present by the
+ * time this reads it into the synthesized group). The old top-level
+ * `needs`/`roleArea` keys are left in place harmlessly (zod strips
+ * unknown keys) — a subsequent config save naturally drops them since
+ * the config UI's draft no longer round-trips them.
+ */
+export function migrateFlatNeedsRoleAreaToGroups(parsed: unknown): unknown {
+  if (typeof parsed !== "object" || parsed === null) return parsed;
+  const doc = parsed as Record<string, unknown>;
+  if ("groups" in doc) return parsed;
+  if (typeof doc.needs !== "object" || doc.needs === null) return parsed;
+  const group: Record<string, unknown> = {
+    id: "default-search-1",
+    label: "Default Search 1",
+    needs: doc.needs,
+  };
+  if (typeof doc.roleArea === "object" && doc.roleArea !== null) group.roleArea = doc.roleArea;
+  return { ...doc, groups: [group] };
+}
+
+/**
  * Reads, decrypts (if needed), parses, and validates config.json from the
  * XDG data directory. Synchronous by design (not deferred) — this matches
  * the primary caller (src/lib/apply/runner.ts, invoked via tsx) and
@@ -264,7 +298,7 @@ export function loadConfig(): Config {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(
         `gigradar config: no config.json found at "${configPath}". ` +
-          "Create one there (profile, needs, and sources are required; roleArea and schedule are optional) " +
+          "Create one there (profile, groups, and sources are required; schedule is optional) " +
           "before running gigradar.",
       );
     }
@@ -326,7 +360,7 @@ export function loadConfig(): Config {
     migrateConfigToEncryptedAtomically(configPath, raw);
   }
 
-  const migrated = migrateNeedsEngagementProfiles(parsed);
+  const migrated = migrateFlatNeedsRoleAreaToGroups(migrateNeedsEngagementProfiles(parsed));
 
   const result = ConfigSchema.safeParse(migrated);
   if (!result.success) {
