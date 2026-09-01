@@ -52,6 +52,22 @@ vi.mock("../session-backend.js", () => ({
   readSessionViaPortunus: (...args: unknown[]) => readSessionViaPortunusMock(...args),
 }));
 
+// self-healing-persistent-session-fix story: withBrowserSession() now
+// retries a fast-path auth failure via real-chrome.ts's spawn/attach
+// mechanism. Fully mocked here too (matching session-capture.test.ts's own
+// convention) -- these tests care about the FAST path's own behavior;
+// spawnRealChromeMock defaults to a rejection (see beforeEach below) so the
+// fallback fails immediately and predictably rather than actually spawning
+// a real Chrome process during `npm test`.
+const spawnRealChromeMock = vi.fn();
+const attachToRealChromeMock = vi.fn();
+const closeRealChromeMock = vi.fn();
+vi.mock("../real-chrome.js", () => ({
+  spawnRealChrome: (...args: unknown[]) => spawnRealChromeMock(...args),
+  attachToRealChrome: (...args: unknown[]) => attachToRealChromeMock(...args),
+  closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
+}));
+
 // Imported AFTER the mock is registered (vi.mock is hoisted by vitest, so
 // this ordering is actually irrelevant, but keeping it below documents the
 // dependency clearly).
@@ -94,6 +110,13 @@ beforeEach(() => {
   launchMock.mockReset();
   executablePathMock.mockReset();
   readSessionViaPortunusMock.mockReset();
+  spawnRealChromeMock.mockReset();
+  attachToRealChromeMock.mockReset();
+  closeRealChromeMock.mockReset();
+  // Default: the persistent-real-chrome fallback fails fast (no real Chrome
+  // in a test environment) -- individual tests that need to exercise a
+  // SUCCESSFUL fallback override this.
+  spawnRealChromeMock.mockRejectedValue(new Error("real Chrome not available in test"));
   executablePathMock.mockReturnValue("/fake/chromium/executable");
   // Chromium "available" by default in every test except the dedicated
   // missing-binary tests below, which override this — but ONLY for the
@@ -153,6 +176,7 @@ function createFakePage(overrides: Record<string, unknown> = {}) {
     goto: vi.fn().mockResolvedValue(undefined),
     title: vi.fn().mockResolvedValue(""),
     locator: vi.fn().mockReturnValue({ innerText: vi.fn().mockResolvedValue("") }),
+    close: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -179,6 +203,31 @@ function setUpFakeBrowserChain(pageOverrides: Record<string, unknown> = {}) {
   const context = createFakeContext(page);
   const browser = createFakeBrowser(context);
   launchMock.mockResolvedValue(browser);
+  return { page, context, browser };
+}
+
+const FAKE_REAL_CHROME_HANDLE = { process: { kill: vi.fn() }, cdpPort: 9999, userDataDir: "/fake/real-chrome-profile", persistent: true };
+
+/**
+ * Wires a fake page/context/"real Chrome" browser together and registers
+ * them with spawnRealChromeMock/attachToRealChromeMock — the
+ * persistent-real-chrome fallback's own acquisition chain, distinct from
+ * setUpFakeBrowserChain()'s fast-path (launchMock) chain. `context.contexts()`
+ * on the returned fake browser exposes exactly this one context (mirroring
+ * `browser.contexts()[0]` — the real, persistent-profile default context,
+ * never `newContext()`), and `context.storageState()` resolves
+ * `storageStateResult` (default: an empty, valid StorageState) so the
+ * self-heal write-back path has something real to filter and persist.
+ */
+function setUpFakeRealChromeChain(pageOverrides: Record<string, unknown> = {}, storageStateResult: StorageState = { cookies: [], origins: [] }) {
+  const page = createFakePage(pageOverrides);
+  const context = {
+    ...createFakeContext(page),
+    storageState: vi.fn().mockResolvedValue(storageStateResult),
+  };
+  const browser = { contexts: vi.fn().mockReturnValue([context]), newContext: vi.fn().mockResolvedValue(context), close: vi.fn().mockResolvedValue(undefined) };
+  spawnRealChromeMock.mockResolvedValue(FAKE_REAL_CHROME_HANDLE);
+  attachToRealChromeMock.mockResolvedValue(browser);
   return { page, context, browser };
 }
 
@@ -535,7 +584,7 @@ describe("withBrowserSession: cleanup on every exit path", () => {
         },
         runCallback,
       ),
-    ).rejects.toThrow(/session expired\/invalid for source "gofractional"/);
+    ).rejects.toThrow(/session for source "gofractional".*is invalid, and the persistent-real-chrome retry ALSO failed/);
 
     expect(runCallback).not.toHaveBeenCalled();
     expect(context.close).toHaveBeenCalledTimes(1);
@@ -1014,5 +1063,99 @@ describe("withBrowserSession: no scraped page content ever appears in errors/log
 
     const allLoggedText = [...errorSpy.mock.calls, ...warnSpy.mock.calls].flat().join(" ");
     expect(allLoggedText).not.toContain("SECRET");
+  });
+});
+
+describe("withBrowserSession: self-healing persistent-real-chrome fallback (owner's own words, 2026-09-01: fix the LONG-TERM lived session, not another one-off Capture Login)", () => {
+  it("never attempts the fallback when the fast path succeeds -- spawnRealChrome() is not called", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain();
+
+    await withBrowserSession(
+      { sourceId: "test-source", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: async () => true },
+      async () => "ok",
+    );
+
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+  });
+
+  it("never retries via the fallback when run() itself throws -- only an auth-related failure triggers a retry", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain();
+
+    await expect(
+      withBrowserSession(
+        { sourceId: "test-source", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: async () => true },
+        async () => {
+          throw new Error("scrape logic blew up, unrelated to auth");
+        },
+      ),
+    ).rejects.toThrow("scrape logic blew up, unrelated to auth");
+
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+  });
+
+  it("when the fast path's session is invalid, retries via spawnRealChrome()/attachToRealChrome() and succeeds using browser.contexts()[0] -- never newContext()", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({}); // fast path: isAuthenticated will fail
+    const { context: realChromeContext, browser: realChromeBrowser } = setUpFakeRealChromeChain();
+
+    const result = await withBrowserSession(
+      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true) },
+      async () => "recovered-via-real-chrome",
+    );
+
+    expect(result).toBe("recovered-via-real-chrome");
+    expect(spawnRealChromeMock).toHaveBeenCalledWith({ persistent: true });
+    expect(attachToRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE.cdpPort);
+    expect(realChromeBrowser.newContext).not.toHaveBeenCalled(); // must reuse contexts()[0], never a fresh isolated context
+    expect(realChromeContext.newPage).toHaveBeenCalledTimes(1);
+    expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
+  });
+
+  it("on a successful fallback, refreshes the on-disk storageState snapshot (origin-scoped) so the NEXT call's fast path is self-healed", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({});
+    const freshCookie = { name: "session", value: "brand-new-cookie-from-real-chrome", domain: "app.targetsource.example", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" as const };
+    const unrelatedCookie = { name: "sid", value: "unrelated-origin-must-be-filtered-out", domain: "accounts.google.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" as const };
+    setUpFakeRealChromeChain({}, { cookies: [freshCookie, unrelatedCookie], origins: [] });
+
+    await withBrowserSession(
+      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true) },
+      async () => "ok",
+    );
+
+    const refreshed: StorageState = JSON.parse(decrypt(fs.readFileSync(storageStatePath, "utf8")));
+    expect(refreshed.cookies).toHaveLength(1); // origin-scoping filter still applied to the write-back
+    expect(refreshed.cookies[0]?.value).toBe("brand-new-cookie-from-real-chrome");
+  });
+
+  it("when the fallback ALSO fails for an unrelated reason, throws ONE combined, actionable error naming both failures", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({});
+    spawnRealChromeMock.mockRejectedValue(new Error("Google Chrome not found at the expected path"));
+
+    await expect(
+      withBrowserSession(
+        { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: async () => false },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(/persistent-real-chrome retry ALSO failed: Google Chrome not found.*Run Capture Login/s);
+  });
+
+  it("when the FAST path itself hit a verification challenge, re-throws that ORIGINAL VerificationChallengeError even if the fallback fails for a different reason -- runner.ts's instanceof routing must still work", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({ title: vi.fn().mockResolvedValue("Just a moment... | Cloudflare") });
+    spawnRealChromeMock.mockRejectedValue(new Error("real Chrome not available in test"));
+
+    const isAuthenticated = vi.fn();
+    await expect(
+      withBrowserSession(
+        { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(VerificationChallengeError);
+
+    expect(isAuthenticated).not.toHaveBeenCalled(); // the fast path never even reached the caller's own predicate
   });
 });

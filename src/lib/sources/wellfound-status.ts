@@ -96,6 +96,11 @@ function normalizeTitle(t: string): string {
  */
 export async function scrapeApplicationStatuses(page: Page): Promise<ApplicationStatusRow[]> {
   await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+  // "networkidle" alone is not a reliable signal the rows have actually
+  // rendered -- see gofractional-status.ts's own scrapeApplicationStatuses()
+  // for the live-verified false-empty-scrape this guards against (same
+  // pattern, same fix). A timeout here just means zero real rows exist.
+  await page.waitForSelector('a[href^="/jobs/applications/"]', { timeout: 15000 }).catch(() => {});
   return page.evaluate(() => {
     // The "Ongoing"/"Archived" tab nav links themselves (bare
     // "/jobs/applications" or "/jobs/applications/archived", no trailing
