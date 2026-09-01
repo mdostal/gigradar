@@ -8,6 +8,45 @@ import { SOURCE_ORIGINS } from "./origins.js";
 import { isAuthenticatedGoFractional } from "./gofractional.js";
 
 /**
+ * Poll timing for isWorkPageHydrated() below — deliberately longer than
+ * gofractional.ts's own AUTH_CHECK_POLL_TIMEOUT_MS (5s): live-verified
+ * 2026-09-01 (self-healing-persistent-session-fix story) that a
+ * Playwright-LAUNCHED Chromium (even with a valid, authenticated session —
+ * `isAuthenticatedGoFractional()` returning true) can sit on a degraded,
+ * un-hydrated shell (`document.title` stuck at the generic "Go Fractional |
+ * Go Fractional" rather than the real, hydrated page's own "Work | Go
+ * Fractional") for well past 5 seconds, never rendering the applications
+ * table at all — the SAME session navigated via the persistent real-chrome
+ * profile (real-chrome.ts) hydrates normally. 12s gives a genuinely slow
+ * real hydration a fair chance without hanging indefinitely on a
+ * permanently-stuck shell.
+ */
+const WORK_PAGE_HYDRATION_POLL_TIMEOUT_MS = 12_000;
+const WORK_PAGE_HYDRATION_POLL_INTERVAL_MS = 250;
+
+/**
+ * "Authenticated" for `/work` specifically means MORE than
+ * isAuthenticatedGoFractional()'s own generic "Dashboard nav link present"
+ * check (which THIS page shell also satisfies even while stuck un-
+ * hydrated — see this file's own WORK_PAGE_HYDRATION_POLL_TIMEOUT_MS doc
+ * comment). Requires BOTH: the shared nav check, AND the real, hydrated
+ * page's own live-verified title ("Work | Go Fractional" — never the
+ * generic "Go Fractional | Go Fractional" shell). A page stuck un-hydrated
+ * correctly reports `false` here, which is exactly what triggers
+ * browser-session.ts's persistent-real-chrome self-healing retry — the
+ * mechanism that actually recovers this case (live-verified).
+ */
+async function isWorkPageHydrated(page: Page): Promise<boolean> {
+  if (!(await isAuthenticatedGoFractional(page))) return false;
+  const deadline = Date.now() + WORK_PAGE_HYDRATION_POLL_TIMEOUT_MS;
+  for (;;) {
+    if ((await page.title()).startsWith("Work")) return true;
+    if (Date.now() >= deadline) return false;
+    await page.waitForTimeout(WORK_PAGE_HYDRATION_POLL_INTERVAL_MS);
+  }
+}
+
+/**
  * Status reconciliation for GoFractional (product-review-followups epic,
  * status-reconciliation-from-platforms story — first source; see
  * .pHive project memory for why this landed here first: owner's own
@@ -101,6 +140,15 @@ function normalizeTitle(t: string): string {
  */
 export async function scrapeApplicationStatuses(page: Page): Promise<ApplicationStatusRow[]> {
   await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+  // "networkidle" alone is not a reliable signal that the table has
+  // actually rendered -- live-verified 2026-09-01 (self-healing-persistent-
+  // session-fix story): on a freshly-launched browser, the page can report
+  // idle network BEFORE the client-rendered rows appear, producing a
+  // false-empty scrape even though the account genuinely has applications.
+  // Wait for a real row to exist too; a timeout here just means the account
+  // genuinely has zero rows (or the table never renders for some other
+  // reason), same as before -- never thrown, never blocks a real empty result.
+  await page.waitForSelector("table tbody tr", { timeout: 15000 }).catch(() => {});
   return page.evaluate(() => {
     const rows: { company: string; title: string; statusLabel: string; updatedText: string }[] = [];
     for (const tr of document.querySelectorAll("table tbody tr")) {
@@ -190,10 +238,10 @@ export async function reconcileGoFractionalStatuses(cfg: SourceConfig): Promise<
       sessionBackend,
       allowedOrigins: [...ALLOWED_ORIGINS],
       url: WORK_URL,
-      // Reuses gofractional.ts's own real, live-verified auth predicate (the
-      // "Dashboard" nav-link poll) rather than inventing a second one — the
-      // /work page carries the exact same authenticated-nav shell.
-      isAuthenticated: isAuthenticatedGoFractional,
+      // isWorkPageHydrated() (this file, above) -- NOT the bare
+      // isAuthenticatedGoFractional() -- since the generic nav-link check
+      // alone can pass on a degraded, un-hydrated shell (live-verified).
+      isAuthenticated: isWorkPageHydrated,
     },
     (page) => scrapeApplicationStatuses(page),
   );

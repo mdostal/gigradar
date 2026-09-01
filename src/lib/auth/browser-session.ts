@@ -53,6 +53,7 @@ import { decrypt, getOrCreateKey, isEncryptedEnvelope, VaultTamperError } from "
 import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
 import { writeStorageStateAtomically } from "./session-capture.js";
 import { isVerificationChallengeContent, VerificationChallengeError } from "../sources/verification-challenge.js";
+import { attachToRealChrome, closeRealChrome, spawnRealChrome } from "./real-chrome.js";
 
 const MODULE_PREFIX = "gigradar browser-session";
 
@@ -349,25 +350,188 @@ export async function launchHeadedBrowser(logContext: string): Promise<Browser> 
 }
 
 /**
- * Launches a headed, origin-scoped Chromium session for one source, hands
+ * Thrown by navigateAndCheckAuth() when `options.isAuthenticated` returns
+ * false — distinct from any error `run()` itself might throw, so
+ * withBrowserSession() can tell "the session itself was bad" (worth a
+ * persistent-real-chrome retry, see below) apart from "the scrape logic
+ * failed for an unrelated reason" (never retried here).
+ */
+class SessionAuthError extends Error {}
+
+/**
+ * Navigates `page` to `url`, runs the shared verification-challenge check
+ * then the caller's own `isAuthenticated` predicate, and throws
+ * (VerificationChallengeError or SessionAuthError) on either failure —
+ * shared between withBrowserSession()'s two acquisition paths (the fast
+ * default path and the persistent-real-chrome fallback below) so the
+ * auth-failure detection logic exists exactly once.
+ */
+async function navigateAndCheckAuth(
+  page: Page,
+  url: string,
+  sourceId: string,
+  isAuthenticated: (page: Page) => Promise<boolean>,
+): Promise<void> {
+  await page.goto(url);
+
+  // verification-copilot epic: a cheap page-content signal (title +
+  // visible body text), checked BEFORE the caller's own isAuthenticated
+  // predicate — a verification challenge is a distinct failure mode
+  // from "session expired," and the caller's own auth check may not
+  // recognize it as anything other than a generic auth failure. See
+  // verification-challenge.ts's own header comment for why this is
+  // wired here (the one shared call site) rather than per-adapter.
+  const title = await page.title();
+  const bodyText = await page.locator("body").innerText().catch(() => "");
+  if (isVerificationChallengeContent(`${title}\n${bodyText.slice(0, 2000)}`)) {
+    throw new VerificationChallengeError(sourceId, url);
+  }
+
+  const authenticated = await isAuthenticated(page);
+  if (!authenticated) {
+    throw new SessionAuthError(
+      `${MODULE_PREFIX}: session expired/invalid for source "${sourceId}" (checked against "${url}").`,
+    );
+  }
+}
+
+/**
+ * THE FAST, DEFAULT acquisition path — a fresh, origin-scoped Playwright
+ * Chromium context seeded from the source's own captured storageState
+ * snapshot. Cheap and, when the snapshot is still valid, indistinguishable
+ * from the old (pre-self-healing) behavior. Throws SessionAuthError or
+ * VerificationChallengeError (never silently) when the snapshot no longer
+ * authenticates — withBrowserSession() below catches exactly those two to
+ * decide whether a persistent-real-chrome retry is warranted.
+ */
+async function acquireViaStorageStateSnapshot<T>(
+  options: BrowserSessionOptions,
+  scopedStorageState: StorageState,
+  run: (page: Page) => Promise<T>,
+): Promise<T> {
+  const { sourceId, url, isAuthenticated } = options;
+  checkChromiumAvailable();
+  const browser: Browser = await launchHeadedBrowser(`source "${sourceId}"`);
+  try {
+    const context = await browser.newContext({ storageState: scopedStorageState });
+    try {
+      const page = await context.newPage();
+      await navigateAndCheckAuth(page, url, sourceId, isAuthenticated);
+      return await run(page);
+    } finally {
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * THE SELF-HEALING FALLBACK (status-reconciliation-outcomes epic's
+ * companion story, persistent-session-fix — owner's own words, 2026-09-01,
+ * correcting a proposed one-off re-Capture-Login: "you HAVE to fix your
+ * long term lived session rather than doing a single session capture that
+ * then recreates the entire thing with no session data").
+ *
+ * ROOT CAUSE this fixes: the fast path above launches a FRESH, Playwright-
+ * fingerprinted Chromium (`chromium.launch()` — carries automation flags
+ * regardless of `channel`, per real-chrome.ts's own header comment) fed a
+ * STATIC storageState snapshot captured once and never renewed. When the
+ * target site invalidates that snapshot server-side, this module had no
+ * recovery path — every future call kept replaying the same dead cookies
+ * into the same fingerprint-detectable browser, live-verified (2026-09-01)
+ * to trip Cloudflare's "Just a moment…" challenge on GoFractional.
+ *
+ * THE FIX: retry via real-chrome.ts's spawn-then-attach mechanism against
+ * the SAME shared, persistent `--user-data-dir` Capture Login itself uses
+ * (`spawnRealChrome({persistent:true})`) — a REAL, non-fingerprinted Chrome
+ * process, reusing its own on-disk cookie jar (`browser.contexts()[0]`,
+ * NEVER `newContext()` — see session-capture.ts's own doc comment: a fresh
+ * context is always isolated from the persistent profile's real cookies,
+ * regardless of `--user-data-dir`). If that authenticates, this function
+ * ALSO writes a fresh storageState snapshot back to disk (local backend
+ * only) before returning — so the fast path above is self-healed for every
+ * later call, rather than staying permanently broken until a human re-runs
+ * Capture Login. Mirrors session-capture.ts's own spawn/attach/cleanup
+ * pattern exactly (including always killing the spawned process when done —
+ * "persistent" describes the ON-DISK PROFILE surviving between spawns, not
+ * a long-lived background process; see project memory
+ * gigradar-real-chrome-persistent-profile.md).
+ *
+ * Storage-state write-back is best-effort: a failure to persist the
+ * refreshed snapshot is logged, never thrown — the caller already got a
+ * real, successful result from `run(page)` at that point, and losing the
+ * self-heal for THIS call only degrades the next call back to "fast path
+ * fails, falls back here again," not a hard failure.
+ */
+async function acquireViaPersistentRealChrome<T>(
+  options: BrowserSessionOptions,
+  scopedAllowedOrigins: string[],
+  storageStatePathToRefresh: string | undefined,
+  run: (page: Page) => Promise<T>,
+): Promise<T> {
+  const { sourceId, url, isAuthenticated } = options;
+  const handle = await spawnRealChrome({ persistent: true });
+  const browser = await attachToRealChrome(handle.cdpPort);
+  try {
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+    const page = await context.newPage();
+    try {
+      await navigateAndCheckAuth(page, url, sourceId, isAuthenticated);
+      const result = await run(page);
+
+      if (storageStatePathToRefresh) {
+        try {
+          const freshState = (await context.storageState()) as StorageState;
+          const scopedFreshState = filterStorageStateToAllowlist(freshState, scopedAllowedOrigins);
+          writeStorageStateAtomically(storageStatePathToRefresh, scopedFreshState);
+        } catch (e) {
+          console.warn(
+            `${MODULE_PREFIX}: real-chrome fallback succeeded for source "${sourceId}" but refreshing its storageState snapshot failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+
+      return result;
+    } finally {
+      await page.close().catch(() => {});
+    }
+  } finally {
+    // Mirrors session-capture.ts's own safeCloseBrowser(): swallow the
+    // Playwright-side close error (the CDP connection may already be
+    // closing) since closeRealChrome()'s pkill-based kill guarantees the
+    // real process dies either way -- see that function's own doc comment.
+    try {
+      await browser.close();
+    } catch {
+      // already closed/closing
+    }
+    closeRealChrome(handle);
+  }
+}
+
+/**
+ * Acquires a headed, origin-scoped browser session for one source, hands
  * the caller a `Page` (already navigated to `options.url` and confirmed
- * authenticated by `options.isAuthenticated`) via `run`, and GUARANTEES
- * `context.close()`/`browser.close()` are called exactly once each on every
- * exit path — including when `run` throws, and when the auth-failure
- * predicate returns false — via a `finally` block. Cleanup is owned
- * centrally here, never left to the caller/adapter (see design_decisions in
- * the story YAML: a leaked Chromium process on every auth-failure run would
- * be a real operational bug otherwise).
+ * authenticated by `options.isAuthenticated`) via `run`, and GUARANTEES the
+ * browser is closed on every exit path. Cleanup is owned centrally here,
+ * never left to the caller/adapter.
+ *
+ * TWO ACQUISITION PATHS, self-healing (see acquireViaPersistentRealChrome()'s
+ * own doc comment for the full rationale): tries the fast, default
+ * storageState-snapshot path first; if THAT throws a VerificationChallengeError
+ * or SessionAuthError (an invalid/stale session — never on any other error,
+ * including one `run()` itself throws), retries ONCE via a real,
+ * persistent-profile Chrome instance, and refreshes the snapshot on success
+ * so future calls are fast again. If the fallback ALSO fails, throws a
+ * combined, actionable error naming both failures — Capture Login is
+ * genuinely the last resort now, not the only path.
  *
  * Throws (before ever launching a browser) if the storageState file is
- * missing/unreadable/malformed — see readStorageStateFile(). Throws (after
- * navigation, before invoking `run`) a specific, actionable
- * "session expired/invalid" error if `isAuthenticated` returns false — the
- * browser/context are still cleanly closed in that case, same as any other
- * throw. Never silently proceeds or returns as if nothing is wrong.
+ * missing/unreadable/malformed — see readStorageStateFile().
  */
 export async function withBrowserSession<T>(options: BrowserSessionOptions, run: (page: Page) => Promise<T>): Promise<T> {
-  const { sourceId, storageStatePathSetting, sessionBackend, allowedOrigins, url, isAuthenticated } = options;
+  const { sourceId, storageStatePathSetting, sessionBackend, allowedOrigins, url } = options;
 
   if (allowedOrigins.length === 0) {
     throw new Error(
@@ -378,6 +542,7 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
 
   const backend = sessionBackend ?? "local";
 
+  let resolvedStorageStatePath: string | undefined;
   let rawStorageState: StorageState;
   if (backend === "portunus") {
     rawStorageState = await readSessionViaPortunus(sourceId, PORTUNUS_SESSION_ACCOUNT);
@@ -387,51 +552,35 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
         `${MODULE_PREFIX}: source "${sourceId}" is using the local session backend but no storageState path was supplied.`,
       );
     }
-    const storageStatePath = resolveEnvString(
-      storageStatePathSetting,
-      `source "${sourceId}" settings storageState path`,
-    );
-    rawStorageState = readStorageStateFile(storageStatePath);
+    resolvedStorageStatePath = resolveEnvString(storageStatePathSetting, `source "${sourceId}" settings storageState path`);
+    rawStorageState = readStorageStateFile(resolvedStorageStatePath);
   }
 
   const scopedStorageState = filterStorageStateToAllowlist(rawStorageState, allowedOrigins);
 
-  checkChromiumAvailable();
-
-  const browser: Browser = await launchHeadedBrowser(`source "${sourceId}"`);
-
   try {
-    const context = await browser.newContext({ storageState: scopedStorageState });
-    try {
-      const page = await context.newPage();
-      await page.goto(url);
-
-      // verification-copilot epic: a cheap page-content signal (title +
-      // visible body text), checked BEFORE the caller's own isAuthenticated
-      // predicate — a verification challenge is a distinct failure mode
-      // from "session expired," and the caller's own auth check may not
-      // recognize it as anything other than a generic auth failure. See
-      // verification-challenge.ts's own header comment for why this is
-      // wired here (the one shared call site) rather than per-adapter.
-      const title = await page.title();
-      const bodyText = await page.locator("body").innerText().catch(() => "");
-      if (isVerificationChallengeContent(`${title}\n${bodyText.slice(0, 2000)}`)) {
-        throw new VerificationChallengeError(sourceId, url);
-      }
-
-      const authenticated = await isAuthenticated(page);
-      if (!authenticated) {
-        throw new Error(
-          `${MODULE_PREFIX}: session expired/invalid for source "${sourceId}" (checked against "${url}"). ` +
-            "Re-authenticate by generating a fresh storageState file and updating this source's settings.",
-        );
-      }
-
-      return await run(page);
-    } finally {
-      await context.close();
+    return await acquireViaStorageStateSnapshot(options, scopedStorageState, run);
+  } catch (fastPathError) {
+    if (!(fastPathError instanceof VerificationChallengeError) && !(fastPathError instanceof SessionAuthError)) {
+      throw fastPathError; // an unrelated failure (e.g. from run() itself) -- never retried
     }
-  } finally {
-    await browser.close();
+    try {
+      return await acquireViaPersistentRealChrome(options, allowedOrigins, resolvedStorageStatePath, run);
+    } catch (fallbackError) {
+      // If the FAST PATH's own failure was a verification challenge, that
+      // diagnosis is already actionable (runner.ts's per-source error
+      // handling routes VerificationChallengeError, via instanceof, to a
+      // DISTINCT "needs human verification" issue rather than a generic
+      // "source fetch failed" one -- see verification-challenge.ts's own
+      // doc comment) regardless of why the fallback ALSO failed. Preserve
+      // and re-throw the ORIGINAL error rather than the fallback's own
+      // (possibly unrelated, e.g. "real Chrome not installed") failure.
+      if (fastPathError instanceof VerificationChallengeError) throw fastPathError;
+      throw new Error(
+        `${MODULE_PREFIX}: session for source "${sourceId}" (checked against "${url}") is invalid, and the ` +
+          `persistent-real-chrome retry ALSO failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}. ` +
+          "Run Capture Login for this source to establish a fresh, real, logged-in session.",
+      );
+    }
   }
 }
