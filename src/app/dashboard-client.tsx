@@ -17,7 +17,7 @@ import type { PrepPacketContent } from "@/lib/apply/prep";
 import { generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
 import { DASHBOARD_PREFS_STORAGE_KEY, deserializeDashboardPrefs, serializeDashboardPrefs } from "./dashboard-prefs";
-import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, type SeenWindow } from "./dashboard-filter";
+import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, shortProfileLabel, type SeenWindow } from "./dashboard-filter";
 import { compareByField, type SortField } from "./dashboard-sort";
 import { GigDetailPanel } from "./gig-detail-panel";
 
@@ -44,6 +44,24 @@ export const OUTCOME_LABEL: Record<OutcomeReason, string> = {
   withdrawn: "Withdrawn/closed",
   expired_unapplied: "Missed — closed before we applied",
 };
+
+/**
+ * dashboard-profile-grouping story — owner's own words: "we aren't
+ * filtering based on the salaries and grouping them like I asked where we
+ * can create different groups... my A list is all fractional gigs and
+ * they pay hourly... let's make a C list." `Gig.matchedProfileIds`
+ * (stamped by the matching runner from `Needs.engagementProfiles`) already
+ * records WHICH configured rate/engagement-type profile(s) a gig cleared —
+ * a completely different axis from the Tier column (matching/tiering.ts's
+ * role-area keyword classifier, see that column's own comment). This was
+ * real, existing data with no dashboard surface at all until now.
+ *
+ * Sentinel for "matched zero configured profiles" — a real, common,
+ * meaningful bucket (e.g. every RED-tier gig, or a green-tier gig whose
+ * rate/hours don't clear anything you've configured — see the Tier
+ * column's own ⚠ marker), not an edge case to hide.
+ */
+export const NO_PROFILE_MATCH = "__none__";
 
 /**
  * Pipeline tabs (product-review-followups epic, dashboard-redesign story) --
@@ -110,7 +128,7 @@ const filterInputClass =
  * (module-augmented below), so the header-row renderer stays generic
  * instead of a giant switch keyed on column id.
  */
-type FilterKind = "text" | "select" | "status-multi" | "number-min" | "number-max" | "seen-window" | "none";
+type FilterKind = "text" | "select" | "status-multi" | "profile-multi" | "number-min" | "number-max" | "seen-window" | "none";
 
 declare module "@tanstack/react-table" {
   interface ColumnMeta<TData, TValue> {
@@ -127,12 +145,15 @@ function ColumnFilterCell({
   onChange,
   selectOptions,
   label,
+  profiles,
 }: {
   filterKind: FilterKind;
   value: unknown;
   onChange: (next: unknown) => void;
   selectOptions?: string[];
   label: string;
+  /** Only for filterKind: "profile-multi" — the configured engagement profiles, dynamic per-install (unlike ALL_STATUSES). */
+  profiles?: { id: string; label: string }[];
 }) {
   if (filterKind === "none") return null;
 
@@ -227,6 +248,38 @@ function ColumnFilterCell({
     );
   }
 
+  if (filterKind === "profile-multi") {
+    const options = [...(profiles ?? []), { id: NO_PROFILE_MATCH, label: "None" }];
+    const checked = (value as ReadonlySet<string>) ?? new Set(options.map((o) => o.id));
+    return (
+      <div className="flex flex-wrap gap-1">
+        {options.map((o) => {
+          const active = checked.has(o.id);
+          return (
+            <button
+              key={o.id}
+              type="button"
+              aria-pressed={active}
+              title={o.label}
+              onClick={() => {
+                const next = new Set(checked);
+                if (next.has(o.id)) next.delete(o.id);
+                else next.add(o.id);
+                onChange(next);
+              }}
+              className={[
+                "rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors",
+                active ? "bg-slate-900 text-white" : "bg-slate-100 text-theme-text-dim hover:bg-slate-200",
+              ].join(" ")}
+            >
+              {o.id === NO_PROFILE_MATCH ? o.label : shortProfileLabel(o.label)}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   return null;
 }
 
@@ -254,11 +307,14 @@ export function DashboardClient({
   gigs,
   draftedGigKeys = new Set(),
   initialPrepByGigKey = {},
+  engagementProfiles = [],
 }: {
   gigs: StoredGig[];
   draftedGigKeys?: ReadonlySet<string>;
   /** Prep packets already persisted (interview_prep table) as of this page's own listGigs()-sibling fetch in page.tsx -- see that file's comment for why this now loads instead of starting empty. */
   initialPrepByGigKey?: Readonly<Record<string, PrepPacketContent>>;
+  /** dashboard-profile-grouping story — this install's configured Needs.engagementProfiles, {id,label} only (see page.tsx's extractEngagementProfileSummaries()). Empty for a first-run install with no Needs configured yet -- the Profile column/filter then just shows the "None" bucket for everything, never crashes. */
+  engagementProfiles?: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -636,6 +692,44 @@ export function DashboardClient({
       meta: { filterKind: "select", selectOptions: ["green", "yellow", "red"] },
     },
     {
+      id: "profile",
+      header: "Profile",
+      // dashboard-profile-grouping story — WHICH configured rate/engagement-
+      // type profile(s) this gig cleared (matching/gate.ts), a different
+      // axis from Tier (role-area only, matching/tiering.ts — see that
+      // column's own comment). Sorts by profile count so multi-match gigs
+      // group together; ties keep their existing relative order.
+      accessorFn: (g) => g.matchedProfileIds?.length ?? 0,
+      cell: ({ row }) => {
+        const ids = row.original.matchedProfileIds ?? [];
+        if (ids.length === 0) return <span className="text-theme-text-dim">—</span>;
+        return (
+          <span className="flex flex-wrap gap-1">
+            {ids.map((id) => {
+              const profile = engagementProfiles.find((p) => p.id === id);
+              return (
+                <span
+                  key={id}
+                  title={profile?.label ?? id}
+                  className="inline-flex rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-theme-text-dim"
+                >
+                  {profile ? shortProfileLabel(profile.label) : id}
+                </span>
+              );
+            })}
+          </span>
+        );
+      },
+      filterFn: (row, _id, value) => {
+        const checked = value as ReadonlySet<string> | undefined;
+        if (!checked) return true;
+        const ids = row.original.matchedProfileIds ?? [];
+        if (ids.length === 0) return checked.has(NO_PROFILE_MATCH);
+        return ids.some((id) => checked.has(id));
+      },
+      meta: { filterKind: "profile-multi" },
+    },
+    {
       id: "status",
       header: "Status",
       accessorFn: (g) => g.status,
@@ -860,6 +954,7 @@ export function DashboardClient({
                     label={
                       typeof header.column.columnDef.header === "string" ? header.column.columnDef.header : header.id
                     }
+                    profiles={engagementProfiles}
                   />
                 </th>
               ))}

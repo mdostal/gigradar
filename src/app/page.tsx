@@ -32,10 +32,36 @@ export const dynamic = "force-dynamic";
 // free. Both computeStatusStrip() inputs tolerate the first-run / empty
 // state (no config.json yet -> `{}`; zero gigs ever scanned -> `[]`)
 // without throwing.
+/**
+ * Extracts just `{id, label}` for each configured engagement profile from
+ * the RAW (unresolved, no-secrets-possible) config document — dashboard-
+ * profile-grouping story. `readRawConfig()` returns `Record<string,
+ * unknown>` (see this file's own header comment on why raw, never
+ * `loadConfig()`), so this is a defensive, tolerant extraction: a missing/
+ * malformed `needs.engagementProfiles` (first-run, no config yet, a shape
+ * this reader doesn't expect) yields `[]` rather than throwing — the
+ * dashboard's own Profile column/filter degrades to "no profiles
+ * configured" instead of crashing the page.
+ */
+function extractEngagementProfileSummaries(rawConfig: Record<string, unknown>): { id: string; label: string }[] {
+  const needs = rawConfig.needs;
+  if (typeof needs !== "object" || needs === null) return [];
+  const profiles = (needs as Record<string, unknown>).engagementProfiles;
+  if (!Array.isArray(profiles)) return [];
+  const result: { id: string; label: string }[] = [];
+  for (const p of profiles) {
+    if (typeof p !== "object" || p === null) continue;
+    const { id, label } = p as Record<string, unknown>;
+    if (typeof id === "string" && typeof label === "string") result.push({ id, label });
+  }
+  return result;
+}
+
 export default function HomePage() {
   const gigs = listGigs();
   const rawConfig = readRawConfig();
   const status = computeStatusStrip(gigs, rawConfig);
+  const engagementProfiles = extractEngagementProfileSummaries(rawConfig);
   // `draft-review-ui` story: which gigs already have a draft (any status) —
   // purely a "Generate draft" vs "Regenerate draft" button label choice on
   // the row (dashboard-draft.ts's draftButtonLabel()), never a visibility
@@ -69,7 +95,7 @@ export default function HomePage() {
         <SyncStatusButton sourceLabel="GoFractional" action={reconcileGoFractionalStatusesAction} />
         <SyncStatusButton sourceLabel="Wellfound" action={reconcileWellfoundStatusesAction} />
       </div>
-      <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} initialPrepByGigKey={prepByGigKey} />
+      <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} initialPrepByGigKey={prepByGigKey} engagementProfiles={engagementProfiles} />
     </main>
   );
 }
