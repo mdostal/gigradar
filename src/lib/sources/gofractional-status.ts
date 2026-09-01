@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
 import type { SourceConfig } from "../types.js";
-import { listGigs, setStatus } from "../store/index.js";
+import { gigKey, listGigs, recordScan, setStatus } from "../store/index.js";
 import type { GigStatus } from "../store/index.js";
 import { withBrowserSession } from "../auth/browser-session.js";
 import { sessionBackendFrom } from "../auth/session-backend.js";
@@ -98,9 +98,27 @@ export async function scrapeApplicationStatuses(page: Page): Promise<Application
 export interface ReconciliationResult {
   updated: { key: string; title: string; from: GigStatus; to: GigStatus }[];
   alreadyCurrent: { key: string; title: string; status: GigStatus }[];
+  /** A row with no real slug/id in its DOM (see file-level comment) got a NEW gig record, synthetic-id keyed — see reconcileGoFractionalStatuses()'s own doc comment. */
+  backfilled: { key: string; title: string; status: GigStatus }[];
+  /** A row backfill genuinely could not handle (e.g. an empty title) — distinct from a normal backfill, which now covers what `noMatch` used to just report. */
   noMatch: ApplicationStatusRow[];
   ambiguous: (ApplicationStatusRow & { matchCount: number })[];
   unknownStatusLabel: ApplicationStatusRow[];
+}
+
+/**
+ * A stable-enough synthetic id for a GoFractional application row that has
+ * NO real slug/href anywhere in its DOM (see this file's header comment —
+ * these rows are `role="link"` `<tr>`s with a client-side router click
+ * handler, not real anchors). Derived from company+title so two distinct
+ * roles at the same company (or the same role title at two different
+ * companies) don't collide. Deliberately NOT this repo's usual
+ * `externalIdFromHref()` pattern — there IS no href to derive one from —
+ * documented here as synthetic, not a real GoFractional identifier, so a
+ * future maintainer never mistakes it for one.
+ */
+function syntheticExternalId(row: ApplicationStatusRow): string {
+  return `applied-${normalizeTitle(`${row.company} ${row.title}`).replace(/\s+/g, "-")}`;
 }
 
 /** Required only for the "local" (default) session backend -- same convention as every other browser-session adapter's own sessionStatePathFrom(). */
@@ -122,9 +140,22 @@ function sessionStatePathFrom(cfg: SourceConfig): string {
  * whose normalized title matches MORE THAN ONE local gig is reported in
  * `ambiguous`, not written — same "no-fabricated-write" discipline this
  * repo's adapters already apply to fabricated DATA, extended here to
- * fabricated MATCHES. A row with no local match at all (a gig gigradar
- * never actually tracked, e.g. applied to before this tool existed) is
- * reported in `noMatch`, not silently dropped.
+ * fabricated MATCHES.
+ *
+ * BACKFILLS a row with no local match at all (owner's own words,
+ * 2026-08-31: "go through, get ALL of them... build out the full
+ * knowledgebase... go fractional ESPECIALLY needs the status updates as a
+ * number of jobs keep getting brought up for application that I've already
+ * applied to") — a real application gigradar never actually tracked (e.g.
+ * applied to before this tool existed, or before this source's own scan
+ * ever surfaced that specific listing) gets a NEW gig record via
+ * `recordScan()` + an immediate `setStatus()` to the row's real status,
+ * rather than just being reported and dropped. This is exactly what stops
+ * an already-applied-to listing from resurfacing on the "To review" tab.
+ * The new record's `externalId` is a synthetic, company+title-derived id
+ * (see `syntheticExternalId()`) since these rows carry no real slug/href;
+ * its `url` points at the real `/work` dashboard (the one real, honest
+ * place to see it) rather than a fabricated `/job/{slug}` guess.
  */
 export async function reconcileGoFractionalStatuses(cfg: SourceConfig): Promise<ReconciliationResult> {
   const sessionBackend = sessionBackendFrom(cfg);
@@ -146,7 +177,7 @@ export async function reconcileGoFractionalStatuses(cfg: SourceConfig): Promise<
   );
 
   const localGigs = listGigs().filter((g) => g.sourceId === "gofractional");
-  const result: ReconciliationResult = { updated: [], alreadyCurrent: [], noMatch: [], ambiguous: [], unknownStatusLabel: [] };
+  const result: ReconciliationResult = { updated: [], alreadyCurrent: [], backfilled: [], noMatch: [], ambiguous: [], unknownStatusLabel: [] };
 
   for (const row of rows) {
     const newStatus = STATUS_LABEL_MAP[row.statusLabel.toLowerCase()];
@@ -159,7 +190,15 @@ export async function reconcileGoFractionalStatuses(cfg: SourceConfig): Promise<
     const matches = localGigs.filter((g) => normalizeTitle(g.title) === normalizedRowTitle);
 
     if (matches.length === 0) {
-      result.noMatch.push(row);
+      if (row.title.trim().length === 0) {
+        result.noMatch.push(row);
+        continue;
+      }
+      const externalId = syntheticExternalId(row);
+      recordScan([{ sourceId: "gofractional", gigs: [{ sourceId: "gofractional", externalId, title: row.title, company: row.company || undefined, url: WORK_URL }] }]);
+      const key = gigKey("gofractional", externalId);
+      setStatus(key, newStatus);
+      result.backfilled.push({ key, title: row.title, status: newStatus });
       continue;
     }
     if (matches.length > 1) {

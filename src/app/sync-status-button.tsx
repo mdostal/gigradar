@@ -49,6 +49,7 @@ export function SyncStatusButton({
       {state.status === "done" && (
         <p className="text-xs text-theme-text-dim">
           {state.result.updated.length} updated
+          {state.result.backfilled.length > 0 && `, ${state.result.backfilled.length} newly tracked`}
           {state.result.alreadyCurrent.length > 0 && `, ${state.result.alreadyCurrent.length} already current`}
           {state.result.noMatch.length > 0 && `, ${state.result.noMatch.length} not tracked locally`}
           {state.result.ambiguous.length > 0 && `, ${state.result.ambiguous.length} ambiguous (skipped)`}

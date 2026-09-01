@@ -19,7 +19,7 @@ vi.mock("../../auth/browser-session.js", () => ({
 }));
 
 // Imported AFTER the mock is registered (vi.mock is hoisted by vitest).
-import { closeDb, getGig, recordScan } from "../../store/index.js";
+import { closeDb, getGig, listGigs, recordScan } from "../../store/index.js";
 import { reconcileGoFractionalStatuses } from "../gofractional-status.js";
 
 interface WithBrowserSessionOptions {
@@ -97,13 +97,52 @@ describe("reconcileGoFractionalStatuses", () => {
     expect(result.alreadyCurrent).toEqual([{ key: "gofractional:fractional-cto-acme", title: "Fractional CTO", status: "applied" }]);
   });
 
-  it("reports noMatch (never fabricates a match) for a scraped row with no corresponding local gig", async () => {
+  it("backfills a NEW gig record (never just drops it) for a scraped row with no corresponding local gig", async () => {
     stubWithBrowserSession([{ company: "Some Co", title: "A Role Gigradar Never Tracked", statusLabel: "Applied", updatedText: "2 days ago" }]);
 
     const result = await reconcileGoFractionalStatuses(cfg);
 
     expect(result.updated).toEqual([]);
-    expect(result.noMatch).toEqual([{ company: "Some Co", title: "A Role Gigradar Never Tracked", statusLabel: "Applied", updatedText: "2 days ago" }]);
+    expect(result.noMatch).toEqual([]);
+    expect(result.backfilled).toEqual([
+      { key: "gofractional:applied-some-co-a-role-gigradar-never-tracked", title: "A Role Gigradar Never Tracked", status: "applied" },
+    ]);
+    const backfilledGig = getGig("gofractional:applied-some-co-a-role-gigradar-never-tracked");
+    expect(backfilledGig?.status).toBe("applied");
+    expect(backfilledGig?.title).toBe("A Role Gigradar Never Tracked");
+    expect(backfilledGig?.company).toBe("Some Co");
+    expect(backfilledGig?.url).toBe("https://app.gofractional.com/work");
+  });
+
+  it("backfills with a status other than 'applied' too ('Passed' row with no local match -> archived)", async () => {
+    stubWithBrowserSession([{ company: "Other Co", title: "Another Untracked Role", statusLabel: "Passed", updatedText: "3 weeks ago" }]);
+
+    const result = await reconcileGoFractionalStatuses(cfg);
+
+    expect(result.backfilled).toHaveLength(1);
+    expect(result.backfilled[0]?.status).toBe("archived");
+  });
+
+  it("does not double-backfill: re-running reconciliation against the same unmatched row finds it via title match on the second pass", async () => {
+    stubWithBrowserSession([{ company: "Some Co", title: "A Role Gigradar Never Tracked", statusLabel: "Applied", updatedText: "2 days ago" }]);
+    await reconcileGoFractionalStatuses(cfg); // first pass: backfilled
+
+    const result = await reconcileGoFractionalStatuses(cfg); // second pass: now locally tracked
+
+    expect(result.backfilled).toEqual([]);
+    expect(result.alreadyCurrent).toEqual([
+      { key: "gofractional:applied-some-co-a-role-gigradar-never-tracked", title: "A Role Gigradar Never Tracked", status: "applied" },
+    ]);
+    expect(listGigs().filter((g) => g.sourceId === "gofractional")).toHaveLength(1); // no duplicate record
+  });
+
+  it("still reports noMatch (does not backfill) for a row with an empty title", async () => {
+    stubWithBrowserSession([{ company: "Some Co", title: "", statusLabel: "Applied", updatedText: "2 days ago" }]);
+
+    const result = await reconcileGoFractionalStatuses(cfg);
+
+    expect(result.backfilled).toEqual([]);
+    expect(result.noMatch).toEqual([{ company: "Some Co", title: "", statusLabel: "Applied", updatedText: "2 days ago" }]);
   });
 
   it("reports ambiguous (never guesses) when a scraped title normalizes to MORE THAN ONE local gig", async () => {
