@@ -11,6 +11,7 @@ import { resolveLlmCredential } from "@/lib/config/env-store";
 import { readRawConfig } from "@/lib/config/save";
 import { ConfigSchema } from "@/lib/config/schema";
 import { reconcileGoFractionalStatuses, type ReconciliationResult } from "@/lib/sources/gofractional-status";
+import { reconcileWellfoundStatuses } from "@/lib/sources/wellfound-status";
 import type { MatchResult } from "@/lib/types";
 
 /**
@@ -244,6 +245,34 @@ export async function reconcileGoFractionalStatusesAction(): Promise<ActionResul
 
   try {
     const result = await reconcileGoFractionalStatuses(source);
+    if (result.updated.length > 0) revalidatePath("/");
+    return actionOk(result);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wellfound status reconciliation (product-review-followups epic,
+// status-reconciliation-from-platforms story, second source). Same shape
+// as reconcileGoFractionalStatusesAction() above.
+// ---------------------------------------------------------------------------
+
+export async function reconcileWellfoundStatusesAction(): Promise<ActionResult<ReconciliationResult>> {
+  let config;
+  try {
+    config = loadConfig();
+  } catch (e) {
+    return actionErr(e);
+  }
+
+  const source = config.sources.find((s) => s.id === "wellfound");
+  if (!source) {
+    return actionErr(new Error('gigradar status-reconciliation: no "wellfound" source configured.'));
+  }
+
+  try {
+    const result = await reconcileWellfoundStatuses(source);
     if (result.updated.length > 0) revalidatePath("/");
     return actionOk(result);
   } catch (e) {

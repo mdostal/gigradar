@@ -5,48 +5,17 @@
 // module entirely (no real/simulated Chromium launch anywhere here, so zero
 // live browser launches happen in `npm test`) and focuses on what's
 // specific to THIS adapter, mirroring gofractional.test.ts's/ateam.test.ts's
-// structure:
-//   1. the real, scoped-to-wellfound.com-only origin allowlist this adapter
-//      actually passes into withBrowserSession() — never Google/Clerk SSO
-//      or any other origin;
-//   2. the recursive __NEXT_DATA__ title/slug walk (findListings(), tested
-//      indirectly via fetch()) against a fixture, including dedup across
-//      the two role pages and both company-name extraction conventions;
-//   3. the page-shape-failure path — no __NEXT_DATA__ tag present at all
-//      (and its empty/invalid-JSON variants) — throws a specific,
-//      actionable error naming the source, never a silent [];
-//   4. the missing-session-file error path (settings.sessionStatePath
-//      missing entirely, AND withBrowserSession's own "no storageState file
-//      found" class of error propagated, never swallowed) — matching
-//      gofractional.ts's/ateam.ts's existing test patterns exactly, per
-//      this story's explicit acceptance criterion.
+// structure.
 //
-// *** FIXTURE IS SYNTHETIC, NOT LIVE-CAPTURED. ***  Unlike
-// gofractional-jobs-cards.json (captured live from a real, valid session),
-// this story's two target role-board URLs
-// (wellfound.com/role/l/chief-technology-officer,
-// wellfound.com/role/l/vp-of-engineering) were confirmed LIVE, with zero
-// session/cookies involved, to both return a genuine HTTP 404 today — see
-// wellfound.ts's own file-level comment for the full live-verification
-// finding (re-checked against 8 different /role/l/<slug> paths, all 404;
-// the whole URL scheme appears to have been retired since the legacy tool
-// this story ports from was built). No real job-listing __NEXT_DATA__
-// payload could therefore be captured this story. `fixtures/wellfound-next-
-// data.json` is a best-effort synthetic approximation — a plausible
-// Next.js state-tree shape with title/slug-keyed listing objects nested at
-// different depths, exercising the recursive walk, dedup, and both
-// company-extraction conventions findListings()/extractCompanyName()
-// implement — NOT recorded from a real Wellfound page. The ONE exception is
-// the login-page fixture data used in the "isAuthenticated predicate"
-// describe block below, and the __NEXT_DATA__ SCRIPT TAG MECHANISM itself
-// (id="__NEXT_DATA__", type="application/json") — both ARE real, confirmed,
-// live-observed data, not synthetic. A future maintainer with a valid
-// session and the current correct board URL MUST re-verify the real
-// listing shape and refresh this fixture before trusting production
-// output.
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+// LIVE-VERIFIED 2026-08-31 (product-review-followups epic — the owner's own
+// real account). This REPLACES an earlier version of this test file that
+// exercised a `__NEXT_DATA__` JSON-walk implementation — that approach's
+// own fixture was explicitly synthetic (its target URLs 404'd even
+// anonymously) and was never actually confirmed against real data. The
+// real, working board is a flat DOM anchor list at `https://wellfound.com/jobs`
+// (see wellfound.ts's own file-level comment for the exact real card
+// shape observed) — this file now mirrors ateam.test.ts's/gofractional.
+// test.ts's `evaluateResult` mocking convention instead.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SourceConfig } from "../../types.js";
 
@@ -59,8 +28,10 @@ vi.mock("../../auth/browser-session.js", () => ({
 import { wellfoundSource } from "../wellfound.js";
 import { SOURCE_LOGIN_URLS, SOURCE_ORIGINS } from "../origins.js";
 
-const fixturesDir = fileURLToPath(new URL("./fixtures", import.meta.url));
-const NEXT_DATA_TEXT = fs.readFileSync(path.join(fixturesDir, "wellfound-next-data.json"), "utf8");
+const REAL_CARD_LISTINGS = [
+  { href: "4617965-founding-cto-chief-ai-delivery-officer", title: "Founding CTO / Chief AI & Delivery Officer" },
+  { href: "4610203-vp-of-engineering", title: "VP of Engineering" },
+];
 
 interface WithBrowserSessionOptions {
   sourceId: string;
@@ -71,33 +42,29 @@ interface WithBrowserSessionOptions {
 }
 
 /**
- * A fake Page: `.title()`/`.textContent()` (used by isSignInPage()) are
- * canned; `.$eval()` (used by extractNextData()) either resolves the given
- * raw script-tag text or rejects, simulating Playwright's real behavior
- * when the selector matches zero elements (no `__NEXT_DATA__` tag present).
+ * A fake Page: `.title()`/`.textContent()` (used by isSignInPage()) and
+ * `.evaluate()` (used by scrapeJobCards()) are independently canned, same
+ * separation ateam.test.ts's/gofractional.test.ts's fake page uses.
+ * `.waitForLoadState()` is mocked resolved — scrapeJobCards() waits for
+ * network idle before evaluating.
  */
-function createFakePage(
-  opts: { title?: string; bodyText?: string; nextDataText?: string | null; evalRejects?: boolean } = {},
-) {
-  const nextDataText = opts.nextDataText === undefined ? NEXT_DATA_TEXT : opts.nextDataText;
+function createFakePage(opts: { title?: string; bodyText?: string; evaluateResult?: unknown } = {}) {
   return {
     title: vi.fn().mockResolvedValue(opts.title ?? "Startup Jobs & AI Recruiting Platform | Wellfound"),
     textContent: vi.fn().mockResolvedValue(opts.bodyText ?? ""),
-    $eval: vi.fn(async (_selector: string, fn: (el: { textContent: string | null }) => unknown) => {
-      if (opts.evalRejects) throw new Error("failed to find element matching selector \"script#__NEXT_DATA__\"");
-      return fn({ textContent: nextDataText });
-    }),
+    evaluate: vi.fn().mockResolvedValue(opts.evaluateResult ?? REAL_CARD_LISTINGS),
+    waitForLoadState: vi.fn().mockResolvedValue(undefined),
   };
 }
 
-/** Wires the mocked withBrowserSession to invoke the adapter's `run` callback against `page` for EVERY call (both role-URL fetches), capturing every options object it was called with. */
+/** Wires the mocked withBrowserSession to actually invoke the adapter's `run` callback against a fake page, capturing the options it was called with. */
 function stubWithBrowserSession(page: ReturnType<typeof createFakePage>) {
-  const capturedOptions: WithBrowserSessionOptions[] = [];
+  let capturedOptions: WithBrowserSessionOptions | undefined;
   withBrowserSessionMock.mockImplementation(async (options: WithBrowserSessionOptions, run: (p: unknown) => Promise<unknown>) => {
-    capturedOptions.push(options);
+    capturedOptions = options;
     return run(page);
   });
-  return capturedOptions;
+  return () => capturedOptions;
 }
 
 const cfg: SourceConfig = { id: "wellfound", enabled: true, settings: { sessionStatePath: "/fake/wellfound-session.json" } };
@@ -109,67 +76,36 @@ describe("wellfoundSource", () => {
     withBrowserSessionMock.mockReset();
   });
 
-  it("normalizes the __NEXT_DATA__ tree into Gig[] with real per-listing urls, deduped by slug across both role pages", async () => {
+  it("normalizes real job cards into Gig[] with real per-listing urls (never the board's own list-view url)", async () => {
     const page = createFakePage();
     stubWithBrowserSession(page);
 
     const gigs = await wellfoundSource.fetch(cfg, profile);
 
-    // 3 unique listings across the fixture's apolloState + searchResults
-    // trees (fractional-cto-acme-labs-123 appears twice, deduped) — fetched
-    // once per role URL (2 calls), so 6 raw finds collapse to 3 unique.
-    expect(gigs).toHaveLength(3);
+    expect(gigs).toHaveLength(2);
 
-    const cto = gigs.find((g) => g.externalId === "fractional-cto-acme-labs-123");
-    expect(cto).toBeDefined();
-    expect(cto).toMatchObject({
+    const founding = gigs.find((g) => g.externalId === "4617965-founding-cto-chief-ai-delivery-officer");
+    expect(founding).toMatchObject({
       sourceId: "wellfound",
-      externalId: "fractional-cto-acme-labs-123",
-      title: "Fractional Chief Technology Officer",
-      company: "Acme Labs", // via the flat `companyName` key
-      url: "https://wellfound.com/jobs/fractional-cto-acme-labs-123", // no explicit url field -> constructed
+      externalId: "4617965-founding-cto-chief-ai-delivery-officer",
+      title: "Founding CTO / Chief AI & Delivery Officer",
+      url: "https://wellfound.com/jobs/4617965-founding-cto-chief-ai-delivery-officer",
     });
 
-    const vpEng = gigs.find((g) => g.externalId === "vp-of-engineering-northwind-124");
-    expect(vpEng).toMatchObject({
-      title: "VP of Engineering",
-      company: "Northwind Robotics", // via the nested `company.name` key
-      url: "https://wellfound.com/jobs/vp-of-engineering-northwind-124",
-    });
-
-    const interim = gigs.find((g) => g.externalId === "interim-cto-meridian-pay-987");
-    expect(interim).toMatchObject({
-      title: "Interim CTO — Seed Stage Fintech",
-      company: "Meridian Pay",
-      url: "https://wellfound.com/jobs/interim-cto-meridian-pay-987", // explicit relative url field, resolved absolute
-    });
-
-    // Real per-listing urls, never a search/role-board page.
     for (const g of gigs) {
       expect(g.url).toMatch(/^https:\/\/wellfound\.com\/jobs\//);
-      expect(g.url).not.toContain("/role/l/");
+      expect(g.url).not.toBe("https://wellfound.com/jobs");
     }
   });
 
-  it("ignores objects that carry only a title or only a slug, never a false-positive match on a partial shape", async () => {
-    const page = createFakePage();
-    stubWithBrowserSession(page);
-
-    const gigs = await wellfoundSource.fetch(cfg, profile);
-
-    expect(gigs.find((g) => g.title === "Not A Real Listing")).toBeUndefined();
-    expect(gigs.some((g) => g.externalId === "not-a-real-listing-either")).toBe(false);
-    // The decoy Company object (name+slug, no `title` key) never matches either.
-    expect(gigs.some((g) => g.externalId === "acme-labs")).toBe(false);
-  });
-
-  it("never fabricates rate/weeklyHours/remote/postedAt — the real listing shape was never live-observed, so all stay unset rather than guessed", async () => {
+  it("never fabricates company/rate/weeklyHours/remote/postedAt — not reliably extractable from the real card DOM observed live, so all stay unset rather than guessed", async () => {
     const page = createFakePage();
     stubWithBrowserSession(page);
 
     const gigs = await wellfoundSource.fetch(cfg, profile);
 
     for (const g of gigs) {
+      expect(g.company).toBeUndefined();
       expect(g.rate).toBeUndefined();
       expect(g.weeklyHours).toBeUndefined();
       expect(g.remote).toBeUndefined();
@@ -177,22 +113,29 @@ describe("wellfoundSource", () => {
     }
   });
 
-  it("calls withBrowserSession once per role-board URL, each scoped to wellfound.com ONLY — never Google/Clerk SSO or any other origin", async () => {
+  it("filters out a card with no extractable title rather than producing a blank-titled Gig", async () => {
+    const page = createFakePage({ evaluateResult: [...REAL_CARD_LISTINGS, { href: "999-no-title-card", title: "" }] });
+    stubWithBrowserSession(page);
+
+    const gigs = await wellfoundSource.fetch(cfg, profile);
+
+    expect(gigs).toHaveLength(2);
+    expect(gigs.some((g) => g.externalId === "999-no-title-card")).toBe(false);
+  });
+
+  it("calls withBrowserSession once, against the real /jobs board, scoped to wellfound.com ONLY — never Google/Clerk SSO or any other origin", async () => {
     const page = createFakePage();
     const getOptions = stubWithBrowserSession(page);
 
     await wellfoundSource.fetch(cfg, profile);
 
-    expect(getOptions).toHaveLength(2);
-    const urls = getOptions.map((o) => o.url);
-    expect(urls).toEqual(["https://wellfound.com/role/l/chief-technology-officer", "https://wellfound.com/role/l/vp-of-engineering"]);
-
-    for (const options of getOptions) {
-      expect(options.sourceId).toBe("wellfound");
-      expect(options.allowedOrigins).toEqual(["wellfound.com"]);
-      expect(options.allowedOrigins).not.toContain("accounts.google.com");
-      expect(options.allowedOrigins.join(",")).not.toMatch(/google|clerk/i);
-    }
+    expect(withBrowserSessionMock).toHaveBeenCalledTimes(1);
+    const options = getOptions();
+    expect(options?.url).toBe("https://wellfound.com/jobs");
+    expect(options?.sourceId).toBe("wellfound");
+    expect(options?.allowedOrigins).toEqual(["wellfound.com"]);
+    expect(options?.allowedOrigins).not.toContain("accounts.google.com");
+    expect(options?.allowedOrigins.join(",")).not.toMatch(/google|clerk/i);
   });
 
   it("registers its own dedicated session settings — SOURCE_ORIGINS/SOURCE_LOGIN_URLS never point wellfound at gofractional's or ateam's entries", () => {
@@ -211,7 +154,7 @@ describe("wellfoundSource", () => {
       const getOptions = stubWithBrowserSession(page);
       await wellfoundSource.fetch(cfg, profile);
 
-      const isAuthenticated = getOptions[0]!.isAuthenticated;
+      const isAuthenticated = getOptions()!.isAuthenticated;
       await expect(isAuthenticated(page)).resolves.toBe(false);
     });
 
@@ -220,7 +163,7 @@ describe("wellfoundSource", () => {
       const getOptions = stubWithBrowserSession(page);
       await wellfoundSource.fetch(cfg, profile);
 
-      const isAuthenticated = getOptions[0]!.isAuthenticated;
+      const isAuthenticated = getOptions()!.isAuthenticated;
       await expect(isAuthenticated(page)).resolves.toBe(true);
     });
 
@@ -229,39 +172,16 @@ describe("wellfoundSource", () => {
       const getOptions = stubWithBrowserSession(page);
       await wellfoundSource.fetch(cfg, profile);
 
-      const isAuthenticated = getOptions[0]!.isAuthenticated;
+      const isAuthenticated = getOptions()!.isAuthenticated;
       await expect(isAuthenticated(page)).resolves.toBe(true);
     });
   });
 
-  describe("page-shape failures (no silent []) ", () => {
-    it("throws a specific, actionable error naming the source when no __NEXT_DATA__ script tag is present at all", async () => {
-      const page = createFakePage({ evalRejects: true });
-      stubWithBrowserSession(page);
+  it("throws (never returns []) when zero listings are scraped despite auth succeeding", async () => {
+    const page = createFakePage({ evaluateResult: [] });
+    stubWithBrowserSession(page);
 
-      await expect(wellfoundSource.fetch(cfg, profile)).rejects.toThrow(/wellfound: no __NEXT_DATA__ script tag found/);
-    });
-
-    it("throws when the __NEXT_DATA__ tag is present but empty", async () => {
-      const page = createFakePage({ nextDataText: "" });
-      stubWithBrowserSession(page);
-
-      await expect(wellfoundSource.fetch(cfg, profile)).rejects.toThrow(/wellfound.*__NEXT_DATA__.*empty/);
-    });
-
-    it("throws when the __NEXT_DATA__ tag content is not valid JSON", async () => {
-      const page = createFakePage({ nextDataText: "{not valid json" });
-      stubWithBrowserSession(page);
-
-      await expect(wellfoundSource.fetch(cfg, profile)).rejects.toThrow(/wellfound.*__NEXT_DATA__.*not valid JSON/);
-    });
-
-    it("throws (never returns []) when zero listings are found across both role pages despite the __NEXT_DATA__ tag parsing fine", async () => {
-      const page = createFakePage({ nextDataText: JSON.stringify({ props: { pageProps: { nothingHere: true } } }) });
-      stubWithBrowserSession(page);
-
-      await expect(wellfoundSource.fetch(cfg, profile)).rejects.toThrow(/found 0 listings across 2 role page\(s\)/);
-    });
+    await expect(wellfoundSource.fetch(cfg, profile)).rejects.toThrow(/found 0 job listings at https:\/\/wellfound\.com\/jobs/);
   });
 
   describe("missing-session error paths (same class of error as gofractional.ts/ateam.ts)", () => {

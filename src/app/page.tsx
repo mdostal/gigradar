@@ -2,7 +2,8 @@ import { readRawConfig } from "@/lib/config/save";
 import { listDrafts, listGigs, listInterviewPrep } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { DashboardClient } from "./dashboard-client";
-import { SyncGoFractionalButton } from "./sync-gofractional-button";
+import { SyncStatusButton } from "./sync-status-button";
+import { reconcileGoFractionalStatusesAction, reconcileWellfoundStatusesAction } from "./actions";
 import { computeStatusStrip } from "@/lib/status/status-strip";
 
 // gigradar is a single-user, 127.0.0.1-bound local app with no CDN/edge cache
@@ -65,7 +66,8 @@ export default function HomePage() {
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.sourcesLabel}</span>
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.profileLabel}</span>
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.lastScanLabel}</span>
-        <SyncGoFractionalButton />
+        <SyncStatusButton sourceLabel="GoFractional" action={reconcileGoFractionalStatusesAction} />
+        <SyncStatusButton sourceLabel="Wellfound" action={reconcileWellfoundStatusesAction} />
       </div>
       <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} initialPrepByGigKey={prepByGigKey} />
     </main>
