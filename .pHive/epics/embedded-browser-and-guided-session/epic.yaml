@@ -1,0 +1,10 @@
+name: embedded-browser-and-guided-session
+title: "Stop the flashing browser windows — headless-first scanning, minimized/positioned headed fallback, interactive embedded profile-assist pane"
+methodology: classic
+stories:
+  - id: headless-first-with-headed-fallback
+    depends_on: []
+  - id: minimize-and-position-headed-windows
+    depends_on: [headless-first-with-headed-fallback]
+  - id: embedded-view-interactive
+    depends_on: []

@@ -22,11 +22,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const spawnRealChromeMock = vi.fn();
 const attachToRealChromeMock = vi.fn();
 const closeRealChromeMock = vi.fn();
+// embedded-browser-and-guided-session epic: startAssistSession() now
+// positions the window (guided/full-auto) via a real, best-effort osascript
+// call -- mocked to a resolved no-op so this suite never shells out.
+const positionChromeWindowSideBySideMock = vi.fn(async (..._args: unknown[]) => undefined);
 
 vi.mock("../real-chrome.js", () => ({
   spawnRealChrome: (...args: unknown[]) => spawnRealChromeMock(...args),
   attachToRealChrome: (...args: unknown[]) => attachToRealChromeMock(...args),
   closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
+  positionChromeWindowSideBySide: (...args: unknown[]) => positionChromeWindowSideBySideMock(...args),
 }));
 
 // product-review-followups epic: startAssistSession() now fires a real
@@ -123,6 +128,7 @@ beforeEach(async () => {
   attachToRealChromeMock.mockReset();
   closeRealChromeMock.mockReset();
   readSessionViaPortunusMock.mockReset();
+  positionChromeWindowSideBySideMock.mockClear();
   vi.mocked((await import("../../notify/desktop.js")).sendDesktopNotification).mockClear();
 });
 
@@ -196,6 +202,24 @@ describe("startAssistSession / getAssistSessionPage / endAssistSession: happy pa
     await startAssistSession(SOURCE_ID, "full-auto", writeStorageStateFixture());
 
     expect(sendDesktopNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe("window positioning (embedded-browser-and-guided-session epic)", () => {
+  it("positions the window side-by-side for guided/full-auto -- work happens through the embedded pane, not the native window", async () => {
+    setUpFakeBrowserChain();
+
+    await startAssistSession(SOURCE_ID, "guided", writeStorageStateFixture());
+
+    expect(positionChromeWindowSideBySideMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT reposition the window for manual mode -- 'a real browser window is open on your desktop, use it directly' is the intended UX there", async () => {
+    setUpFakeBrowserChain();
+
+    await startAssistSession(SOURCE_ID, "manual", writeStorageStateFixture());
+
+    expect(positionChromeWindowSideBySideMock).not.toHaveBeenCalled();
   });
 });
 

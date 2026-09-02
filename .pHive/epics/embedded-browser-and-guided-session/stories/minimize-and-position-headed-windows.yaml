@@ -1,0 +1,38 @@
+id: minimize-and-position-headed-windows
+epic: embedded-browser-and-guided-session
+title: "Minimize headed windows on unattended scans; position them side-by-side for guided profile-assist sessions"
+status: complete
+complexity: small
+methodology: classic
+depends_on: [headless-first-with-headed-fallback]
+
+description: |
+  When a headed Chrome window IS required, two distinct treatments
+  depending on whether a human is expected to be present (owner
+  clarification mid-epic): unattended scheduled scans minimize the window
+  immediately (real-chrome.ts's minimizeChromeWindow(), macOS osascript,
+  best-effort/never throws); guided/full-auto profile-assist sessions
+  position the window to a fixed half of the primary display instead
+  (positionChromeWindowSideBySide()) -- a real, glanceable, directly-usable
+  window rather than a hidden one, complementing the embedded pane. Manual
+  mode is untouched either way.
+
+acceptance_criteria:
+  - "acquireViaStorageStateSnapshot()'s headed tier (tier 2) and acquireViaPersistentRealChrome() (tier 3) both call minimizeChromeWindow() once auth is confirmed, before run() executes."
+  - "minimizeChromeWindow() targets \"window 1 of application Google Chrome\" directly (not \"front window\") so it works regardless of frontmost-app state, via execFile (argv-level, never a shell)."
+  - "startAssistSession() calls positionChromeWindowSideBySide() for guided/full-auto mode starts, and does NOT call it for manual mode."
+  - "Both window-management helpers are macOS-only no-ops on other platforms, and swallow any osascript failure (never throw) -- a failure here must never fail a scan or session."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/real-chrome.ts
+      purpose: "new minimizeChromeWindow()/positionChromeWindowSideBySide() exports."
+    - path: src/lib/auth/browser-session.ts
+      purpose: "wires minimizeChromeWindow() into the two headed acquisition tiers."
+    - path: src/lib/auth/assist-session.ts
+      purpose: "wires positionChromeWindowSideBySide() into startAssistSession() for guided/full-auto."
+
+references:
+  - path: .pHive/epics/embedded-browser-and-guided-session/docs/design-discussion.md
+    relevant_excerpt: "Story B section -- the two-treatment split and the explicit out-of-scope note on true cross-app docking."

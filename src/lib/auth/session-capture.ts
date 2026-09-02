@@ -6,7 +6,7 @@
 // filterStorageStateToAllowlist() export and its StorageState type shapes.
 // The browser itself is acquired via real-chrome.ts's
 // spawnRealChrome()/attachToRealChrome() (never
-// playwright.chromium.launch()/browser-session.ts's launchHeadedBrowser() --
+// playwright.chromium.launch()/browser-session.ts's launchScopedChromium() --
 // see real-chrome.ts's header comment for why).
 //
 // THE EPIC'S SINGLE HIGHEST-NOVELTY PIECE: holding a live Playwright

@@ -9,6 +9,7 @@
 // discipline extractProfileFromResumeAction (src/app/config/actions.ts)
 // already establishes, for the same reason: this app's Server Action
 // request path never populates process.env from .env itself.
+import type { Page } from "playwright";
 import { actionErr, actionOk } from "@/lib/actions/result";
 import {
   endAssistSession,
@@ -222,6 +223,57 @@ export async function getSessionScreenshotAction(sessionId: string): Promise<Act
     const page = getAssistSessionPage(sessionId);
     const screenshot = await page.screenshot({ type: "jpeg", quality: 70 });
     return actionOk({ dataUrl: `data:image/jpeg;base64,${screenshot.toString("base64")}` });
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// embedded-browser-and-guided-session epic, embedded-view-interactive story
+// (this epic's real-world scope is `.pHive/epics/embedded-profile-assist`'s
+// own already-designed Slice 2 story --
+// stories/embedded-view-interactive.yaml -- built here, not redesigned).
+// Makes the embedded pane genuinely interactive: a human can click/type
+// directly into the real held Page without ever touching the separate
+// native window. Both return a fresh screenshot in the SAME response
+// (design-discussion.md's "one round trip, not two" reasoning) so the
+// client never needs a second call just to see the result of its own
+// action.
+// ---------------------------------------------------------------------------
+
+async function screenshotDataUrl(page: Page): Promise<string> {
+  const screenshot = await page.screenshot({ type: "jpeg", quality: 70 });
+  return `data:image/jpeg;base64,${screenshot.toString("base64")}`;
+}
+
+/**
+ * `xRatio`/`yRatio` are in [0, 1] -- the client computes them as
+ * offsetX/offsetY divided by the rendered `<img>`'s clientWidth/
+ * clientHeight, so this is independent of actual display size. Translated
+ * back to real page pixels via the held Page's own `viewportSize()` before
+ * calling `page.mouse.click()` -- Playwright's own input API, already
+ * available on the held Page, no raw CDP needed.
+ */
+export async function clickSessionAtAction(sessionId: string, xRatio: number, yRatio: number): Promise<ActionResult<{ dataUrl: string }>> {
+  try {
+    const page = getAssistSessionPage(sessionId);
+    const viewport = page.viewportSize();
+    if (!viewport) {
+      return actionErr(new Error("gigradar profile-assist: the session's page has no viewport size to translate the click against."));
+    }
+    await page.mouse.click(xRatio * viewport.width, yRatio * viewport.height);
+    return actionOk({ dataUrl: await screenshotDataUrl(page) });
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/** Types into whatever element currently has focus on the real page — matches normal keyboard-typing semantics (the human is expected to click a field first, same as using a real browser). */
+export async function typeIntoSessionAction(sessionId: string, text: string): Promise<ActionResult<{ dataUrl: string }>> {
+  try {
+    const page = getAssistSessionPage(sessionId);
+    await page.keyboard.type(text);
+    return actionOk({ dataUrl: await screenshotDataUrl(page) });
   } catch (e) {
     return actionErr(e);
   }
