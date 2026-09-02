@@ -163,7 +163,14 @@ export async function runRadar(
       // No-op (matchedGroupIds/aiFlags pass through unchanged) when no
       // group in scope has aiVerify on, or no LLM credential resolved this
       // cycle — byte-identical to before this feature existed either way.
-      const { matchedGroupIds, aiFlags } = await applyAiVerification(g, heuristicMatchedGroupIds, scopedGroupsById, runOpts.credential);
+      const { matchedGroupIds, aiFlags } = await applyAiVerification(
+        g,
+        heuristicMatchedGroupIds,
+        scopedGroupsById,
+        config.profile,
+        config.applyProfile,
+        runOpts.credential,
+      );
       // The flat/legacy Gig.tier stays anchored to the primary group's OWN
       // tier result (customizable-tier-scoring epic: respects that group's
       // own tierScoring mode now, not always the keyword classifier) —

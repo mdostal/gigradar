@@ -1,0 +1,8 @@
+name: deep-memory-and-context
+title: "Real resume/career-history context reaching generateDraft() and verifyGroupMatch(), not just prep packets"
+methodology: classic
+stories:
+  - id: attach-resume-to-draft-generation
+    depends_on: []
+  - id: attach-resume-and-profile-to-match-verification
+    depends_on: []

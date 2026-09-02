@@ -1,0 +1,38 @@
+id: attach-resume-and-profile-to-match-verification
+epic: deep-memory-and-context
+title: "verifyGroupMatch() gains real candidate signal (roles/skills + optional resume file), staying a role-type check, not a personal-fit judgment"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  verifyGroupMatch() (matching/ai-verify.ts) previously had ZERO candidate
+  signal -- it only ever compared the gig listing against GroupConfig's own
+  roleArea config, never the applicant's actual background. Adds
+  profile/applyProfile parameters, a minimal candidate-background block
+  (roles/skills only -- deliberately NOT reusing draft.ts's full
+  buildApplicantDataBlock(), which includes contact info this check has no
+  reason to see), and the same optional resume-file attachment
+  attach-resume-to-draft-generation added to generateDraft(). The prompt
+  wording explicitly scopes this to role-type disambiguation, not personal
+  fit (prep.ts's own separate job), to avoid blurring the feature.
+
+acceptance_criteria:
+  - "verifyGroupMatch(gig, group, profile, applyProfile, credential) -- new required profile param, applyProfile optional (undefined is valid, same as generatePrepPacket()'s own optionality)."
+  - "buildCandidateBackgroundBlock() includes only roles/skills, never email/phone/links/rate -- verified by a dedicated test."
+  - "A resume file (when on file) is attached via the same loadResume()/buildResumeContentBlock() mechanism, same graceful degradation on missing/deleted file."
+  - "applyAiVerification()'s signature grows profile/applyProfile params, threaded straight through to verifyGroupMatch(); its one real call site (apply/runner.ts's runRadar()) passes config.profile/config.applyProfile."
+  - "All existing applyAiVerification() orchestration behavior (no-op when no group has aiVerify on, credential-missing graceful degradation, per-group try/catch never dropping the heuristic match on an AI-call failure) is unchanged."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/matching/ai-verify.ts
+      purpose: "verifyGroupMatch()/applyAiVerification() signature + resume-attachment changes."
+    - path: src/lib/apply/runner.ts
+      purpose: "the one real call site, updated to pass config.profile/config.applyProfile."
+
+references:
+  - path: .pHive/epics/deep-memory-and-context/docs/design-discussion.md
+    relevant_excerpt: "§2-3 -- scope decision, including the deliberate role-type-vs-personal-fit boundary."

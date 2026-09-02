@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FilePart, TextPart } from "ai";
 import type { ApplyProfileConfig, Gig, Profile } from "../../types.js";
 
 // Mocked `generateText` — per this story's testing contract, ZERO real API
@@ -30,6 +34,7 @@ vi.mock("../../config/llm-client.js", async (importOriginal) => {
 
 import { NoOutputGeneratedError } from "ai";
 import { buildApplicantDataBlock, generateDraft } from "../draft.js";
+import { saveResume } from "../../documents/resume-store.js";
 
 beforeEach(() => {
   mockGenerateText.mockReset();
@@ -39,11 +44,29 @@ beforeEach(() => {
   mockGenerateText.mockResolvedValue({ output: { coverText: "Dear hiring team...", answers: {} } });
 });
 
-/** The single joined prompt string generateDraft() sends. */
+/**
+ * deep-memory-and-context epic: generateDraft() now sends a
+ * messages/content-blocks array (so a resume file can be attached the same
+ * way prep.ts's generatePrepPacket() already does — see draft.test.ts's
+ * generatePrepPacket test-helper precedent). Every EXISTING prompt-grounding
+ * assertion below still cares about a single joined string, so this joins
+ * every text block with the same "\n\n" separator generateDraft()'s own
+ * former single-string prompt used — cross-block ordering (indexOf, slice)
+ * still holds since the text blocks are still emitted in the same order.
+ */
 function promptSentToLLM(): string {
-  const call = mockGenerateText.mock.calls[0]?.[0] as { prompt?: string } | undefined;
-  if (!call?.prompt) throw new Error("test setup: generateText() was not called with a prompt");
-  return call.prompt;
+  return messageContentSentToLLM()
+    .filter((b): b is TextPart => b.type === "text")
+    .map((b) => b.text)
+    .join("\n\n");
+}
+
+/** The raw messages[0].content array generateDraft() sends — mirrors prep.test.ts's own helper exactly. */
+function messageContentSentToLLM(): Array<TextPart | FilePart> {
+  const call = mockGenerateText.mock.calls[0]?.[0] as { messages?: Array<{ content?: unknown }> } | undefined;
+  const content = call?.messages?.[0]?.content;
+  if (!Array.isArray(content)) throw new Error("test setup: generateText() was not called with a messages content array");
+  return content as Array<TextPart | FilePart>;
 }
 
 const REAL_PROFILE: Profile = {
@@ -111,7 +134,11 @@ describe("generateDraft: claude-code-harness credential routes to generateHarnes
     expect(mockCreateAnthropic).not.toHaveBeenCalled();
     expect(mockGenerateText).not.toHaveBeenCalled();
 
-    const [, prompt] = mockGenerateHarnessObject.mock.calls[0] as [unknown, string];
+    const [, content] = mockGenerateHarnessObject.mock.calls[0] as [unknown, Array<{ type: string; text?: string }>];
+    const prompt = content
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n\n");
     expect(prompt).toContain(REAL_GIG.title);
     expect(prompt).toContain(REAL_PROFILE.name);
   });
@@ -202,6 +229,73 @@ describe("generateDraft: prompt grounding — only real data, gig content delimi
     // trailing instruction outside the markers.
     expect(prompt.indexOf("BEGIN GIG LISTING DATA")).toBeLessThan(prompt.indexOf(adversarialGig.description as string));
     expect(prompt.indexOf(adversarialGig.description as string)).toBeLessThan(prompt.indexOf("END GIG LISTING DATA"));
+  });
+});
+
+describe("generateDraft: real resume file attachment (deep-memory-and-context epic)", () => {
+  let tmpDataDir: string;
+  let tmpKeyDir: string;
+
+  beforeEach(() => {
+    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-draft-resume-test-"));
+    tmpKeyDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-draft-resume-test-key-"));
+    process.env.XDG_DATA_HOME = tmpDataDir;
+    process.env.XDG_CONFIG_HOME = tmpKeyDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDataDir, { recursive: true, force: true });
+    fs.rmSync(tmpKeyDir, { recursive: true, force: true });
+    delete process.env.XDG_DATA_HOME;
+    delete process.env.XDG_CONFIG_HOME;
+  });
+
+  it("when applyProfile.resumePath is set and loadResume() succeeds, embeds the real resume as a file content part", async () => {
+    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 fake resume for draft test"), "application/pdf");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+
+    await generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+
+    const fileBlock = messageContentSentToLLM().find((b) => b.type === "file");
+    expect(fileBlock).toBeDefined();
+  });
+
+  it("a plain-text saved resume is embedded as a text block, not a file block", async () => {
+    const { path: resumePath } = saveResume(Buffer.from("Jane Doe -- backend engineer, plain text resume."), "text/plain");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+
+    await generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+
+    const content = messageContentSentToLLM();
+    expect(content.some((b) => b.type === "file")).toBe(false);
+    const fullPrompt = content.filter((b): b is TextPart => b.type === "text").map((b) => b.text).join("\n---\n");
+    expect(fullPrompt).toContain("Jane Doe -- backend engineer, plain text resume.");
+  });
+
+  it("still exactly ONE LLM call even when a resume is embedded", async () => {
+    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 another fake resume"), "application/pdf");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+
+    await generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("when applyProfile.resumePath is unset, behaves exactly as before this epic -- no file block", async () => {
+    await generateDraft(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+
+    expect(messageContentSentToLLM().some((b) => b.type === "file")).toBe(false);
+  });
+
+  it("when resumePath is set but the file has been deleted, degrades gracefully -- no error, no file block", async () => {
+    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 to be deleted"), "application/pdf");
+    fs.unlinkSync(resumePath);
+    const applyProfileWithMissingResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+
+    await expect(
+      generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithMissingResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }),
+    ).resolves.toBeDefined();
+    expect(messageContentSentToLLM().some((b) => b.type === "file")).toBe(false);
   });
 });
 
