@@ -66,6 +66,23 @@ export const RoleAreaConfigSchema = z.object({
 });
 
 /**
+ * Mirrors `TierScoringMode` in src/lib/types.ts (customizable-tier-scoring
+ * epic). Each numeric-threshold variant is `.refine()`d so the "high"
+ * cutoff (`green`/`greenPercentile`) can never be configured LOWER than
+ * the "low" one (`yellow`/`yellowPercentile`) — a config the UI should
+ * never accept, since green would then be unreachable before yellow.
+ */
+export const TierScoringModeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("keyword") }),
+  z
+    .object({ kind: z.literal("score-threshold"), green: z.number().min(0).max(1), yellow: z.number().min(0).max(1) })
+    .refine((m) => m.green >= m.yellow, { message: "green threshold must be >= yellow threshold" }),
+  z
+    .object({ kind: z.literal("percentile"), greenPercentile: z.number().min(0).max(100), yellowPercentile: z.number().min(0).max(100) })
+    .refine((m) => m.greenPercentile >= m.yellowPercentile, { message: "greenPercentile must be >= yellowPercentile" }),
+]);
+
+/**
  * Mirrors `GroupConfig` in src/lib/types.ts (multi-group-architecture
  * epic). `roleArea` stays `.optional()`, same do-nothing-default pattern
  * as the old top-level `Config.roleArea` it replaces.
@@ -76,6 +93,7 @@ export const GroupConfigSchema = z.object({
   needs: NeedsSchema,
   roleArea: RoleAreaConfigSchema.optional(),
   aiVerify: z.boolean().optional(),
+  tierScoring: TierScoringModeSchema.optional(),
 });
 
 /**

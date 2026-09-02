@@ -35,6 +35,8 @@ interface GigRow {
   matched_group_ids: string | null;
   matched_group_tiers: string | null;
   ai_flags: string | null;
+  match_score: number | null;
+  matched_group_scores: string | null;
   status: string;
   outcome_reason: string | null;
   outcome_note: string | null;
@@ -72,6 +74,8 @@ function toStoredGig(row: GigRow): StoredGig {
     matchedGroupIds: row.matched_group_ids !== null ? JSON.parse(row.matched_group_ids) : undefined,
     matchedGroupTiers: row.matched_group_tiers !== null ? JSON.parse(row.matched_group_tiers) : undefined,
     aiFlags: row.ai_flags !== null ? JSON.parse(row.ai_flags) : undefined,
+    matchScore: row.match_score ?? undefined,
+    matchedGroupScores: row.matched_group_scores !== null ? JSON.parse(row.matched_group_scores) : undefined,
     status: row.status as GigStatus,
     outcomeReason: (row.outcome_reason as OutcomeReason | null) ?? null,
     outcomeNote: row.outcome_note ?? null,
@@ -125,6 +129,8 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     matched_group_ids: gig.matchedGroupIds === undefined ? null : JSON.stringify(gig.matchedGroupIds),
     matched_group_tiers: gig.matchedGroupTiers === undefined ? null : JSON.stringify(gig.matchedGroupTiers),
     ai_flags: gig.aiFlags === undefined ? null : JSON.stringify(gig.aiFlags),
+    match_score: gig.matchScore ?? null,
+    matched_group_scores: gig.matchedGroupScores === undefined ? null : JSON.stringify(gig.matchedGroupScores),
     now,
   };
 
@@ -133,11 +139,11 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
       `INSERT INTO gigs (
          key, source_id, external_id, title, company, url, rate_min, rate_max, rate_unit,
          weekly_hours, remote, contract_to_hire, employment_type, stage, posted_at, description, raw, tier,
-         matched_profile_ids, matched_group_ids, matched_group_tiers, ai_flags, status, first_seen, last_seen, unavailable_since, reappeared_at
+         matched_profile_ids, matched_group_ids, matched_group_tiers, ai_flags, match_score, matched_group_scores, status, first_seen, last_seen, unavailable_since, reappeared_at
        ) VALUES (
          :key, :source_id, :external_id, :title, :company, :url, :rate_min, :rate_max, :rate_unit,
          :weekly_hours, :remote, :contract_to_hire, :employment_type, :stage, :posted_at, :description, :raw, :tier,
-         :matched_profile_ids, :matched_group_ids, :matched_group_tiers, :ai_flags, 'new', :now, :now, NULL, NULL
+         :matched_profile_ids, :matched_group_ids, :matched_group_tiers, :ai_flags, :match_score, :matched_group_scores, 'new', :now, :now, NULL, NULL
        )`,
     ).run(params);
     return { key, inserted: true, reappeared: false };
@@ -158,6 +164,8 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
        matched_group_ids = :matched_group_ids,
        matched_group_tiers = :matched_group_tiers,
        ai_flags = :ai_flags,
+       match_score = :match_score,
+       matched_group_scores = :matched_group_scores,
        last_seen = :now,
        unavailable_since = NULL,
        reappeared_at = CASE WHEN :was_unavailable THEN :now ELSE reappeared_at END
@@ -182,6 +190,8 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     matched_group_ids: params.matched_group_ids,
     matched_group_tiers: params.matched_group_tiers,
     ai_flags: params.ai_flags,
+    match_score: params.match_score,
+    matched_group_scores: params.matched_group_scores,
     now: params.now,
     key: params.key,
     was_unavailable: wasUnavailable ? 1 : 0,
@@ -357,6 +367,23 @@ export function listGigs(filter: GigFilter = {}, opts: DbOption = {}): StoredGig
     .prepare(`SELECT * FROM gigs ${where} ORDER BY first_seen DESC`)
     .all(params) as unknown as GigRow[];
   return rows.map(toStoredGig);
+}
+
+/**
+ * customizable-tier-scoring epic. Every currently-stored `matchScore` for
+ * `status: "new"` gigs matching `groupId` — "how does this gig compare to
+ * everything you still need to decide on," not every gig ever seen. This
+ * is the population `TierScoringMode: {kind:"percentile"}` ranks a new
+ * gig's own score against (see `matching/score-tiering.ts`'s
+ * `computeTier()`). Reuses `listGigs()`'s own filtering rather than a
+ * second, duplicated query — a gig with no `matchScore` yet (e.g. not yet
+ * re-scanned since this feature shipped) is simply excluded, never
+ * counted as a zero.
+ */
+export function listGroupScores(groupId: string, opts: DbOption = {}): number[] {
+  return listGigs({ groupId, status: "new" }, opts)
+    .map((g) => g.matchScore)
+    .filter((score): score is number => score !== undefined);
 }
 
 /** Explicitly set a gig's status (e.g. the user marks it "applied"). Throws if the key doesn't exist. */

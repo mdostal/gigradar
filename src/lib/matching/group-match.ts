@@ -6,9 +6,21 @@
 // up. gate()/tiering.ts's tier() get ZERO signature changes here — this is
 // a pure orchestration layer calling each, once per group, never a rewrite
 // of either.
+//
+// customizable-tier-scoring epic extends this to also compute/return each
+// group's own MatchResult.score (gate()'s own return already computes it
+// — previously discarded, never surfaced past this function) and to
+// choose HOW each group's tier is computed: the existing keyword
+// classifier (tiering.ts's tier(), default, unchanged) or, per
+// GroupConfig.tierScoring, matching/score-tiering.ts's computeTier().
+// `scorePopulations` is the one caller-supplied, optional input that
+// keeps this function 100% pure (no I/O) even for "percentile" mode — see
+// score-tiering.ts's own header comment for why the population is fetched
+// by the caller (apply/runner.ts), never here.
 import type { Gig, GroupConfig, Profile, Tier } from "../types.js";
 import { gate } from "./gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "./tiering.js";
+import { computeTier } from "./score-tiering.js";
 
 export interface GroupMatchResult {
   /** Every group whose gate this gig cleared — never a partial/fabricated list, empty when it cleared none. */
@@ -21,6 +33,8 @@ export interface GroupMatchResult {
    * "yellow" rather than silently omitted.
    */
   groupTiers: Record<string, Tier>;
+  /** Every evaluated group's OWN score (gate()'s MatchResult.score), independent of pass/fail — customizable-tier-scoring epic. */
+  groupScores: Record<string, number>;
 }
 
 /**
@@ -28,14 +42,33 @@ export interface GroupMatchResult {
  * whatever this gig's source is in scope for — see runner.ts's own
  * scoping logic, `SourceConfig.groupIds ?? every configured group`).
  * Pure, no I/O — directly unit-testable without a real Gig/store.
+ *
+ * `scorePopulations` (optional, customizable-tier-scoring epic): a
+ * pre-fetched `Record<groupId, number[]>` of OTHER gigs' scores for any
+ * group whose `tierScoring.kind === "percentile"` — omitted or missing an
+ * entry for a given group falls back to an empty population (see
+ * score-tiering.ts's `computeTier()` for what that means: ranks at the
+ * middle, 0.5, rather than crashing or silently favoring one tier).
  */
-export function matchGroups(gig: Gig, groups: GroupConfig[], profile: Profile): GroupMatchResult {
+export function matchGroups(
+  gig: Gig,
+  groups: GroupConfig[],
+  profile: Profile,
+  scorePopulations: Record<string, number[]> = {},
+): GroupMatchResult {
   const matchedGroupIds: string[] = [];
   const groupTiers: Record<string, Tier> = {};
+  const groupScores: Record<string, number> = {};
   for (const group of groups) {
     const gateResult = gate(gig, group.needs, profile);
     if (gateResult.pass) matchedGroupIds.push(group.id);
-    groupTiers[group.id] = tier(gig, group.roleArea ?? EMPTY_ROLE_AREA_CONFIG).tier;
+    groupScores[group.id] = gateResult.score;
+
+    const mode = group.tierScoring ?? { kind: "keyword" as const };
+    groupTiers[group.id] =
+      mode.kind === "keyword"
+        ? tier(gig, group.roleArea ?? EMPTY_ROLE_AREA_CONFIG).tier
+        : computeTier(gateResult.score, mode, scorePopulations[group.id] ?? []).tier;
   }
-  return { matchedGroupIds, groupTiers };
+  return { matchedGroupIds, groupTiers, groupScores };
 }

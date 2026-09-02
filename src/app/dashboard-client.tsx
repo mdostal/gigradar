@@ -668,11 +668,18 @@ export function DashboardClient({
         // marker is what makes that visible instead of green silently
         // implying "matches what you'd accept."
         const clearedAProfile = (row.original.matchedProfileIds?.length ?? 0) > 0;
+        // customizable-tier-scoring epic: the real, persisted match score
+        // behind this tier (title attribute only -- no layout change) —
+        // visible regardless of which tierScoring mode actually produced
+        // this tier (keyword mode still computes/persists a score, it's
+        // just not what decided the tier).
+        const score = row.original.matchScore;
         return (
           <span className="inline-flex items-center gap-1">
             <span
               className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-current/30"
               style={tier ? TIER_BADGE_STYLE[tier] : TIER_BADGE_FALLBACK_STYLE}
+              title={score !== undefined ? `Match score: ${score.toFixed(2)}` : undefined}
             >
               {tier ?? "unrated"}
             </span>

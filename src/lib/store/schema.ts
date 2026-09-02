@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS gigs (
   matched_group_ids TEXT,               -- JSON-stringified string[] of GroupConfig.id -- nullable (not yet evaluated against groups, or evaluated and cleared none); multi-group-architecture epic, mirrors matched_profile_ids exactly; see db.ts's ensureColumn()
   matched_group_tiers TEXT,             -- JSON-stringified Record<groupId, Tier> -- every group's OWN tier result, independent of whether that group's gate passed; nullable; see db.ts's ensureColumn()
   ai_flags          TEXT,               -- JSON-stringified Record<groupId, {confirmed, reason}> -- ai-match-verification epic; nullable (no group had aiVerify on, or ran with no LLM credential); see db.ts's ensureColumn()
+  match_score       REAL,               -- primary in-scope group's MatchResult.score (0-1); customizable-tier-scoring epic; nullable (not yet computed); see db.ts's ensureColumn()
+  matched_group_scores TEXT,            -- JSON-stringified Record<groupId, number> -- every in-scope group's OWN score, independent of pass/fail; nullable; see db.ts's ensureColumn()
   status            TEXT NOT NULL DEFAULT 'new'
                       CHECK (status IN ('new', 'applied', 'interview', 'archived', 'ignored')),
   outcome_reason    TEXT,               -- 'rejected' | 'withdrawn' | 'expired_unapplied', nullable; see types.ts's OutcomeReason and db.ts's ensureColumn() for the ALTER TABLE path this needs on a pre-existing DB
