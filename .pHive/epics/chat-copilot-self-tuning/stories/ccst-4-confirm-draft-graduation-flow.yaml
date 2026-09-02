@@ -1,0 +1,68 @@
+id: ccst-4-confirm-draft-graduation-flow
+epic: chat-copilot-self-tuning
+title: Confirm the existing draft-graduation (semi-auto to full-auto) flow matches the owner's description
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Read-only confirmation pass, independent of ccst-1..3 -- no code changes
+  expected. The owner re-described a semi-auto-to-full-auto draft
+  workflow ("it drafts all above a certain rating score for me... and
+  then will review drafts and approve those, until good... we need to do
+  at least 3 of those before we can enable full auto") that this session's
+  research already confirmed matches the EXISTING graduated-auto-fire-trust
+  epic (src/lib/apply/autofire.ts's approvedCount()/isGraduated(), the
+  config UI's Auto-fire section, minApprovals defaulting to 3 per
+  (sourceId, tier) pair). This story is the deliberate, explicit act of
+  verifying that reading was correct against the real code and real
+  config-UI copy, and writing down the confirmation (or any genuine gap
+  found) rather than silently assuming it.
+
+  One specific phrase to check carefully: "drafts all above a certain
+  rating score" -- src/lib/apply/runner.ts's gate() computes a numeric
+  MatchResult.score, but Config.autoDraftOnScan today only auto-drafts
+  GREEN-tier matches (a tier gate, not a numeric score threshold). If the
+  owner actually wants a numeric score cutoff distinct from tier, that is
+  a genuine gap -- surface it as an explicit, separately-scoped follow-up,
+  never silently absorbed into ccst-1..3's scope.
+
+acceptance_criteria:
+  - "Given src/lib/apply/autofire.ts and the config UI's Auto-fire section are read end to end, then a short written confirmation note (this story's own completion comment, or a small addition to design-discussion.md section 1 item 1) states explicitly whether the existing flow matches the owner's description"
+  - "Given the 'drafts all above a certain rating score' phrasing, when checked against Config.autoDraftOnScan's actual GREEN-tier-only behavior, then the finding (match, or a real numeric-vs-tier gap) is explicitly stated, not glossed over"
+  - "If a genuine gap is found, then it is written up as a specific, actionable, separately-scoped follow-up item (not fixed inline as part of this story, and not silently folded into ccst-1/ccst-2/ccst-3's scope)"
+
+steps:
+  - id: research
+    description: Read src/lib/apply/autofire.ts (approvedCount, findAutoFireRule, isGraduated, the 4 default checks) and src/app/config/config-client.tsx's Auto-fire section end to end
+    agent: researcher
+  - id: implement
+    description: Write the confirmation note (or gap writeup) -- this story's "implementation" is documentation, not code
+    agent: developer
+    depends_on: [research]
+  - id: review
+    description: Review the confirmation note for accuracy against the actual code read
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit the confirmation note to the epic's docs
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/autofire.ts
+      purpose: "approvedCount()/findAutoFireRule()/isGraduated() -- the exact 3-approvals-per-(sourceId,tier)-pair graduation math to confirm against the owner's description"
+    - path: src/app/config/config-client.tsx
+      purpose: "Auto-fire section's defaultAutoFireRule() (minApprovals: '3') -- confirm this is really the default the owner is remembering"
+
+references:
+  - path: src/lib/apply/autofire.ts
+    relevant_excerpt: |
+      export function isGraduated(sourceId: string, tier: Tier, config: Config, opts: DbOption = {}): boolean {
+        const rule = findAutoFireRule(sourceId, tier, config);
+        if (!rule) return false;
+        return approvedCount(sourceId, tier, opts) >= rule.minApprovals;
+      }

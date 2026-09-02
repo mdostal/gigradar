@@ -1,0 +1,47 @@
+name: chat-copilot-self-tuning
+title: Persistent memory + a gated self-tuning tool on the chat co-pilot
+description: |
+  The chat co-pilot (src/lib/chat/agent-chat-loop.ts) gains real, working
+  memory: conversation history that survives a server restart, plus a
+  durable, ungated "preference note" record the owner's feedback can land
+  in ("that's not a CTO role"). It also gains a generic, gated
+  propose_config_edit tool -- the same propose/pause/approve/resolve
+  mechanism the existing add_source tool already proves out -- so the
+  owner can say "add CFO to redKeywords" in chat and have the agent
+  propose the exact ConfigEdits change for approval before saveConfig()
+  ever writes it. An opt-in, off-by-default chatAutoApproveConfigEdits
+  toggle lets config-edit proposals auto-fire with a mandatory warning
+  banner instead of pausing for approval, mirroring
+  graduated-auto-fire-trust's existing "toggle skips a normally-gated
+  step" precedent.
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: none
+
+stories:
+  - id: ccst-1-chat-memory-store-and-module
+    title: chat_sessions/chat_preferences tables + memory.ts
+    complexity: low
+    depends_on: []
+  - id: ccst-2-chat-loop-memory-and-config-edit-tool
+    title: Chat-loop rehydration + propose_config_edit/note_preference tools + auto-approve toggle
+    complexity: high
+    depends_on: [ccst-1-chat-memory-store-and-module]
+  - id: ccst-3-chat-and-config-ui
+    title: /chat UI (resumed history, auto-applied banner) + /config auto-approve toggle
+    complexity: medium
+    depends_on: [ccst-2-chat-loop-memory-and-config-edit-tool]
+  - id: ccst-4-confirm-draft-graduation-flow
+    title: Confirm the existing draft-graduation (semi-auto to full-auto) flow matches the owner's description
+    complexity: low
+    depends_on: []
+
+# Slice 1 only -- persistent memory + the gated propose_config_edit tool on
+# the EXISTING /chat page. Slice 2 (contextual hover chat on Dashboard/
+# Drafts/Config) deliberately NOT planned in story-level detail yet -- see
+# vertical-plan.md -- it builds on ccst-2's chat-loop/memory layer, which
+# doesn't exist until this slice ships.
+deferred_slices:
+  - slice: 2
+    title: "Contextual hover chat across Dashboard/Drafts/Config"
+    gated_on: "Slice 1 (ccst-1..4) shipped + live-verified"

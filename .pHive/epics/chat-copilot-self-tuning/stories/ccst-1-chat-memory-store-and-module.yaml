@@ -1,0 +1,84 @@
+id: ccst-1-chat-memory-store-and-module
+epic: chat-copilot-self-tuning
+title: chat_sessions/chat_preferences tables + memory.ts
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Two new STRICT tables in src/lib/store/schema.ts: chat_sessions (one row
+  per session, JSON-stringified Anthropic.MessageParam[] history, upserted
+  wholesale on each save -- mirrors application_drafts's single-row-per-key
+  pattern) and chat_preferences (append-only, one row per recorded
+  preference note -- mirrors autofire_decisions's append-only audit-log
+  pattern). Both are genuinely new tables (CREATE TABLE IF NOT EXISTS in
+  the shared SCHEMA_SQL string), no ensureColumn() migration needed.
+
+  New module src/lib/chat/memory.ts is the ONLY code that ever touches
+  these two tables -- the narrow seam a future Mnemosyne-backed
+  implementation can swap behind later without any other file in this
+  epic changing (design-discussion.md section 6.1's whole point).
+
+acceptance_criteria:
+  - "Given a fresh DB, when getDb() opens it, then chat_sessions and chat_preferences exist with the exact columns in structured-outline.md Part 1a"
+  - "Given saveSessionHistory(sessionId, history) is called twice for the same sessionId with different history arrays, when loadSessionHistory(sessionId) is called, then it returns the SECOND (most recent) history, not both, not the first"
+  - "Given loadSessionHistory() is called for a sessionId that was never saved, then it returns undefined, not an error, not an empty array"
+  - "Given deleteSessionHistory(sessionId) is called, when loadSessionHistory(sessionId) is called after, then it returns undefined"
+  - "Given recordPreference(note, sessionId) is called multiple times, when listPreferences() is called, then every note is present (append-only -- never overwritten), ordered by createdAt"
+  - "Given recordPreference(note, undefined) is called (no sessionId), then it succeeds and the stored row's sessionId is null, never throwing on a missing session context"
+
+steps:
+  - id: research
+    description: Re-read src/lib/store/schema.ts's application_drafts and autofire_decisions table definitions plus src/lib/store/drafts.ts's save/get functions as the exact pattern to mirror
+    agent: researcher
+  - id: implement
+    description: Add the two tables to schema.ts; write memory.ts's five exported functions per structured-outline.md Part 1b
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write tests covering every acceptance criterion above, using the same temp-file-DB-per-test isolation pattern as src/lib/store/__tests__/store.test.ts
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation and tests for correctness and convention compliance
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/schema.ts
+      purpose: "SCHEMA_SQL string -- add the two new CREATE TABLE statements here, application_drafts/autofire_decisions are the exact patterns to mirror"
+    - path: src/lib/store/drafts.ts
+      purpose: "saveDraft()/getDraft() -- the exact single-row-per-key upsert pattern chat_sessions' save/load functions mirror"
+    - path: src/lib/apply/autofire.ts
+      purpose: "recordAutoFireDecision() in src/lib/store/ -- the exact append-only insert pattern chat_preferences' recordPreference() mirrors (see approvedCount()'s own query style too, for listPreferences()'s ORDER BY)"
+    - path: src/lib/store/db.ts
+      purpose: "getDb()/DbOption -- memory.ts's functions take the same opts: DbOption = {} parameter every other store function does"
+
+design_decisions:
+  - decision: "chat_sessions is a single-row-per-session whole-blob table, not one-row-per-message"
+    rationale: "LoopEntry.history is already an in-memory array serialized/deserialized as one unit everywhere it's used; a one-row-per-message table reconstructs that array on every read for no benefit at this single-user app's real scale. Owner's own 'start simple' direction on memory (design-discussion.md section 6.1)."
+  - decision: "chat_preferences is append-only, never UPDATE/DELETE"
+    rationale: "A preference is a fact recorded at a point in time -- mirrors autofire_decisions' existing append-only audit-log precedent in this exact codebase, not a new pattern."
+
+risks:
+  - severity: low
+    description: "Whole-history upsert could grow large over a very long single session"
+    mitigation: "MAX_TURNS=20 per sendMessage()/resolveApproval() call already bounds growth per call; single-user local SQLite; not a real concern at this scale -- see structured-outline.md Risk R4"
+
+references:
+  - path: src/lib/store/schema.ts
+    relevant_excerpt: |
+      CREATE TABLE IF NOT EXISTS application_drafts (
+        gig_key      TEXT PRIMARY KEY REFERENCES gigs(key),
+        content      TEXT NOT NULL,
+        ...
+      ) STRICT;
+      -- application_drafts' single-row-per-key upsert-on-save pattern is
+      -- the exact shape chat_sessions mirrors.

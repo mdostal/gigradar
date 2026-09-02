@@ -1,0 +1,85 @@
+id: ccst-3-chat-and-config-ui
+epic: chat-copilot-self-tuning
+title: "/chat UI (resumed history, auto-applied banner) + /config auto-approve toggle"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [ccst-2-chat-loop-memory-and-config-edit-tool]
+
+description: |
+  Two small, additive UI changes -- ZERO new components needed for the
+  proposal card itself (already generic, confirmed in ccst-2's own
+  research: chat-client.tsx's proposal rendering is `{role, tool,
+  description}`-driven, never hardcoded per tool name, so propose_config_edit
+  renders on the exact same approve/reject card add_source already uses).
+
+  1. /chat page: on mount, call resumeChatSessionAction() (new Server
+     Action wrapping ccst-2's resumeChatSession()) instead of unconditionally
+     startChatSessionAction(); if it found persisted history, render it
+     immediately (reusing the SAME Anthropic.MessageParam[] -> ChatMessage[]
+     mapping sendMessage()'s own event handling already does for the live
+     turn-by-turn case, not a second, parallel mapping). Handle the new
+     "auto_applied" event type (ccst-2) as a NEW, visually distinct
+     ChatMessage role -- a warning-styled banner, never the plain assistant
+     message bubble or the approve/reject proposal card.
+
+  2. /config page: one new CheckboxField for chatAutoApproveConfigEdits in
+     the same settings area other opt-in scan/draft behavior toggles
+     (autoDraftOnScan, notifyOnGreenMatch) already live, round-tripped
+     through configToDraft()/draftToEdits() the same way those are.
+
+acceptance_criteria:
+  - "Given a sessionId with real persisted history (seeded via ccst-1's memory.ts directly in a test), when the /chat page mounts, then the rendered message list shows that history, not an empty conversation"
+  - "Given a sessionId with no persisted history, when the /chat page mounts, then it falls back to a normal fresh session (unchanged from today's behavior)"
+  - "Given the chat loop returns a {type:'auto_applied', ...} event, when chat-client.tsx handles it, then the rendered message has a role/style DISTINCT from both a plain assistant message and a proposal card -- verify via a distinct CSS class or test id, not just text content"
+  - "Given the config UI, when chatAutoApproveConfigEdits is toggled on and Save is clicked, then the persisted config.json's groups[0]... no -- the TOP-LEVEL chatAutoApproveConfigEdits field is true after reload (same round-trip pattern as autoDraftOnScan's own existing test)"
+  - "Given chatAutoApproveConfigEdits is never touched (first-run), when the config is saved, then the field is omitted from the written document entirely (not defaulted to false) -- same 'omission is the meaningful default' pattern as autoDraftOnScan"
+
+steps:
+  - id: research
+    description: Re-read chat-client.tsx's ChatMessage union, applyEvent(), and its render loop end to end, plus config-client.tsx's existing autoDraftOnScan CheckboxField wiring in configToDraft()/draftToEdits()/the render tree, as the exact patterns to extend
+    agent: researcher
+  - id: implement
+    description: Add resumeChatSessionAction(), the auto_applied ChatMessage role + its distinct render treatment, the chatAutoApproveConfigEdits DraftConfig field + checkbox + configToDraft()/draftToEdits() wiring
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write/extend tests for the resume-on-mount path, the auto_applied banner's distinct rendering, and the new checkbox's config round-trip
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation and tests for correctness and convention compliance
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/chat/chat-client.tsx
+      purpose: "ChatMessage union (line ~6-9), applyEvent() (line ~55-78), the render loop further down -- all three need the new auto_applied case"
+    - path: src/app/chat/actions.ts
+      purpose: "startChatSessionAction() is the existing pattern resumeChatSessionAction() mirrors"
+    - path: src/app/config/config-client.tsx
+      purpose: "autoDraftOnScan's CheckboxField (Schedule section) is the exact pattern chatAutoApproveConfigEdits' checkbox mirrors -- DraftConfig field, configToDraft()/draftToEdits() round-trip, render tree entry"
+
+design_decisions:
+  - decision: "auto_applied renders as a genuinely distinct visual treatment, not just different text on the existing assistant-message bubble"
+    rationale: "Owner's own words: 'a toggle enabling it to auto fire with a popup warning' -- a same-looking bubble with different words does not satisfy 'warning'; this must be visually unmistakable from a normal reply at a glance."
+
+risks:
+  - severity: low
+    description: "Reusing the wrong message-mapping logic for rendering resumed history could subtly diverge from how a live turn's messages render"
+    mitigation: "Explicitly reuse the SAME Anthropic.MessageParam[]->ChatMessage[] mapping the live-turn path already has, not a second implementation -- flagged in the description above"
+
+references:
+  - path: src/app/chat/chat-client.tsx
+    relevant_excerpt: |
+      type ChatMessage =
+        | { role: "user" | "assistant" | "system"; text: string }
+        | { role: "proposal"; tool: string; description: string; resolved?: "approved" | "rejected" }
+        | { role: "screenshot"; sourceId: string; dataUrl: string };
+      -- gains one more variant: { role: "auto_applied"; tool: string; description: string }

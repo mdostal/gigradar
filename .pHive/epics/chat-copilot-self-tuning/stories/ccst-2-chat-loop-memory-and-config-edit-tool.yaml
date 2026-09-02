@@ -1,0 +1,127 @@
+id: ccst-2-chat-loop-memory-and-config-edit-tool
+epic: chat-copilot-self-tuning
+title: Chat-loop rehydration + propose_config_edit/note_preference tools + auto-approve toggle
+status: pending
+complexity: high
+methodology: classic
+depends_on: [ccst-1-chat-memory-store-and-module]
+
+description: |
+  Wires memory.ts (ccst-1) into agent-chat-loop.ts and adds two new tools:
+
+  1. resumeChatSession(sessionId): boolean -- calls memory.loadSessionHistory();
+     seeds the in-memory session and returns true if found, false otherwise
+     (caller falls back to the existing startChatSession(), which stays an
+     explicit fresh-start and is UNCHANGED). endChatSession() gains one line
+     calling memory.deleteSessionHistory(). sendMessage()/resolveApproval()
+     each gain one call to memory.saveSessionHistory(sessionId, entry.history)
+     immediately before returning.
+
+  2. propose_config_edit -- a NEW, GENERIC gated tool (same pendingApproval
+     pause/resume shape as the existing add_source tool): the model proposes
+     {summary, edits, reason}; on approval, executeWriteTool()'s new branch
+     calls saveConfig(edits) (the SAME write path add_source/the config UI/
+     the setup wizard already use -- no new validation surface) and, on
+     success, memory.recordPreference(reason, sessionId).
+
+  3. note_preference -- a NEW, UNGATED tool (runs immediately, dispatched
+     alongside the existing read-only tools list_gigs/get_gig/
+     get_status_summary): calls memory.recordPreference(input.note, sessionId)
+     directly, no approval pause. Owner's own explicit ruling, 2026-09-02:
+     "only the config and impactful changes... [need approval]" -- a memory
+     note is not a config.json/behavior change.
+
+  4. Config.chatAutoApproveConfigEdits?: boolean (new field, off by default,
+     same "omitted/false identical, no tri-state" pattern as autoDraftOnScan) --
+     when true, propose_config_edit skips pendingApproval entirely and
+     auto-executes immediately, returning a NEW ChatLoopEvent variant
+     {type:"auto_applied", tool, input, description} instead of the normal
+     proposal event, so the UI (ccst-3) can render a distinct mandatory
+     warning banner rather than silently applying the change. Owner's own
+     words: "a toggle enabling it to auto fire with a popup warning."
+     ONLY applies to propose_config_edit -- every other write tool
+     (update_gig_status, generate_draft, etc.) is explicitly unchanged.
+
+acceptance_criteria:
+  - "Given a sessionId with persisted history (via memory.saveSessionHistory), when resumeChatSession(sessionId) is called, then it returns true and a subsequent sendMessage() call sees that history as prior context"
+  - "Given a sessionId with no persisted history, when resumeChatSession(sessionId) is called, then it returns false and does not create a session entry"
+  - "Given a chat session, when sendMessage() or resolveApproval() completes, then memory.saveSessionHistory() was called with the session's current, complete history"
+  - "Given endChatSession(sessionId) is called, then memory.deleteSessionHistory(sessionId) was called (verify via a mock or a real memory.ts round-trip)"
+  - "Given the model calls propose_config_edit with chatAutoApproveConfigEdits unset/false, when the loop turn completes, then a pendingApproval is set (same as add_source today) and a {type:'proposal'} event is returned -- saveConfig() is NOT called yet"
+  - "Given a pending propose_config_edit proposal, when resolveApproval(sessionId, credential, true, config) is called, then saveConfig(edits) is called with the exact edits object the model proposed, and on success memory.recordPreference(reason, sessionId) is called"
+  - "Given resolveApproval(..., false, ...) (rejected), when called on a pending propose_config_edit, then saveConfig() is NEVER called and no preference is recorded"
+  - "Given saveConfig(edits) returns {ok:false, error}, when the approved propose_config_edit executes, then the specific saveConfig error message reaches the tool_result (same error-surfacing convention every other write tool in this loop already has), never a generic failure"
+  - "Given the model calls note_preference at any point (no prior pendingApproval), then memory.recordPreference() is called IMMEDIATELY within that same turn -- no pendingApproval is ever set for this tool"
+  - "Given config.chatAutoApproveConfigEdits is true, when the model calls propose_config_edit, then executeWriteTool() runs IMMEDIATELY within that turn (saveConfig() is called, no pause) and the returned event is {type:'auto_applied', tool:'propose_config_edit', input, description} -- NOT {type:'proposal'}"
+  - "Given config.chatAutoApproveConfigEdits is true, when the model calls update_gig_status (a DIFFERENT write tool), then the existing pendingApproval pause behavior is completely unchanged -- the toggle has zero effect on any tool other than propose_config_edit"
+  - "Given describeProposal('propose_config_edit', {summary: 'X'}) is called, then it returns exactly 'X' (input.summary verbatim), matching the approval card's existing 'show exactly what will change' contract"
+
+steps:
+  - id: research
+    description: Re-read agent-chat-loop.ts's ADD_SOURCE_TOOL definition/dispatch/describeProposal/executeWriteTool branch end to end as the exact shape to mirror for propose_config_edit, and the read-only-tools dispatch (list_gigs/get_gig/get_status_summary) as the shape for note_preference
+    agent: researcher
+  - id: implement
+    description: Implement resumeChatSession/endChatSession/sendMessage/resolveApproval memory wiring, the two new tools, describeProposal's new case, executeWriteTool's new branch (with the sessionId parameter it needs threaded in), and the chatAutoApproveConfigEdits branch per structured-outline.md Part 1c and Part 1f
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Write tests covering every acceptance criterion above -- mock memory.ts the same way stage-application.test.ts mocks generateDraft, so this suite tests agent-chat-loop.ts's own wiring, not memory.ts's internals (already covered by ccst-1's own tests)
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review implementation and tests for correctness and convention compliance -- pay particular attention to Risk R2 (edits sent as a complete replacement array, never partial) and the chatAutoApproveConfigEdits scope boundary (propose_config_edit only)
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/chat/agent-chat-loop.ts
+      purpose: "The whole file -- ADD_SOURCE_TOOL's definition (~line 217), describeProposal()'s ADD_SOURCE_TOOL case (~line 413), executeWriteTool()'s ADD_SOURCE_TOOL branch (~line 542) are the three exact places propose_config_edit needs a sibling entry; startChatSession/endChatSession (~line 274-281) and sendMessage/resolveApproval (~line 657-693) are where the memory hooks land"
+    - path: src/lib/config/save.ts
+      purpose: "saveConfig(edits: ConfigEdits): ActionResult<Config> -- the exact, unchanged write path propose_config_edit's approved execution calls"
+    - path: src/lib/apply/autofire.ts
+      purpose: "Config.autoFire.killSwitch is the existing precedent for 'a toggle lets a normally-gated action skip the gate' -- same shape chatAutoApproveConfigEdits follows"
+    - path: src/lib/apply/__tests__/stage-application.test.ts
+      purpose: "vi.mock() pattern for mocking a sibling lib module wholesale (generateDraft there, memory.ts here) so this story's tests exercise agent-chat-loop.ts's own wiring, not the mocked module's internals"
+
+code_examples:
+  - title: "The exact pendingApproval/pause shape propose_config_edit mirrors"
+    file: src/lib/chat/agent-chat-loop.ts
+    snippet: |
+      if (tool === ADD_SOURCE_TOOL) {
+        // ... validation ...
+        entry.pendingApproval = { toolUseId: toolUse.id, tool: toolUse.name, input };
+        return { type: "proposal", tool: toolUse.name, input, description: describeProposal(toolUse.name, input) };
+      }
+
+design_decisions:
+  - decision: "propose_config_edit takes a raw edits:object from the model, not a family of field-specific tools (addRedKeyword, setRateFloor, etc.)"
+    rationale: "A narrow-tool family duplicates ConfigSchema's own job of defining what's valid, and needs a new tool every time a Config field is added. One generic tool + saveConfig()'s existing zod validation as the real backstop -- same 'do not build a second source of truth for Config validity' discipline this session already applied elsewhere. See structured-outline.md Part 4's elicitation."
+  - decision: "note_preference is completely ungated"
+    rationale: "Owner's own explicit ruling, 2026-09-02: approval gates config.json/behavior changes, not memory writes. A note is inert until a human approves a propose_config_edit that acts on it."
+  - decision: "chatAutoApproveConfigEdits applies ONLY to propose_config_edit, no other write tool"
+    rationale: "Owner's own words scoped it to 'config and impactful changes' as the thing needing approval by default -- the auto-fire toggle request was specifically about config edits ('change your preferences... add the indeed channel'), not about relaxing update_gig_status/generate_draft/run_scan's existing, separately-designed guardrails."
+
+risks:
+  - severity: high
+    description: "A vague propose_config_edit.summary or a partial edits.groups/edits.sources array reaching saveConfig() -- see structured-outline.md Risks R1/R2"
+    mitigation: "Tool description explicitly instructs exact field/value naming and complete-replacement-array semantics; saveConfig()'s zod validation is the real backstop; a dedicated test proves a partial groups edit doesn't silently drop sibling groups"
+  - severity: medium
+    description: "chatAutoApproveConfigEdits silently expanding scope to tools beyond propose_config_edit in a future edit to this file"
+    mitigation: "The branch is written as an explicit tool===PROPOSE_CONFIG_EDIT_TOOL check, never a generic 'if autoApprove, skip pendingApproval for any tool' -- a reviewer should flag any change that widens this"
+
+references:
+  - path: src/lib/chat/agent-chat-loop.ts
+    relevant_excerpt: |
+      if (tool === ADD_SOURCE_TOOL) {
+        const existingIds = ...
+        // collision check against a FRESH raw read, then saveConfig({sources: [...]})
+      }
+      -- the exact "read fresh, validate, saveConfig(), throw on failure"
+      shape propose_config_edit's branch mirrors, minus the collision-check
+      specifics (which are add_source-only).
