@@ -35,15 +35,36 @@ export async function generateMetadata(): Promise<Metadata> {
  * (`/issues`) calls `revalidatePath("/")` after a real resolve, so this
  * re-reads and the badge updates without a manual reload.
  */
+/**
+ * multi-group-architecture epic, Slice 3. Every configured group's
+ * `{id, label}`, tolerant-extracted from the RAW (unresolved) config the
+ * same way dashboard-data.ts's extractEngagementProfileSummaries() reads
+ * `groups[]` — a missing/malformed `groups` array (first-run, no config
+ * yet) yields `[]`, so NavHeader's own "2+ groups" gate simply renders no
+ * switcher rather than throwing.
+ */
+export function extractGroupSummaries(rawConfig: Record<string, unknown>): { id: string; label: string }[] {
+  const groups = rawConfig.groups;
+  if (!Array.isArray(groups)) return [];
+  const result: { id: string; label: string }[] = [];
+  for (const g of groups) {
+    if (typeof g !== "object" || g === null) continue;
+    const { id, label } = g as Record<string, unknown>;
+    if (typeof id === "string" && typeof label === "string") result.push({ id, label });
+  }
+  return result;
+}
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   const openIssues = listIssues({ open: true });
   const raw = readRawConfig();
   const icon = resolveAppIcon(typeof raw.appIcon === "string" ? raw.appIcon : undefined);
   const theme = resolveUiTheme(raw.uiTheme);
+  const groups = extractGroupSummaries(raw);
   return (
     <html lang="en" data-theme={theme}>
       <body className="theme-body min-h-screen antialiased">
-        <NavHeader issuesBadge={issuesBadgeInfo(openIssues)} iconSrc={icon.path} />
+        <NavHeader issuesBadge={issuesBadgeInfo(openIssues)} iconSrc={icon.path} groups={groups} />
         {children}
         <UpdateNotifier />
       </body>
