@@ -20,6 +20,7 @@
     "start": "NODE_OPTIONS=--experimental-sqlite next start -H 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test": "NODE_OPTIONS=--experimental-sqlite vitest run",
+    "test:e2e": "NODE_OPTIONS=--experimental-sqlite playwright test",
     "radar": "NODE_OPTIONS=--experimental-sqlite tsx src/lib/apply/runner.ts",
     "mcp": "NODE_OPTIONS=--experimental-sqlite tsx src/mcp/server.ts",
     "scheduler": "NODE_OPTIONS=--experimental-sqlite tsx src/scheduler/index.ts",
@@ -47,6 +48,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^22.0.0",

@@ -35,6 +35,9 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "electron/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    "playwright.config.ts",
     ".next/types/**/*.ts"
   ],
   "exclude": [

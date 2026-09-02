@@ -31,6 +31,9 @@ sessions/
 *.sqlite3
 .playwright-mcp/
 .playwright-mcp/
+# playwright-e2e-scaffold-and-ci story: generated test-run artifacts, never committed
+test-results/
+playwright-report/
 # scripts/update.sh's local dev-service log/state dir (see that script's own header comment)
 .run/
 # tauri-installer epic: generated/downloaded, never committed --
