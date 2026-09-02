@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, type FormEvent, useEffect, useRef, useState, useTransition } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useState, useTransition } from "react";
 import { APP_ICONS, DEFAULT_APP_ICON_ID } from "@/lib/app-icons";
 import type { SessionReadiness } from "@/lib/auth/session-readiness";
 import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
@@ -52,6 +52,16 @@ interface DraftSource {
   /** email-digest-ingestion epic: true when this row is a Gmail job-alert digest source -- maps to SourceConfig.kind: "gmail-digest". Mutually exclusive with isCustom, same "one kind at a time" rule. */
   isGmailDigest: boolean;
   settings: SettingPair[];
+  /**
+   * multi-group-architecture epic, Slice 2. Mirrors `SourceConfig.groupIds`
+   * exactly: `undefined` means "every group" (the default — a source is
+   * shared across every search unless deliberately scoped down), a real
+   * array means "only these group ids." The checkbox UI (below) treats
+   * "every current group checked" and `undefined` as the same state,
+   * collapsing back to `undefined` on save rather than persisting a
+   * redundant full-list array — see draftToSource().
+   */
+  groupIds?: string[];
 }
 
 interface DraftProfile {
@@ -139,6 +149,74 @@ function defaultTierScoring(): DraftTierScoring {
 }
 
 /**
+ * multi-group-architecture epic, Slice 2. One editable group — bundles
+ * everything that used to live flat on `DraftConfig` (Slice 1's
+ * single-implicit-group convention) plus the group's own identity
+ * (`id`/`label`, previously tracked separately via a ref since Slice 1
+ * never let the form edit more than one group).
+ */
+interface DraftGroup {
+  id: string;
+  label: string;
+  needs: DraftNeeds;
+  roleArea: DraftRoleArea;
+  aiVerify: boolean;
+  tierScoring: DraftTierScoring;
+}
+
+/** Mirrors `makeProfileId()`'s slug+random-suffix convention exactly — collisions are harmless (ids only need to be unique within one user's config, never compared across configs). */
+function makeGroupId(label: string): string {
+  const slug = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "group";
+  return `${slug}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function draftGroupFrom(group: { id: string; label: string; needs: Config["groups"][number]["needs"]; roleArea?: RoleAreaConfig; aiVerify?: boolean; tierScoring?: Config["groups"][number]["tierScoring"] }): DraftGroup {
+  const mode = group.tierScoring;
+  return {
+    id: group.id,
+    label: group.label,
+    needs: {
+      engagementProfiles: group.needs.engagementProfiles.map((p) => ({
+        id: p.id,
+        label: p.label,
+        types: p.types,
+        minRate: String(p.minRate),
+        highRate: String(p.highRate),
+        maxHours: String(p.maxHours),
+        maxHoursAtHighRate: String(p.maxHoursAtHighRate),
+        rateUnit: p.rateUnit,
+      })),
+      freshStageOnly: group.needs.freshStageOnly,
+      remoteOnly: group.needs.remoteOnly,
+    },
+    roleArea: {
+      enabled: group.roleArea != null,
+      coreTitles: group.roleArea?.coreTitles ?? [],
+      keywords: group.roleArea?.keywords ?? [],
+      redKeywords: group.roleArea?.redKeywords ?? [],
+    },
+    aiVerify: group.aiVerify ?? false,
+    tierScoring: !mode || mode.kind === "keyword"
+      ? defaultTierScoring()
+      : mode.kind === "score-threshold"
+        ? { ...defaultTierScoring(), kind: "score-threshold", green: String(mode.green), yellow: String(mode.yellow) }
+        : { ...defaultTierScoring(), kind: "percentile", greenPercentile: String(mode.greenPercentile), yellowPercentile: String(mode.yellowPercentile) },
+  };
+}
+
+/** A brand-new, never-saved group — blank needs/roleArea, id generated from the label at creation time (see makeGroupId()). */
+function defaultDraftGroup(label: string): DraftGroup {
+  return {
+    id: makeGroupId(label),
+    label,
+    needs: { engagementProfiles: [], freshStageOnly: false, remoteOnly: false },
+    roleArea: { enabled: false, coreTitles: [], keywords: [], redKeywords: [] },
+    aiVerify: false,
+    tierScoring: defaultTierScoring(),
+  };
+}
+
+/**
  * Mirrors `DraftRoleArea`'s enabled-flag tri-state pattern exactly
  * (`draft-generation-foundation` story): `enabled` distinguishes "never
  * configured" from "configured, possibly with blank optional fields" —
@@ -196,20 +274,19 @@ function defaultAutoFireRule(): DraftAutoFireRule {
 
 interface DraftConfig {
   profile: DraftProfile;
-  needs: DraftNeeds;
-  sources: DraftSource[];
-  roleArea: DraftRoleArea;
   /**
-   * ai-match-verification epic — mirrors GroupConfig.aiVerify exactly:
-   * always has a value (defaulting to false), no enabled-flag tri-state
-   * needed, same "omitted/false are identical" pattern as
-   * autoDraftOnScan/notifyOnGreenMatch above. Slice 1 of the
-   * multi-group-architecture epic has no group-management UI yet, so this
-   * toggles the single primary group's aiVerify (see configToDraft()'s own
-   * comment on that convention).
+   * multi-group-architecture epic, Slice 2. Every configured group, real
+   * group management (add/rename/remove) — supersedes Slice 1's
+   * single-implicit-group convention (the old flat `needs`/`roleArea`/
+   * `aiVerify`/`tierScoring` fields, now on each `DraftGroup`). Always at
+   * least one entry — `ConfigSchema`'s own `groups.min(1)` invariant; the
+   * form disables removing the last remaining group rather than letting
+   * the count reach zero client-side.
    */
-  aiVerify: boolean;
-  tierScoring: DraftTierScoring;
+  groups: DraftGroup[];
+  /** UI-only — which group's Needs/RoleArea/aiVerify/tierScoring sections are currently shown/editable. Never sent to saveConfig(). */
+  selectedGroupId: string;
+  sources: DraftSource[];
   schedule: string;
   applyProfile: DraftApplyProfile;
   /**
@@ -324,18 +401,18 @@ function sourceToDraft(source: SourceConfig): DraftSource {
     isCustom: source.kind === "custom-llm",
     isGmailDigest: source.kind === "gmail-digest",
     settings: settingsToPairs(source.settings),
+    groupIds: source.groupIds,
   };
 }
 
-// Slice 1 of the multi-group-architecture epic has no group-management UI
-// yet (Slice 2) — this form only ever reads/writes the FIRST/primary group
-// (config.groups[0]), same single-group convention as the setup wizard (see
-// src/app/setup/setup-wizard-client.tsx). Every existing single-search
-// config.json has exactly one group (migrateFlatNeedsRoleAreaToGroups() in
-// load.ts guarantees it), so this is byte-identical behavior for every
-// pre-multi-group install.
+// multi-group-architecture epic, Slice 2: every configured group is now
+// real, editable form state (config.groups.map(...)) — supersedes Slice
+// 1's config.groups[0]-only convention. A not-yet-multi-group install
+// still has exactly one group (migrateFlatNeedsRoleAreaToGroups() in
+// load.ts guarantees it), so this renders byte-identically to Slice 1 for
+// that common case, just via a real (length-1) groups array instead of a
+// hardcoded [0] lookup.
 function configToDraft(config: Config): DraftConfig {
-  const group = config.groups[0];
   return {
     profile: {
       name: config.profile.name,
@@ -347,35 +424,9 @@ function configToDraft(config: Config): DraftConfig {
       homeBaseLat: config.profile.homeBase ? String(config.profile.homeBase.lat) : "",
       homeBaseLng: config.profile.homeBase ? String(config.profile.homeBase.lng) : "",
     },
-    needs: {
-      engagementProfiles: (group?.needs.engagementProfiles ?? []).map((p) => ({
-        id: p.id,
-        label: p.label,
-        types: p.types,
-        minRate: String(p.minRate),
-        highRate: String(p.highRate),
-        maxHours: String(p.maxHours),
-        maxHoursAtHighRate: String(p.maxHoursAtHighRate),
-        rateUnit: p.rateUnit,
-      })),
-      freshStageOnly: group?.needs.freshStageOnly ?? false,
-      remoteOnly: group?.needs.remoteOnly ?? false,
-    },
+    groups: config.groups.map((g) => draftGroupFrom(g)),
+    selectedGroupId: config.groups[0]?.id ?? "",
     sources: config.sources.map(sourceToDraft),
-    roleArea: {
-      enabled: group?.roleArea != null,
-      coreTitles: group?.roleArea?.coreTitles ?? [],
-      keywords: group?.roleArea?.keywords ?? [],
-      redKeywords: group?.roleArea?.redKeywords ?? [],
-    },
-    aiVerify: group?.aiVerify ?? false,
-    tierScoring: (() => {
-      const mode = group?.tierScoring;
-      const base = defaultTierScoring();
-      if (!mode || mode.kind === "keyword") return base;
-      if (mode.kind === "score-threshold") return { ...base, kind: "score-threshold", green: String(mode.green), yellow: String(mode.yellow) };
-      return { ...base, kind: "percentile", greenPercentile: String(mode.greenPercentile), yellowPercentile: String(mode.yellowPercentile) };
-    })(),
     schedule: config.schedule ?? "",
     autoDraftOnScan: config.autoDraftOnScan ?? false,
     chatAutoApproveConfigEdits: config.chatAutoApproveConfigEdits ?? false,
@@ -479,6 +530,7 @@ function draftToSource(draft: DraftSource): SourceConfig {
     enabled: draft.enabled,
     ...(kind && { kind }),
     ...(settings && { settings }),
+    ...(draft.groupIds !== undefined && { groupIds: draft.groupIds }),
   };
 }
 
@@ -495,14 +547,56 @@ function draftToSource(draft: DraftSource): SourceConfig {
  * defaulted `roleArea: {}` or `schedule: ""` per this story's acceptance
  * criteria.
  *
- * `groupId`/`groupLabel` identify the single group (Slice 1 has no
- * group-management UI yet — see configToDraft()'s own comment) this draft's
- * `needs`/`roleArea` get wrapped into. `groups` is then sent as a complete
- * replacement array (same "always submits the complete current state"
- * convention as `sources`), so an edit with `roleArea` disabled correctly
- * un-sets it — see the tri-state comment above.
+ * multi-group-architecture epic, Slice 2: `groups` is built from EVERY
+ * `draft.groups` entry (real ids/labels now, no more single-implicit-group
+ * ref) and sent as a complete replacement array (same "always submits the
+ * complete current state" convention as `sources`), so an edit with a
+ * group's `roleArea` disabled correctly un-sets it — see the tri-state
+ * comment above.
  */
-function draftToEdits(draft: DraftConfig, groupId: string, groupLabel: string): ConfigEdits {
+function buildGroupEdits(g: DraftGroup): Record<string, unknown> {
+  // NOT typed as `Needs`/`TierScoringMode` here on purpose: draftNumber()
+  // can return the original (invalid) string for a blank/non-numeric
+  // field, which is exactly what should reach ConfigSchema.safeParse()
+  // server-side to produce a specific field-level error — typing these as
+  // the strict domain interfaces would force a number-only shape and mask
+  // that deliberately-invalid passthrough at compile time.
+  const needs = {
+    engagementProfiles: g.needs.engagementProfiles.map((p) => ({
+      id: p.id,
+      label: p.label,
+      types: p.types,
+      minRate: draftNumber(p.minRate),
+      highRate: draftNumber(p.highRate),
+      rateUnit: p.rateUnit,
+      // maxHours/maxHoursAtHighRate are omitted entirely for a "year"
+      // (salaried) profile — EngagementProfileSchema only requires them
+      // when rateUnit is "hour" (see that schema's .refine()).
+      ...(p.rateUnit === "hour" ? { maxHours: draftNumber(p.maxHours), maxHoursAtHighRate: draftNumber(p.maxHoursAtHighRate) } : {}),
+    })),
+    freshStageOnly: g.needs.freshStageOnly,
+    remoteOnly: g.needs.remoteOnly,
+  };
+
+  const roleArea: RoleAreaConfig | undefined = g.roleArea.enabled
+    ? {
+        coreTitles: nonBlank(g.roleArea.coreTitles),
+        keywords: nonBlank(g.roleArea.keywords),
+        redKeywords: nonBlank(g.roleArea.redKeywords),
+      }
+    : undefined;
+
+  const tierScoring =
+    g.tierScoring.kind === "score-threshold"
+      ? { kind: "score-threshold", green: draftNumber(g.tierScoring.green), yellow: draftNumber(g.tierScoring.yellow) }
+      : g.tierScoring.kind === "percentile"
+        ? { kind: "percentile", greenPercentile: draftNumber(g.tierScoring.greenPercentile), yellowPercentile: draftNumber(g.tierScoring.yellowPercentile) }
+        : { kind: "keyword" };
+
+  return { id: g.id, label: g.label, needs, roleArea, aiVerify: g.aiVerify, tierScoring };
+}
+
+function draftToEdits(draft: DraftConfig): ConfigEdits {
   // NOT typed as `Profile`/`Needs` here on purpose: draftNumber() can return
   // the original (invalid) string for a blank/non-numeric field, which is
   // exactly what should reach ConfigSchema.safeParse() server-side to
@@ -525,54 +619,11 @@ function draftToEdits(draft: DraftConfig, groupId: string, groupLabel: string): 
       : {}),
   };
 
-  const needs = {
-    engagementProfiles: draft.needs.engagementProfiles.map((p) => ({
-      id: p.id,
-      label: p.label,
-      types: p.types,
-      minRate: draftNumber(p.minRate),
-      highRate: draftNumber(p.highRate),
-      rateUnit: p.rateUnit,
-      // maxHours/maxHoursAtHighRate are omitted entirely for a "year"
-      // (salaried) profile — EngagementProfileSchema only requires them
-      // when rateUnit is "hour" (see that schema's .refine()).
-      ...(p.rateUnit === "hour"
-        ? { maxHours: draftNumber(p.maxHours), maxHoursAtHighRate: draftNumber(p.maxHoursAtHighRate) }
-        : {}),
-    })),
-    freshStageOnly: draft.needs.freshStageOnly,
-    remoteOnly: draft.needs.remoteOnly,
-  };
-
   const sources: SourceConfig[] = draft.sources.map(draftToSource);
-
-  const roleArea: RoleAreaConfig | undefined = draft.roleArea.enabled
-    ? {
-        coreTitles: nonBlank(draft.roleArea.coreTitles),
-        keywords: nonBlank(draft.roleArea.keywords),
-        redKeywords: nonBlank(draft.roleArea.redKeywords),
-      }
-    : undefined;
-
-  // customizable-tier-scoring epic. NOT typed as TierScoringMode here on
-  // purpose -- same draftNumber() invalid-passthrough reasoning as `needs`
-  // above: a blank/non-numeric threshold must reach ConfigSchema.safeParse()
-  // server-side for a specific field-level error, not be masked by a
-  // number-only type at compile time.
-  const tierScoring =
-    draft.tierScoring.kind === "score-threshold"
-      ? { kind: "score-threshold", green: draftNumber(draft.tierScoring.green), yellow: draftNumber(draft.tierScoring.yellow) }
-      : draft.tierScoring.kind === "percentile"
-        ? {
-            kind: "percentile",
-            greenPercentile: draftNumber(draft.tierScoring.greenPercentile),
-            yellowPercentile: draftNumber(draft.tierScoring.yellowPercentile),
-          }
-        : { kind: "keyword" };
 
   const edits: ConfigEdits = {
     profile,
-    groups: [{ id: groupId, label: groupLabel, needs, roleArea, aiVerify: draft.aiVerify, tierScoring }],
+    groups: draft.groups.map(buildGroupEdits),
     sources,
   };
 
@@ -1412,14 +1463,39 @@ export function ConfigClient({
 }) {
   const sourcesWithOpenIssues = new Set(sourcesWithOpenIssuesList);
   const [draft, setDraft] = useState<DraftConfig>(() => configToDraft(initial));
-  // Slice 1 has no group-management UI yet (see configToDraft()'s own
-  // comment) — this form only ever edits the FIRST/primary group's id/label
-  // is preserved (never renamed by this form), and re-captured after each
-  // successful save so it always reflects what's actually on disk.
-  const primaryGroupRef = useRef({
-    id: initial.groups[0]?.id ?? "default-search-1",
-    label: initial.groups[0]?.label ?? "Default Search 1",
-  });
+  // multi-group-architecture epic, Slice 2. The group currently shown in
+  // the Needs/Role area section below; falls back to the first group if
+  // the selection ever points at a since-deleted id (shouldn't happen —
+  // handleRemoveGroup() re-selects immediately — but never crashes if it
+  // does).
+  const selectedGroup = draft.groups.find((g) => g.id === draft.selectedGroupId) ?? draft.groups[0];
+
+  /** Applies `updater` to the currently-selected group only, leaving every other group untouched. */
+  function updateSelectedGroup(updater: (g: DraftGroup) => DraftGroup) {
+    setDraft((prev) => ({ ...prev, groups: prev.groups.map((g) => (g.id === prev.selectedGroupId ? updater(g) : g)) }));
+  }
+
+  const [newGroupLabel, setNewGroupLabel] = useState("");
+
+  function handleAddGroup() {
+    const label = newGroupLabel.trim();
+    if (!label) return;
+    const group = defaultDraftGroup(label);
+    setDraft((prev) => ({ ...prev, groups: [...prev.groups, group], selectedGroupId: group.id }));
+    setNewGroupLabel("");
+  }
+
+  /** Disabled/hidden when only one group remains — ConfigSchema requires at least one, same invariant this form must never let the user violate client-side. Also scrubs the removed id out of every source's groupIds, so a stale reference never lingers invisibly (the checkbox UI only ever renders CURRENT groups). */
+  function handleRemoveGroup(groupId: string) {
+    setDraft((prev) => {
+      if (prev.groups.length <= 1) return prev;
+      const groups = prev.groups.filter((g) => g.id !== groupId);
+      const sources = prev.sources.map((s) => (s.groupIds ? { ...s, groupIds: s.groupIds.filter((id) => id !== groupId) } : s));
+      const selectedGroupId = prev.selectedGroupId === groupId ? (groups[0]?.id ?? "") : prev.selectedGroupId;
+      return { ...prev, groups, sources, selectedGroupId };
+    });
+  }
+
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -1468,8 +1544,8 @@ export function ConfigClient({
   function handleApplyTemplate() {
     const template = ROLE_TEMPLATES.find((t) => t.id === selectedTemplateId);
     if (!template) return;
-    setDraft((prev) => ({
-      ...prev,
+    updateSelectedGroup((g) => ({
+      ...g,
       roleArea: {
         enabled: true,
         coreTitles: [...template.config.coreTitles],
@@ -1783,7 +1859,7 @@ export function ConfigClient({
     e.preventDefault();
     setError(null);
     setSavedAt(null);
-    const edits = draftToEdits(draft, primaryGroupRef.current.id, primaryGroupRef.current.label);
+    const edits = draftToEdits(draft);
     startTransition(async () => {
       const result = await saveConfigAction(edits);
       if (!result.ok) {
@@ -1792,9 +1868,11 @@ export function ConfigClient({
       }
       // Resync the form with the server's validated, written document —
       // e.g. a source added with a blank id/settings row got dropped.
-      setDraft(configToDraft(result.data));
-      const savedGroup = result.data.groups[0];
-      if (savedGroup) primaryGroupRef.current = { id: savedGroup.id, label: savedGroup.label };
+      // Preserves the current selection by id when it still exists after
+      // save (it always should — saveConfig() never drops a group this
+      // form itself sent), falling back to the first group otherwise.
+      const selectedGroupId = draft.selectedGroupId;
+      setDraft({ ...configToDraft(result.data), selectedGroupId: result.data.groups.some((g) => g.id === selectedGroupId) ? selectedGroupId : (result.data.groups[0]?.id ?? "") });
       setSavedAt(Date.now());
     });
   }
@@ -2091,30 +2169,95 @@ export function ConfigClient({
       </section>
 
       <section className={sectionClass}>
-        <h2 className="text-lg font-semibold text-theme-text">Needs</h2>
+        <h2 className="text-lg font-semibold text-theme-text">Groups (searches)</h2>
         <p className="text-xs text-theme-text-dim">
-          At least one engagement profile is required — this is the gate's hard constraint set. A gig is checked
-          against every profile whose engagement type it matches (a listing can clear more than one); each profile
-          has its own rate floor, so e.g. a low-ball full-time salary can be excluded even while a good hourly
-          contract rate passes.
+          Each group is an independent search with its own Needs/Role area/scoring below — a gig can clear zero,
+          one, or several at once, sharing the same tracked-gig pool and the same &ldquo;apply once&rdquo; status.
+          Sources are shared across every group by default; scope a source to specific groups in the Sources
+          section below.
         </p>
-        <EngagementProfilesEditor
-          profiles={draft.needs.engagementProfiles}
-          onChange={(engagementProfiles) => setDraft({ ...draft, needs: { ...draft.needs, engagementProfiles } })}
-        />
-        <div className="mt-3 flex flex-wrap gap-4">
-          <CheckboxField
-            label="Fresh-stage listings only"
-            checked={draft.needs.freshStageOnly}
-            onChange={(v) => setDraft({ ...draft, needs: { ...draft.needs, freshStageOnly: v } })}
-          />
-          <CheckboxField
-            label="Remote only"
-            checked={draft.needs.remoteOnly}
-            onChange={(v) => setDraft({ ...draft, needs: { ...draft.needs, remoteOnly: v } })}
-          />
+        <div className="mt-3 flex flex-wrap gap-2">
+          {draft.groups.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => setDraft({ ...draft, selectedGroupId: g.id })}
+              className={`rounded-md border px-3 py-1.5 text-sm font-medium ${
+                g.id === draft.selectedGroupId
+                  ? "border-brand-accent bg-brand-accent text-brand-bg"
+                  : "border-theme-surface-border text-theme-text hover:bg-theme-surface-raised"
+              }`}
+            >
+              {g.label || "(untitled group)"}
+            </button>
+          ))}
         </div>
+        <div className="mt-3 flex items-end gap-2">
+          <label className="flex-1">
+            <span className={labelClass}>New group name</span>
+            <input
+              type="text"
+              value={newGroupLabel}
+              placeholder="e.g. Drone Photography"
+              onChange={(e) => setNewGroupLabel(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <button type="button" onClick={handleAddGroup} disabled={!newGroupLabel.trim()} className={captureButtonClass}>
+            + Add group
+          </button>
+        </div>
+        {selectedGroup && (
+          <div className="mt-3 flex items-end gap-2 border-t border-theme-surface-border pt-3">
+            <label className="flex-1">
+              <span className={labelClass}>Selected group&apos;s name</span>
+              <input
+                type="text"
+                value={selectedGroup.label}
+                onChange={(e) => updateSelectedGroup((g) => ({ ...g, label: e.target.value }))}
+                className={inputClass}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => handleRemoveGroup(selectedGroup.id)}
+              disabled={draft.groups.length <= 1}
+              title={draft.groups.length <= 1 ? "At least one group is always required" : "Remove this group"}
+              className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50"
+            >
+              Remove group
+            </button>
+          </div>
+        )}
       </section>
+
+      {selectedGroup && (
+        <section className={sectionClass}>
+          <h2 className="text-lg font-semibold text-theme-text">Needs — {selectedGroup.label || "(untitled group)"}</h2>
+          <p className="text-xs text-theme-text-dim">
+            At least one engagement profile is required — this is the gate's hard constraint set. A gig is checked
+            against every profile whose engagement type it matches (a listing can clear more than one); each profile
+            has its own rate floor, so e.g. a low-ball full-time salary can be excluded even while a good hourly
+            contract rate passes.
+          </p>
+          <EngagementProfilesEditor
+            profiles={selectedGroup.needs.engagementProfiles}
+            onChange={(engagementProfiles) => updateSelectedGroup((g) => ({ ...g, needs: { ...g.needs, engagementProfiles } }))}
+          />
+          <div className="mt-3 flex flex-wrap gap-4">
+            <CheckboxField
+              label="Fresh-stage listings only"
+              checked={selectedGroup.needs.freshStageOnly}
+              onChange={(v) => updateSelectedGroup((g) => ({ ...g, needs: { ...g.needs, freshStageOnly: v } }))}
+            />
+            <CheckboxField
+              label="Remote only"
+              checked={selectedGroup.needs.remoteOnly}
+              onChange={(v) => updateSelectedGroup((g) => ({ ...g, needs: { ...g.needs, remoteOnly: v } }))}
+            />
+          </div>
+        </section>
+      )}
 
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Sources</h2>
@@ -2220,6 +2363,38 @@ export function ConfigClient({
                   }}
                 />
               </div>
+              {draft.groups.length > 1 && (
+                <div className="mt-2">
+                  <span className={labelClass}>Scoped to groups</span>
+                  <div className="mt-1 flex flex-wrap gap-3">
+                    {draft.groups.map((g) => {
+                      // undefined groupIds means "every group" -- every checkbox
+                      // renders checked in that state without an explicit list.
+                      const checked = source.groupIds === undefined || source.groupIds.includes(g.id);
+                      return (
+                        <label key={g.id} className="flex items-center gap-1.5 text-sm text-theme-text">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const currentIds = source.groupIds ?? draft.groups.map((grp) => grp.id);
+                              const nextIds = e.target.checked ? [...currentIds, g.id] : currentIds.filter((id) => id !== g.id);
+                              // A fully-inclusive selection collapses back to
+                              // undefined ("every group", the clean do-nothing
+                              // default) rather than persisting a redundant
+                              // full-list array.
+                              const groupIds = nextIds.length === draft.groups.length ? undefined : nextIds;
+                              setDraft({ ...draft, sources: draft.sources.map((s, idx) => (idx === i ? { ...s, groupIds } : s)) });
+                            }}
+                          />
+                          {g.label || "(untitled group)"}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 text-xs text-theme-text-dim">All checked (the default) means every group evaluates this source's gigs.</p>
+                </div>
+              )}
               {source.isCustom && (
                 <div className="mt-2">
                   <button
@@ -2379,136 +2554,138 @@ export function ConfigClient({
         </div>
       </section>
 
-      <section className={sectionClass}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-theme-text">Role area (optional)</h2>
-          <CheckboxField
-            label="Configure role-area filtering"
-            checked={draft.roleArea.enabled}
-            onChange={(enabled) => setDraft({ ...draft, roleArea: { ...draft.roleArea, enabled } })}
-          />
-        </div>
-        <p className="text-xs text-theme-text-dim">
-          Left off, every gig tiers &quot;yellow&quot; — the do-nothing default, not an error.
-        </p>
-        <div className="mt-3 flex items-end gap-2">
-          <label className="flex-1">
-            <span className={labelClass}>Start from a template</span>
-            <select
-              value={selectedTemplateId}
-              onChange={(e) => setSelectedTemplateId(e.target.value)}
-              className={inputClass}
-            >
-              {ROLE_TEMPLATES.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button type="button" onClick={handleApplyTemplate} className={captureButtonClass}>
-            Apply
-          </button>
-        </div>
-        {draft.roleArea.enabled && (
-          <div className="mt-3 flex flex-col gap-3">
-            <StringListEditor
-              label="Core titles (unambiguous title matches — always GREEN)"
-              values={draft.roleArea.coreTitles}
-              onChange={(coreTitles) => setDraft({ ...draft, roleArea: { ...draft.roleArea, coreTitles } })}
-            />
-            <StringListEditor
-              label="Keywords (broader green signals)"
-              values={draft.roleArea.keywords}
-              onChange={(keywords) => setDraft({ ...draft, roleArea: { ...draft.roleArea, keywords } })}
-            />
-            <StringListEditor
-              label="Red keywords (title-only hard stop, unless a core title also matches)"
-              values={draft.roleArea.redKeywords}
-              onChange={(redKeywords) => setDraft({ ...draft, roleArea: { ...draft.roleArea, redKeywords } })}
+      {selectedGroup && (
+        <section className={sectionClass}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-theme-text">Role area (optional) — {selectedGroup.label || "(untitled group)"}</h2>
+            <CheckboxField
+              label="Configure role-area filtering"
+              checked={selectedGroup.roleArea.enabled}
+              onChange={(enabled) => updateSelectedGroup((g) => ({ ...g, roleArea: { ...g.roleArea, enabled } }))}
             />
           </div>
-        )}
-        <div className="mt-3 border-t border-theme-surface-border pt-3">
-          <CheckboxField
-            label="Double-check matches with AI (catches keyword false positives)"
-            checked={draft.aiVerify}
-            onChange={(aiVerify) => setDraft({ ...draft, aiVerify })}
-          />
-          <p className="mt-1 text-xs text-theme-text-dim">
-            Keyword matching alone can green-tier the wrong role type — e.g. &quot;Interim Finance Director&quot; matching
-            only because &quot;interim&quot; is a green keyword. Turning this on spends one extra LLM call per already-
-            matched gig each scan to double-check its actual role type before counting it as a real match. Requires an
-            LLM credential (Settings below); silently skipped with the heuristic result standing if none is configured.
+          <p className="text-xs text-theme-text-dim">
+            Left off, every gig tiers &quot;yellow&quot; — the do-nothing default, not an error.
           </p>
-        </div>
-        <div className="mt-3 border-t border-theme-surface-border pt-3">
-          <label>
-            <span className={labelClass}>How GREEN/YELLOW/RED is decided</span>
-            <select
-              value={draft.tierScoring.kind}
-              onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, kind: e.target.value as DraftTierScoring["kind"] } })}
-              className={inputClass}
-            >
-              <option value="keyword">Keywords (default — core titles / keywords / red keywords above)</option>
-              <option value="score-threshold">Score threshold (fixed cutoffs on the match score, 0–1)</option>
-              <option value="percentile">Percentile (ranked against your other currently-tracked matches)</option>
-            </select>
-          </label>
-          {draft.tierScoring.kind === "score-threshold" && (
-            <div className="mt-2 flex gap-2">
-              <label className="flex-1">
-                <span className={labelClass}>Green at/above</span>
-                <input
-                  type="text"
-                  value={draft.tierScoring.green}
-                  onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, green: e.target.value } })}
-                  className={inputClass}
-                />
-              </label>
-              <label className="flex-1">
-                <span className={labelClass}>Yellow at/above</span>
-                <input
-                  type="text"
-                  value={draft.tierScoring.yellow}
-                  onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, yellow: e.target.value } })}
-                  className={inputClass}
-                />
-              </label>
+          <div className="mt-3 flex items-end gap-2">
+            <label className="flex-1">
+              <span className={labelClass}>Start from a template</span>
+              <select
+                value={selectedTemplateId}
+                onChange={(e) => setSelectedTemplateId(e.target.value)}
+                className={inputClass}
+              >
+                {ROLE_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={handleApplyTemplate} className={captureButtonClass}>
+              Apply
+            </button>
+          </div>
+          {selectedGroup.roleArea.enabled && (
+            <div className="mt-3 flex flex-col gap-3">
+              <StringListEditor
+                label="Core titles (unambiguous title matches — always GREEN)"
+                values={selectedGroup.roleArea.coreTitles}
+                onChange={(coreTitles) => updateSelectedGroup((g) => ({ ...g, roleArea: { ...g.roleArea, coreTitles } }))}
+              />
+              <StringListEditor
+                label="Keywords (broader green signals)"
+                values={selectedGroup.roleArea.keywords}
+                onChange={(keywords) => updateSelectedGroup((g) => ({ ...g, roleArea: { ...g.roleArea, keywords } }))}
+              />
+              <StringListEditor
+                label="Red keywords (title-only hard stop, unless a core title also matches)"
+                values={selectedGroup.roleArea.redKeywords}
+                onChange={(redKeywords) => updateSelectedGroup((g) => ({ ...g, roleArea: { ...g.roleArea, redKeywords } }))}
+              />
             </div>
           )}
-          {draft.tierScoring.kind === "percentile" && (
-            <div className="mt-2 flex gap-2">
-              <label className="flex-1">
-                <span className={labelClass}>Green at/above percentile</span>
-                <input
-                  type="text"
-                  value={draft.tierScoring.greenPercentile}
-                  onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, greenPercentile: e.target.value } })}
-                  className={inputClass}
-                />
-              </label>
-              <label className="flex-1">
-                <span className={labelClass}>Yellow at/above percentile</span>
-                <input
-                  type="text"
-                  value={draft.tierScoring.yellowPercentile}
-                  onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, yellowPercentile: e.target.value } })}
-                  className={inputClass}
-                />
-              </label>
-            </div>
-          )}
-          <p className="mt-1 text-xs text-theme-text-dim">
-            {draft.tierScoring.kind === "keyword" &&
-              "The default — tier comes from the core titles/keywords/red keywords above, not the numeric match score."}
-            {draft.tierScoring.kind === "score-threshold" &&
-              "Tier comes from the match score (rate/fit/hours/freshness, 0–1) crossing these fixed cutoffs instead of keywords — green must be >= yellow."}
-            {draft.tierScoring.kind === "percentile" &&
-              "Tier comes from how this gig's score ranks against your OTHER currently-tracked, undecided gigs for this search — e.g. 80 means \"top 20% is green.\" Ranking is approximate with few tracked gigs and improves as more accumulate. Green percentile must be >= yellow percentile."}
-          </p>
-        </div>
-      </section>
+          <div className="mt-3 border-t border-theme-surface-border pt-3">
+            <CheckboxField
+              label="Double-check matches with AI (catches keyword false positives)"
+              checked={selectedGroup.aiVerify}
+              onChange={(aiVerify) => updateSelectedGroup((g) => ({ ...g, aiVerify }))}
+            />
+            <p className="mt-1 text-xs text-theme-text-dim">
+              Keyword matching alone can green-tier the wrong role type — e.g. &quot;Interim Finance Director&quot; matching
+              only because &quot;interim&quot; is a green keyword. Turning this on spends one extra LLM call per already-
+              matched gig each scan to double-check its actual role type before counting it as a real match. Requires an
+              LLM credential (Settings below); silently skipped with the heuristic result standing if none is configured.
+            </p>
+          </div>
+          <div className="mt-3 border-t border-theme-surface-border pt-3">
+            <label>
+              <span className={labelClass}>How GREEN/YELLOW/RED is decided</span>
+              <select
+                value={selectedGroup.tierScoring.kind}
+                onChange={(e) => updateSelectedGroup((g) => ({ ...g, tierScoring: { ...g.tierScoring, kind: e.target.value as DraftTierScoring["kind"] } }))}
+                className={inputClass}
+              >
+                <option value="keyword">Keywords (default — core titles / keywords / red keywords above)</option>
+                <option value="score-threshold">Score threshold (fixed cutoffs on the match score, 0–1)</option>
+                <option value="percentile">Percentile (ranked against your other currently-tracked matches)</option>
+              </select>
+            </label>
+            {selectedGroup.tierScoring.kind === "score-threshold" && (
+              <div className="mt-2 flex gap-2">
+                <label className="flex-1">
+                  <span className={labelClass}>Green at/above</span>
+                  <input
+                    type="text"
+                    value={selectedGroup.tierScoring.green}
+                    onChange={(e) => updateSelectedGroup((g) => ({ ...g, tierScoring: { ...g.tierScoring, green: e.target.value } }))}
+                    className={inputClass}
+                  />
+                </label>
+                <label className="flex-1">
+                  <span className={labelClass}>Yellow at/above</span>
+                  <input
+                    type="text"
+                    value={selectedGroup.tierScoring.yellow}
+                    onChange={(e) => updateSelectedGroup((g) => ({ ...g, tierScoring: { ...g.tierScoring, yellow: e.target.value } }))}
+                    className={inputClass}
+                  />
+                </label>
+              </div>
+            )}
+            {selectedGroup.tierScoring.kind === "percentile" && (
+              <div className="mt-2 flex gap-2">
+                <label className="flex-1">
+                  <span className={labelClass}>Green at/above percentile</span>
+                  <input
+                    type="text"
+                    value={selectedGroup.tierScoring.greenPercentile}
+                    onChange={(e) => updateSelectedGroup((g) => ({ ...g, tierScoring: { ...g.tierScoring, greenPercentile: e.target.value } }))}
+                    className={inputClass}
+                  />
+                </label>
+                <label className="flex-1">
+                  <span className={labelClass}>Yellow at/above percentile</span>
+                  <input
+                    type="text"
+                    value={selectedGroup.tierScoring.yellowPercentile}
+                    onChange={(e) => updateSelectedGroup((g) => ({ ...g, tierScoring: { ...g.tierScoring, yellowPercentile: e.target.value } }))}
+                    className={inputClass}
+                  />
+                </label>
+              </div>
+            )}
+            <p className="mt-1 text-xs text-theme-text-dim">
+              {selectedGroup.tierScoring.kind === "keyword" &&
+                "The default — tier comes from the core titles/keywords/red keywords above, not the numeric match score."}
+              {selectedGroup.tierScoring.kind === "score-threshold" &&
+                "Tier comes from the match score (rate/fit/hours/freshness, 0–1) crossing these fixed cutoffs instead of keywords — green must be >= yellow."}
+              {selectedGroup.tierScoring.kind === "percentile" &&
+                "Tier comes from how this gig's score ranks against your OTHER currently-tracked, undecided gigs for this search — e.g. 80 means \"top 20% is green.\" Ranking is approximate with few tracked gigs and improves as more accumulate. Green percentile must be >= yellow percentile."}
+            </p>
+          </div>
+        </section>
+      )}
 
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Schedule (optional)</h2>
