@@ -87,6 +87,21 @@ export interface SourceScanBatch {
    * `errors` list) — same rule, same non-effect on delisting.
    */
   gigs: Gig[];
+  /**
+   * deep-dive-audit-and-testing-framework epic: whether `gigs` represents
+   * the COMPLETE, authoritative set of everything this source currently
+   * has live — omitted/true for a real full-source scan (the normal case,
+   * e.g. apply/runner.ts's own scan pass), `false` for a partial insert
+   * (e.g. a status-reconciliation backfill inserting ONE gig it found on
+   * an external application-status page). Gates delisting eligibility:
+   * `recordScan()` only calls `flagUnavailableForSource()` when this is
+   * NOT explicitly `false` — a single-gig backfill batch must never be
+   * treated as "the complete truth about this source," which is exactly
+   * what mass-archived real `applied` gigs as collateral damage before
+   * this field existed (confirmed root cause, see that epic's design
+   * discussion §1a).
+   */
+  isFullScan?: boolean;
 }
 
 /** Everything that happened in one recordScan() call — nothing silent. */

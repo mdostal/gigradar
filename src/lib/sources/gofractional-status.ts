@@ -277,7 +277,7 @@ export async function reconcileGoFractionalStatuses(cfg: SourceConfig): Promise<
         continue;
       }
       const externalId = syntheticExternalId(row);
-      recordScan([{ sourceId: "gofractional", gigs: [{ sourceId: "gofractional", externalId, title: row.title, company: row.company || undefined, url: WORK_URL }] }]);
+      recordScan([{ sourceId: "gofractional", gigs: [{ sourceId: "gofractional", externalId, title: row.title, company: row.company || undefined, url: WORK_URL }], isFullScan: false }]);
       const key = gigKey("gofractional", externalId);
       setStatus(key, newStatus);
       if (outcomeReason) setOutcome(key, outcomeReason, row.statusLabel);

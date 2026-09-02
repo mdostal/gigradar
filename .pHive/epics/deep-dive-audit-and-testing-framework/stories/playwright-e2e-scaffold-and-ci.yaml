@@ -1,0 +1,86 @@
+id: playwright-e2e-scaffold-and-ci
+epic: deep-dive-audit-and-testing-framework
+title: "Real Playwright E2E scaffold (dashboard/config/chat smoke specs) + CI workflow gating npm test/typecheck/e2e on every PR"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Deep-dive audit finding (2026-09-02): 101 real vitest unit/integration
+  test files exist, but zero committed Playwright/E2E specs, and zero CI
+  workflow runs npm test/npm run typecheck on any PR -- the only GitHub
+  Actions workflow (.github/workflows/tauri-release.yml) is
+  tag-push-triggered only. docs/ARCHITECTURE.md documents "live-verified
+  on the owner's real machine" as the accepted substitute for automated
+  UI coverage -- a real gap in the documented contract itself.
+
+  Scoped, minimal-viable addition (not aspirational -- per the audit
+  agent's own explicit "start lean" recommendation):
+  1. playwright.config.ts at repo root: single chromium project, a
+     `webServer` block running `npm run build && npm run start` (or
+     reusing an already-running server) against http://127.0.0.1:3000,
+     matching the existing NODE_OPTIONS=--experimental-sqlite env.
+     Isolated data dir per test run (XDG_DATA_HOME/GIGRADAR_DB_PATH
+     pointed at a temp dir with a small seeded fixture DB) -- NEVER the
+     real data dir, same discipline every other test in this repo
+     already follows.
+  2. tests/e2e/ directory, 3 smoke specs:
+     - dashboard.spec.ts: seed a temp DB with a few gigs, load /, assert
+       rows render with correct fields.
+     - config-roundtrip.spec.ts: open /config, edit a field, save,
+       reload, assert persistence.
+     - chat-panel.spec.ts: open the contextual hover chat (Dashboard/
+       Config), assert it opens and accepts input (mock the LLM call at
+       the network layer -- never a real API key/credential in CI).
+  3. .github/workflows/ci.yml: triggered on pull_request and push,
+     running npm test, npm run typecheck, and npx playwright test in
+     sequence -- closing the "no CI gate exists at all" finding.
+
+  Explicitly OUT of scope for this story (per the audit's own
+  recommendation): Electron-mode and Tauri-packaged-app E2E (heavier,
+  platform-specific, partially covered already by
+  electron/__tests__/server-ready.test.ts's process-level testing) --
+  start with browser-mode Playwright against `next start`, since that's
+  the common substrate all 3 runtime modes actually serve.
+
+acceptance_criteria:
+  - "npx playwright test runs all 3 specs successfully against an isolated temp data dir, never touching ~/.local/share/gigradar/."
+  - "A new GitHub Actions workflow runs on every pull_request and push, executing npm test, npm run typecheck, and the new E2E specs -- confirmed by opening a real test PR and observing the workflow run (or, if no real PR is opened in this story, by validating the workflow YAML's trigger/step syntax is correct and would run as described)."
+  - "The chat-panel spec never makes a real LLM API call (network-mocked), so CI never needs a real credential."
+  - "config-roundtrip.spec.ts genuinely catches the exact regression class flagged as high-severity in dashboard-results-view.yaml's own risk section (a save that doesn't actually persist/revalidate)."
+
+steps:
+  - id: research
+    description: Re-read vitest.config.ts/vitest.setup.ts's isolation pattern (the one to mirror for Playwright's webServer env) and confirm the real port/env gigradar's dev server uses.
+    agent: researcher
+  - id: implement
+    description: Write playwright.config.ts, the 3 smoke specs, and the ci.yml workflow.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Run the new suite locally end-to-end, confirm it passes cleanly and is genuinely isolated from real data.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the CI workflow YAML is syntactically correct and its trigger/step configuration matches the acceptance criteria; confirm no spec can ever touch real user data even accidentally.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: vitest.config.ts
+      purpose: "the isolation pattern (temp XDG_DATA_HOME) to mirror for Playwright's own env"
+    - path: vitest.setup.ts
+      purpose: "the process-wide temp-dir default this repo already established for tests"
+    - path: .github/workflows/tauri-release.yml
+      purpose: "the only existing workflow -- confirms zero PR-gating CI exists today, the new ci.yml is additive"
+
+references:
+  - path: .pHive/epics/deep-dive-audit-and-testing-framework/docs/design-discussion.md
+    relevant_excerpt: "§1f — the full testing-framework gap analysis and minimal-viable proposal"

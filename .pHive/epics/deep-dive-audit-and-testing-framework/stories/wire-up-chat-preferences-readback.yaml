@@ -1,0 +1,77 @@
+id: wire-up-chat-preferences-readback
+epic: deep-dive-audit-and-testing-framework
+title: "Make listPreferences() actually feed into the chat co-pilot instead of being write-only"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Deep-dive audit finding (2026-09-02): listPreferences()
+  (src/lib/chat/memory.ts:56-58) is exported but never called anywhere
+  else in the codebase. chat_preferences (written via the ungated
+  note_preference tool and propose_config_edit's reason field) is
+  currently a black hole -- the owner tells the chat co-pilot something
+  worth remembering, and nothing ever reads it back. This directly
+  matches "it does not remember."
+
+  Separately-confirmed finding: agent-chat-loop.ts's messages.create()
+  call passes no `system` field at all (zero hits grepping for
+  prompt/system) -- there is no chat system prompt today, despite the
+  chat-copilot-self-tuning epic's own design doc assuming one would
+  exist ("The tool's input schema and system prompt must force the
+  model to...").
+
+  Minimal, scoped fix for THIS story (deeper memory/context work is
+  Epic 4, not here): add a real system prompt to agent-chat-loop.ts's
+  messages.create() call that establishes basic grounding (gigradar's
+  purpose, the current date) AND includes the most recent N
+  chat_preferences entries (via listPreferences()) as prior-context the
+  model should treat as durable owner preferences -- not just this
+  session's own history. Keep this additive and bounded (a fixed N, e.g.
+  last 20 preferences) rather than attempting full preference-based
+  behavior change (that's explicitly Epic 4/Epic 2 scope per the
+  chat-copilot-self-tuning epic's own design-discussion §3b, which left
+  "should preferences become structured facts" as an open, unresolved
+  question -- do not resolve it here, just stop the black-hole problem).
+
+acceptance_criteria:
+  - "A fresh chat session's first real LLM call includes a system prompt containing the most recent recorded chat_preferences entries."
+  - "note_preference-recorded text from a PRIOR session is visibly reflected in a NEW session's behavior (e.g. asking the model 'what have I told you to remember' surfaces it) -- verified with a real test, not just code inspection."
+  - "The system prompt addition does not change any EXISTING tool-call behavior or the propose/approve flow -- only adds grounding context."
+  - "Session-history growth: note in this story's own risk section (not fixed here) that chat_sessions.history still grows unbounded -- flag as a known follow-up, do not silently expand this story's scope to fix it too."
+
+steps:
+  - id: research
+    description: Re-read agent-chat-loop.ts's messages.create() call site and memory.ts's listPreferences() signature in full.
+    agent: researcher
+  - id: implement
+    description: Add the system prompt construction (grounding text + recent preferences) to the loop.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Test that preferences recorded in one session are present in a NEW session's system prompt content.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no regression to existing chat tool-call/approval behavior; confirm the preference injection is bounded (not unbounded growth).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/chat/agent-chat-loop.ts
+      purpose: "the messages.create() call site, currently missing a system prompt entirely"
+    - path: src/lib/chat/memory.ts
+      purpose: "listPreferences() -- the never-called function this story wires up"
+
+references:
+  - path: .pHive/epics/deep-dive-audit-and-testing-framework/docs/design-discussion.md
+    relevant_excerpt: "§1c — the write-only preferences + missing system prompt findings"
+  - path: .pHive/epics/chat-copilot-self-tuning/docs/design-discussion.md
+    relevant_excerpt: "§3b — the still-open 'structured facts vs free text' question this story deliberately does not resolve"
