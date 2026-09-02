@@ -17,7 +17,12 @@ permissions:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    # macOS, not ubuntu: src/lib/auth/real-chrome.ts's spawn-then-attach
+    # mechanism is macOS-only by design (see that file's own
+    # resolveRealChromePath()), and real-chrome.test.ts genuinely exercises
+    # it for real -- confirmed live on this workflow's first real PR run,
+    # which failed hard on ubuntu-latest with exactly that platform guard.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
