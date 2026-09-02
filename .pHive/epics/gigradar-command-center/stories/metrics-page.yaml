@@ -1,7 +1,7 @@
 id: metrics-page
 epic: gigradar-command-center
 title: "New /metrics route: applied/failed/run-rate/graphs, the founding success criterion finally built"
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: []
