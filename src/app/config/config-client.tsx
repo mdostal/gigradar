@@ -1,12 +1,13 @@
 "use client";
 
-import { type ChangeEvent, type FormEvent, useEffect, useState, useTransition } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState, useTransition } from "react";
 import { APP_ICONS, DEFAULT_APP_ICON_ID } from "@/lib/app-icons";
 import type { SessionReadiness } from "@/lib/auth/session-readiness";
 import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
 import { DEFAULT_UI_THEME, UI_THEMES, type UiThemeId } from "@/lib/ui-theme";
 import type { ConfigEdits } from "@/lib/config/save";
 import { mergeDedupe } from "@/lib/profile-ingestion/merge";
+import { findRoleSkillOverlap } from "./profile-data-quality";
 import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
 import { SOURCE_PRESETS, sourceConfigFromPreset } from "@/lib/sources/source-presets";
 import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
@@ -1856,6 +1857,16 @@ export function ConfigClient({
     setRemoveResumeState({ status: "idle" });
   }
 
+  // deep-dive-audit-and-testing-framework epic, clean-and-guard-profile-
+  // data-quality story: a WARNING, never a save-blocker -- a title-like
+  // phrase genuinely also being a real skill is rare but possible, so the
+  // owner decides, save is never prevented. See profile-data-quality.ts's
+  // own header comment for the live-verified contamination this catches.
+  const roleSkillOverlap = useMemo(
+    () => findRoleSkillOverlap(draft.profile.roles, draft.profile.skills),
+    [draft.profile.roles, draft.profile.skills],
+  );
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -1928,6 +1939,14 @@ export function ConfigClient({
             onChange={(skills) => setDraft({ ...draft, profile: { ...draft.profile, skills } })}
             placeholder="e.g. TypeScript"
           />
+          {roleSkillOverlap.length > 0 && (
+            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              {roleSkillOverlap.length === 1
+                ? `"${roleSkillOverlap[0]}" appears in both Roles and Skills — probably a role title that landed in the wrong field.`
+                : `These appear in both Roles and Skills — probably role titles that landed in the wrong field: ${roleSkillOverlap.map((s) => `"${s}"`).join(", ")}.`}{" "}
+              You can still save as-is; this is just a heads-up.
+            </div>
+          )}
           <label>
             <span className={labelClass}>Timezone</span>
             <input
