@@ -38,6 +38,7 @@
 // here (matches electron-wrapper's own "terminal-launched, not a packaged
 // installer/service" scope discipline).
 import { Cron } from "croner";
+import { startSidecarHealthCheck } from "./sidecar-health.js";
 import { evaluateAutoFire } from "../lib/apply/autofire.js";
 import { runRadar, stageApplication } from "../lib/apply/runner.js";
 import { loadConfig } from "../lib/config/load.js";
@@ -574,6 +575,7 @@ async function main(): Promise<void> {
   await registerAllSources();
 
   startScheduler();
+  startSidecarHealthCheck();
 }
 
 // Only run when invoked directly (`npm run scheduler`), not when imported by
