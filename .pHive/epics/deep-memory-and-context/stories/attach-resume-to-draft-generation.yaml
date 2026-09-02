@@ -1,0 +1,34 @@
+id: attach-resume-to-draft-generation
+epic: deep-memory-and-context
+title: "generateDraft() attaches the applicant's real resume file, reusing prep.ts's proven loadResume()/buildResumeContentBlock() mechanism"
+status: complete
+complexity: small
+methodology: classic
+depends_on: []
+
+description: |
+  generateDraft() (draft.ts) was grounded ONLY in Profile's shallow
+  {roles, skills, timezone, homeBase} fields -- never the applicant's real
+  resume file, even though career-documents already persists one and
+  prep.ts's generatePrepPacket() has attached it (via loadResume()/
+  buildResumeContentBlock()) since that epic shipped. Reuses that exact
+  mechanism -- never a second, duplicated resume-loading implementation.
+
+acceptance_criteria:
+  - "generateDraft() calls loadResume(applyProfile.resumePath) when set, and buildResumeContentBlock() to embed it -- PDF as a real file part, plain text as a text part."
+  - "The AI-SDK call site switches from a single string prompt to a messages/content-blocks array (Output.object() unchanged) so a PDF resume embeds natively, matching prep.ts's own generateText({messages:...}) shape."
+  - "The claude-code-harness credential path uses toHarnessContentBlocks() the same way prep.ts does."
+  - "Degrades gracefully exactly like prep.ts when resumePath is unset or the file is missing -- no error, no file block, byte-identical prompt content to before this story for that case."
+  - "Existing draft-format branching (FORMAT_INSTRUCTIONS) is unaffected -- resume attachment is orthogonal to per-platform format."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/draft.ts
+      purpose: "generateDraft()'s content-blocks refactor + resume attachment."
+    - path: src/lib/apply/prep.ts
+      purpose: "the proven pattern this story reuses verbatim (loadResume/buildResumeContentBlock, toHarnessContentBlocks)."
+
+references:
+  - path: .pHive/epics/deep-memory-and-context/docs/design-discussion.md
+    relevant_excerpt: "§2-3 -- scope decision and story breakdown."

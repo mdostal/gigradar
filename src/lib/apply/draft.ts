@@ -28,12 +28,14 @@
 // ApplyProfileConfig/Gig passed in — no placeholder text is ever
 // substituted for a missing optional field, it's simply omitted from the
 // prompt. See draft.test.ts's prompt-grounding test.
-import { NoOutputGeneratedError, Output, generateText } from "ai";
+import { type FilePart, NoOutputGeneratedError, Output, type TextPart, generateText } from "ai";
 import { z } from "zod";
 import type { ApplyProfileConfig, Config, DraftContent, DraftFormat, Gig, Profile } from "../types.js";
-import { createAiSdkModel, generateHarnessObject } from "../config/llm-client.js";
+import { createAiSdkModel, generateHarnessObject, toHarnessContentBlocks } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 import { getSource } from "../sources/source.js";
+import { loadResume } from "../documents/resume-store.js";
+import { buildResumeContentBlock } from "../profile-ingestion/extract.js";
 
 const DRAFT_TOOL_NAME = "draft_application";
 
@@ -169,6 +171,16 @@ const FORMAT_INSTRUCTIONS: Record<DraftFormat, string> = {
  * untrusted DATA (see this file's header comment and buildGigDataBlock()
  * above).
  *
+ * deep-memory-and-context epic: also attaches the applicant's real resume
+ * file when one is on file (`applyProfile.resumePath`), via the SAME
+ * `loadResume()`/`buildResumeContentBlock()` mechanism `prep.ts`'s
+ * `generatePrepPacket()` already established — never a second, duplicated
+ * resume-loading implementation. Previously this draft was grounded ONLY
+ * in `Profile`'s shallow `{roles, skills, ...}` fields; a resume file
+ * carries real, specific work history/achievements no structured field
+ * captures. Degrades gracefully (no resume attached) exactly like
+ * `prep.ts` does when `resumePath` is unset or the file is missing.
+ *
  * `credential` is used to construct the model HERE, inside this function
  * call, and nowhere else — see this file's header comment. Callers (e.g.
  * `apply/runner.ts`'s `stageApplication()`) resolve it themselves, however
@@ -185,18 +197,34 @@ export async function generateDraft(
   credential: LlmCredential,
   format: DraftFormat = "cover-letter",
 ): Promise<DraftContent> {
-  const prompt = [
-    "Draft a job application for this person, grounded STRICTLY in the real applicant data provided below. " +
-      FORMAT_INSTRUCTIONS[format] +
-      " CRITICAL: never invent, embellish, or assume experience, skills, employers, dates, or figures that are " +
-      "not explicitly present in the applicant data below. If something isn't stated, do not claim it.",
-    buildApplicantDataBlock(profile, applyProfile),
-    buildGigDataBlock(gig),
-    `Now report the complete drafted application via the ${DRAFT_TOOL_NAME} structured output.`,
-  ].join("\n\n");
+  const resumeFile = applyProfile.resumePath ? loadResume(applyProfile.resumePath) : undefined;
+  const resumeBlock = resumeFile
+    ? buildResumeContentBlock(
+        resumeFile.mediaType === "application/pdf"
+          ? { resumeFile: { data: resumeFile.data, mediaType: "application/pdf" } }
+          : { resumeText: resumeFile.data.toString("utf8") },
+      )
+    : undefined;
+
+  const contentBlocks: Array<TextPart | FilePart> = [
+    {
+      type: "text",
+      text:
+        "Draft a job application for this person, grounded STRICTLY in the real applicant data provided below" +
+        (resumeBlock ? " and their real resume file (attached)" : "") +
+        ". " +
+        FORMAT_INSTRUCTIONS[format] +
+        " CRITICAL: never invent, embellish, or assume experience, skills, employers, dates, or figures that are " +
+        "not explicitly present in the applicant data/resume below. If something isn't stated, do not claim it.",
+    },
+    { type: "text", text: buildApplicantDataBlock(profile, applyProfile) },
+    ...(resumeBlock ? [{ type: "text" as const, text: "The applicant's real, current resume file follows:" }, resumeBlock] : []),
+    { type: "text", text: buildGigDataBlock(gig) },
+    { type: "text", text: `Now report the complete drafted application via the ${DRAFT_TOOL_NAME} structured output.` },
+  ];
 
   if (credential.kind === "claude-code-harness") {
-    const result = await generateHarnessObject(DraftResultSchema, prompt);
+    const result = await generateHarnessObject(DraftResultSchema, toHarnessContentBlocks(contentBlocks));
     return { ...result, format };
   }
 
@@ -204,7 +232,7 @@ export async function generateDraft(
 
   const result = await generateText({
     model,
-    prompt,
+    messages: [{ role: "user", content: contentBlocks }],
     output: Output.object({ schema: DraftResultSchema, name: DRAFT_TOOL_NAME }),
   });
 

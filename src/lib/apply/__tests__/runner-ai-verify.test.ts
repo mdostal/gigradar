@@ -75,7 +75,7 @@ function makeGig(externalId: string): Gig {
 }
 
 describe("runRadar: applyAiVerification() wiring (ai-match-verification epic)", () => {
-  it("calls applyAiVerification with the gig, the heuristic matchedGroupIds, a groupId->GroupConfig map, and the resolved credential", async () => {
+  it("calls applyAiVerification with the gig, the heuristic matchedGroupIds, a groupId->GroupConfig map, the real profile/applyProfile, and the resolved credential", async () => {
     nextGigs = [makeGig("1")];
     const config = makeConfig(true);
     const credential = { kind: "api-key" as const, provider: "anthropic" as const, value: "fake-api-key" };
@@ -83,15 +83,19 @@ describe("runRadar: applyAiVerification() wiring (ai-match-verification epic)", 
     await runRadar(config, { db }, { credential });
 
     expect(mockApplyAiVerification).toHaveBeenCalledTimes(1);
-    const [gigArg, matchedGroupIdsArg, groupsByIdArg, credentialArg] = mockApplyAiVerification.mock.calls[0] as [
+    const [gigArg, matchedGroupIdsArg, groupsByIdArg, profileArg, applyProfileArg, credentialArg] = mockApplyAiVerification.mock.calls[0] as [
       Gig,
       string[],
       Map<string, unknown>,
+      unknown,
+      unknown,
       unknown,
     ];
     expect(gigArg.externalId).toBe("1");
     expect(matchedGroupIdsArg).toEqual(["g1"]);
     expect(groupsByIdArg.get("g1")).toEqual(config.groups[0]);
+    expect(profileArg).toEqual(config.profile);
+    expect(applyProfileArg).toEqual(config.applyProfile);
     expect(credentialArg).toEqual(credential);
   });
 
