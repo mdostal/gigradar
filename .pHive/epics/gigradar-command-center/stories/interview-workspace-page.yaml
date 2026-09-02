@@ -1,7 +1,7 @@
 id: interview-workspace-page
 epic: gigradar-command-center
 title: "New per-gig Interview workspace page -- prep packet + Materials, promoted out of a table row"
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: []
