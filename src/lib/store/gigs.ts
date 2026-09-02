@@ -34,6 +34,7 @@ interface GigRow {
   matched_profile_ids: string | null;
   matched_group_ids: string | null;
   matched_group_tiers: string | null;
+  ai_flags: string | null;
   status: string;
   outcome_reason: string | null;
   outcome_note: string | null;
@@ -70,6 +71,7 @@ function toStoredGig(row: GigRow): StoredGig {
     matchedProfileIds: row.matched_profile_ids !== null ? JSON.parse(row.matched_profile_ids) : undefined,
     matchedGroupIds: row.matched_group_ids !== null ? JSON.parse(row.matched_group_ids) : undefined,
     matchedGroupTiers: row.matched_group_tiers !== null ? JSON.parse(row.matched_group_tiers) : undefined,
+    aiFlags: row.ai_flags !== null ? JSON.parse(row.ai_flags) : undefined,
     status: row.status as GigStatus,
     outcomeReason: (row.outcome_reason as OutcomeReason | null) ?? null,
     outcomeNote: row.outcome_note ?? null,
@@ -122,6 +124,7 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     matched_profile_ids: gig.matchedProfileIds === undefined ? null : JSON.stringify(gig.matchedProfileIds),
     matched_group_ids: gig.matchedGroupIds === undefined ? null : JSON.stringify(gig.matchedGroupIds),
     matched_group_tiers: gig.matchedGroupTiers === undefined ? null : JSON.stringify(gig.matchedGroupTiers),
+    ai_flags: gig.aiFlags === undefined ? null : JSON.stringify(gig.aiFlags),
     now,
   };
 
@@ -130,11 +133,11 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
       `INSERT INTO gigs (
          key, source_id, external_id, title, company, url, rate_min, rate_max, rate_unit,
          weekly_hours, remote, contract_to_hire, employment_type, stage, posted_at, description, raw, tier,
-         matched_profile_ids, matched_group_ids, matched_group_tiers, status, first_seen, last_seen, unavailable_since, reappeared_at
+         matched_profile_ids, matched_group_ids, matched_group_tiers, ai_flags, status, first_seen, last_seen, unavailable_since, reappeared_at
        ) VALUES (
          :key, :source_id, :external_id, :title, :company, :url, :rate_min, :rate_max, :rate_unit,
          :weekly_hours, :remote, :contract_to_hire, :employment_type, :stage, :posted_at, :description, :raw, :tier,
-         :matched_profile_ids, :matched_group_ids, :matched_group_tiers, 'new', :now, :now, NULL, NULL
+         :matched_profile_ids, :matched_group_ids, :matched_group_tiers, :ai_flags, 'new', :now, :now, NULL, NULL
        )`,
     ).run(params);
     return { key, inserted: true, reappeared: false };
@@ -154,6 +157,7 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
        matched_profile_ids = :matched_profile_ids,
        matched_group_ids = :matched_group_ids,
        matched_group_tiers = :matched_group_tiers,
+       ai_flags = :ai_flags,
        last_seen = :now,
        unavailable_since = NULL,
        reappeared_at = CASE WHEN :was_unavailable THEN :now ELSE reappeared_at END
@@ -177,6 +181,7 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     matched_profile_ids: params.matched_profile_ids,
     matched_group_ids: params.matched_group_ids,
     matched_group_tiers: params.matched_group_tiers,
+    ai_flags: params.ai_flags,
     now: params.now,
     key: params.key,
     was_unavailable: wasUnavailable ? 1 : 0,

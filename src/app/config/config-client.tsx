@@ -179,6 +179,16 @@ interface DraftConfig {
   needs: DraftNeeds;
   sources: DraftSource[];
   roleArea: DraftRoleArea;
+  /**
+   * ai-match-verification epic — mirrors GroupConfig.aiVerify exactly:
+   * always has a value (defaulting to false), no enabled-flag tri-state
+   * needed, same "omitted/false are identical" pattern as
+   * autoDraftOnScan/notifyOnGreenMatch above. Slice 1 of the
+   * multi-group-architecture epic has no group-management UI yet, so this
+   * toggles the single primary group's aiVerify (see configToDraft()'s own
+   * comment on that convention).
+   */
+  aiVerify: boolean;
   schedule: string;
   applyProfile: DraftApplyProfile;
   /**
@@ -335,6 +345,7 @@ function configToDraft(config: Config): DraftConfig {
       keywords: group?.roleArea?.keywords ?? [],
       redKeywords: group?.roleArea?.redKeywords ?? [],
     },
+    aiVerify: group?.aiVerify ?? false,
     schedule: config.schedule ?? "",
     autoDraftOnScan: config.autoDraftOnScan ?? false,
     notifyOnGreenMatch: config.notifyOnGreenMatch ?? false,
@@ -512,7 +523,7 @@ function draftToEdits(draft: DraftConfig, groupId: string, groupLabel: string): 
       }
     : undefined;
 
-  const edits: ConfigEdits = { profile, groups: [{ id: groupId, label: groupLabel, needs, roleArea }], sources };
+  const edits: ConfigEdits = { profile, groups: [{ id: groupId, label: groupLabel, needs, roleArea, aiVerify: draft.aiVerify }], sources };
 
   const schedule = draft.schedule.trim();
   edits.schedule = schedule === "" ? undefined : schedule;
@@ -2366,6 +2377,19 @@ export function ConfigClient({
             />
           </div>
         )}
+        <div className="mt-3 border-t border-theme-surface-border pt-3">
+          <CheckboxField
+            label="Double-check matches with AI (catches keyword false positives)"
+            checked={draft.aiVerify}
+            onChange={(aiVerify) => setDraft({ ...draft, aiVerify })}
+          />
+          <p className="mt-1 text-xs text-theme-text-dim">
+            Keyword matching alone can green-tier the wrong role type — e.g. &quot;Interim Finance Director&quot; matching
+            only because &quot;interim&quot; is a green keyword. Turning this on spends one extra LLM call per already-
+            matched gig each scan to double-check its actual role type before counting it as a real match. Requires an
+            LLM credential (Settings below); silently skipped with the heuristic result standing if none is configured.
+          </p>
+        </div>
       </section>
 
       <section className={sectionClass}>
