@@ -8,17 +8,34 @@ const endChatSessionMock = vi.fn();
 const resumeChatSessionMock = vi.fn();
 const sendMessageMock = vi.fn();
 const resolveApprovalMock = vi.fn();
-vi.mock("@/lib/chat/agent-chat-loop", () => ({
-  startChatSession: (...args: unknown[]) => startChatSessionMock(...args),
-  endChatSession: (...args: unknown[]) => endChatSessionMock(...args),
-  resumeChatSession: (...args: unknown[]) => resumeChatSessionMock(...args),
-  sendMessage: (...args: unknown[]) => sendMessageMock(...args),
-  resolveApproval: (...args: unknown[]) => resolveApprovalMock(...args),
-}));
+// buildContextSeedBlock is real (not mocked) -- it's a pure string builder
+// (chat-copilot-self-tuning epic, Slice 2), so exercising the real
+// implementation is more useful than stubbing it, and startContextualChatSessionAction's
+// own tests assert on startChatSessionMock's second arg to prove the real
+// seed actually reached it.
+vi.mock("@/lib/chat/agent-chat-loop", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/chat/agent-chat-loop")>();
+  return {
+    ...actual,
+    startChatSession: (...args: unknown[]) => startChatSessionMock(...args),
+    endChatSession: (...args: unknown[]) => endChatSessionMock(...args),
+    resumeChatSession: (...args: unknown[]) => resumeChatSessionMock(...args),
+    sendMessage: (...args: unknown[]) => sendMessageMock(...args),
+    resolveApproval: (...args: unknown[]) => resolveApprovalMock(...args),
+  };
+});
 
 import { setEnvVar } from "@/lib/config/env-store";
 import { saveConfig, type ConfigEdits } from "@/lib/config/save";
-import { endChatSessionAction, resolveChatApprovalAction, resumeChatSessionAction, sendChatMessageAction, startChatSessionAction } from "../actions";
+import { closeDb, recordScan, saveDraft } from "@/lib/store";
+import {
+  endChatSessionAction,
+  resolveChatApprovalAction,
+  resumeChatSessionAction,
+  sendChatMessageAction,
+  startChatSessionAction,
+  startContextualChatSessionAction,
+} from "../actions";
 
 function baseConfigEdits(): ConfigEdits {
   return {
@@ -63,6 +80,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  closeDb();
   const fs = await import("node:fs");
   if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
   else process.env.XDG_DATA_HOME = originalXdgDataHome;
@@ -80,6 +98,86 @@ describe("startChatSessionAction", () => {
     if (!result.ok) throw new Error("expected success");
     expect(result.data.sessionId.length).toBeGreaterThan(0);
     expect(startChatSessionMock).toHaveBeenCalledWith(result.data.sessionId);
+  });
+});
+
+describe("startContextualChatSessionAction (chat-copilot-self-tuning epic, Slice 2)", () => {
+  it("gig: seeds the session with the real gig's data and returns its title as the contextLabel", async () => {
+    recordScan([{ sourceId: "src-a", gigs: [{ sourceId: "src-a", externalId: "1", title: "Fractional CTO at Acme", company: "Acme", url: "https://example.test/1" }] }]);
+
+    const result = await startContextualChatSessionAction("gig", "src-a:1");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.data.contextLabel).toBe("Fractional CTO at Acme");
+    expect(startChatSessionMock).toHaveBeenCalledTimes(1);
+    const [, seed] = startChatSessionMock.mock.calls[0] as [string, string];
+    expect(seed).toContain("Fractional CTO at Acme");
+    expect(seed).toContain("Acme");
+  });
+
+  it("gig: returns {ok:false} for an unknown gig key, never calls startChatSession", async () => {
+    const result = await startContextualChatSessionAction("gig", "does-not:exist");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("does-not:exist");
+    expect(startChatSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("draft: seeds the session with both the draft content and its linked gig's title as contextLabel", async () => {
+    recordScan([{ sourceId: "src-a", gigs: [{ sourceId: "src-a", externalId: "1", title: "Fractional CTO at Acme", url: "https://example.test/1" }] }]);
+    saveDraft("src-a:1", { coverText: "Dear hiring manager...", answers: {} });
+
+    const result = await startContextualChatSessionAction("draft", "src-a:1");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.data.contextLabel).toBe("Fractional CTO at Acme");
+    const [, seed] = startChatSessionMock.mock.calls[0] as [string, string];
+    expect(seed).toContain("Dear hiring manager");
+  });
+
+  it("draft: returns {ok:false} for a gig key with no draft, never calls startChatSession", async () => {
+    recordScan([{ sourceId: "src-a", gigs: [{ sourceId: "src-a", externalId: "1", title: "T", url: "https://example.test/1" }] }]);
+
+    const result = await startContextualChatSessionAction("draft", "src-a:1");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(startChatSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("source: seeds the session with id/enabled/kind/groupIds but OMITS settings (opaque, may reference secrets)", async () => {
+    saveConfig({
+      profile: { name: "Test", roles: [], skills: [], timezone: "UTC" },
+      groups: [{ id: "g1", label: "Group 1", needs: { engagementProfiles: [{ id: "p1", label: "Hourly", types: ["contract"], minRate: 100, highRate: 150, maxHours: 20, maxHoursAtHighRate: 40, rateUnit: "hour" }], freshStageOnly: false, remoteOnly: true } }],
+      sources: [{ id: "braintrust", enabled: true, settings: { apiToken: "env:BRAINTRUST_TOKEN" } }],
+    });
+
+    const result = await startContextualChatSessionAction("source", "braintrust");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.data.contextLabel).toBe("braintrust");
+    const [, seed] = startChatSessionMock.mock.calls[0] as [string, string];
+    expect(seed).toContain("braintrust");
+    expect(seed).not.toContain("BRAINTRUST_TOKEN");
+    expect(seed).not.toContain("apiToken");
+  });
+
+  it("source: returns {ok:false} for an unknown source id, never calls startChatSession", async () => {
+    saveConfig({
+      profile: { name: "Test", roles: [], skills: [], timezone: "UTC" },
+      groups: [{ id: "g1", label: "Group 1", needs: { engagementProfiles: [{ id: "p1", label: "Hourly", types: ["contract"], minRate: 100, highRate: 150, maxHours: 20, maxHoursAtHighRate: 40, rateUnit: "hour" }], freshStageOnly: false, remoteOnly: true } }],
+      sources: [],
+    });
+
+    const result = await startContextualChatSessionAction("source", "does-not-exist");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(startChatSessionMock).not.toHaveBeenCalled();
   });
 });
 

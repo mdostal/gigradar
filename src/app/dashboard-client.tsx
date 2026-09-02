@@ -20,6 +20,7 @@ import { DASHBOARD_PREFS_STORAGE_KEY, deserializeDashboardPrefs, serializeDashbo
 import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, shortProfileLabel, type SeenWindow } from "./dashboard-filter";
 import { compareByField, type SortField } from "./dashboard-sort";
 import { GigDetailPanel } from "./gig-detail-panel";
+import { ContextualChatTrigger } from "./contextual-chat/contextual-chat-trigger";
 
 export const ALL_STATUSES: GigStatus[] = ["new", "applied", "interview", "archived", "ignored"];
 
@@ -604,13 +605,16 @@ export function DashboardClient({
       enableSorting: false,
       enableColumnFilter: false,
       cell: ({ row }) => (
-        <button
-          type="button"
-          onClick={() => setSelectedGigKey(row.original.key)}
-          className="whitespace-nowrap rounded-md border border-theme-surface-border px-2 py-1 text-xs font-medium text-theme-text hover:bg-theme-surface-raised"
-        >
-          View →
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setSelectedGigKey(row.original.key)}
+            className="whitespace-nowrap rounded-md border border-theme-surface-border px-2 py-1 text-xs font-medium text-theme-text hover:bg-theme-surface-raised"
+          >
+            View →
+          </button>
+          <ContextualChatTrigger kind="gig" itemKey={row.original.key} label={row.original.title} />
+        </div>
       ),
       meta: { filterKind: "none" },
     },
@@ -969,7 +973,7 @@ export function DashboardClient({
           </thead>
           <tbody className="divide-y divide-slate-100 bg-theme-surface">
             {rows.map((row) => (
-              <tr key={row.original.key} className="odd:bg-theme-surface even:bg-theme-surface-raised/60 hover:bg-slate-100">
+              <tr key={row.original.key} className="group odd:bg-theme-surface even:bg-theme-surface-raised/60 hover:bg-slate-100">
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-2 text-theme-text-dim">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
