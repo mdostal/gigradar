@@ -47,10 +47,21 @@ const BADGE_COLOR_CLASS: Record<IssuesBadgeInfo["color"], string> = {
 export function NavHeader({
   issuesBadge = null,
   iconSrc,
+  groups = [],
 }: {
   issuesBadge?: IssuesBadgeInfo | null;
   /** Public path of the current `Config.appIcon` pick (`icon-picker` story) — layout.tsx resolves this server-side via resolveAppIcon(), so it's always a valid path, never undefined in practice. Optional only so tests can render NavHeader standalone without wiring it. */
   iconSrc?: string;
+  /**
+   * multi-group-architecture epic, Slice 3. Every configured group's
+   * `{id, label}` — layout.tsx resolves this server-side via
+   * readRawConfig() (same non-resolving, ENOENT-tolerant reader every
+   * other status-strip-adjacent read in this app uses). Rendered as a
+   * row of group-switcher pills UNDER the main nav, but ONLY once 2+
+   * groups exist — a not-yet-multi-group install (the common case) sees
+   * zero extra UI, byte-identical to before this prop existed.
+   */
+  groups?: { id: string; label: string }[];
 }) {
   const pathname = usePathname();
   return (
@@ -96,6 +107,42 @@ export function NavHeader({
           })}
         </div>
       </nav>
+      {groups.length > 1 && (
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-1.5 px-6 pb-2.5 text-xs">
+          <span className="text-brand-text-dim">Search:</span>
+          <Link
+            href="/"
+            aria-current={pathname === "/" ? "page" : undefined}
+            className={[
+              "rounded-full px-2.5 py-1 font-medium transition-colors",
+              pathname === "/"
+                ? "bg-brand-accent/15 text-brand-accent ring-1 ring-inset ring-brand-accent/30"
+                : "text-brand-text-dim hover:bg-brand-bg-elevated hover:text-brand-text",
+            ].join(" ")}
+          >
+            All groups
+          </Link>
+          {groups.map((g) => {
+            const href = `/${g.id}`;
+            const active = pathname === href;
+            return (
+              <Link
+                key={g.id}
+                href={href}
+                aria-current={active ? "page" : undefined}
+                className={[
+                  "rounded-full px-2.5 py-1 font-medium transition-colors",
+                  active
+                    ? "bg-brand-accent/15 text-brand-accent ring-1 ring-inset ring-brand-accent/30"
+                    : "text-brand-text-dim hover:bg-brand-bg-elevated hover:text-brand-text",
+                ].join(" ")}
+              >
+                {g.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
     </header>
   );
 }
