@@ -26,12 +26,30 @@
 // `browser.newContext()` — see filterStorageStateToAllowlist() below, which
 // runs before every context is constructed, unconditionally.
 //
-// HEADED ONLY. `headless: false` is the only mode this module launches —
-// live testing during this epic's planning confirmed both target sites
-// (GoFractional, A.Team) fail authentication in headless mode, independent
-// of session validity (likely bot detection). Do not add a `headless`
-// option here; that's a separate, deliberate future decision, not a default
-// fallback (see design_decisions in the story YAML).
+// HEADLESS FIRST, HEADED FALLBACK (embedded-browser-and-guided-session
+// epic, headless-first-with-headed-fallback story). Originally headed-only
+// — live testing during browser-session-auth's own planning found
+// GoFractional/A.Team fail authentication in headless mode, independent of
+// session validity (likely bot detection). That finding was never
+// re-tested since, and headed-only meant a real, visible window popped on
+// EVERY scan of every browser-session source, forever, whether or not the
+// finding still held. acquireViaStorageStateSnapshot() below now tries
+// `headless: true` FIRST; only a SessionAuthError/VerificationChallengeError
+// falls through to a headed retry (see withBrowserSession()'s three-tier
+// chain) — this makes the system self-discovering, permanently re-testing
+// the real constraint on every scan rather than assuming it's forever
+// fixed by a one-off manual check. No caching of "headless works for
+// source X" across calls, deliberately — correctness over a marginal speed
+// win; a failed headless attempt costs a few seconds, not a window.
+//
+// When a headed window IS required (headless failed), it's minimized
+// immediately after auth is confirmed (minimizeChromeWindow(),
+// real-chrome.ts) so an unattended scheduled scan never leaves a window
+// flashing/focus-stealing on the owner's desktop for the scan's duration —
+// the window still exists (CDP automation operates on the render tree, not
+// physical on-screen pixels) but is never visible. This module never adds
+// a caller-facing `headless` OPTION — the tiered fallback above is the
+// only control surface; see design_decisions in the story YAML.
 //
 // NO SCRAPED CONTENT IN ERRORS/LOGS. Every error thrown or logged by this
 // module includes only URLs, file paths, and fixed diagnostic strings —
@@ -53,7 +71,7 @@ import { decrypt, getOrCreateKey, isEncryptedEnvelope, VaultTamperError } from "
 import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
 import { writeStorageStateAtomically } from "./session-capture.js";
 import { isVerificationChallengeContent, VerificationChallengeError } from "../sources/verification-challenge.js";
-import { attachToRealChrome, closeRealChrome, spawnRealChrome } from "./real-chrome.js";
+import { attachToRealChrome, closeRealChrome, minimizeChromeWindow, spawnRealChrome } from "./real-chrome.js";
 
 const MODULE_PREFIX = "gigradar browser-session";
 
@@ -312,13 +330,15 @@ export function checkChromiumAvailable(): void {
 let warnedNoRealChrome = false;
 
 /**
- * Launches a headed browser for `logContext` (e.g. `source "gofractional"`),
+ * Launches a browser for `logContext` (e.g. `source "gofractional"`),
  * preferring the real, locally-installed Google Chrome (`channel: "chrome"`)
  * over Playwright's bundled Chromium build ("Chrome for Testing"). Google's
  * OAuth sign-in flow actively fingerprints and rejects the bundled build
  * ("This browser or app may not be secure") independent of automation
  * flags -- confirmed live during this fix. Launching the actual Chrome
- * binary a user has installed passes the same flow.
+ * binary a user has installed passes the same flow. `headless` is passed
+ * straight through to `chromium.launch()` -- see this module's header
+ * comment for the headless-first-with-headed-fallback rationale.
  *
  * Falls back to bundled Chromium -- already confirmed present by the
  * caller's own checkChromiumAvailable() call -- when real Chrome isn't
@@ -327,9 +347,9 @@ let warnedNoRealChrome = false;
  * fallback warning is logged once per process (not once per launch) to
  * avoid repeat-launch log spam.
  */
-export async function launchHeadedBrowser(logContext: string): Promise<Browser> {
+export async function launchScopedChromium(headless: boolean, logContext: string): Promise<Browser> {
   try {
-    return await chromium.launch({ headless: false, channel: "chrome" });
+    return await chromium.launch({ headless, channel: "chrome" });
   } catch {
     if (!warnedNoRealChrome) {
       warnedNoRealChrome = true;
@@ -340,7 +360,7 @@ export async function launchHeadedBrowser(logContext: string): Promise<Browser> 
       );
     }
     try {
-      return await chromium.launch({ headless: false });
+      return await chromium.launch({ headless });
     } catch (e) {
       throw new Error(
         `${MODULE_PREFIX}: failed to launch a browser for ${logContext}: ${e instanceof Error ? e.message : String(e)}`,
@@ -402,21 +422,32 @@ async function navigateAndCheckAuth(
  * from the old (pre-self-healing) behavior. Throws SessionAuthError or
  * VerificationChallengeError (never silently) when the snapshot no longer
  * authenticates — withBrowserSession() below catches exactly those two to
- * decide whether a persistent-real-chrome retry is warranted.
+ * decide whether the next tier is warranted.
+ *
+ * `headless` lets the caller (withBrowserSession()'s three-tier chain) try
+ * this exact same acquisition twice — headless first, headed second — with
+ * no duplicated logic between the two attempts. `minimizeAfterAuth: true`
+ * (only ever passed on the HEADED attempt, and only from an unattended-scan
+ * caller — never from a caller with a human actively present) minimizes the
+ * window immediately once auth is confirmed, before `run()` executes, so it
+ * never sits visible/focus-stealing for the scan's duration.
  */
 async function acquireViaStorageStateSnapshot<T>(
   options: BrowserSessionOptions,
   scopedStorageState: StorageState,
   run: (page: Page) => Promise<T>,
+  headless: boolean,
+  minimizeAfterAuth: boolean,
 ): Promise<T> {
   const { sourceId, url, isAuthenticated } = options;
   checkChromiumAvailable();
-  const browser: Browser = await launchHeadedBrowser(`source "${sourceId}"`);
+  const browser: Browser = await launchScopedChromium(headless, `source "${sourceId}"`);
   try {
     const context = await browser.newContext({ storageState: scopedStorageState });
     try {
       const page = await context.newPage();
       await navigateAndCheckAuth(page, url, sourceId, isAuthenticated);
+      if (minimizeAfterAuth) await minimizeChromeWindow();
       return await run(page);
     } finally {
       await context.close();
@@ -478,6 +509,11 @@ async function acquireViaPersistentRealChrome<T>(
     const page = await context.newPage();
     try {
       await navigateAndCheckAuth(page, url, sourceId, isAuthenticated);
+      // embedded-browser-and-guided-session epic: this tier only ever runs
+      // from an unattended-scan caller (withBrowserSession()'s own chain) —
+      // never with a human actively present, so minimizing immediately once
+      // auth is confirmed is always correct here, unconditionally.
+      await minimizeChromeWindow();
       const result = await run(page);
 
       if (storageStatePathToRefresh) {
@@ -511,21 +547,28 @@ async function acquireViaPersistentRealChrome<T>(
 }
 
 /**
- * Acquires a headed, origin-scoped browser session for one source, hands
- * the caller a `Page` (already navigated to `options.url` and confirmed
+ * Acquires an origin-scoped browser session for one source, hands the
+ * caller a `Page` (already navigated to `options.url` and confirmed
  * authenticated by `options.isAuthenticated`) via `run`, and GUARANTEES the
  * browser is closed on every exit path. Cleanup is owned centrally here,
  * never left to the caller/adapter.
  *
- * TWO ACQUISITION PATHS, self-healing (see acquireViaPersistentRealChrome()'s
- * own doc comment for the full rationale): tries the fast, default
- * storageState-snapshot path first; if THAT throws a VerificationChallengeError
- * or SessionAuthError (an invalid/stale session — never on any other error,
- * including one `run()` itself throws), retries ONCE via a real,
- * persistent-profile Chrome instance, and refreshes the snapshot on success
- * so future calls are fast again. If the fallback ALSO fails, throws a
- * combined, actionable error naming both failures — Capture Login is
- * genuinely the last resort now, not the only path.
+ * THREE ACQUISITION TIERS, self-healing (see acquireViaPersistentRealChrome()'s
+ * own doc comment for the persistent-real-chrome rationale, and this
+ * module's header comment for the headless-first rationale):
+ *   1. storageState snapshot, HEADLESS — no window ever appears if this
+ *      works.
+ *   2. storageState snapshot, HEADED (this module's original fast path) —
+ *      only reached if tier 1 threw VerificationChallengeError or
+ *      SessionAuthError. Minimized immediately once auth is confirmed.
+ *   3. persistent-real-chrome retry, HEADED — only reached if tier 2 ALSO
+ *      threw one of those same two error types. Refreshes the storageState
+ *      snapshot on success so tier 1/2 are self-healed for later calls.
+ * Any OTHER error (including one `run()` itself throws) is never retried —
+ * it propagates immediately from whichever tier it came from. If tier 3
+ * ALSO fails, throws a combined, actionable error naming both the
+ * triggering failure and tier 3's own — Capture Login is genuinely the
+ * last resort now, not the only path.
  *
  * Throws (before ever launching a browser) if the storageState file is
  * missing/unreadable/malformed — see readStorageStateFile().
@@ -558,29 +601,42 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
 
   const scopedStorageState = filterStorageStateToAllowlist(rawStorageState, allowedOrigins);
 
+  const isSessionOrChallengeError = (e: unknown): boolean =>
+    e instanceof VerificationChallengeError || e instanceof SessionAuthError;
+
   try {
-    return await acquireViaStorageStateSnapshot(options, scopedStorageState, run);
-  } catch (fastPathError) {
-    if (!(fastPathError instanceof VerificationChallengeError) && !(fastPathError instanceof SessionAuthError)) {
-      throw fastPathError; // an unrelated failure (e.g. from run() itself) -- never retried
-    }
-    try {
-      return await acquireViaPersistentRealChrome(options, allowedOrigins, resolvedStorageStatePath, run);
-    } catch (fallbackError) {
-      // If the FAST PATH's own failure was a verification challenge, that
-      // diagnosis is already actionable (runner.ts's per-source error
-      // handling routes VerificationChallengeError, via instanceof, to a
-      // DISTINCT "needs human verification" issue rather than a generic
-      // "source fetch failed" one -- see verification-challenge.ts's own
-      // doc comment) regardless of why the fallback ALSO failed. Preserve
-      // and re-throw the ORIGINAL error rather than the fallback's own
-      // (possibly unrelated, e.g. "real Chrome not installed") failure.
-      if (fastPathError instanceof VerificationChallengeError) throw fastPathError;
-      throw new Error(
-        `${MODULE_PREFIX}: session for source "${sourceId}" (checked against "${url}") is invalid, and the ` +
-          `persistent-real-chrome retry ALSO failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}. ` +
-          "Run Capture Login for this source to establish a fresh, real, logged-in session.",
-      );
-    }
+    return await acquireViaStorageStateSnapshot(options, scopedStorageState, run, /* headless */ true, /* minimizeAfterAuth */ false);
+  } catch (e) {
+    if (!isSessionOrChallengeError(e)) throw e; // an unrelated failure (e.g. from run() itself) -- never retried
+    // Headless failing isn't itself surfaced further -- tier 2 (headed) is
+    // always at least as diagnostic, and is what a human capturing a fresh
+    // session actually saw, so its own error is what propagates below.
+  }
+
+  let fastPathError: unknown;
+  try {
+    return await acquireViaStorageStateSnapshot(options, scopedStorageState, run, /* headless */ false, /* minimizeAfterAuth */ true);
+  } catch (e) {
+    if (!isSessionOrChallengeError(e)) throw e; // an unrelated failure (e.g. from run() itself) -- never retried
+    fastPathError = e;
+  }
+
+  try {
+    return await acquireViaPersistentRealChrome(options, allowedOrigins, resolvedStorageStatePath, run);
+  } catch (fallbackError) {
+    // If tier 2's own failure was a verification challenge, that diagnosis
+    // is already actionable (runner.ts's per-source error handling routes
+    // VerificationChallengeError, via instanceof, to a DISTINCT "needs
+    // human verification" issue rather than a generic "source fetch
+    // failed" one -- see verification-challenge.ts's own doc comment)
+    // regardless of why tier 3 ALSO failed. Preserve and re-throw that
+    // ORIGINAL error rather than tier 3's own (possibly unrelated, e.g.
+    // "real Chrome not installed") failure.
+    if (fastPathError instanceof VerificationChallengeError) throw fastPathError;
+    throw new Error(
+      `${MODULE_PREFIX}: session for source "${sourceId}" (checked against "${url}") is invalid, and the ` +
+        `persistent-real-chrome retry ALSO failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}. ` +
+        "Run Capture Login for this source to establish a fresh, real, logged-in session.",
+    );
   }
 }

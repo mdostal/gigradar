@@ -1,0 +1,36 @@
+id: headless-first-with-headed-fallback
+epic: embedded-browser-and-guided-session
+title: "Try headless first for every browser-session scan; only fall back to headed on a real auth/challenge failure"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  browser-session.ts's withBrowserSession() launched a real, visible
+  headless:false Chrome window on EVERY scan of every browser-session
+  source, forever -- because GoFractional/A.Team were found (at
+  browser-session-auth's original design time) to fail auth in headless
+  mode. That finding was never re-tested since. Rather than a one-off
+  manual re-test, make the system self-discovering: try headless first;
+  only a SessionAuthError/VerificationChallengeError falls through to the
+  existing headed path. Strictly additive new first tier -- the existing
+  headed fast path and persistent-real-chrome fallback are unchanged as
+  tiers 2/3. No cross-call caching of "headless works for source X" --
+  correctness over a marginal speed win.
+
+acceptance_criteria:
+  - "acquireViaStorageStateSnapshot() accepts a headless boolean; withBrowserSession() tries it with headless=true first."
+  - "A SessionAuthError/VerificationChallengeError from the headless attempt falls through to the existing headed fast path (tier 2), which falls through to the existing persistent-real-chrome retry (tier 3) exactly as before -- any OTHER error (e.g. from run() itself) propagates immediately from whichever tier it came from, never retried."
+  - "When headless succeeds, launchScopedChromium is called exactly once with {headless: true, channel: \"chrome\"} -- no headed window ever appears."
+  - "Existing three-way error-preservation behavior (VerificationChallengeError from the headed tier takes priority for runner.ts's instanceof routing) is unchanged."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/browser-session.ts
+      purpose: "launchHeadedBrowser() renamed launchScopedChromium(headless, logContext); acquireViaStorageStateSnapshot() takes headless+minimizeAfterAuth params; withBrowserSession()'s chain grows a headless tier before the existing two."
+
+references:
+  - path: .pHive/epics/embedded-browser-and-guided-session/docs/design-discussion.md
+    relevant_excerpt: "Story A section -- full rationale and the owner's confirmed scope decision."

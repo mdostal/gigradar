@@ -33,7 +33,7 @@
 import crypto from "node:crypto";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { filterStorageStateToAllowlist, readStorageStateFile, type StorageState } from "./browser-session.js";
-import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
+import { attachToRealChrome, closeRealChrome, positionChromeWindowSideBySide, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
 import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
 import { resolveEnvString } from "../config/load.js";
 import { sendDesktopNotification } from "../notify/desktop.js";
@@ -208,6 +208,20 @@ export async function startAssistSession(
       title: "gigradar: browser opened to help with your profile",
       body: `A browser window opened for ${sourceId} in ${mode} mode -- follow along and help where needed.`,
     });
+  }
+
+  // embedded-browser-and-guided-session epic: "guided"/"full-auto" work is
+  // meant to happen through the embedded live-view pane
+  // (embedded-view-interactive story, /profile-assist's own UI), not by
+  // looking at/using this separate native window directly -- so position it
+  // to a fixed side of the screen (real and glanceable, never hidden) the
+  // moment it opens, rather than letting it pop centered and steal focus
+  // for the whole session. "manual" mode is unaffected -- it's explicitly
+  // "a real browser window is open on your desktop, use it directly"
+  // (profile-assist-client.tsx's own manual-mode copy), so repositioning it
+  // there would fight the actual feature.
+  if (mode !== "manual") {
+    void positionChromeWindowSideBySide();
   }
 
   const sessionId = crypto.randomUUID();

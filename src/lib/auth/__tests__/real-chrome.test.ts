@@ -44,9 +44,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawnMock = vi.fn();
 const spawnSyncMock = vi.fn();
+// embedded-browser-and-guided-session epic: execFile() is what
+// minimizeChromeWindow()/positionChromeWindowSideBySide() shell out to
+// osascript with -- mocked here too, defaulting to a successful no-op
+// callback so every OTHER test in this file (which never touches those two
+// functions) is unaffected.
+const execFileMock = vi.fn((_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null) => void) => cb(null));
 vi.mock("node:child_process", () => ({
   spawn: (...args: unknown[]) => spawnMock(...args),
   spawnSync: (...args: unknown[]) => spawnSyncMock(...args),
+  execFile: (...args: unknown[]) => execFileMock(...(args as [string, string[], unknown, (err: Error | null) => void])),
 }));
 
 const connectOverCDPMock = vi.fn();
@@ -72,6 +79,8 @@ beforeEach(() => {
   spawnMock.mockReset();
   spawnSyncMock.mockReset();
   connectOverCDPMock.mockReset();
+  execFileMock.mockReset();
+  execFileMock.mockImplementation((_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null) => void) => cb(null));
   vi.spyOn(fs, "existsSync").mockImplementation((p) => {
     if (p === REAL_MACOS_CHROME_PATH) return true;
     return realExistsSync(p);
@@ -325,5 +334,53 @@ describe("closeRealChrome", () => {
 
     expect(() => closeRealChrome({ process: child as never, cdpPort: 1, userDataDir: dir, persistent: false })).not.toThrow();
     expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("minimizeChromeWindow / positionChromeWindowSideBySide (embedded-browser-and-guided-session epic)", () => {
+  it("minimizeChromeWindow shells out to osascript via execFile (argv-level, never a shell) targeting window 1 directly, not \"front window\"", async () => {
+    const { minimizeChromeWindow } = await import("../real-chrome.js");
+
+    await minimizeChromeWindow();
+
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    const [cmd, args] = execFileMock.mock.calls[0] as [string, string[], unknown, unknown];
+    expect(cmd).toBe("osascript");
+    expect(args[0]).toBe("-e");
+    expect(args[1]).toContain('tell application "Google Chrome" to set miniaturized of window 1 to true');
+  });
+
+  it("positionChromeWindowSideBySide queries the real screen bounds via Finder, then sets Chrome's window 1 bounds to the right half", async () => {
+    const { positionChromeWindowSideBySide } = await import("../real-chrome.js");
+
+    await positionChromeWindowSideBySide();
+
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    const [cmd, args] = execFileMock.mock.calls[0] as [string, string[], unknown, unknown];
+    expect(cmd).toBe("osascript");
+    const script = args[1];
+    expect(script).toContain('tell application "Finder" to set screenBounds to bounds of window of desktop');
+    expect(script).toContain('tell application "Google Chrome" to set bounds of window 1 to');
+    expect(script).toContain("screenWidth / 2");
+  });
+
+  it("both are no-ops (never call execFile) on a non-macOS platform", async () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const { minimizeChromeWindow, positionChromeWindowSideBySide } = await import("../real-chrome.js");
+
+    await minimizeChromeWindow();
+    await positionChromeWindowSideBySide();
+
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("both are best-effort -- an osascript failure is swallowed, never thrown", async () => {
+    execFileMock.mockImplementation((_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null) => void) =>
+      cb(new Error("osascript: Chrome not running")),
+    );
+    const { minimizeChromeWindow, positionChromeWindowSideBySide } = await import("../real-chrome.js");
+
+    await expect(minimizeChromeWindow()).resolves.toBeUndefined();
+    await expect(positionChromeWindowSideBySide()).resolves.toBeUndefined();
   });
 });

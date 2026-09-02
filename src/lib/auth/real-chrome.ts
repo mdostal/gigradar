@@ -56,7 +56,7 @@
 // -- NEVER a silent fallback to Playwright's bundled Chromium, which would
 // silently reintroduce the exact fingerprinting problem this module exists
 // to fix.
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { execFile, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -308,4 +308,69 @@ export function closeRealChrome(handle: RealChromeHandle): void {
   } catch {
     // already removed, or was never created
   }
+}
+
+// -----------------------------------------------------------------------
+// embedded-browser-and-guided-session epic: window-management helpers, used
+// so a real, headed Chrome window never sits there flashing/stealing focus
+// on the owner's desktop for the duration of an unattended scan or a
+// guided/full-auto profile-assist session. Both are macOS-only (this
+// module is already macOS-gated -- see resolveRealChromePath()) and
+// BEST-EFFORT: a failure here (Chrome not yet frontmost, an AppleScript
+// permissions prompt never answered, whatever) is logged and swallowed,
+// never thrown -- the caller already has a working, authenticated browser
+// at this point, and losing the window-placement nicety must never turn
+// into a failed scan/session. Same execFile-argv-level-no-shell discipline
+// src/lib/notify/desktop.ts already established for its own osascript
+// call -- `window 1 of application "Google Chrome"` is addressed directly
+// rather than "front window", so this works even if Chrome isn't the
+// frontmost app at the moment this fires.
+// -----------------------------------------------------------------------
+
+function runOsascript(script: string, logContext: string): Promise<void> {
+  return new Promise((resolve) => {
+    execFile("osascript", ["-e", script], { timeout: 5_000 }, (err) => {
+      if (err) console.warn(`${MODULE_PREFIX}: ${logContext} failed (non-fatal): ${err.message}`);
+      resolve();
+    });
+  });
+}
+
+/**
+ * Minimizes Chrome's frontmost window immediately -- used for the
+ * unattended-scan headed fallback (browser-session.ts), where no human is
+ * present to look at the window at all; it only needs to keep existing for
+ * CDP automation to keep working (minimizing does not stop Playwright from
+ * screenshotting/clicking -- both operate on the render tree, not physical
+ * on-screen pixels).
+ */
+export async function minimizeChromeWindow(): Promise<void> {
+  if (process.platform !== "darwin") return;
+  await runOsascript('tell application "Google Chrome" to set miniaturized of window 1 to true', "minimizing the Chrome window");
+}
+
+/**
+ * Positions Chrome's frontmost window to the right half of the primary
+ * display -- used for guided/full-auto profile-assist sessions, where a
+ * human IS expected to be present and the owner explicitly asked for a
+ * real, glanceable, directly-usable window (not a hidden one) they can work
+ * side-by-side with the app, complementing (not replacing) the embedded
+ * live-view pane. See this epic's design-discussion.md for why true
+ * cross-app docking (tracking the gigradar app's own window live) is out of
+ * scope here -- this is a fixed half-of-screen placement, computed fresh
+ * each call from the primary display's current bounds via Finder's own
+ * desktop-window bounds (the same source `System Events`/`Finder`-based
+ * screen-geometry scripts conventionally use on macOS).
+ */
+export async function positionChromeWindowSideBySide(): Promise<void> {
+  if (process.platform !== "darwin") return;
+  await runOsascript(
+    [
+      'tell application "Finder" to set screenBounds to bounds of window of desktop',
+      "set screenWidth to item 3 of screenBounds",
+      "set screenHeight to item 4 of screenBounds",
+      'tell application "Google Chrome" to set bounds of window 1 to {(screenWidth / 2) as integer, 0, screenWidth, screenHeight}',
+    ].join("\n"),
+    "positioning the Chrome window side-by-side",
+  );
 }

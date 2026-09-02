@@ -1,7 +1,7 @@
 id: embedded-view-interactive
 epic: embedded-profile-assist
 title: "Click/type forwarding into the embedded pane + mid-session agent-engaged toggle"
-status: pending
+status: complete # implemented via embedded-browser-and-guided-session epic's own embedded-view-interactive story, 2026-09-02
 complexity: medium
 methodology: classic
 depends_on: [embedded-view-readonly]

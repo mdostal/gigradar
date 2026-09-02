@@ -1,0 +1,37 @@
+id: embedded-view-interactive
+epic: embedded-browser-and-guided-session
+title: "Click/type forwarding into the embedded pane + mid-session agentEngaged toggle"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Built here, not redesigned -- this is embedded-profile-assist's own
+  already-fully-speced Slice 2 story
+  (.pHive/epics/embedded-profile-assist/stories/embedded-view-interactive.yaml),
+  implemented as this epic's third story since it's the concrete answer to
+  "work WITH the AI to load a profile, see it in the app" without touching
+  the separate native window. See that file for the original, unabridged
+  acceptance criteria -- restated in outcome form below.
+
+acceptance_criteria:
+  - "clickSessionAtAction(sessionId, xRatio, yRatio) translates ratio-based coordinates to real page pixels via the held Page's viewportSize(), calls page.mouse.click(), and returns a fresh screenshot in the same response."
+  - "typeIntoSessionAction(sessionId, text) wraps page.keyboard.type(text), same refresh-and-return shape."
+  - "profile-assist-client.tsx's Embedded view gains an agentEngaged toggle, OFF by default whenever Embedded view is entered; ON resumes the existing Guided-mode propose/approve loop (runUntilBlocked) without ending/restarting the assist session; OFF stops the next turn from firing (checked at the top of every loop iteration via a ref)."
+  - "A human click/type is disallowed while a turn is actively resolving (runningRef) -- no dropped or interleaved actions."
+  - "Manual mode is unaffected; Native view's existing auto-start behavior for guided/full-auto is unchanged."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/profile-assist/actions.ts
+      purpose: "new clickSessionAtAction/typeIntoSessionAction Server Actions."
+    - path: src/app/profile-assist/profile-assist-client.tsx
+      purpose: "agentEngaged toggle, click/type UI, runUntilBlocked()'s agentEngagedRef gate."
+
+references:
+  - path: .pHive/epics/embedded-profile-assist/stories/embedded-view-interactive.yaml
+    relevant_excerpt: "The original Slice 2 spec this story implements verbatim."
+  - path: .pHive/epics/embedded-browser-and-guided-session/docs/design-discussion.md
+    relevant_excerpt: "Story C section."

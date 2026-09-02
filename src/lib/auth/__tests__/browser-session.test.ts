@@ -62,10 +62,18 @@ vi.mock("../session-backend.js", () => ({
 const spawnRealChromeMock = vi.fn();
 const attachToRealChromeMock = vi.fn();
 const closeRealChromeMock = vi.fn();
+// embedded-browser-and-guided-session epic: minimizeChromeWindow() is a
+// real, best-effort no-op-on-failure osascript call in production --
+// mocked to a resolved no-op here so these tests never shell out, and left
+// unasserted-on by default (individual tests below opt into asserting
+// call counts where the minimize-on-headed-fallback behavior is itself
+// under test).
+const minimizeChromeWindowMock = vi.fn();
 vi.mock("../real-chrome.js", () => ({
   spawnRealChrome: (...args: unknown[]) => spawnRealChromeMock(...args),
   attachToRealChrome: (...args: unknown[]) => attachToRealChromeMock(...args),
   closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
+  minimizeChromeWindow: (...args: unknown[]) => minimizeChromeWindowMock(...args),
 }));
 
 // Imported AFTER the mock is registered (vi.mock is hoisted by vitest, so
@@ -113,6 +121,8 @@ beforeEach(() => {
   spawnRealChromeMock.mockReset();
   attachToRealChromeMock.mockReset();
   closeRealChromeMock.mockReset();
+  minimizeChromeWindowMock.mockReset();
+  minimizeChromeWindowMock.mockResolvedValue(undefined);
   // Default: the persistent-real-chrome fallback fails fast (no real Chrome
   // in a test environment) -- individual tests that need to exercise a
   // SUCCESSFUL fallback override this.
@@ -334,7 +344,7 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
     void context; // unused here, present for readability of the fake-chain shape
   });
 
-  it("launches headed, preferring real Google Chrome — headless: false, channel: chrome", async () => {
+  it("tries headless first, preferring real Google Chrome — headless: true, channel: chrome (embedded-browser-and-guided-session epic)", async () => {
     const storageStatePath = writeFixtureCopy();
     setUpFakeBrowserChain();
 
@@ -349,11 +359,36 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
       async () => "ok",
     );
 
+    // Tier 1 (headless) succeeds — the headed fast path/fallback never run.
     expect(launchMock).toHaveBeenCalledTimes(1);
-    expect(launchMock).toHaveBeenCalledWith({ headless: false, channel: "chrome" });
+    expect(launchMock).toHaveBeenCalledWith({ headless: true, channel: "chrome" });
+    // No visible window ever existed -- nothing to minimize.
+    expect(minimizeChromeWindowMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to bundled Chromium when real Chrome isn't installed", async () => {
+  it("minimizes the window once headed tier 2 succeeds after headless tier 1 fails auth", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({});
+
+    await withBrowserSession(
+      {
+        sourceId: "test-source",
+        storageStatePathSetting: storageStatePath,
+        allowedOrigins: TARGET_ALLOWLIST,
+        url: "https://app.targetsource.example/jobs",
+        // false (tier 1, headless -- fails, triggering the headed retry this test verifies), true (tier 2, headed).
+        isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true),
+      },
+      async () => "ok",
+    );
+
+    expect(launchMock).toHaveBeenCalledTimes(2);
+    expect(launchMock).toHaveBeenNthCalledWith(1, { headless: true, channel: "chrome" });
+    expect(launchMock).toHaveBeenNthCalledWith(2, { headless: false, channel: "chrome" });
+    expect(minimizeChromeWindowMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to bundled Chromium when real Chrome isn't installed (still headless — tier 1)", async () => {
     const storageStatePath = writeFixtureCopy();
     const { browser } = setUpFakeBrowserChain();
     launchMock.mockReset();
@@ -372,8 +407,8 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
     );
 
     expect(launchMock).toHaveBeenCalledTimes(2);
-    expect(launchMock).toHaveBeenNthCalledWith(1, { headless: false, channel: "chrome" });
-    expect(launchMock).toHaveBeenNthCalledWith(2, { headless: false });
+    expect(launchMock).toHaveBeenNthCalledWith(1, { headless: true, channel: "chrome" });
+    expect(launchMock).toHaveBeenNthCalledWith(2, { headless: true });
   });
 
   it("throws a source-scoped error when both real Chrome and bundled Chromium fail to launch", async () => {
@@ -568,7 +603,7 @@ describe("withBrowserSession: cleanup on every exit path", () => {
     expect(browser.close).toHaveBeenCalledTimes(1);
   });
 
-  it("auth-failure predicate returns false — throws a specific, actionable error, the callback is never invoked, and close() is still called exactly once on both context and browser", async () => {
+  it("auth-failure predicate returns false — throws a specific, actionable error, the callback is never invoked, and close() is called once per storageState-snapshot tier attempted (headless tier 1, then headed tier 2 — both fail, both clean up)", async () => {
     const storageStatePath = writeFixtureCopy();
     const { context, browser } = setUpFakeBrowserChain();
     const runCallback = vi.fn();
@@ -587,8 +622,8 @@ describe("withBrowserSession: cleanup on every exit path", () => {
     ).rejects.toThrow(/session for source "gofractional".*is invalid, and the persistent-real-chrome retry ALSO failed/);
 
     expect(runCallback).not.toHaveBeenCalled();
-    expect(context.close).toHaveBeenCalledTimes(1);
-    expect(browser.close).toHaveBeenCalledTimes(1);
+    expect(context.close).toHaveBeenCalledTimes(2);
+    expect(browser.close).toHaveBeenCalledTimes(2);
   });
 
   it("the callback throwing for any reason still results in context.close()/browser.close() being called exactly once each (no leak, no double-close)", async () => {
@@ -995,7 +1030,7 @@ describe("withBrowserSession: verification-challenge detection (verification-cop
     ).resolves.toBe("ok");
   });
 
-  it("still cleanly closes the context/browser (finally blocks) when this new throw path fires", async () => {
+  it("still cleanly closes the context/browser (finally blocks) when this new throw path fires, on every tier it fires in (headless tier 1, then headed tier 2)", async () => {
     const storageStatePath = writeFixtureCopy();
     const { context, browser } = setUpFakeBrowserChain({ title: vi.fn().mockResolvedValue("Performing Security Verification") });
 
@@ -1012,8 +1047,8 @@ describe("withBrowserSession: verification-challenge detection (verification-cop
       ),
     ).rejects.toThrow(VerificationChallengeError);
 
-    expect(context.close).toHaveBeenCalledTimes(1);
-    expect(browser.close).toHaveBeenCalledTimes(1);
+    expect(context.close).toHaveBeenCalledTimes(2);
+    expect(browser.close).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -1095,13 +1130,14 @@ describe("withBrowserSession: self-healing persistent-real-chrome fallback (owne
     expect(spawnRealChromeMock).not.toHaveBeenCalled();
   });
 
-  it("when the fast path's session is invalid, retries via spawnRealChrome()/attachToRealChrome() and succeeds using browser.contexts()[0] -- never newContext()", async () => {
+  it("when both storageState-snapshot tiers are invalid (headless, then headed), retries via spawnRealChrome()/attachToRealChrome() and succeeds using browser.contexts()[0] -- never newContext()", async () => {
     const storageStatePath = writeFixtureCopy();
-    setUpFakeBrowserChain({}); // fast path: isAuthenticated will fail
+    setUpFakeBrowserChain({}); // tiers 1+2: isAuthenticated will fail both times
     const { context: realChromeContext, browser: realChromeBrowser } = setUpFakeRealChromeChain();
 
+    // false (tier 1, headless), false (tier 2, headed), true (tier 3, persistent real chrome -- the fallback this test actually verifies).
     const result = await withBrowserSession(
-      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true) },
+      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true) },
       async () => "recovered-via-real-chrome",
     );
 
@@ -1120,8 +1156,9 @@ describe("withBrowserSession: self-healing persistent-real-chrome fallback (owne
     const unrelatedCookie = { name: "sid", value: "unrelated-origin-must-be-filtered-out", domain: "accounts.google.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" as const };
     setUpFakeRealChromeChain({}, { cookies: [freshCookie, unrelatedCookie], origins: [] });
 
+    // false (tier 1, headless), false (tier 2, headed), true (tier 3, the persistent-real-chrome fallback this test verifies the write-back for).
     await withBrowserSession(
-      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true) },
+      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true) },
       async () => "ok",
     );
 

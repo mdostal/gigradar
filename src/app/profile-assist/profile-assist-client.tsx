@@ -7,15 +7,17 @@
 // events don't need a human, and stop (surfacing the right control) the
 // moment one does (a pending approval or an ask_human question). Full-auto
 // tab is disabled — profile-assist-full-auto-mode story, not yet shipped.
-import { useRef, useState } from "react";
+import { useRef, useState, type MouseEvent } from "react";
 import {
   advanceLoopTurnAction,
   answerHumanAction,
+  clickSessionAtAction,
   endAssistSessionAction,
   getSessionScreenshotAction,
   resolveApprovalAction,
   startAssistSessionAction,
   suggestProfileFieldsAction,
+  typeIntoSessionAction,
 } from "./actions";
 import type { FieldSuggestion } from "@/lib/apply/profile-suggest";
 import type { LoopEvent } from "@/lib/apply/profile-assist-loop";
@@ -145,6 +147,20 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
   const viewModeRef = useRef(viewMode);
   viewModeRef.current = viewMode;
 
+  // embedded-browser-and-guided-session epic, embedded-view-interactive
+  // story. OFF by default whenever Embedded view is entered ("add as an
+  // option, native flow is the safe default" -- design-discussion.md):
+  // native mode's existing auto-start behavior is untouched below; Embedded
+  // starts purely human-driven (click/type via clickSessionAtAction/
+  // typeIntoSessionAction) until the human explicitly opts the agent back
+  // in. Read inside runUntilBlocked's loop via a ref, same reasoning as
+  // viewModeRef above -- a mid-loop toggle-off must stop the NEXT turn from
+  // firing, not just be seen on a future handler call.
+  const [agentEngaged, setAgentEngaged] = useState(false);
+  const agentEngagedRef = useRef(agentEngaged);
+  agentEngagedRef.current = agentEngaged;
+  const [humanTypeText, setHumanTypeText] = useState("");
+
   async function refreshScreenshot(sessionId: string) {
     if (viewModeRef.current !== "embedded") return;
     setScreenshot((prev) => ({ ...prev, status: "loading" }));
@@ -173,7 +189,13 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     setSession({ status: "active", sessionId: result.data.sessionId });
     setSuggest({ status: "idle" });
     void refreshScreenshot(result.data.sessionId);
-    if (mode === "guided" || mode === "full-auto") {
+    // embedded-view-interactive story: Embedded view starts purely
+    // human-driven -- only Native's unchanged auto-start behavior fires
+    // here. handleToggleAgentEngaged() (below) is what starts the loop
+    // once the human toggles it on inside Embedded.
+    const startEngaged = viewModeRef.current !== "embedded";
+    setAgentEngaged(startEngaged);
+    if ((mode === "guided" || mode === "full-auto") && startEngaged) {
       void runUntilBlocked(result.data.sessionId);
     }
   }
@@ -206,13 +228,14 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     setSuggest({ status: "success", suggestions: result.data });
   }
 
-  /** Keeps calling advanceLoopTurnAction() until an event needs a human (a pending approval or an unanswered question) or the loop is over (done/turn_limit_reached). Each intermediate event is appended to the transcript as it arrives. */
+  /** Keeps calling advanceLoopTurnAction() until an event needs a human (a pending approval or an unanswered question), agentEngaged is toggled off mid-loop (embedded-view-interactive story -- checked at the top of every iteration so a toggle-off stops the NEXT turn, not just future handler calls), or the loop is over (done/turn_limit_reached). Each intermediate event is appended to the transcript as it arrives. */
   async function runUntilBlocked(sessionId: string) {
     if (runningRef.current) return;
     runningRef.current = true;
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        if (!agentEngagedRef.current) return;
         setTranscript((prev) => [...prev, { kind: "advancing" }]);
         const result = await advanceLoopTurnAction(sessionId);
         setTranscript((prev) => prev.slice(0, -1)); // drop the "advancing" placeholder
@@ -283,6 +306,45 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
       return;
     }
     void runUntilBlocked(sessionId);
+  }
+
+  /** Flips agentEngaged; turning it ON resumes the existing propose/approve loop without ending/restarting the assist session (embedded-view-interactive story). */
+  function handleToggleAgentEngaged() {
+    if (session.status !== "active") return;
+    const next = !agentEngaged;
+    setAgentEngaged(next);
+    if (next) void runUntilBlocked(session.sessionId);
+  }
+
+  /** Ratio-scales the click against the rendered <img>'s own dimensions -- independent of actual display size -- before sending it to clickSessionAtAction. Disabled while a turn is in flight (runningRef) so a human click can't interleave with an in-flight agent turn. */
+  async function handleEmbeddedClick(e: MouseEvent<HTMLImageElement>) {
+    if (session.status !== "active" || runningRef.current) return;
+    const sessionId = session.sessionId;
+    const img = e.currentTarget;
+    const xRatio = e.nativeEvent.offsetX / img.clientWidth;
+    const yRatio = e.nativeEvent.offsetY / img.clientHeight;
+    setScreenshot((prev) => ({ ...prev, status: "loading" }));
+    const result = await clickSessionAtAction(sessionId, xRatio, yRatio);
+    if (!result.ok) {
+      setScreenshot({ status: "error", message: result.error });
+      return;
+    }
+    setScreenshot({ status: "loaded", dataUrl: result.data.dataUrl });
+  }
+
+  /** Types humanTypeText into whatever element currently has focus on the real page, then clears the input -- matches normal keyboard-typing semantics (the human clicks a field first, same as a real browser). */
+  async function handleEmbeddedType() {
+    if (session.status !== "active" || runningRef.current || !humanTypeText) return;
+    const sessionId = session.sessionId;
+    const text = humanTypeText;
+    setHumanTypeText("");
+    setScreenshot((prev) => ({ ...prev, status: "loading" }));
+    const result = await typeIntoSessionAction(sessionId, text);
+    if (!result.ok) {
+      setScreenshot({ status: "error", message: result.error });
+      return;
+    }
+    setScreenshot({ status: "loaded", dataUrl: result.data.dataUrl });
   }
 
   const startForm = (
@@ -408,17 +470,29 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-slate-600">
                   {viewMode === "embedded"
-                    ? "A live view of the session below (auto-refreshes as the agent acts) — read-only for now."
+                    ? agentEngaged
+                      ? "A live view of the session below (auto-refreshes as the agent acts) — click \"Pause agent\" any time to drive it yourself instead."
+                      : "A live view of the session below — click or type directly into it, or click \"Let agent drive\" to hand it back to the AI."
                     : tab === "guided"
-                      ? "A real browser window is open on your desktop — every proposed action needs your approval below before it happens."
-                      : "A real browser window is open on your desktop — the LLM acts on it directly. It'll pause and ask if it's unsure."}
+                      ? "A real browser window is open on your desktop, positioned to the side — every proposed action needs your approval below before it happens."
+                      : "A real browser window is open on your desktop, positioned to the side — the LLM acts on it directly. It'll pause and ask if it's unsure."}
                 </p>
                 <div className="flex items-center gap-2">
+                  {viewMode === "embedded" && (
+                    <button
+                      type="button"
+                      onClick={handleToggleAgentEngaged}
+                      className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      {agentEngaged ? "Pause agent" : "Let agent drive"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
                       const next = viewMode === "native" ? "embedded" : "native";
                       setViewMode(next);
+                      setAgentEngaged(next !== "embedded");
                       if (next === "embedded" && session.status === "active") void refreshScreenshot(session.sessionId);
                     }}
                     className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -447,10 +521,36 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
                         </p>
                       ) : screenshot.dataUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element -- a Playwright-screenshot data URL, not a static asset next/image can optimize.
-                        <img src={screenshot.dataUrl} alt="Live view of the session's current page" className="w-full rounded" />
+                        <img
+                          src={screenshot.dataUrl}
+                          alt="Live view of the session's current page — click to interact"
+                          onClick={(e) => void handleEmbeddedClick(e)}
+                          className={`w-full rounded ${runningRef.current ? "cursor-wait" : "cursor-pointer"}`}
+                        />
                       ) : (
                         <p className="text-xs text-slate-400">Loading…</p>
                       )}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={humanTypeText}
+                        onChange={(e) => setHumanTypeText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void handleEmbeddedType();
+                        }}
+                        placeholder="Click a field above, then type here…"
+                        aria-label="Text to type into the embedded session"
+                        className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleEmbeddedType()}
+                        disabled={!humanTypeText || session.status !== "active"}
+                        className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Type
+                      </button>
                     </div>
                   </div>
                 )}
