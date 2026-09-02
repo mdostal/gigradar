@@ -231,6 +231,44 @@ describe("delisting detection", () => {
     expect(summary.flaggedUnavailable).toEqual([]);
     expect(getGig("src-a:1", { db })?.unavailableSince).toBeNull();
   });
+
+  it("isFullScan:false (status-reconciliation backfill inserts) never delists ANY other gig for that source, even gigs the owner marked applied -- the real corruption bug this field fixes (deep-dive-audit-and-testing-framework epic)", () => {
+    const t0 = "2026-01-01T00:00:00.000Z";
+    const t1 = "2026-01-02T00:00:00.000Z";
+    const gigA = makeGig({ sourceId: "wellfound", externalId: "1" });
+    const gigB = makeGig({ sourceId: "wellfound", externalId: "2" });
+    const gigC = makeGig({ sourceId: "wellfound", externalId: "3" });
+
+    recordScan([{ sourceId: "wellfound", gigs: [gigA, gigB, gigC] }], { db, now: t0 });
+    setStatus("wellfound:1", "applied", { db });
+    setStatus("wellfound:2", "applied", { db });
+
+    // Exactly the shape wellfound-status.ts's/gofractional-status.ts's own
+    // backfill call sites use: one synthetic gig, isFullScan:false.
+    const backfillGig = makeGig({ sourceId: "wellfound", externalId: "backfilled-4" });
+    const summary = recordScan([{ sourceId: "wellfound", gigs: [backfillGig], isFullScan: false }], { db, now: t1 });
+
+    expect(summary.flaggedUnavailable).toEqual([]);
+    expect(summary.sourcesWithResults).toEqual([]);
+    expect(getGig("wellfound:1", { db })?.status).toBe("applied");
+    expect(getGig("wellfound:1", { db })?.unavailableSince).toBeNull();
+    expect(getGig("wellfound:2", { db })?.status).toBe("applied");
+    expect(getGig("wellfound:2", { db })?.unavailableSince).toBeNull();
+    expect(getGig("wellfound:3", { db })?.unavailableSince).toBeNull();
+  });
+
+  it("isFullScan omitted (the default) still delists correctly -- the fix is additive, real full scans are unaffected", () => {
+    const t0 = "2026-01-01T00:00:00.000Z";
+    const t1 = "2026-01-02T00:00:00.000Z";
+    const gigA = makeGig({ sourceId: "src-a", externalId: "1" });
+    const gigB = makeGig({ sourceId: "src-a", externalId: "2" });
+
+    recordScan([{ sourceId: "src-a", gigs: [gigA, gigB] }], { db, now: t0 });
+    const summary = recordScan([{ sourceId: "src-a", gigs: [gigB] }], { db, now: t1 });
+
+    expect(summary.flaggedUnavailable).toEqual(["src-a:1"]);
+    expect(getGig("src-a:1", { db })?.unavailableSince).toBe(t1);
+  });
 });
 
 describe("reappearance", () => {

@@ -213,7 +213,7 @@ export async function reconcileWellfoundStatuses(cfg: SourceConfig): Promise<Rec
         continue;
       }
       const externalId = row.href.replace(/^\//, "");
-      recordScan([{ sourceId: "wellfound", gigs: [{ sourceId: "wellfound", externalId, title: row.title, company: row.company || undefined, url: `https://wellfound.com${row.href}` }] }]);
+      recordScan([{ sourceId: "wellfound", gigs: [{ sourceId: "wellfound", externalId, title: row.title, company: row.company || undefined, url: `https://wellfound.com${row.href}` }], isFullScan: false }]);
       const key = gigKey("wellfound", externalId);
       setStatus(key, newStatus);
       if (outcomeReason) setOutcome(key, outcomeReason, row.statusLabel);

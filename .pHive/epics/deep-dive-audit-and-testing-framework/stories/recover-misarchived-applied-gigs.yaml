@@ -1,0 +1,76 @@
+id: recover-misarchived-applied-gigs
+epic: deep-dive-audit-and-testing-framework
+title: "Best-effort recovery pass for gigs mis-archived by the corruption bug"
+status: pending
+complexity: low
+methodology: classic
+depends_on: [fix-recordscan-corruption-bug]
+
+description: |
+  Owner's own decision (deep-dive audit gate, 2026-09-02): attempt a
+  best-effort recovery for gigs the recordScan() corruption bug
+  mis-archived, but ONLY where the evidence is unambiguous -- never guess.
+  Leave genuinely-ambiguous cases alone rather than fabricate a recovery.
+
+  The one surviving real 'applied' gig in gigs.db has `unavailableSince`
+  set ~2ms after its own insert timestamp despite never having been
+  archived -- this is the confirmed fingerprint of the bug (a later
+  iteration in the same reconcile loop flagged it unavailable, then a
+  SUBSEQUENT run re-matched it by title and called setStatus('applied')
+  again, which does NOT clear unavailableSince/outcomeReason). A gig
+  currently sitting `archived` with `outcomeReason` in
+  {expired_unapplied, withdrawn} AND an `unavailableSince` timestamp that
+  lands within a few seconds of another gig's recordScan() write for the
+  SAME source on the SAME reconciliation run is the recoverable case.
+
+  This is a one-off data-migration script, not new application logic --
+  write it as a standalone script (e.g. scripts/recover-misarchived-gigs.ts)
+  that: (1) runs read-only first and prints exactly what it WOULD change
+  and why, for the owner to review, (2) only after explicit confirmation,
+  applies the recovery (setStatus back to its pre-archive value -- infer
+  from context, e.g. if a draft exists with status='approved'/'submitted'
+  for that gig, or if the gig's own history suggests 'applied').
+
+  IMPORTANT: this script must never run against the owner's real
+  ~/.local/share/gigradar/gigs.db without the owner's own explicit
+  go-ahead at the moment it's actually run -- development/testing must
+  use a COPY, never the live file, per this project's own standing rule.
+
+acceptance_criteria:
+  - "The script's dry-run mode never writes to any database, only prints its proposed changes."
+  - "The recovery heuristic is documented inline with its exact evidence threshold (e.g. the seconds-window used) so a human reviewing the dry-run output can judge each proposed change."
+  - "A gig with genuinely ambiguous history (no draft, no clear fingerprint) is left untouched and reported as 'skipped, ambiguous', never guessed."
+  - "Running the script twice in a row (after a real apply) is idempotent -- the second run finds nothing left to recover."
+
+steps:
+  - id: research
+    description: Query a COPY of the real gigs.db to characterize exactly how many gigs show the unavailableSince-fingerprint pattern, and cross-reference against application_drafts for corroborating evidence.
+    agent: researcher
+  - id: implement
+    description: Write the dry-run-first recovery script.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Test against a synthetic temp DB seeded with both a real bug-fingerprint case and an ambiguous case, confirming only the unambiguous one is proposed for recovery.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the script cannot run destructively without an explicit confirm step, and that dry-run output is genuinely legible to a human (not just a raw diff dump).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit script to feature branch (do not run it against real data as part of this story -- that's a separate, owner-approved action after merge).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/gigs.ts
+      purpose: "setStatus()/setOutcome() -- the functions the recovery script calls"
+    - path: src/lib/store/drafts.ts
+      purpose: "getDraft()/listDrafts() -- corroborating evidence for what a gig's true prior status should be"
+
+references:
+  - path: .pHive/epics/deep-dive-audit-and-testing-framework/docs/design-discussion.md
+    relevant_excerpt: "§1a — the unavailableSince fingerprint evidence; §3 open question 2 — owner chose best-effort recovery"

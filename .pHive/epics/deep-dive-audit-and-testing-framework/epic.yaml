@@ -1,0 +1,51 @@
+name: deep-dive-audit-and-testing-framework
+title: "Deep-dive audit: fix the recordScan corruption bug, clean data quality, wire up chat memory, and lay a real testing foundation"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: minor
+
+description: |
+  Owner-requested deep-dive audit (2026-09-02) across six problem areas
+  (state-tracking, auto-update, memory/context quality, per-platform
+  drafting, focus-stealing browser windows, testing-framework maturity).
+  Six parallel research agents grounded every finding in real file:line
+  citations and, where safe, real data. Full findings:
+  .pHive/epics/deep-dive-audit-and-testing-framework/docs/design-discussion.md
+
+  This epic is the FIRST of a 5-epic program the owner confirmed:
+  1. THIS epic — fix what's small/severe/well-understood now, lay the
+     testing-framework foundation everything else builds on.
+  2. platform-aware-application-drafting (follow-on, not yet planned)
+  3. embedded-browser-and-guided-session (follow-on, not yet planned)
+  4. deep-memory-and-context (follow-on, not yet planned)
+  5. ui-overhaul-via-ui-squads (follow-on, not yet planned)
+
+  Scale: Medium (multi-file, cross-stack, but bounded and well-understood
+  — H/V planning folded into the design-discussion doc rather than run as
+  separate ceremony documents; owner confirmed this scale assessment).
+
+stories:
+  - id: fix-recordscan-corruption-bug
+    title: "Fix recordScan()/flagUnavailableForSource() mass-archiving genuinely-applied gigs on partial-batch backfill writes"
+    complexity: medium
+    depends_on: []
+  - id: recover-misarchived-applied-gigs
+    title: "Best-effort recovery pass for gigs mis-archived by the corruption bug"
+    complexity: low
+    depends_on: [fix-recordscan-corruption-bug]
+  - id: clean-and-guard-profile-data-quality
+    title: "Clean the owner's live role-title-in-skills contamination + add cross-field sanity check on config save"
+    complexity: low
+    depends_on: []
+  - id: wire-up-chat-preferences-readback
+    title: "Make listPreferences() actually feed into the chat co-pilot instead of being write-only"
+    complexity: medium
+    depends_on: []
+  - id: playwright-e2e-scaffold-and-ci
+    title: "Real Playwright E2E scaffold (dashboard/config/chat smoke specs) + CI workflow gating npm test/typecheck/e2e on every PR"
+    complexity: medium
+    depends_on: []
+  - id: sidecar-health-check
+    title: "Detect a dead Tauri sidecar and raise a dashboard issue instead of silently sitting dead for days"
+    complexity: low
+    depends_on: []

@@ -1,0 +1,65 @@
+id: clean-and-guard-profile-data-quality
+epic: deep-dive-audit-and-testing-framework
+title: "Clean the owner's live role-title-in-skills contamination + add cross-field sanity check on config save"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Deep-dive audit finding (2026-09-02), live-verified against the real
+  running app's /config page: profile.skills currently begins with
+  "Fractional CTO" and "Principal Architect" -- literal duplicates of the
+  first two entries in profile.roles. Job titles sitting in the Skills
+  field. Ruled out as coming from example/seed data (config.example.json
+  uses an obviously-fake profile, load.ts throws rather than scaffolding
+  from a placeholder) -- this is stale, pre-existing contamination with
+  no current code path that would have produced or would ever catch it.
+
+  Two parts:
+  1. One-time cleanup: remove role-title duplicates from the owner's real
+     profile.skills via the real /config UI (not a raw file edit -- the
+     file is encrypted at rest by a mechanism outside this codebase, per
+     this session's own finding; the live app's own save path is the only
+     safe way to write it).
+  2. Guard: add a basic cross-field sanity check on config save (e.g. in
+     src/app/config/config-client.tsx's validation or a save-time check)
+     that flags (not silently strips) an exact-match entry appearing in
+     BOTH profile.roles and profile.skills, so this can't silently recur
+     without at least a visible warning to the owner.
+
+acceptance_criteria:
+  - "The owner's real profile.skills no longer contains any entry that exact-matches an entry in profile.roles (verified via the live /config page after cleanup)."
+  - "Saving a config where the same string appears in both roles and skills surfaces a visible warning to the user before/at save time -- it does not silently save, and does not silently strip either (the user decides what to do)."
+  - "A legitimate case where a title-like phrase is genuinely also a real skill (rare but possible) is never hard-blocked -- this is a warning, not a validation error that prevents saving."
+
+steps:
+  - id: research
+    description: Confirm the exact current contents of profile.roles/skills via the live /config page (read-only) before making any change; confirm config-client.tsx's existing validation/save path to find the right insertion point for the new check.
+    agent: researcher
+  - id: implement
+    description: Perform the one-time cleanup via the live app's own UI; add the cross-field sanity-check warning to the save path.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Unit test the new cross-field check in isolation (given roles/skills with an overlap, confirm the warning fires; given no overlap, confirm it doesn't).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the cleanup was applied correctly (re-check the live /config page) and the warning is genuinely visible, not buried.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "the real /config UI and its save/validation path -- both the cleanup target and the new guard's home"
+
+references:
+  - path: .pHive/epics/deep-dive-audit-and-testing-framework/docs/design-discussion.md
+    relevant_excerpt: "§1c — the live-verified contamination finding"

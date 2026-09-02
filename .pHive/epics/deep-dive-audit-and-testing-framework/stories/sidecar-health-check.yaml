@@ -1,0 +1,71 @@
+id: sidecar-health-check
+epic: deep-dive-audit-and-testing-framework
+title: "Detect a dead Tauri sidecar and raise a dashboard issue instead of silently sitting dead for days"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Deep-dive audit finding (2026-09-02), and a real incident from the same
+  session: the packaged Tauri app's Node sidecar server died silently and
+  sat dead for 2+ days (process alive, port 3000 not listening, log's
+  last real line from days earlier) with zero detection -- the owner's
+  own words: "i click and nothing happens." No heartbeat/health-check
+  mechanism exists anywhere in the scheduler or notify/issues.ts (grepped,
+  zero hits). The one related shipped mechanism
+  (sidecar-orphan-self-detection, runner-registry-and-sidecar-lifecycle
+  epic) covers the OPPOSITE direction -- the sidecar polling its parent
+  PID and self-exiting if the parent dies -- not the app staying alive
+  while the sidecar itself silently dies.
+
+  Add a lightweight, periodic health-check reusing the EXISTING
+  raiseIssue()/desktop-notification path (src/lib/notify/issues.ts) --
+  no new notification mechanism, no new UI. The check: from within the
+  scheduler process (already running independently, per the launchd job)
+  or the Tauri Rust side (src-tauri/src/lib.rs), periodically poll the
+  sidecar's own HTTP port; if unresponsive for N consecutive checks
+  (avoid false-positives from a normal brief restart), raise a real issue
+  the owner would see next time they open the dashboard OR get a desktop
+  notification for, same as any other raised issue today.
+
+acceptance_criteria:
+  - "Killing the sidecar's server process (while the scheduler/watchdog keeps running) results in a real issue appearing in the Issues list within N health-check cycles."
+  - "A normal, brief restart (e.g. during a real app update) does not falsely raise an issue -- the check tolerates a small number of consecutive failures before alerting."
+  - "The health-check reuses the existing raiseIssue() call shape -- no new notification UI, no new persistence table."
+  - "The check runs independently of the sidecar itself (it can't be a self-check the dead process would need to run) -- verified by confirming the watchdog's own process is separate from what it's checking."
+
+steps:
+  - id: research
+    description: Confirm exactly which process is best positioned to run this check (the scheduler, since it's already a separate long-running process per launchd, vs. adding new Rust-side polling) and re-read issues.ts's raiseIssue() signature.
+    agent: researcher
+  - id: implement
+    description: Add the periodic health-check + raiseIssue() call.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Test the consecutive-failure threshold logic in isolation (mocked health-check results); test that raiseIssue() is called with the right severity/message shape.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no false-positive risk from normal restart timing; confirm this doesn't duplicate or conflict with sidecar-orphan-self-detection's existing mechanism.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/notify/issues.ts
+      purpose: "raiseIssue()/desktop-notification -- the existing mechanism to reuse, not replace"
+    - path: src/scheduler/index.ts
+      purpose: "the already-running independent process that's the natural home for this watchdog"
+    - path: .pHive/epics/runner-registry-and-sidecar-lifecycle/stories/sidecar-orphan-self-detection.yaml
+      purpose: "the existing, OPPOSITE-direction mechanism (sidecar checks parent) not to duplicate"
+
+references:
+  - path: .pHive/epics/deep-dive-audit-and-testing-framework/docs/design-discussion.md
+    relevant_excerpt: "§1f — the dead-sidecar incident and zero-heartbeat-mechanism finding"

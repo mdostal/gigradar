@@ -1,0 +1,89 @@
+id: fix-recordscan-corruption-bug
+epic: deep-dive-audit-and-testing-framework
+title: "Fix recordScan()/flagUnavailableForSource() mass-archiving genuinely-applied gigs on partial-batch backfill writes"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Confirmed, reproducible data-corruption bug (deep-dive audit,
+  2026-09-02): recordScan() (src/lib/store/gigs.ts:290-325) treats ANY
+  non-empty batch as an authoritative full source-scan and calls
+  flagUnavailableForSource() (gigs.ts:228-265), which archives every
+  tracked gig for that source NOT present in the batch -- including gigs
+  the owner has manually marked "applied", flipping them to
+  "archived/withdrawn". The status-reconciliation backfill paths in
+  src/lib/sources/wellfound-status.ts:216 and
+  src/lib/sources/gofractional-status.ts:280 call recordScan() with a
+  SINGLE-gig batch to insert one backfilled row -- and that tiny batch
+  then gets treated as "the complete truth about every gig from this
+  source," mass-archiving everything else as collateral damage.
+
+  Real gigs.db evidence: 1,825 tracked gigs, only 1 with status='applied',
+  326 auto-archived. Deterministic repro (isolated temp DB): seed 2 gigs
+  marked applied + 1 new; run one single-gig recordScan() call mimicking
+  the backfill path; both applied gigs flip to archived/withdrawn.
+
+  Fix: recordScan()'s delisting behavior (flagUnavailableForSource) must
+  only fire for batches that represent a genuine full source scan, never
+  for a single-gig backfill insert. Add an explicit opt-in
+  (e.g. `SourceScanBatch.isFullScan?: boolean`, or a separate
+  non-delisting insert path) that only the real full-source scanners in
+  apply/runner.ts set true; the reconciliation backfill call sites
+  (wellfound-status.ts:216, gofractional-status.ts:280) must NOT trigger
+  delisting at all -- they want "insert one gig," not "this is now the
+  complete truth about this source."
+
+  Also fold in the small, directly-related UI fix: dashboard-client.tsx's
+  PIPELINE_TABS (lines 83-89) folds archived+ignored into one "Archived"
+  tab labeled via OUTCOME_LABEL (lines 43-47) as "Withdrawn/closed" even
+  when outcomeReason is the corruption bug's own expired_unapplied/
+  withdrawn value, not a real platform action -- once the store-layer fix
+  lands, re-verify this label is still accurate and only describes a real
+  outcome, never gigradar's own bug.
+
+acceptance_criteria:
+  - "A single-gig recordScan() call (the exact shape wellfound-status.ts/gofractional-status.ts's backfill paths use) never archives any OTHER gig for that source, regardless of status."
+  - "A real full-source scan (apply/runner.ts's own recordScan() call, unchanged) still correctly delists gigs that genuinely disappeared from that source's real listing -- delisting behavior is not removed, only gated to real full scans."
+  - "A gig manually marked 'applied' by the owner survives any number of subsequent single-gig backfill recordScan() calls for the same source, unchanged."
+  - "The isolated repro that currently demonstrates the bug (2 applied gigs flipping to archived/withdrawn after one backfill call) passes as a real regression test after the fix -- both gigs remain 'applied'."
+
+steps:
+  - id: research
+    description: Re-read gigs.ts's recordScan()/flagUnavailableForSource() and both reconciliation backfill call sites in full before touching anything; confirm SourceScanBatch's real type shape in src/lib/store/types.ts.
+    agent: researcher
+  - id: implement
+    description: Add the full-scan opt-in gate to recordScan()/flagUnavailableForSource(); update apply/runner.ts's own call site to set it true; update the two backfill call sites to either omit it (default false) or use a non-delisting insert path.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Turn the isolated repro into a real regression test in src/lib/store/__tests__/gigs.test.ts (or a new file). Also add a test proving a real full-source scan still delists correctly. Re-verify the dashboard's Archived-tab label against the fixed data.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no other call site in the codebase relies on the old "any batch delists" behavior; confirm the fix is additive (opt-in gate), not a removal of real delisting capability.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/gigs.ts
+      purpose: "recordScan() (290-325) + flagUnavailableForSource() (228-265) -- the actual bug"
+    - path: src/lib/sources/wellfound-status.ts
+      purpose: "line 216, the single-gig backfill call site"
+    - path: src/lib/sources/gofractional-status.ts
+      purpose: "line 280, the single-gig backfill call site"
+    - path: src/lib/apply/runner.ts
+      purpose: "the real full-source-scan caller of recordScan() -- must keep delisting working here"
+    - path: src/app/dashboard-client.tsx
+      purpose: "lines 43-47, 83-89 -- PIPELINE_TABS/OUTCOME_LABEL, the small related label-accuracy check"
+
+references:
+  - path: .pHive/epics/deep-dive-audit-and-testing-framework/docs/design-discussion.md
+    relevant_excerpt: "§1a — full root-cause writeup, repro steps, and the unavailableSince fingerprint evidence from the live DB"

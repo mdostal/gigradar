@@ -314,7 +314,11 @@ export function recordScan(batches: SourceScanBatch[], opts: RecordScanOptions =
 
       // Zero gigs (source ran fine, found nothing) => skip entirely. Do not
       // touch unavailable_since for anything from this source this scan.
-      if (batch.gigs.length > 0) {
+      // A batch explicitly marked isFullScan:false (a status-reconciliation
+      // backfill inserting one gig, never "here is everything this source
+      // has") also never triggers delisting — see SourceScanBatch.isFullScan's
+      // own doc comment for the real corruption bug this gate fixes.
+      if (batch.gigs.length > 0 && batch.isFullScan !== false) {
         sourcesWithResults.push(batch.sourceId);
         flaggedUnavailable.push(...flagUnavailableForSource(db, batch.sourceId, seenKeys, now));
       }
