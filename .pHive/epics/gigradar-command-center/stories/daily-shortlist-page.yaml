@@ -1,7 +1,7 @@
 id: daily-shortlist-page
 epic: gigradar-command-center
 title: "New /today route: Daily Shortlist, the fast daily check-in"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

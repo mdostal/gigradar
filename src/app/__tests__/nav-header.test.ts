@@ -12,11 +12,14 @@ import { NAV_LINKS } from "../nav-header";
 // (`assisted-apply-drafting` epic); `/issues` by the `notifications-epic`;
 // `/profile-assist` by the `profile-assist` epic; `/chat` by the
 // `agent-chat` epic; `/setup` by the `setup-wizard` story
-// (`product-review-followups` epic).
+// (`product-review-followups` epic); `/today` by the `daily-shortlist-page`
+// story (`gigradar-command-center` epic) -- sits right after Dashboard,
+// the fast daily-check-in counterpart to Dashboard's full working view.
 describe("NAV_LINKS", () => {
-  it("has working links to /, /drafts, /profile-assist, /chat, /issues, /setup, and /config, in that order", () => {
+  it("has working links to /, /today, /drafts, /profile-assist, /chat, /issues, /setup, and /config, in that order", () => {
     expect(NAV_LINKS).toEqual([
       { href: "/", label: "Dashboard" },
+      { href: "/today", label: "Today" },
       { href: "/drafts", label: "Drafts" },
       { href: "/profile-assist", label: "Profile assist" },
       { href: "/chat", label: "Chat" },

@@ -23,6 +23,7 @@ import type { IssuesBadgeInfo } from "./issues-badge";
 /** Exported (not just inlined in JSX) so it's directly assertable in tests without rendering. */
 export const NAV_LINKS = [
   { href: "/", label: "Dashboard" },
+  { href: "/today", label: "Today" },
   { href: "/drafts", label: "Drafts" },
   { href: "/profile-assist", label: "Profile assist" },
   { href: "/chat", label: "Chat" },
