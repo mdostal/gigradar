@@ -13,7 +13,7 @@ import { applyAiVerification } from "../matching/ai-verify.js";
 import { gigKey, listGroupScores, recordScan, saveDraft } from "../store/index.js";
 import type { DbOption, RecordScanOptions, SourceScanBatch } from "../store/index.js";
 import { loadConfig } from "../config/load.js";
-import { generateDraft } from "./draft.js";
+import { generateDraft, resolveApplicationFormat } from "./draft.js";
 
 /**
  * One radar run: for every enabled source, fetch -> gate -> tier -> collect,
@@ -278,7 +278,8 @@ export async function stageApplication(
     );
   }
 
-  const content = await generateDraft(r.gig, config.profile, config.applyProfile, credential);
+  const format = resolveApplicationFormat(r.gig, config);
+  const content = await generateDraft(r.gig, config.profile, config.applyProfile, credential, format);
   saveDraft(gigKey(r.gig.sourceId, r.gig.externalId), content, storeOpts);
 
   return { gig: r.gig, content, status: "draft" };

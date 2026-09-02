@@ -82,6 +82,8 @@ export interface SourcePreset {
   settings: NonNullable<SourceConfig["settings"]>;
   /** True when this platform typically notifies candidates by email (application status, interview invites) -- see file header. */
   suggestsGmailDigest?: boolean;
+  /** platform-aware-application-drafting epic: this platform's real application UX, when known with real confidence -- see DraftFormat's own doc comment (types.ts). Omitted means "no specific knowledge", not "cover-letter" -- sourceConfigFromPreset() only sets SourceConfig.applicationFormat when this is present, so an unset preset still falls back through Source.applicationFormat/the "cover-letter" default the normal way. */
+  applicationFormat?: SourceConfig["applicationFormat"];
 }
 
 export const SOURCE_PRESETS: SourcePreset[] = [
@@ -100,6 +102,11 @@ export const SOURCE_PRESETS: SourcePreset[] = [
       allowedOrigins: ["indeed.com"],
     },
     suggestsGmailDigest: true,
+    // platform-aware-application-drafting epic, owner's own words: "you
+    // toss in a cover letter and a resume upload on indeed" -- matches
+    // today's default shape exactly, set explicitly here so the decision
+    // is documented rather than silently relying on the fallback.
+    applicationFormat: "cover-letter",
   },
   {
     id: "welcome-to-the-jungle",
@@ -144,6 +151,10 @@ export const SOURCE_PRESETS: SourcePreset[] = [
       loginUrl: "https://app.gocatalant.com/c/_/auth/login/",
       allowedOrigins: ["gocatalant.com", "catalant.com"],
     },
+    // platform-aware-application-drafting epic, owner's own words: "you
+    // make a proposal on catalant" -- a marketplace-native business
+    // proposal, not an email-style cover letter.
+    applicationFormat: "proposal",
   },
   {
     id: "gun-io",
@@ -262,5 +273,11 @@ export function sourceConfigFromPreset(preset: SourcePreset, existingIds: Iterab
     id = `${preset.id}-${suffix}`;
     suffix += 1;
   }
-  return { id, enabled: true, kind: "custom-llm", settings: preset.settings };
+  return {
+    id,
+    enabled: true,
+    kind: "custom-llm",
+    settings: preset.settings,
+    ...(preset.applicationFormat ? { applicationFormat: preset.applicationFormat } : {}),
+  };
 }

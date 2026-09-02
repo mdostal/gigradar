@@ -179,6 +179,10 @@ export const linkedinSource: Source = {
   id: "linkedin",
   label: "LinkedIn",
   auth: "none",
+  // platform-aware-application-drafting epic, owner's own words: "linkedin
+  // is often an auto-apply with a few forms" -- a handful of short,
+  // discrete answers, typically no free-text cover letter at all.
+  applicationFormat: "form-fields",
   async fetch(cfg: SourceConfig): Promise<Gig[]> {
     const keywords = searchKeywordsFrom(cfg);
     const jobType = jobTypeFrom(cfg);

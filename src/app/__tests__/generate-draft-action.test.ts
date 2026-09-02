@@ -15,7 +15,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const mockGenerateDraft = vi.fn();
-vi.mock("@/lib/apply/draft", () => ({ generateDraft: (...args: unknown[]) => mockGenerateDraft(...args) }));
+vi.mock("@/lib/apply/draft", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/apply/draft")>();
+  return { ...actual, generateDraft: (...args: unknown[]) => mockGenerateDraft(...args) };
+});
 
 import { revalidatePath } from "next/cache";
 import { closeDb, getDraft, recordScan } from "@/lib/store";
