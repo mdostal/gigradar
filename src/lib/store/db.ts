@@ -108,6 +108,8 @@ function openConnection(dbPath: string, busyTimeoutMs: number): DatabaseSyncType
   ensureColumn(db, "gigs", "matched_group_ids", "TEXT");
   ensureColumn(db, "gigs", "matched_group_tiers", "TEXT");
   ensureColumn(db, "gigs", "ai_flags", "TEXT");
+  ensureColumn(db, "gigs", "match_score", "REAL");
+  ensureColumn(db, "gigs", "matched_group_scores", "TEXT");
   ensureDraftsSubmittingStatus(db);
   return db;
 }

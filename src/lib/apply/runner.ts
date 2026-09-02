@@ -8,8 +8,9 @@ import { registerAllSources } from "../sources/register-all.js";
 import { gate } from "../matching/gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
 import { matchGroups } from "../matching/group-match.js";
+import { computeTier } from "../matching/score-tiering.js";
 import { applyAiVerification } from "../matching/ai-verify.js";
-import { gigKey, recordScan, saveDraft } from "../store/index.js";
+import { gigKey, listGroupScores, recordScan, saveDraft } from "../store/index.js";
 import type { DbOption, RecordScanOptions, SourceScanBatch } from "../store/index.js";
 import { loadConfig } from "../config/load.js";
 import { generateDraft } from "./draft.js";
@@ -129,6 +130,20 @@ export async function runRadar(
     // matchedGroupIds/matchedGroupTiers instead (see below), never lost.
     const primaryGroup = scopedGroups[0];
 
+    // customizable-tier-scoring epic: for every in-scope group using
+    // "percentile" tier scoring, pre-fetch the population of OTHER
+    // currently-tracked gigs' scores ONCE per source (not per gig) — see
+    // matching/score-tiering.ts's own header comment for why this read
+    // happens here (the one impure call site) rather than inside the pure
+    // matchGroups()/computeTier() pipeline. A group not using percentile
+    // mode never gets a DB query.
+    const scorePopulations: Record<string, number[]> = {};
+    for (const grp of scopedGroups) {
+      if (grp.tierScoring?.kind === "percentile") {
+        scorePopulations[grp.id] = listGroupScores(grp.id, storeOpts);
+      }
+    }
+
     // Dedup this source's own fetch by key (defends against a single fetch
     // call returning the same externalId twice) before gating and persisting.
     const seenInBatch = new Set<string>();
@@ -141,8 +156,7 @@ export async function runRadar(
       const gateResult = primaryGroup
         ? gate(g, primaryGroup.needs, config.profile)
         : { gig: g, pass: false, reasons: ["no group in scope for this source"], score: 0, matchedProfiles: [] };
-      const tierResult = tier(g, primaryGroup?.roleArea ?? EMPTY_ROLE_AREA_CONFIG);
-      const { matchedGroupIds: heuristicMatchedGroupIds, groupTiers } = matchGroups(g, scopedGroups, config.profile);
+      const { matchedGroupIds: heuristicMatchedGroupIds, groupTiers, groupScores } = matchGroups(g, scopedGroups, config.profile, scorePopulations);
       // ai-match-verification epic: a second, LLM-driven check, spent only
       // on groups the heuristic ALREADY matched and that opted in via
       // GroupConfig.aiVerify — see matching/ai-verify.ts's header comment.
@@ -150,6 +164,19 @@ export async function runRadar(
       // group in scope has aiVerify on, or no LLM credential resolved this
       // cycle — byte-identical to before this feature existed either way.
       const { matchedGroupIds, aiFlags } = await applyAiVerification(g, heuristicMatchedGroupIds, scopedGroupsById, runOpts.credential);
+      // The flat/legacy Gig.tier stays anchored to the primary group's OWN
+      // tier result (customizable-tier-scoring epic: respects that group's
+      // own tierScoring mode now, not always the keyword classifier) —
+      // EMPTY_ROLE_AREA_CONFIG's "yellow" default when there's no primary
+      // group at all. Reuses groupScores[primaryGroup.id] (already
+      // computed by matchGroups() above) rather than a third gate() call.
+      const primaryTierResult =
+        primaryGroup && primaryGroup.tierScoring && primaryGroup.tierScoring.kind !== "keyword"
+          ? computeTier(groupScores[primaryGroup.id]!, primaryGroup.tierScoring, scorePopulations[primaryGroup.id] ?? [])
+          : tier(g, primaryGroup?.roleArea ?? EMPTY_ROLE_AREA_CONFIG);
+      const flatTier = primaryTierResult.tier;
+      const flatReasons = primaryTierResult.reasons;
+      const flatScore = primaryGroup ? groupScores[primaryGroup.id]! : gateResult.score;
       // Stamp tier + matchedProfileIds/matchedGroupIds/matchedGroupTiers
       // onto the persisted gig (not the original `g`, so a caller's own
       // Gig object is never mutated) — this is the object that both the
@@ -157,10 +184,12 @@ export async function runRadar(
       // in-memory result agree on all of it.
       const gigWithTier: Gig = {
         ...g,
-        tier: tierResult.tier,
+        tier: flatTier,
         matchedProfileIds: gateResult.matchedProfiles,
         matchedGroupIds,
         matchedGroupTiers: groupTiers,
+        matchScore: flatScore,
+        matchedGroupScores: groupScores,
         ...(Object.keys(aiFlags).length > 0 ? { aiFlags } : {}),
       };
 
@@ -175,8 +204,8 @@ export async function runRadar(
         // (there IS only one group to check).
         pass: matchedGroupIds.length > 0,
         gig: gigWithTier,
-        tier: tierResult.tier,
-        reasons: [...gateResult.reasons, ...tierResult.reasons],
+        tier: flatTier,
+        reasons: [...gateResult.reasons, ...flatReasons],
       });
     }
     // Always add a batch for a source whose fetch succeeded — even an

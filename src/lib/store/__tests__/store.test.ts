@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Gig } from "../../types.js";
 import { closeDb, getDb } from "../db.js";
-import { getGig, listGigs, recordScan, setOutcome, setStatus } from "../gigs.js";
+import { getGig, listGigs, listGroupScores, recordScan, setOutcome, setStatus } from "../gigs.js";
 import type { DatabaseSync } from "node:sqlite";
 
 // All tests use a fresh temp-file db per test (never :memory: for the whole
@@ -318,6 +318,70 @@ describe("listGigs", () => {
     const ignored = getGig("src-a:3", { db });
     expect(ignored?.status).toBe("ignored");
     expect(ignored?.outcomeReason).toBeNull();
+  });
+});
+
+describe("recordScan: matchScore/matchedGroupScores round-trip (customizable-tier-scoring epic)", () => {
+  it("round-trips matchScore and matchedGroupScores through the store", () => {
+    const gig = makeGig({ sourceId: "src-a", externalId: "1", matchScore: 0.73, matchedGroupScores: { a: 0.73, b: 0.4 } });
+
+    recordScan([{ sourceId: "src-a", gigs: [gig] }], { db, now: "2026-01-01T00:00:00.000Z" });
+
+    const stored = getGig("src-a:1", { db });
+    expect(stored?.matchScore).toBe(0.73);
+    expect(stored?.matchedGroupScores).toEqual({ a: 0.73, b: 0.4 });
+  });
+
+  it("matchScore/matchedGroupScores are undefined (never 0 or {}) when the runner never set them", () => {
+    const gig = makeGig({ sourceId: "src-a", externalId: "2" });
+
+    recordScan([{ sourceId: "src-a", gigs: [gig] }], { db, now: "2026-01-01T00:00:00.000Z" });
+
+    const stored = getGig("src-a:2", { db });
+    expect(stored?.matchScore).toBeUndefined();
+    expect(stored?.matchedGroupScores).toBeUndefined();
+  });
+});
+
+describe("listGroupScores (customizable-tier-scoring epic)", () => {
+  it("returns every currently-stored matchScore for 'new'-status gigs matching groupId, no others", () => {
+    recordScan(
+      [
+        {
+          sourceId: "src-a",
+          gigs: [
+            makeGig({ sourceId: "src-a", externalId: "1", matchedGroupIds: ["a"], matchScore: 0.9 }),
+            makeGig({ sourceId: "src-a", externalId: "2", matchedGroupIds: ["a"], matchScore: 0.5 }),
+            makeGig({ sourceId: "src-a", externalId: "3", matchedGroupIds: ["b"], matchScore: 0.1 }),
+            makeGig({ sourceId: "src-a", externalId: "4" }), // no matchedGroupIds/matchScore at all
+          ],
+        },
+      ],
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+
+    expect(listGroupScores("a", { db }).sort()).toEqual([0.5, 0.9]);
+    expect(listGroupScores("b", { db })).toEqual([0.1]);
+    expect(listGroupScores("c", { db })).toEqual([]); // no gigs matched this group at all
+  });
+
+  it("excludes a gig once it's no longer 'new' (applied/archived/ignored) -- only counts what's still being decided on", () => {
+    recordScan(
+      [{ sourceId: "src-a", gigs: [makeGig({ sourceId: "src-a", externalId: "1", matchedGroupIds: ["a"], matchScore: 0.9 })] }],
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+    setStatus("src-a:1", "applied", { db });
+
+    expect(listGroupScores("a", { db })).toEqual([]);
+  });
+
+  it("excludes a gig that matched the group but has no matchScore yet, rather than counting it as 0", () => {
+    recordScan(
+      [{ sourceId: "src-a", gigs: [makeGig({ sourceId: "src-a", externalId: "1", matchedGroupIds: ["a"] })] }], // matchedGroupIds set, matchScore NOT set
+      { db, now: "2026-01-01T00:00:00.000Z" },
+    );
+
+    expect(listGroupScores("a", { db })).toEqual([]);
   });
 });
 

@@ -82,4 +82,82 @@ describe("matchGroups", () => {
     expect(result.matchedGroupIds).toEqual(["a"]);
     expect(result.groupTiers).toEqual({ a: "yellow" });
   });
+
+  it("returns groupScores for every evaluated group, independent of gate pass/fail — same 'recorded regardless' convention as groupTiers", () => {
+    const passing = makeGroup({ id: "a", needs: PASSING_NEEDS });
+    const failing = makeGroup({ id: "b", needs: IMPOSSIBLE_NEEDS });
+
+    const result = matchGroups(makeGig(), [passing, failing], EMPTY_PROFILE);
+
+    expect(typeof result.groupScores.a).toBe("number");
+    expect(typeof result.groupScores.b).toBe("number");
+  });
+});
+
+describe("matchGroups: customizable-tier-scoring", () => {
+  // makeGig() (no rate, no weeklyHours, no stage) + PASSING_NEEDS +
+  // EMPTY_PROFILE (no roles/skills => fit=1) is a deterministic score of
+  // 0.41 via gate.ts's scoreOf() (rateScore=0, fit=1, hoursScore=0.5,
+  // freshScore=0.6 => 0.45*0 + 0.25*1 + 0.2*0.5 + 0.1*0.6 = 0.41) --
+  // verified once here, then relied on as a known fixture value below.
+  it("sanity check: the shared gig fixture's score is the known 0.41 value the tests below rely on", () => {
+    const group = makeGroup({ id: "a", needs: PASSING_NEEDS });
+    const result = matchGroups(makeGig(), [group], EMPTY_PROFILE);
+    expect(result.groupScores.a).toBeCloseTo(0.41, 5);
+  });
+
+  it("a group with tierScoring:score-threshold uses the SCORE, never the keyword classifier — a roleArea that would keyword-tier red is overridden", () => {
+    const RED_ROLE_AREA: RoleAreaConfig = { coreTitles: [], keywords: [], redKeywords: ["Fractional CTO"] };
+    const group = makeGroup({
+      id: "a",
+      needs: PASSING_NEEDS,
+      roleArea: RED_ROLE_AREA, // would keyword-tier this gig RED
+      tierScoring: { kind: "score-threshold", green: 0.3, yellow: 0.1 }, // 0.41 clears green
+    });
+
+    const result = matchGroups(makeGig(), [group], EMPTY_PROFILE);
+
+    expect(result.groupTiers.a).toBe("green");
+  });
+
+  it("a group with tierScoring:percentile uses the caller-supplied population, ignoring roleArea entirely", () => {
+    const group = makeGroup({
+      id: "a",
+      needs: PASSING_NEEDS,
+      roleArea: { coreTitles: [], keywords: [], redKeywords: ["Fractional CTO"] }, // would keyword-tier RED
+      tierScoring: { kind: "percentile", greenPercentile: 80, yellowPercentile: 40 },
+    });
+    // 0.41 is greater than all 4 population values -> rank 100% -> green
+    const scorePopulations = { a: [0.05, 0.1, 0.2, 0.3] };
+
+    const result = matchGroups(makeGig(), [group], EMPTY_PROFILE, scorePopulations);
+
+    expect(result.groupTiers.a).toBe("green");
+  });
+
+  it("percentile mode with no population entry for a group ranks at the middle (0.5) rather than crashing", () => {
+    const group = makeGroup({
+      id: "a",
+      needs: PASSING_NEEDS,
+      tierScoring: { kind: "percentile", greenPercentile: 80, yellowPercentile: 30 },
+    });
+
+    const result = matchGroups(makeGig(), [group], EMPTY_PROFILE, {}); // no "a" entry
+
+    expect(result.groupTiers.a).toBe("yellow"); // rank 0.5 is between 30th and 80th percentile
+  });
+
+  it("two groups in the same call can use different tierScoring modes independently", () => {
+    const keywordGroup = makeGroup({ id: "a", needs: PASSING_NEEDS, roleArea: GREEN_ROLE_AREA });
+    const scoreGroup = makeGroup({
+      id: "b",
+      needs: PASSING_NEEDS,
+      roleArea: { coreTitles: [], keywords: [], redKeywords: ["Fractional CTO"] }, // would keyword-tier RED
+      tierScoring: { kind: "score-threshold", green: 0.3, yellow: 0.1 },
+    });
+
+    const result = matchGroups(makeGig(), [keywordGroup, scoreGroup], EMPTY_PROFILE);
+
+    expect(result.groupTiers).toEqual({ a: "green", b: "green" }); // "a" via keywords, "b" via score -- same outcome, different reasoning
+  });
 });

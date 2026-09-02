@@ -119,6 +119,26 @@ interface DraftRoleArea {
 }
 
 /**
+ * customizable-tier-scoring epic — mirrors `TierScoringMode` (src/lib/types.ts)
+ * as a flat, always-populated draft shape (no enabled-flag tri-state needed:
+ * `kind` itself IS the tri/quad-state selector). Numeric fields are
+ * controlled-input strings, same `draftNumber()`-at-save-time convention as
+ * `DraftEngagementProfile`'s own rate fields -- only the fields relevant to
+ * the selected `kind` are ever read by `draftToEdits()`.
+ */
+interface DraftTierScoring {
+  kind: "keyword" | "score-threshold" | "percentile";
+  green: string;
+  yellow: string;
+  greenPercentile: string;
+  yellowPercentile: string;
+}
+
+function defaultTierScoring(): DraftTierScoring {
+  return { kind: "keyword", green: "0.7", yellow: "0.4", greenPercentile: "80", yellowPercentile: "40" };
+}
+
+/**
  * Mirrors `DraftRoleArea`'s enabled-flag tri-state pattern exactly
  * (`draft-generation-foundation` story): `enabled` distinguishes "never
  * configured" from "configured, possibly with blank optional fields" —
@@ -189,6 +209,7 @@ interface DraftConfig {
    * comment on that convention).
    */
   aiVerify: boolean;
+  tierScoring: DraftTierScoring;
   schedule: string;
   applyProfile: DraftApplyProfile;
   /**
@@ -348,6 +369,13 @@ function configToDraft(config: Config): DraftConfig {
       redKeywords: group?.roleArea?.redKeywords ?? [],
     },
     aiVerify: group?.aiVerify ?? false,
+    tierScoring: (() => {
+      const mode = group?.tierScoring;
+      const base = defaultTierScoring();
+      if (!mode || mode.kind === "keyword") return base;
+      if (mode.kind === "score-threshold") return { ...base, kind: "score-threshold", green: String(mode.green), yellow: String(mode.yellow) };
+      return { ...base, kind: "percentile", greenPercentile: String(mode.greenPercentile), yellowPercentile: String(mode.yellowPercentile) };
+    })(),
     schedule: config.schedule ?? "",
     autoDraftOnScan: config.autoDraftOnScan ?? false,
     chatAutoApproveConfigEdits: config.chatAutoApproveConfigEdits ?? false,
@@ -526,7 +554,27 @@ function draftToEdits(draft: DraftConfig, groupId: string, groupLabel: string): 
       }
     : undefined;
 
-  const edits: ConfigEdits = { profile, groups: [{ id: groupId, label: groupLabel, needs, roleArea, aiVerify: draft.aiVerify }], sources };
+  // customizable-tier-scoring epic. NOT typed as TierScoringMode here on
+  // purpose -- same draftNumber() invalid-passthrough reasoning as `needs`
+  // above: a blank/non-numeric threshold must reach ConfigSchema.safeParse()
+  // server-side for a specific field-level error, not be masked by a
+  // number-only type at compile time.
+  const tierScoring =
+    draft.tierScoring.kind === "score-threshold"
+      ? { kind: "score-threshold", green: draftNumber(draft.tierScoring.green), yellow: draftNumber(draft.tierScoring.yellow) }
+      : draft.tierScoring.kind === "percentile"
+        ? {
+            kind: "percentile",
+            greenPercentile: draftNumber(draft.tierScoring.greenPercentile),
+            yellowPercentile: draftNumber(draft.tierScoring.yellowPercentile),
+          }
+        : { kind: "keyword" };
+
+  const edits: ConfigEdits = {
+    profile,
+    groups: [{ id: groupId, label: groupLabel, needs, roleArea, aiVerify: draft.aiVerify, tierScoring }],
+    sources,
+  };
 
   const schedule = draft.schedule.trim();
   edits.schedule = schedule === "" ? undefined : schedule;
@@ -2392,6 +2440,72 @@ export function ConfigClient({
             only because &quot;interim&quot; is a green keyword. Turning this on spends one extra LLM call per already-
             matched gig each scan to double-check its actual role type before counting it as a real match. Requires an
             LLM credential (Settings below); silently skipped with the heuristic result standing if none is configured.
+          </p>
+        </div>
+        <div className="mt-3 border-t border-theme-surface-border pt-3">
+          <label>
+            <span className={labelClass}>How GREEN/YELLOW/RED is decided</span>
+            <select
+              value={draft.tierScoring.kind}
+              onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, kind: e.target.value as DraftTierScoring["kind"] } })}
+              className={inputClass}
+            >
+              <option value="keyword">Keywords (default — core titles / keywords / red keywords above)</option>
+              <option value="score-threshold">Score threshold (fixed cutoffs on the match score, 0–1)</option>
+              <option value="percentile">Percentile (ranked against your other currently-tracked matches)</option>
+            </select>
+          </label>
+          {draft.tierScoring.kind === "score-threshold" && (
+            <div className="mt-2 flex gap-2">
+              <label className="flex-1">
+                <span className={labelClass}>Green at/above</span>
+                <input
+                  type="text"
+                  value={draft.tierScoring.green}
+                  onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, green: e.target.value } })}
+                  className={inputClass}
+                />
+              </label>
+              <label className="flex-1">
+                <span className={labelClass}>Yellow at/above</span>
+                <input
+                  type="text"
+                  value={draft.tierScoring.yellow}
+                  onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, yellow: e.target.value } })}
+                  className={inputClass}
+                />
+              </label>
+            </div>
+          )}
+          {draft.tierScoring.kind === "percentile" && (
+            <div className="mt-2 flex gap-2">
+              <label className="flex-1">
+                <span className={labelClass}>Green at/above percentile</span>
+                <input
+                  type="text"
+                  value={draft.tierScoring.greenPercentile}
+                  onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, greenPercentile: e.target.value } })}
+                  className={inputClass}
+                />
+              </label>
+              <label className="flex-1">
+                <span className={labelClass}>Yellow at/above percentile</span>
+                <input
+                  type="text"
+                  value={draft.tierScoring.yellowPercentile}
+                  onChange={(e) => setDraft({ ...draft, tierScoring: { ...draft.tierScoring, yellowPercentile: e.target.value } })}
+                  className={inputClass}
+                />
+              </label>
+            </div>
+          )}
+          <p className="mt-1 text-xs text-theme-text-dim">
+            {draft.tierScoring.kind === "keyword" &&
+              "The default — tier comes from the core titles/keywords/red keywords above, not the numeric match score."}
+            {draft.tierScoring.kind === "score-threshold" &&
+              "Tier comes from the match score (rate/fit/hours/freshness, 0–1) crossing these fixed cutoffs instead of keywords — green must be >= yellow."}
+            {draft.tierScoring.kind === "percentile" &&
+              "Tier comes from how this gig's score ranks against your OTHER currently-tracked, undecided gigs for this search — e.g. 80 means \"top 20% is green.\" Ranking is approximate with few tracked gigs and improves as more accumulate. Green percentile must be >= yellow percentile."}
           </p>
         </div>
       </section>

@@ -103,6 +103,43 @@ export interface RoleAreaConfig {
 }
 
 /**
+ * customizable-tier-scoring epic. HOW a group's GREEN/YELLOW/RED tier gets
+ * computed — an alternative to (never a change to) `tier()`'s existing
+ * keyword classifier (matching/tiering.ts, UNCHANGED). Omitted on
+ * `GroupConfig` means `{kind:"keyword"}`, byte-identical to every install
+ * before this field existed — the owner's own words, 2026-09-02: "keep it
+ * green for now" (don't disturb existing tiering) "but that needs to be a
+ * score" (make GREEN/YELLOW/RED customizable off the real, already-
+ * computed `MatchResult.score`, not just keywords).
+ *
+ * - `"keyword"`: today's classifier, unchanged (matching/tiering.ts's
+ *   coreTitles/redKeywords/keywords precedence).
+ * - `"score-threshold"`: a gig's own `score` (0-1, matching/gate.ts's
+ *   scoreOf() — rate/fit/hours/freshness composite) is compared directly
+ *   against two fixed cutoffs. `green`/`yellow` are each in [0,1];
+ *   `green` must be >= `yellow` (config/schema.ts's `.refine()` enforces
+ *   this — a lower green cutoff than yellow would make green unreachable
+ *   before yellow, a config the UI should never accept).
+ * - `"percentile"`: a gig's score is ranked against the CURRENT population
+ *   of other tracked gigs' scores for this SAME group (only `status:
+ *   "new"` gigs — "how does this compare to what I still need to decide
+ *   on," not every gig ever seen). `greenPercentile`/`yellowPercentile`
+ *   are each in [0,100] (e.g. `greenPercentile: 80` means "top 20% of
+ *   current scores for this group is green"); `greenPercentile` must be
+ *   >= `yellowPercentile`. The population is a snapshot taken once per
+ *   scan cycle (matching/group-match.ts's `matchGroups()` stays a PURE
+ *   function — the population is fetched by the caller, `apply/
+ *   runner.ts`, via `store/gigs.ts`'s `listGroupScores()`, and passed in
+ *   — never a DB read inside the matching pipeline itself), so ranking is
+ *   necessarily approximate on a nearly-empty group and self-improves as
+ *   more gigs accumulate real scores.
+ */
+export type TierScoringMode =
+  | { kind: "keyword" }
+  | { kind: "score-threshold"; green: number; yellow: number }
+  | { kind: "percentile"; greenPercentile: number; yellowPercentile: number };
+
+/**
  * Apply-specific fields a real application form needs that `Profile`
  * doesn't hold today — email, phone, LinkedIn, a short headline/bio, and a
  * single rate figure to anchor when a form asks for one. Optional on
@@ -199,6 +236,12 @@ export interface GroupConfig {
    * degradation posture as `Config.autoDraftOnScan`.
    */
   aiVerify?: boolean;
+  /**
+   * customizable-tier-scoring epic. Omitted means `{kind:"keyword"}` —
+   * byte-identical to every install before this field existed. See
+   * `TierScoringMode`'s own doc comment above for the full contract.
+   */
+  tierScoring?: TierScoringMode;
 }
 
 /** Full user configuration. Lives in the user's own storage, never in the repo. */
@@ -433,6 +476,17 @@ export interface Gig {
    * per-group map.
    */
   aiFlags?: Record<string, { confirmed: boolean; reason: string }>;
+  /**
+   * customizable-tier-scoring epic. The FIRST in-scope ("primary") group's
+   * own `MatchResult.score` (matching/gate.ts's `scoreOf()` — a 0-1
+   * rate/fit/hours/freshness composite), persisted for the first time
+   * (previously computed fresh every scan and thrown away — see
+   * matching/gate.ts's `gate()`). Same backward-compat anchoring
+   * convention as the flat `tier`/`matchedProfileIds` fields above.
+   */
+  matchScore?: number;
+  /** Every in-scope group's OWN score (`Record<groupId, number>`), independent of pass/fail — mirrors `matchedGroupTiers`'s own "recorded regardless of gate outcome" convention. Feeds `TierScoringMode`'s "score-threshold"/"percentile" computation. */
+  matchedGroupScores?: Record<string, number>;
 }
 
 /**

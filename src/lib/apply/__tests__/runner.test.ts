@@ -368,3 +368,84 @@ describe("runRadar: group-aware matching (multi-group-architecture epic, mga-3)"
     expect(stored?.matchedGroupTiers).toEqual({ A: "green" }); // B never evaluated -- no key for it at all
   });
 });
+
+describe("runRadar: customizable-tier-scoring", () => {
+  const PASSING_PROFILE: EngagementProfile = {
+    id: "any-hourly",
+    label: "Any (hourly)",
+    types: ["contract", "fractional", "contract-to-hire"],
+    minRate: 0,
+    highRate: 999_999,
+    maxHours: 999,
+    maxHoursAtHighRate: 999,
+    rateUnit: "hour",
+  };
+
+  function makeScoreConfig(tierScoring: Config["groups"][number]["tierScoring"]): Config {
+    return {
+      profile: { name: "Test User", roles: [], skills: [], timezone: "UTC" },
+      groups: [
+        {
+          id: "g1",
+          label: "Group 1",
+          needs: { engagementProfiles: [PASSING_PROFILE], freshStageOnly: false, remoteOnly: false },
+          roleArea: { coreTitles: [], keywords: [], redKeywords: ["Fractional CTO"] }, // would keyword-tier RED
+          tierScoring,
+        },
+      ],
+      sources: [{ id: "braintrust", enabled: true }],
+    };
+  }
+
+  it("persists matchScore/matchedGroupScores on every gig, regardless of tierScoring mode", async () => {
+    nextGigs = [makeGig("1", "Fractional CTO for a Seed-Stage Startup")];
+
+    await runRadar(makeScoreConfig(undefined), { db }); // default keyword mode
+
+    const stored = getGig("braintrust:1", { db });
+    expect(typeof stored?.matchScore).toBe("number");
+    expect(stored?.matchedGroupScores).toEqual({ g1: stored?.matchScore });
+  });
+
+  it("score-threshold mode overrides the keyword classifier for the flat Gig.tier, not just the per-group tier", async () => {
+    nextGigs = [makeGig("1", "Fractional CTO for a Seed-Stage Startup")]; // unpriced -> a real, computable score
+
+    await runRadar(makeScoreConfig({ kind: "score-threshold", green: 0.1, yellow: 0.05 }), { db });
+
+    const stored = getGig("braintrust:1", { db });
+    // roleArea's redKeywords would have kept this RED under keyword tiering --
+    // score-threshold mode overrides that for this group.
+    expect(stored?.tier).toBe("green");
+    expect(stored?.matchedGroupTiers).toEqual({ g1: "green" });
+  });
+
+  it("percentile mode ranks a new gig against the population of ALREADY-stored 'new' gigs for that group, fetched fresh each scan", async () => {
+    // Cycle 1: seed two lower-scoring gigs (high weeklyHours -> low hoursScore -> low total score).
+    nextGigs = [
+      { sourceId: "braintrust", externalId: "low1", title: "Fractional CTO A", url: "https://example.test/low1", weeklyHours: 950 },
+      { sourceId: "braintrust", externalId: "low2", title: "Fractional CTO B", url: "https://example.test/low2", weeklyHours: 900 },
+    ];
+    await runRadar(makeScoreConfig({ kind: "percentile", greenPercentile: 80, yellowPercentile: 40 }), { db });
+
+    // Cycle 2: a NEW gig with a much better weeklyHours figure -> a real, higher score than both seeded gigs.
+    nextGigs = [
+      { sourceId: "braintrust", externalId: "high1", title: "Fractional CTO C", url: "https://example.test/high1", weeklyHours: 5 },
+    ];
+    await runRadar(makeScoreConfig({ kind: "percentile", greenPercentile: 80, yellowPercentile: 40 }), { db });
+
+    const high = getGig("braintrust:high1", { db });
+    // Ranks above both pre-existing scores -> 100th percentile -> green.
+    expect(high?.tier).toBe("green");
+
+    // Re-scanning one of the ORIGINAL low gigs now ranks it against the
+    // (now 3-gig) population, including the newly-inserted high scorer --
+    // proves the population is genuinely re-fetched each scan, not cached
+    // from cycle 1.
+    nextGigs = [
+      { sourceId: "braintrust", externalId: "low1", title: "Fractional CTO A", url: "https://example.test/low1", weeklyHours: 950 },
+    ];
+    await runRadar(makeScoreConfig({ kind: "percentile", greenPercentile: 80, yellowPercentile: 40 }), { db });
+    const low1 = getGig("braintrust:low1", { db });
+    expect(low1?.tier).not.toBe("green"); // still the lowest (or tied-lowest) of the population
+  });
+});
