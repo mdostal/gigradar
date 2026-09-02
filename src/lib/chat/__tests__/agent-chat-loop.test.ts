@@ -873,6 +873,25 @@ describe("note_preference: ungated, runs immediately", () => {
     expect(prefs[0]).toMatchObject({ note: "CFO/Finance titles are never a fit for the CTO group", sessionId: "np1" });
     endChatSession("np1");
   });
+
+  it("a preference recorded in one session is surfaced in a system prompt for a LATER, DIFFERENT session -- proves listPreferences() is no longer write-only (deep-dive-audit-and-testing-framework epic)", async () => {
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("note_preference", { note: "Never draft for pure sales/BD roles" }))
+      .mockResolvedValueOnce(fakeTextResponse("Got it."));
+    startChatSession("np-session-a");
+    await sendMessage("np-session-a", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "remember: no sales roles", FAKE_CONFIG);
+    endChatSession("np-session-a");
+
+    mockCreate.mockClear();
+    mockCreate.mockResolvedValueOnce(fakeTextResponse("Sure, I have that in mind."));
+    startChatSession("np-session-b");
+    await sendMessage("np-session-b", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "what should I keep in mind?", FAKE_CONFIG);
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    const requestArgs = mockCreate.mock.calls[0]?.[0] as { system?: string };
+    expect(requestArgs.system).toContain("Never draft for pure sales/BD roles");
+    endChatSession("np-session-b");
+  });
 });
 
 describe("propose_config_edit: propose then approve, no exceptions", () => {
