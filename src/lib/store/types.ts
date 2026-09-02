@@ -161,3 +161,11 @@ export interface StoredAutoFireDecision {
   /** null when no per-pair rule was ever loaded for this decision (e.g. the kill switch stopped evaluation first). */
   ruleSnapshot: AutoFireRuleConfig | null;
 }
+
+/** A `chat_preferences` row as persisted by the store (store/chat.ts's recordChatPreference()) — chat-copilot-self-tuning epic. */
+export interface StoredChatPreference {
+  note: string;
+  /** null when recorded with no session context (e.g. a batch/system note). */
+  sessionId: string | null;
+  createdAt: string;
+}

@@ -57,6 +57,35 @@ Two distinct things, and the first is **already built**:
      own words: "it does a plan cycle, gives us the approval changes it
      would make, we approve and submit."
 
+## 1a. ccst-4 confirmation: the existing draft-graduation flow — 2026-09-02
+
+Read `src/lib/apply/autofire.ts` end to end again for this specific story
+(`checkTierIsGreen`, `checkDraftContentSanity`, `checkGigIsFresh`,
+`checkDailyCapNotExceeded`, `approvedCount()`/`isGraduated()`) plus the
+config UI's Auto-fire section (`defaultAutoFireRule()`: `minApprovals: "3"`,
+`dailyCap: "3"`).
+
+**Match, with one honest, real gap.** The graduation math itself is
+exactly as described: `autoDraftOnScan` drafts new matches, the owner
+reviews and approves/rejects each one on `/drafts`, and
+`isGraduated(sourceId, tier)` (`approvedCount() >= rule.minApprovals`,
+config-UI default 3) is the real, live gate before `evaluateAutoFire()`
+will ever let anything actually fire — genuinely "do at least 3 of those
+before full auto," per `(sourceId, tier)` pair, exactly as described.
+
+The gap: the owner's phrase "drafts all above a certain **rating score**"
+implies a numeric cutoff over `MatchResult.score` (a real, already-
+computed value — `gate.ts`'s `scoreOf()`). What actually exists today is
+tier-only: `autoDraftOnScan` drafts GREEN-tier matches, full stop — there
+is no numeric-score threshold anywhere in the auto-draft or auto-fire
+path, and `checkTierIsGreen()` is likewise a hard tier check, not a score
+comparison. This is a real, separately-scoped gap — **not fixed by this
+epic** (out of scope for ccst-1..3, which are about the chat co-pilot, not
+the draft/auto-fire gating rules themselves) — flagged here as its own
+future follow-up: a `Config`-level numeric score threshold (or a
+per-source/tier override) as an alternative or supplement to the current
+tier-only gate, if the owner wants finer control than green/yellow/red.
+
 ## 2. Current state (researched this session)
 
 `src/lib/chat/agent-chat-loop.ts` (697 lines) is further along than a

@@ -315,6 +315,20 @@ export interface Config {
    * existed.
    */
   llmProvider?: "anthropic" | "openai" | "google";
+  /**
+   * chat-copilot-self-tuning epic. Opt-in, off by default (same
+   * "omitted/false are identical, no tri-state" pattern as
+   * autoDraftOnScan) -- when true, the chat co-pilot's propose_config_edit
+   * tool skips its normal approve/reject pause and auto-executes
+   * immediately, returning a distinct "auto_applied" chat event the UI
+   * renders as a mandatory warning banner rather than silently applying
+   * the change (owner's own words: "a toggle enabling it to auto fire
+   * with a popup warning"). Applies ONLY to propose_config_edit -- every
+   * other chat write tool (update_gig_status, generate_draft, etc.) is
+   * completely unaffected by this toggle; see
+   * agent-chat-loop.ts's runTurnLoop() for the exact scope boundary.
+   */
+  chatAutoApproveConfigEdits?: boolean;
 }
 
 /**
