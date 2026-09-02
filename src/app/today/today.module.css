@@ -1,0 +1,794 @@
+/*
+ * gigradar-command-center epic, daily-shortlist-page story. Ported
+ * verbatim from the verified, bug-free Daily Shortlist concept
+ * (ui-overhaul-via-ui-squads) -- this page ships "as is" per the owner's
+ * own words, a dedicated look, NOT part of the swappable
+ * radar/editorial/terminal/signal-deck theme system (that's Signal Deck's
+ * own scope; see gigradar-command-center's design-discussion.md §2
+ * "Resolved" item 3). CSS Modules scope every class name automatically,
+ * so these tokens/rules never leak onto other routes -- the `.page`
+ * wrapper class carries every custom property; descendants inherit them
+ * through normal CSS cascade, same as the original concept's `:root`
+ * scoping did for the whole document.
+ */
+.page {
+  --bg: #e4decb;
+  --surface: #f8f5ea;
+  --surface-2: #eee8d6;
+  --ink: #21251e;
+  --muted: #6e6852;
+  --faint: #8b8468;
+  --line: #c9c1a5;
+  --line-soft: #d8d1b9;
+  --accent: #3b4670;
+  --accent-soft: #dbdeec;
+  --accent-ink: #f6f5f0;
+  --green: #2e6b45;
+  --green-tint: #dce5d3;
+  --green-line: #a9be9b;
+  --yellow: #93670f;
+  --yellow-tint: #efe1bc;
+  --yellow-line: #cbae72;
+  --red: #a03f27;
+  --red-tint: #ead6c9;
+  --red-line: #cda48d;
+  --shadow-card: 0 1px 1px rgba(33, 37, 30, 0.05), 0 10px 22px -14px rgba(33, 37, 30, 0.35);
+  --radius: 3px;
+
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 28px 80px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-shortlist-body), "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  .page {
+    --bg: #14170f;
+    --surface: #1c2116;
+    --surface-2: #232819;
+    --ink: #ece7d2;
+    --muted: #aba488;
+    --faint: #857f65;
+    --line: #383e28;
+    --line-soft: #2c3120;
+    --accent: #96a4da;
+    --accent-soft: #262b45;
+    --accent-ink: #14170f;
+    --green: #74be8f;
+    --green-tint: #202e22;
+    --green-line: #3d4f38;
+    --yellow: #e2b558;
+    --yellow-tint: #322a17;
+    --yellow-line: #52431f;
+    --red: #e28468;
+    --red-tint: #35231b;
+    --red-line: #533226;
+    --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 24px -14px rgba(0, 0, 0, 0.7);
+  }
+}
+
+.page :global(*) {
+  box-sizing: border-box;
+}
+.page :global(::selection) {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+.page :global(a) {
+  color: var(--accent);
+}
+.page :global(:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/*
+ * :where(...) keeps these two reset rules at THE SAME specificity as
+ * .page alone (0,1,0) -- a real bug caught during live verification:
+ * without :where(), ".page :global(button)" carries specificity (0,1,1)
+ * [.page's class + button's type selector], which beat plain single-class
+ * rules like .chipActive/.segActive further down this file despite
+ * appearing earlier in source order, silently making active
+ * chip/segment button TEXT the same color as its own background
+ * (invisible). :where() contributes zero specificity regardless of what
+ * selector list it wraps, so source order (this block first, the active
+ * states later) decides again, as intended.
+ */
+.page :global(:where(h1, h2, h3)) {
+  margin: 0;
+  text-wrap: balance;
+}
+.page :global(:where(button, select, input)) {
+  font-family: inherit;
+  color: inherit;
+}
+.mono {
+  font-family: var(--font-shortlist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============ MASTHEAD ============ */
+.masthead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  padding-bottom: 18px;
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.wordmark {
+  font-family: var(--font-shortlist-display), Georgia, serif;
+  font-weight: 700;
+  font-size: 34px;
+  letter-spacing: -0.01em;
+}
+.mastDate {
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.mastRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+.mastStat {
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.mastWarn {
+  color: var(--yellow);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.dotOk {
+  background: var(--green);
+}
+.dotLive {
+  background: var(--accent);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 70, 112, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(59, 70, 112, 0);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  .dotLive {
+    animation: pulseDark 2.4s ease-in-out infinite;
+  }
+}
+@keyframes pulseDark {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(150, 164, 218, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(150, 164, 218, 0);
+  }
+}
+
+/* ============ TOOLBAR ============ */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 0 22px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 28px;
+}
+.chipGroup {
+  display: flex;
+  gap: 6px;
+}
+.chip {
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease,
+    border-color 0.1s ease,
+    transform 0.08s ease;
+}
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.chip:active {
+  transform: scale(0.96);
+}
+.chipActive {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}
+.toolbarSep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line);
+  margin: 0 2px;
+}
+.tbSelect {
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.tbSearch {
+  composes: tbSelect;
+  cursor: text;
+  min-width: 180px;
+  font-family: var(--font-shortlist-mono), monospace;
+}
+.tbSearch::placeholder {
+  color: var(--faint);
+}
+.seenToggle {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.seg {
+  font-size: 12px;
+  padding: 6px 11px;
+  background: var(--surface);
+  color: var(--muted);
+  border: none;
+  border-right: 1px solid var(--line);
+  cursor: pointer;
+  font-family: var(--font-shortlist-mono), monospace;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+}
+.seg:last-child {
+  border-right: none;
+}
+.seg:hover {
+  color: var(--ink);
+}
+.segActive {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.tbReset {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  padding: 6px 2px;
+}
+.tbReset:hover {
+  color: var(--ink);
+}
+
+/* ============ SECTION HEADS ============ */
+.sectionHead {
+  font-family: var(--font-shortlist-display), Georgia, serif;
+  font-weight: 600;
+  font-size: 22px;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.sectionSub {
+  font-weight: 400;
+  font-style: italic;
+  font-size: 14px;
+  color: var(--muted);
+}
+.picks {
+  margin-bottom: 44px;
+}
+
+/* ============ STAMP BADGE ============ */
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.stampGreen {
+  color: var(--green);
+  background: var(--green-tint);
+}
+.stampYellow {
+  color: var(--yellow);
+  background: var(--yellow-tint);
+}
+.stampRed {
+  color: var(--red);
+  background: var(--red-tint);
+}
+
+/* ============ PICKS GRID ============ */
+.picksGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+.pickCard {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--green);
+  border-radius: var(--radius);
+  padding: 18px 18px 16px;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.pickCard:hover {
+  transform: translateY(-2px);
+}
+.pickTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+.pickTitle {
+  font-family: var(--font-shortlist-display), Georgia, serif;
+  font-weight: 600;
+  font-size: 17px;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+.pickCompany {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.unlisted {
+  font-style: italic;
+  color: var(--faint);
+}
+.pickMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.sourceTag {
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  padding: 1px 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+}
+.pickRate {
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.pickRateUnstated {
+  font-weight: 400;
+  font-size: 12.5px;
+  color: var(--faint);
+  font-style: italic;
+}
+.pickActions {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line-soft);
+  display: flex;
+  gap: 6px;
+}
+
+.btn {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition:
+    background 0.08s ease,
+    border-color 0.08s ease,
+    transform 0.06s ease,
+    color 0.08s ease;
+}
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn:active {
+  transform: scale(0.95);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btnPrimary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.btnPrimary:hover {
+  opacity: 0.9;
+  color: var(--accent-ink);
+}
+.btnGhost {
+  background: transparent;
+}
+.btnDone {
+  color: var(--green);
+  border-color: var(--green-line);
+}
+
+/* ============ ROSTER ============ */
+.rosterCount {
+  color: var(--muted);
+}
+.rosterHeadRow {
+  display: grid;
+  grid-template-columns: 1fr 108px 128px 84px 138px 130px;
+  gap: 10px;
+  padding: 0 14px 8px;
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  border-bottom: 1px solid var(--line);
+}
+.group {
+  margin-top: 22px;
+}
+.group:first-child {
+  margin-top: 0;
+}
+.groupLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--surface);
+  background: var(--ink);
+  padding: 4px 10px 4px 8px;
+  border-radius: 2px 6px 6px 2px;
+  margin: 14px 0 6px;
+}
+.groupLabel .n {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+.row {
+  display: grid;
+  grid-template-columns: 1fr 108px 128px 84px 138px 130px;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.row:hover,
+.rowOpen {
+  background: var(--surface);
+}
+.rowListing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.rowTitleLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.rowTitle {
+  font-family: var(--font-shortlist-display), Georgia, serif;
+  font-weight: 600;
+  font-size: 14.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rowCompany {
+  font-size: 12px;
+  color: var(--muted);
+}
+.profileChips {
+  display: flex;
+  gap: 3px;
+}
+.profileChip {
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  flex: none;
+}
+.rowRate {
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 12.5px;
+}
+.rowRateUnstated {
+  color: var(--faint);
+  font-style: italic;
+  font-size: 11.5px;
+}
+.rowSeen {
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rowStatus select {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  cursor: pointer;
+}
+.flash select {
+  animation: flash 0.8s ease;
+}
+@keyframes flash {
+  0% {
+    background: var(--accent-soft);
+  }
+  100% {
+    background: var(--surface);
+  }
+}
+.outcomeNote {
+  display: block;
+  font-size: 10.5px;
+  color: var(--faint);
+  margin-top: 2px;
+  font-style: italic;
+}
+.rowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.iconBtn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    opacity 0.1s ease,
+    background 0.1s ease,
+    color 0.1s ease,
+    border-color 0.1s ease,
+    transform 0.3s ease;
+}
+.iconBtn:hover {
+  background: var(--surface-2);
+  border-color: var(--line);
+  color: var(--accent);
+}
+.iconBtn:active {
+  transform: scale(0.9);
+}
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.chevronOpen svg {
+  transform: rotate(180deg);
+}
+.iconBtn svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.18s ease;
+}
+
+.detail {
+  grid-column: 1 / -1;
+  padding: 16px 14px 20px 14px;
+  margin: 0 0 4px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 3px solid var(--accent);
+}
+.detailTeaser {
+  font-family: var(--font-shortlist-display), Georgia, serif;
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.5;
+  max-width: 65ch;
+  color: var(--ink);
+  margin-bottom: 10px;
+}
+.detailMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+.detailMeta b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.detailProfiles {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.detailProfilesLabel {
+  font-size: 11px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: var(--font-shortlist-mono), monospace;
+}
+.fullChip {
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  color: var(--muted);
+}
+.detailActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.detailError {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--red);
+}
+.detailPrep {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.emptyState {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-family: var(--font-shortlist-display), Georgia, serif;
+  font-style: italic;
+  font-size: 16px;
+}
+.emptyState button {
+  display: block;
+  margin: 14px auto 0;
+}
+
+.pagefoot {
+  margin-top: 52px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-shortlist-mono), monospace;
+  font-size: 11px;
+  color: var(--faint);
+  display: flex;
+  justify-content: space-between;
+}
+
+@media (max-width: 760px) {
+  .rosterHeadRow {
+    display: none;
+  }
+  .row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "listing actions" "source status";
+    row-gap: 8px;
+  }
+  .rowListing {
+    grid-area: listing;
+  }
+  .rowActions {
+    grid-area: actions;
+  }
+  .rowSourceCell {
+    grid-area: source;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .rowRate,
+  .rowSeen {
+    display: none;
+  }
+  .rowStatus {
+    grid-area: status;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page :global(*) {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

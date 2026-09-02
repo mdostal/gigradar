@@ -1,7 +1,7 @@
 id: signal-deck-main-dashboard
 epic: gigradar-command-center
 title: "Signal Deck becomes the real main dashboard (/) + the new default theme"
-status: in_progress
+status: complete
 complexity: high
 methodology: classic
 depends_on: []
