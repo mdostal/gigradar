@@ -30,9 +30,10 @@
 // prompt. See draft.test.ts's prompt-grounding test.
 import { NoOutputGeneratedError, Output, generateText } from "ai";
 import { z } from "zod";
-import type { ApplyProfileConfig, DraftContent, Gig, Profile } from "../types.js";
+import type { ApplyProfileConfig, Config, DraftContent, DraftFormat, Gig, Profile } from "../types.js";
 import { createAiSdkModel, generateHarnessObject } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
+import { getSource } from "../sources/source.js";
 
 const DRAFT_TOOL_NAME = "draft_application";
 
@@ -114,6 +115,51 @@ export function buildGigDataBlock(gig: Gig): string {
 }
 
 /**
+ * platform-aware-application-drafting epic. Resolves which real
+ * application UX to draft for, per gig. Precedence: an explicit
+ * `SourceConfig.applicationFormat` override always wins (the one place a
+ * user/preset controls this for a config-driven source, e.g. `custom-llm`
+ * presets like Catalant/Indeed, which have no static `Source` object of
+ * their own); else the registered `Source.applicationFormat` default (set
+ * on hand-written adapters like gofractional.ts/linkedin.ts where it's
+ * known with real confidence); else `"cover-letter"` — never a guess.
+ */
+export function resolveApplicationFormat(gig: Gig, config: Config): DraftFormat {
+  const sourceConfig = config.sources.find((s) => s.id === gig.sourceId);
+  if (sourceConfig?.applicationFormat) return sourceConfig.applicationFormat;
+  return getSource(gig.sourceId)?.applicationFormat ?? "cover-letter";
+}
+
+/**
+ * Per-format instruction text for generateDraft()'s prompt — branches
+ * WORDING only, never the output schema (DraftResultSchema stays the same
+ * {coverText, answers} shape for every format, per DraftContent.format's
+ * own doc comment in types.ts: the field name never changes, just what it
+ * holds and how it's framed).
+ */
+const FORMAT_INSTRUCTIONS: Record<DraftFormat, string> = {
+  "cover-letter":
+    "Write a cover message (coverText) and, only if the listing implies specific application questions, " +
+    "concise structured answers (answers, keyed by question) — otherwise leave answers as an empty object.",
+  proposal:
+    "Write a business proposal statement (coverText) framed the way you would for a marketplace engagement " +
+    "listing — professional and outcome-focused, more like a pitch for why you're the right fit for this " +
+    "specific engagement than a personal cover letter. Only if the listing implies specific application " +
+    "questions, add concise structured answers (answers, keyed by question) — otherwise leave answers as an " +
+    "empty object.",
+  "why-fit":
+    "Write a short, punchy statement of why you're a fit for this specific role (coverText) — NOT a " +
+    "traditional cover letter; get straight to the point in 2-4 sentences. Only if the listing implies " +
+    "specific application questions, add concise structured answers (answers, keyed by question) — otherwise " +
+    "leave answers as an empty object.",
+  "form-fields":
+    "This platform is typically a short application-form flow with discrete questions rather than a " +
+    "free-text cover letter. Leave coverText as an empty string unless the listing explicitly calls for a " +
+    "personal statement. Focus on concise, direct answers to any application questions the listing implies " +
+    "(answers, keyed by question) — e.g. years of experience, availability, or rate expectations, if implied.",
+};
+
+/**
  * Drafts one gig's application via a single LLM call using the Vercel AI
  * SDK's forced structured output (`output: Output.object(...)`, never
  * free-text parsing) — mirrors `extractProfile()`'s shape exactly.
@@ -137,12 +183,12 @@ export async function generateDraft(
   profile: Profile,
   applyProfile: ApplyProfileConfig,
   credential: LlmCredential,
+  format: DraftFormat = "cover-letter",
 ): Promise<DraftContent> {
   const prompt = [
     "Draft a job application for this person, grounded STRICTLY in the real applicant data provided below. " +
-      "Write a cover message (coverText) and, only if the listing implies specific application questions, " +
-      "concise structured answers (answers, keyed by question) — otherwise leave answers as an empty object. " +
-      "CRITICAL: never invent, embellish, or assume experience, skills, employers, dates, or figures that are " +
+      FORMAT_INSTRUCTIONS[format] +
+      " CRITICAL: never invent, embellish, or assume experience, skills, employers, dates, or figures that are " +
       "not explicitly present in the applicant data below. If something isn't stated, do not claim it.",
     buildApplicantDataBlock(profile, applyProfile),
     buildGigDataBlock(gig),
@@ -150,7 +196,8 @@ export async function generateDraft(
   ].join("\n\n");
 
   if (credential.kind === "claude-code-harness") {
-    return generateHarnessObject(DraftResultSchema, prompt);
+    const result = await generateHarnessObject(DraftResultSchema, prompt);
+    return { ...result, format };
   }
 
   const model = createAiSdkModel(credential);
@@ -162,7 +209,7 @@ export async function generateDraft(
   });
 
   try {
-    return result.output;
+    return { ...result.output, format };
   } catch (e) {
     if (e instanceof NoOutputGeneratedError) {
       throw new Error("gigradar apply: the model's response did not include the expected structured draft result.");

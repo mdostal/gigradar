@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { DraftStatus } from "@/lib/store";
-import type { DraftContent } from "@/lib/types";
+import type { DraftContent, DraftFormat } from "@/lib/types";
 import { markSubmittedAction, setDraftStatusAction, updateDraftContentAction } from "./actions";
 import { DRAFT_STATUS_TABS, filterDrafts, formatCopyReadyDraft, type DraftListItem, type DraftStatusFilter } from "./drafts-filter";
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
@@ -26,6 +26,18 @@ const STATUS_BADGE_CLASS: Record<DraftStatus, string> = {
   rejected: "bg-red-100 text-red-800 ring-1 ring-inset ring-red-300",
   submitted: "bg-green-100 text-green-800 ring-1 ring-inset ring-green-300",
   submitting: "bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-300",
+};
+
+// platform-aware-application-drafting epic: the field is still literally
+// named `coverText` regardless of format (DraftContent.format's own doc
+// comment in types.ts explains why — never renamed), so the review UI's
+// job is just to relabel what's already there per the real platform's
+// application UX, not restructure the layout.
+const FORMAT_LABEL: Record<DraftFormat, string> = {
+  "cover-letter": "Cover message",
+  proposal: "Proposal",
+  "why-fit": "Why you're a fit",
+  "form-fields": "Statement (optional — this platform is mostly short-answer questions)",
 };
 
 function tabClass(active: boolean): string {
@@ -64,7 +76,8 @@ function DraftCard({ item }: { item: DraftListItem }) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const editedContent: DraftContent = { coverText, answers };
+  const format = item.content.format ?? "cover-letter";
+  const editedContent: DraftContent = { coverText, answers, format };
 
   function handleSave() {
     setError(null);
@@ -128,12 +141,12 @@ function DraftCard({ item }: { item: DraftListItem }) {
       {item.status === "draft" ? (
         <div className="mt-3 flex flex-col gap-3">
           <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Cover message
+            {FORMAT_LABEL[format]}
             <textarea
               value={coverText}
               onChange={(e) => setCoverText(e.target.value)}
               rows={8}
-              aria-label={`Cover message for ${item.gigTitle}`}
+              aria-label={`${FORMAT_LABEL[format]} for ${item.gigTitle}`}
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
             />
           </label>

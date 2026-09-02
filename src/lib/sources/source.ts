@@ -1,4 +1,4 @@
-import type { Gig, SourceConfig, Profile } from "../types.js";
+import type { DraftFormat, Gig, SourceConfig, Profile } from "../types.js";
 import type { LlmCredential } from "../config/env-store.js";
 
 /**
@@ -38,6 +38,17 @@ export interface Source {
    * parameter already established.
    */
   fetch(cfg: SourceConfig, profile: Profile, credential?: LlmCredential): Promise<Gig[]>;
+  /**
+   * platform-aware-application-drafting epic. This platform's real
+   * application UX, when known with real confidence — see
+   * `DraftFormat`'s own doc comment (types.ts) for what each value
+   * means. Omitted means "no specific knowledge of this platform's real
+   * apply flow" — `apply/draft.ts`'s `resolveApplicationFormat()` falls
+   * back to `"cover-letter"`, today's original, universal shape, rather
+   * than guessing. `SourceConfig.applicationFormat` (if set) always
+   * overrides this default.
+   */
+  applicationFormat?: DraftFormat;
 }
 
 const registry = new Map<string, Source>();

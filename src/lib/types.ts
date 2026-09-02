@@ -190,6 +190,16 @@ export interface SourceConfig {
    * evaluated against a "fractional CTO" group's criteria at all).
    */
   groupIds?: string[];
+  /**
+   * platform-aware-application-drafting epic. Overrides the registered
+   * `Source.applicationFormat` default (if any) for this specific source
+   * instance — the one place a user/preset controls draft tone for a
+   * `custom-llm`/`gmail-digest` source, which has no static `Source`
+   * object of its own to hang a default on. Omitted means "use the
+   * registered Source's own default, or 'cover-letter' if neither is
+   * set" — see `apply/draft.ts`'s `resolveApplicationFormat()`.
+   */
+  applicationFormat?: DraftFormat;
 }
 
 /**
@@ -500,7 +510,36 @@ export interface Gig {
 export interface DraftContent {
   coverText: string;
   answers: Record<string, string>;
+  /**
+   * platform-aware-application-drafting epic. Which real application UX
+   * this draft was written for — deep-dive-audit-and-testing-framework's
+   * own finding (2026-09-02) confirmed drafting was 100% platform-
+   * agnostic before this field existed, always producing one generic
+   * "email cover letter" shape regardless of whether the real platform
+   * wants a marketplace proposal (Catalant), a single "why are you a
+   * fit" pitch (GoFractional), a traditional cover letter + resume
+   * upload (Indeed), or a handful of short form-field answers with no
+   * real cover letter at all (LinkedIn Easy-Apply-style). Omitted
+   * (existing/legacy drafts, or a platform gigradar has no specific
+   * knowledge of) means "cover-letter" — today's original, universal
+   * shape, byte-identical to before this field existed. The field name
+   * stays `coverText` regardless of format (never renamed) — for
+   * `"proposal"`/`"why-fit"` it holds that format's own primary text;
+   * for `"form-fields"` it's typically empty and `answers` carries
+   * everything.
+   */
+  format?: DraftFormat;
 }
+
+/**
+ * platform-aware-application-drafting epic. See `DraftContent.format`'s
+ * own doc comment for what each value means. Deliberately a closed,
+ * small enum rather than free text — `generateDraft()` branches its
+ * PROMPT WORDING (never its output schema) on this value, and the
+ * review UI branches its section label the same way; an open-ended
+ * string would defeat both.
+ */
+export type DraftFormat = "cover-letter" | "proposal" | "why-fit" | "form-fields";
 
 /** The gate's verdict on a single gig — always explainable. */
 export interface MatchResult {

@@ -83,6 +83,7 @@ describe("generateDraft: structured output", () => {
     expect(result).toEqual({
       coverText: "Dear Acme team, I'm excited to apply...",
       answers: { "Why this role?": "Great fit for my background." },
+      format: "cover-letter",
     });
   });
 
@@ -105,7 +106,7 @@ describe("generateDraft: claude-code-harness credential routes to generateHarnes
 
     const result = await generateDraft(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "claude-code-harness" });
 
-    expect(result).toEqual({ coverText: "Dear harness team...", answers: {} });
+    expect(result).toEqual({ coverText: "Dear harness team...", answers: {}, format: "cover-letter" });
     expect(mockGenerateHarnessObject).toHaveBeenCalledTimes(1);
     expect(mockCreateAnthropic).not.toHaveBeenCalled();
     expect(mockGenerateText).not.toHaveBeenCalled();

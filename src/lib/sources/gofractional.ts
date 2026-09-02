@@ -286,6 +286,10 @@ export const gofractionalSource: Source = {
   id: "gofractional",
   label: "GoFractional",
   auth: "browser-session",
+  // platform-aware-application-drafting epic, owner's own words: "you add
+  // why you're a fit on go-fractional" -- a single, punchy "why are you a
+  // fit" statement, not a traditional cover letter.
+  applicationFormat: "why-fit",
   async fetch(cfg: SourceConfig): Promise<Gig[]> {
     const sessionBackend = sessionBackendFrom(cfg);
     const sessionStatePath = sessionBackend === "local" ? sessionStatePathFrom(cfg) : undefined;

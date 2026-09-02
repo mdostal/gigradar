@@ -11,7 +11,13 @@ import type { ApplyProfileConfig, Config, DraftContent, Gig, MatchResult } from 
 // that). This also lets the "guardrail fires before any LLM call" acceptance
 // criteria be asserted directly: mockGenerateDraft.mock.calls.length === 0.
 const { mockGenerateDraft } = vi.hoisted(() => ({ mockGenerateDraft: vi.fn() }));
-vi.mock("../draft.js", () => ({ generateDraft: mockGenerateDraft }));
+// resolveApplicationFormat() left as the REAL implementation (a pure
+// function over gig.sourceId + config.sources/the source registry) --
+// only generateDraft() itself (the LLM call) is mocked here.
+vi.mock("../draft.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../draft.js")>();
+  return { ...actual, generateDraft: mockGenerateDraft };
+});
 
 import { closeDb, getDb, getDraft } from "../../store/index.js";
 import { stageApplication } from "../runner.js";
@@ -148,7 +154,7 @@ describe("stageApplication: successful draft generation and persistence (AC7)", 
 
     const result = await stageApplication(makeMatchResult(gig, "green"), config, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, { db });
 
-    expect(mockGenerateDraft).toHaveBeenCalledWith(gig, config.profile, config.applyProfile, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+    expect(mockGenerateDraft).toHaveBeenCalledWith(gig, config.profile, config.applyProfile, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "cover-letter");
     expect(result).toEqual({ gig, content, status: "draft" });
 
     const stored = getDraft(`${gig.sourceId}:${gig.externalId}`, { db });
