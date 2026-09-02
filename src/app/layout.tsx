@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { IBM_Plex_Mono, IBM_Plex_Sans, Oxanium } from "next/font/google";
 import "./globals.css";
 import { resolveAppIcon } from "@/lib/app-icons";
 import { readRawConfig } from "@/lib/config/save";
@@ -8,6 +9,23 @@ import { resolveUiTheme } from "@/lib/ui-theme";
 import { issuesBadgeInfo } from "./issues-badge";
 import { NavHeader } from "./nav-header";
 import { UpdateNotifier } from "./update-notifier";
+
+/**
+ * gigradar-command-center epic: Signal Deck's own display/body/mono
+ * typefaces, loaded via next/font/google -- self-hosted and bundled at
+ * BUILD time, never a runtime request to Google's CDN. This is the reason
+ * to use next/font here rather than signal-deck.css's own CSS @import
+ * (what the original verified concept used): a local-first, performance-
+ * sensitive app (see the owner's own "this should be BLAZING fast running
+ * from local" complaint) should never add an external network dependency
+ * to page load, even a themeable one. Loaded unconditionally (every theme
+ * bundles these font files, not just signal-deck) -- statically cached,
+ * effectively free after the first load, and far simpler than a
+ * per-theme-conditional font-loading path.
+ */
+const signalDeckHeadingFont = Oxanium({ subsets: ["latin"], weight: ["600", "700"], variable: "--font-signal-deck-heading" });
+const signalDeckBodyFont = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-signal-deck-body" });
+const signalDeckMonoFont = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-signal-deck-mono" });
 
 /**
  * Dynamic (not a static `export const metadata`) so the favicon reflects
@@ -62,7 +80,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const theme = resolveUiTheme(raw.uiTheme);
   const groups = extractGroupSummaries(raw);
   return (
-    <html lang="en" data-theme={theme}>
+    <html
+      lang="en"
+      data-theme={theme}
+      className={`${signalDeckHeadingFont.variable} ${signalDeckBodyFont.variable} ${signalDeckMonoFont.variable}`}
+    >
       <body className="theme-body min-h-screen antialiased">
         <NavHeader issuesBadge={issuesBadgeInfo(openIssues)} iconSrc={icon.path} groups={groups} />
         {children}

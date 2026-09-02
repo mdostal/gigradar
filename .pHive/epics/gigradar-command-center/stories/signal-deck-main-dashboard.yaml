@@ -1,0 +1,46 @@
+id: signal-deck-main-dashboard
+epic: gigradar-command-center
+title: "Signal Deck becomes the real main dashboard (/) + the new default theme"
+status: in_progress
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Real dashboard-client.tsx rewrite using the verified, bug-fixed Signal
+  Deck concept (ui-overhaul-via-ui-squads) as the IA/interaction spec:
+  status-strip readouts, filter console, radial signal-meter per-row
+  indicator (tier + recency, not just a colored dot), inline row-expand
+  into a Details/Chat drawer instead of navigating away. Every existing
+  interaction (sort/filter/column-filter, seen-window, status change,
+  generate draft, generate prep packet, contextual chat, profile-grouping)
+  is preserved -- this is a visual/interaction restructure, not a feature
+  cut. Signal Deck's own palette/type/scanner-animation ships as a NEW
+  Config.uiTheme option ("signal-deck"), additive to the existing
+  radar/editorial/terminal themes, and becomes the new default.
+
+acceptance_criteria:
+  - "Every interaction the current dashboard-client.tsx supports (sort, column filters, seen-window filter, status dropdown, Draft/Analyze actions, contextual chat trigger, profile-grouping) still works, verified by adapting the existing test suite to the new markup, not deleting coverage."
+  - "Row expansion is inline (drawer), never a route navigation -- directly answers the owner's 'click and nothing happens' complaint."
+  - "Config.uiTheme gains \"signal-deck\" as a new enum member; default changes from \"radar\" to \"signal-deck\"; existing radar/editorial/terminal themes are unchanged and still selectable."
+  - "src/app/themes/signal-deck.css follows the existing theme-file pattern (guarded by [data-theme=\"signal-deck\"], extends existing token names)."
+  - "ThemePicker in Config's Appearance section lists signal-deck as an option."
+  - "npm test / npm run typecheck / npm run build all pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/dashboard-client.tsx
+      purpose: "the file being rewritten -- preserve every handler, restructure the markup/visuals."
+    - path: src/app/themes/radar.css
+      purpose: "existing theme-file pattern to follow for signal-deck.css."
+    - path: src/lib/types.ts
+      purpose: "Config.uiTheme enum."
+    - path: src/app/config/config-client.tsx
+      purpose: "ThemePicker component + DEFAULT_UI_THEME constant."
+
+references:
+  - path: .pHive/epics/gigradar-command-center/docs/design-discussion.md
+    relevant_excerpt: "Full research + resolved scope, including why Signal Deck becomes structural behavior (Story 1) separately from becoming a theme skin."
+  - path: .pHive/epics/ui-overhaul-via-ui-squads/docs/design-discussion.md
+    relevant_excerpt: "The verified, bug-fixed Signal Deck concept this story implements for real."

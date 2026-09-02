@@ -11,6 +11,7 @@ describe("resolveUiTheme()", () => {
     expect(resolveUiTheme("editorial")).toBe("editorial");
     expect(resolveUiTheme("terminal")).toBe("terminal");
     expect(resolveUiTheme("radar")).toBe("radar");
+    expect(resolveUiTheme("signal-deck")).toBe("signal-deck");
   });
 
   it("falls back to the default for an unknown value", () => {
@@ -32,8 +33,8 @@ describe("UI_THEMES", () => {
     expect(UI_THEMES.some((t) => t.id === DEFAULT_UI_THEME)).toBe(true);
   });
 
-  it("DEFAULT_UI_THEME is radar (owner's confirmed favorite of the design swarm)", () => {
-    expect(DEFAULT_UI_THEME).toBe("radar");
+  it("DEFAULT_UI_THEME is signal-deck (gigradar-command-center epic: promoted over the original radar default, which remains selectable)", () => {
+    expect(DEFAULT_UI_THEME).toBe("signal-deck");
   });
 
   it("every theme id has a corresponding CSS file under src/app/themes/", () => {

@@ -1,0 +1,29 @@
+id: signal-desk-theme
+epic: gigradar-command-center
+title: "Signal Desk (calm ops) as a 5th selectable Config.uiTheme option"
+status: pending
+complexity: small
+methodology: classic
+depends_on: [signal-deck-main-dashboard]
+
+description: |
+  Signal Desk (the calm-operations concept, ui-overhaul-via-ui-squads)
+  ships as a genuinely new, additive theme option -- same pattern as
+  signal-deck-main-dashboard's own new theme addition, just without the
+  structural dashboard-client.tsx changes (those already landed in that
+  story and are shared across every theme).
+
+acceptance_criteria:
+  - "Config.uiTheme gains \"signal-desk\" as a new enum member, additive -- radar/editorial/terminal/signal-deck all remain selectable and default unchanged (signal-deck stays default)."
+  - "src/app/themes/signal-desk.css follows the existing theme-file pattern."
+  - "ThemePicker lists signal-desk as an option."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/themes/signal-deck.css
+      purpose: "sibling theme file this story's signal-desk.css mirrors the pattern of."
+
+references:
+  - path: .pHive/epics/gigradar-command-center/docs/design-discussion.md
+    relevant_excerpt: "Resolved item 2 -- Signal Desk becomes a 5th theme option."

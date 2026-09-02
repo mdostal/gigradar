@@ -1,4 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// gigradar-command-center epic: layout.tsx now calls next/font/google at
+// module scope (Signal Deck's own fonts) -- a real SWC build-time
+// transform in Next's own pipeline, not a real runtime function outside
+// it, so it throws under plain vitest unless mocked. Returns the same
+// shape real next/font does (an object with a `.variable` class name)
+// since layout.tsx reads `.variable` off each font -- this test only
+// cares about extractGroupSummaries() below, never these fonts, but the
+// whole module still has to evaluate cleanly to import that function.
+vi.mock("next/font/google", () => ({
+  Oxanium: () => ({ variable: "mock-oxanium" }),
+  IBM_Plex_Sans: () => ({ variable: "mock-ibm-plex-sans" }),
+  IBM_Plex_Mono: () => ({ variable: "mock-ibm-plex-mono" }),
+}));
+
 import { extractGroupSummaries } from "../layout";
 
 // layout.tsx is a Server Component -- extractGroupSummaries() is the one

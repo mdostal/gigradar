@@ -1,0 +1,37 @@
+id: metrics-page
+epic: gigradar-command-center
+title: "New /metrics route: applied/failed/run-rate/graphs, the founding success criterion finally built"
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  New backend rollups (nothing to port visually from Concepts A/B/C --
+  none were briefed on this) plus a new dedicated page. Fulfills
+  project-profile.yaml's own north_star.success criterion, unbuilt since
+  scaffold: "a weekly metrics overview and deep-dive with suggestions, so
+  any user can see their throughput and improve toward finding their next
+  role." Informed by mdostal.com Career CRM's pipeline-summary-tile
+  pattern (career-crm/docs/extraction-reference.md) and the real
+  GigStatus/outcomeReason data already tracked. Own dedicated look, not
+  theme-swappable, using shared color tokens.
+
+acceptance_criteria:
+  - "Real counts: total tracked, applied, interviewing, archived-by-outcomeReason (rejected/withdrawn/expired_unapplied), ignored."
+  - "A real daily/weekly application run-rate figure, computed from actual application_drafts/gigs timestamps, not a placeholder."
+  - "At least one real graph (e.g. applications over time) using real historical data, not a static mock."
+  - "Some real customization (e.g. date range, which metrics show) -- needs its own design pass during implementation, not fully speced here."
+  - "New pure computation functions covered by unit tests, matching this codebase's established pattern (e.g. matching/score-tiering.ts's own test discipline) -- not just visually verified."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/gigs.ts
+      purpose: "real gig/status data this page's rollups query."
+    - path: .pHive/epics/career-crm/docs/extraction-reference.md
+      purpose: "mdostal.com's pipeline-summary-tile pattern, informing this page's layout."
+
+references:
+  - path: .pHive/project-profile.yaml
+    relevant_excerpt: "north_star.success -- the founding, still-unbuilt criterion this story finally delivers."

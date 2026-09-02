@@ -107,6 +107,54 @@ export const TIER_BADGE_STYLE: Record<string, { color: string; background: strin
 };
 export const TIER_BADGE_FALLBACK_STYLE = { color: "var(--text-secondary, #64748b)", background: "var(--surface-bg-raised, #f1f5f9)" };
 
+/**
+ * gigradar-command-center epic, Signal Deck: the radial signal-meter's arc
+ * fill -- how "fresh" a gig still reads, not just its tier color. 0 (just
+ * seen) fills the full ring; decays linearly to a small residual sliver by
+ * SIGNAL_DECAY_DAYS out, never fully empty (a month-old green match is
+ * still worth seeing, just visually quieter). Exported/pure so it's
+ * testable without rendering the SVG.
+ */
+export const SIGNAL_DECAY_DAYS = 14;
+export function signalStrength(firstSeen: string, now: number): number {
+  const ageMs = now - new Date(firstSeen).getTime();
+  if (!Number.isFinite(ageMs) || ageMs <= 0) return 1;
+  const ageDays = ageMs / 86_400_000;
+  return Math.max(0.12, 1 - ageDays / SIGNAL_DECAY_DAYS);
+}
+
+/**
+ * The radial signal-meter itself -- a small ring whose stroke color is the
+ * tier's own theme-invariant color (TIER_BADGE_STYLE, unchanged) and whose
+ * arc length encodes signalStrength() above. Purely decorative/additive:
+ * the plain text tier badge next to it (unchanged, still "green"/
+ * "unrated"/etc.) remains the authoritative, screen-reader-visible value,
+ * so this never needs its own aria-label.
+ */
+function TierSignalMeter({ tier, firstSeen }: { tier: StoredGig["tier"]; firstSeen: string }) {
+  const color = (tier ? TIER_BADGE_STYLE[tier]?.color : undefined) ?? TIER_BADGE_FALLBACK_STYLE.color;
+  const strength = signalStrength(firstSeen, Date.now());
+  const radius = 7;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" className="shrink-0">
+      <circle cx="9" cy="9" r={radius} fill="none" stroke="currentColor" strokeWidth="2" className="text-theme-surface-border" />
+      <circle
+        cx="9"
+        cy="9"
+        r={radius}
+        fill="none"
+        stroke={color}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={circumference * (1 - strength)}
+        transform="rotate(-90 9 9)"
+      />
+    </svg>
+  );
+}
+
 export function formatRate(rate: StoredGig["rate"]): string {
   if (!rate) return "—";
   const { min, max, unit } = rate;
@@ -122,7 +170,7 @@ export function formatDate(iso: string): string {
 }
 
 const filterInputClass =
-  "w-full rounded border border-theme-surface-border px-1.5 py-1 text-xs text-theme-text placeholder:text-theme-text-dim focus:border-slate-500 focus:outline-none";
+  "w-full rounded border border-theme-surface-border px-1.5 py-1 text-xs text-theme-text placeholder:text-theme-text-dim focus:border-theme-accent focus:outline-none";
 
 /**
  * Per-column filter control shape — driven by each ColumnDef's own `meta`
@@ -238,7 +286,7 @@ function ColumnFilterCell({
               }}
               className={[
                 "rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors",
-                active ? "bg-slate-900 text-white" : "bg-slate-100 text-theme-text-dim hover:bg-slate-200",
+                active ? "bg-theme-accent text-theme-accent-ink" : "bg-theme-surface-raised text-theme-text-dim hover:bg-theme-surface-border",
               ].join(" ")}
             >
               {STATUS_LABEL[s]}
@@ -270,7 +318,7 @@ function ColumnFilterCell({
               }}
               className={[
                 "rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors",
-                active ? "bg-slate-900 text-white" : "bg-slate-100 text-theme-text-dim hover:bg-slate-200",
+                active ? "bg-theme-accent text-theme-accent-ink" : "bg-theme-surface-raised text-theme-text-dim hover:bg-theme-surface-border",
               ].join(" ")}
             >
               {o.id === NO_PROFILE_MATCH ? o.label : shortProfileLabel(o.label)}
@@ -397,6 +445,15 @@ export function DashboardClient({
     for (const g of gigs) counts[g.status]++;
     return counts;
   }, [gigs]);
+
+  // gigradar-command-center epic, Signal Deck status-strip: "ready to act"
+  // is the owner's own real triage question -- green tier AND still new,
+  // the exact combination the pipeline tabs' "To review" tab already
+  // filters to when paired with a tier filter, computed here once for the
+  // readout tiles rather than re-deriving it from the (possibly
+  // differently-filtered) `rows` below.
+  const readyToActCount = useMemo(() => gigs.filter((g) => g.status === "new" && g.tier === "green").length, [gigs]);
+  const inProgressCount = countByStatus.applied + countByStatus.interview;
 
   const statusFilterValue = columnFilters.find((f) => f.id === "status")?.value as ReadonlySet<GigStatus> | undefined;
   const activeTabKey = PIPELINE_TABS.find((t) => sameStatusSet(statusFilterValue, t.statuses))?.key;
@@ -679,7 +736,8 @@ export function DashboardClient({
         // just not what decided the tier).
         const score = row.original.matchScore;
         return (
-          <span className="inline-flex items-center gap-1">
+          <span className="inline-flex items-center gap-1.5">
+            <TierSignalMeter tier={tier} firstSeen={row.original.firstSeen} />
             <span
               className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-current/30"
               style={tier ? TIER_BADGE_STYLE[tier] : TIER_BADGE_FALLBACK_STYLE}
@@ -722,7 +780,7 @@ export function DashboardClient({
                 <span
                   key={id}
                   title={profile?.label ?? id}
-                  className="inline-flex rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-theme-text-dim"
+                  className="inline-flex rounded-full bg-theme-surface-raised px-1.5 py-0.5 text-[11px] font-medium text-theme-text-dim"
                 >
                   {profile ? shortProfileLabel(profile.label) : id}
                 </span>
@@ -764,7 +822,7 @@ export function DashboardClient({
       id: "rate",
       header: "Rate",
       accessorFn: (g) => g.rate?.min ?? null,
-      cell: ({ row }) => formatRate(row.original.rate),
+      cell: ({ row }) => <span className="font-theme-mono">{formatRate(row.original.rate)}</span>,
       sortingFn: sortingFnFor("rate"),
       filterFn: (row, _id, value) =>
         value == null || (row.original.rate?.min != null && row.original.rate.min >= (value as number)),
@@ -774,7 +832,7 @@ export function DashboardClient({
       id: "weeklyHours",
       header: "Weekly hrs",
       accessorFn: (g) => g.weeklyHours ?? null,
-      cell: ({ row }) => row.original.weeklyHours ?? "—",
+      cell: ({ row }) => <span className="font-theme-mono">{row.original.weeklyHours ?? "—"}</span>,
       sortingFn: sortingFnFor("weeklyHours"),
       filterFn: (row, _id, value) =>
         value == null || (row.original.weeklyHours != null && row.original.weeklyHours <= (value as number)),
@@ -784,7 +842,7 @@ export function DashboardClient({
       id: "firstSeen",
       header: "Seen",
       accessorFn: (g) => g.firstSeen,
-      cell: ({ row }) => formatDate(row.original.firstSeen),
+      cell: ({ row }) => <span className="font-theme-mono">{formatDate(row.original.firstSeen)}</span>,
       sortingFn: sortingFnFor("firstSeen"),
       filterFn: (row, _id, value) =>
         isWithinSeenWindow(row.original.firstSeen, (value as SeenWindow) ?? "any", Date.now()),
@@ -872,6 +930,37 @@ export function DashboardClient({
 
   return (
     <div className="mt-6 flex flex-col gap-3">
+      {/*
+        gigradar-command-center epic, Signal Deck status-strip: a real,
+        computed "what actually needs me today" readout above the pipeline
+        tabs -- ready-to-act (green + new) is the owner's own triage
+        question, made a first-class number instead of something you'd
+        have to derive by eyeballing the table. Each tile doubles as a
+        filter shortcut into the pipeline tabs below (clicking it applies
+        the matching status filter, same handleTabSelect() the tabs
+        themselves use), so it's additive UI over existing filter state,
+        never a second source of truth.
+      */}
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-theme-surface-border bg-theme-surface-border sm:grid-cols-4">
+        {[
+          { label: "Ready to act", hint: "Green & new", value: readyToActCount, onClick: () => handleTabSelect(["new"]) },
+          { label: "New", hint: "All tiers", value: countByStatus.new, onClick: () => handleTabSelect(["new"]) },
+          { label: "In progress", hint: "Applied + interview", value: inProgressCount, onClick: () => handleTabSelect(["applied", "interview"]) },
+          { label: "Tracked", hint: "Every status", value: gigs.length, onClick: () => handleTabSelect(ALL_STATUSES) },
+        ].map((tile) => (
+          <button
+            key={tile.label}
+            type="button"
+            onClick={tile.onClick}
+            className="flex flex-col gap-0.5 bg-theme-surface px-4 py-3 text-left transition-colors hover:bg-theme-surface-raised"
+          >
+            <span className="font-theme-mono text-2xl font-semibold text-theme-text">{tile.value}</span>
+            <span className="text-xs font-medium text-theme-text">{tile.label}</span>
+            <span className="text-[11px] text-theme-text-faint">{tile.hint}</span>
+          </button>
+        ))}
+      </div>
+
       <nav aria-label="Pipeline stage" className="flex flex-wrap gap-1.5 border-b border-theme-surface-border pb-3">
         {PIPELINE_TABS.map((tab) => {
           const count = tab.statuses.reduce((sum, s) => sum + countByStatus[s], 0);
@@ -885,11 +974,11 @@ export function DashboardClient({
               className={[
                 "rounded-full px-3 py-1.5 text-sm font-medium transition-colors",
                 active
-                  ? "bg-slate-900 text-white"
+                  ? "bg-theme-accent text-theme-accent-ink"
                   : "border border-theme-surface-border bg-theme-surface text-theme-text-dim hover:bg-theme-surface-raised",
               ].join(" ")}
             >
-              {tab.label} <span className={active ? "text-white/70" : "text-theme-text-dim/70"}>{count}</span>
+              {tab.label} <span className={`font-theme-mono ${active ? "opacity-70" : "text-theme-text-dim/70"}`}>{count}</span>
             </button>
           );
         })}
@@ -923,7 +1012,7 @@ export function DashboardClient({
         math for a modest UX tradeoff (set filters before scrolling).
       */}
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-theme-surface-border shadow-sm">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <table className="min-w-full divide-y divide-theme-surface-border text-sm">
           <thead className="bg-theme-surface-raised">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
@@ -932,7 +1021,7 @@ export function DashboardClient({
                   return (
                     <th
                       key={header.id}
-                      className="sticky top-0 z-[1] isolate bg-theme-surface-raised px-3 py-2 text-left font-semibold text-theme-text-dim"
+                      className="sticky top-0 z-[1] isolate bg-theme-surface-raised px-3 py-2 text-left font-theme-heading text-[11px] font-semibold uppercase tracking-wide text-theme-text-dim"
                     >
                       {header.column.getCanSort() ? (
                         <button
@@ -971,9 +1060,9 @@ export function DashboardClient({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 bg-theme-surface">
+          <tbody className="divide-y divide-theme-surface-border/60 bg-theme-surface">
             {rows.map((row) => (
-              <tr key={row.original.key} className="group odd:bg-theme-surface even:bg-theme-surface-raised/60 hover:bg-slate-100">
+              <tr key={row.original.key} className="group odd:bg-theme-surface even:bg-theme-surface-raised/60 hover:bg-theme-accent-dim">
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-2 text-theme-text-dim">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
