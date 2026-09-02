@@ -137,6 +137,17 @@ function normalizeTitle(t: string): string {
  * ONLY the first child `<div>` of the job-details cell for `title` —
  * reading the cell's whole `textContent` would concatenate the title with
  * the category/location text right after it (confirmed live).
+ *
+ * The company cell has the SAME kind of trap: it's not bare text, it's an
+ * avatar circle (a `<span>` holding just the company's first initial, e.g.
+ * "E") followed by a sibling `<span class="line-clamp-1 ...">` holding the
+ * real name — `cells[0].textContent` concatenates both, producing a
+ * doubled leading letter ("EEngineering Consulting..."), confirmed live
+ * 2026-09-02 (self-healing-persistent-session-fix story's own known
+ * follow-up). Reads ONLY that `.line-clamp-1` span, same "target the real
+ * text node, don't trust the whole cell" discipline as the title read
+ * above — falls back to the full cell's textContent if that class ever
+ * disappears, rather than silently returning an empty company name.
  */
 export async function scrapeApplicationStatuses(page: Page): Promise<ApplicationStatusRow[]> {
   await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
@@ -154,7 +165,7 @@ export async function scrapeApplicationStatuses(page: Page): Promise<Application
     for (const tr of document.querySelectorAll("table tbody tr")) {
       const cells = [...tr.querySelectorAll("td")];
       if (cells.length < 5) continue;
-      const company = (cells[0]?.textContent ?? "").trim();
+      const company = (cells[0]?.querySelector(".line-clamp-1")?.textContent ?? cells[0]?.textContent ?? "").trim();
       const titleCell = cells[1];
       const titleLine = (titleCell?.querySelector("div")?.textContent ?? titleCell?.textContent ?? "").trim();
       const statusLabel = (cells[3]?.textContent ?? "").trim();
