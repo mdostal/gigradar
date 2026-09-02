@@ -10,6 +10,7 @@ import { mergeDedupe } from "@/lib/profile-ingestion/merge";
 import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
 import { SOURCE_PRESETS, sourceConfigFromPreset } from "@/lib/sources/source-presets";
 import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
+import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
 import {
   assignGmailConnectionAction,
   cancelCaptureAction,
@@ -2264,7 +2265,7 @@ export function ConfigClient({
         <div className="mt-3 flex flex-col gap-4">
           {draft.sources.map((source, i) => (
             // eslint-disable-next-line react/no-array-index-key
-            <div key={i} className="rounded-md border border-theme-surface-border p-3">
+            <div key={i} className="group rounded-md border border-theme-surface-border p-3">
               <div className="flex items-end gap-3">
                 <label className="flex-1">
                   <span className={labelClass}>Source</span>
@@ -2311,6 +2312,7 @@ export function ConfigClient({
                   hasOpenIssue={sourcesWithOpenIssues.has(source.id)}
                   onStartCapture={() => handleStartCapture(i, source.id)}
                 />
+                {source.id.trim().length > 0 && <ContextualChatTrigger kind="source" itemKey={source.id} label={source.id} />}
                 <CheckboxField
                   label="Enabled"
                   checked={source.enabled}

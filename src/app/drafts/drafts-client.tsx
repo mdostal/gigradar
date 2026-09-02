@@ -5,6 +5,7 @@ import type { DraftStatus } from "@/lib/store";
 import type { DraftContent } from "@/lib/types";
 import { markSubmittedAction, setDraftStatusAction, updateDraftContentAction } from "./actions";
 import { DRAFT_STATUS_TABS, filterDrafts, formatCopyReadyDraft, type DraftListItem, type DraftStatusFilter } from "./drafts-filter";
+import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
 
 const STATUS_TAB_LABEL: Record<DraftStatusFilter, string> = {
   all: "All",
@@ -102,17 +103,20 @@ function DraftCard({ item }: { item: DraftListItem }) {
   const showApprovedView = item.status === "approved" || item.status === "submitted";
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
+    <div className="group rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="font-medium text-slate-900">{item.gigTitle}</p>
           <p className="text-sm text-slate-500">{item.gigCompany ?? "—"}</p>
         </div>
-        <span
-          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[item.status]}`}
-        >
-          {item.status}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <ContextualChatTrigger kind="draft" itemKey={item.gigKey} label={item.gigTitle} />
+          <span
+            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[item.status]}`}
+          >
+            {item.status}
+          </span>
+        </div>
       </div>
 
       <p className="mt-1 text-xs text-slate-400">
