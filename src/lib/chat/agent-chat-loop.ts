@@ -50,7 +50,7 @@ import { saveInterviewPrep } from "../store/prep.js";
 import type { GigFilter, GigStatus, StoredGig } from "../store/types.js";
 import { readRawConfig, saveConfig } from "../config/save.js";
 import type { ConfigEdits } from "../config/save.js";
-import { loadSessionHistory, deleteSessionHistory, recordPreference, saveSessionHistory } from "./memory.js";
+import { loadSessionHistory, deleteSessionHistory, listPreferences, recordPreference, saveSessionHistory } from "./memory.js";
 import type { Config, MatchResult, SourceConfig, Tier } from "../types.js";
 
 const MODULE_PREFIX = "gigradar agent-chat-loop";
@@ -721,8 +721,44 @@ async function executeWriteTool(
   throw new Error(`${MODULE_PREFIX}: unrecognized write tool "${tool}".`);
 }
 
+/** How many of the most-recent recorded preferences to surface in the system prompt -- see buildSystemPrompt()'s own comment for why this stays bounded rather than growing unbounded. */
+const MAX_PREFERENCES_IN_PROMPT = 20;
+
+/**
+ * deep-dive-audit-and-testing-framework epic, wire-up-chat-preferences-
+ * readback story. Before this, agent-chat-loop.ts's messages.create() call
+ * had NO system prompt at all (confirmed by the deep-dive audit — zero
+ * hits grepping for prompt/system in this file), despite the
+ * chat-copilot-self-tuning epic's own design doc assuming one would exist.
+ * listPreferences() (memory.ts) was exported but never called anywhere —
+ * anything the owner told note_preference/propose_config_edit to remember
+ * went into a black hole, never read back into a future session.
+ *
+ * This is deliberately minimal grounding, not a resolution of the still-
+ * open "should preferences become structured facts" question
+ * (chat-copilot-self-tuning epic's design-discussion.md §3b) — just basic
+ * identity + the most recent MAX_PREFERENCES_IN_PROMPT preference notes,
+ * bounded so this never becomes an unbounded-growth problem the way
+ * chat_sessions.history already is (a known, separate, NOT-fixed-here gap).
+ */
+function buildSystemPrompt(): string {
+  const preferences = listPreferences(MAX_PREFERENCES_IN_PROMPT);
+  const lines = [
+    "You are gigradar's chat co-pilot -- you help the owner track and manage their fractional/contract job search: tracked gigs, application drafts, config, and sources.",
+  ];
+  if (preferences.length > 0) {
+    lines.push(
+      "",
+      "The owner has previously told you things to remember (most recent last). Treat these as durable context for this conversation, not one-off instructions to re-execute:",
+      ...preferences.map((p) => `- ${p.note}`),
+    );
+  }
+  return lines.join("\n");
+}
+
 async function runTurnLoop(entry: LoopEntry, credential: LlmCredential, config: Config, sessionId: string): Promise<ChatLoopEvent> {
   const client = createAnthropicClient(credential);
+  const system = buildSystemPrompt();
   // Screenshots taken during THIS call's read-only tool chain -- scoped to
   // this one sendMessage()/resolveApproval() call, not entry-level state.
   // Fed to the model as a tool_result either way (see
@@ -735,6 +771,7 @@ async function runTurnLoop(entry: LoopEntry, credential: LlmCredential, config: 
     const response = await client.messages.create({
       model: "claude-opus-5",
       max_tokens: 2048,
+      system,
       tools: CHAT_TOOLS,
       tool_choice: { type: "auto", disable_parallel_tool_use: true },
       messages: entry.history,
