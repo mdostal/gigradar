@@ -218,6 +218,28 @@ describe("list_gigs", () => {
       await close();
     }
   });
+
+  it("filters by groupId, passed straight through to listGigs()'s own real JSON-containment GigFilter (multi-group-architecture epic, Slice 4)", async () => {
+    recordScan([
+      {
+        sourceId: "braintrust",
+        gigs: [
+          { ...makeGig({ sourceId: "braintrust", externalId: "1", title: "A" }), matchedGroupIds: ["cto-search"] },
+          { ...makeGig({ sourceId: "braintrust", externalId: "2", title: "B" }), matchedGroupIds: ["drone-search"] },
+          { ...makeGig({ sourceId: "braintrust", externalId: "3", title: "C" }), matchedGroupIds: ["cto-search", "drone-search"] },
+        ],
+      },
+    ]);
+
+    const { client, close } = await connectedClient();
+    try {
+      const result = await client.callTool({ name: "list_gigs", arguments: { groupId: "cto-search" } });
+      const gigs = parseJsonResult(result) as { key: string }[];
+      expect(gigs.map((g) => g.key).sort()).toEqual(["braintrust:1", "braintrust:3"]);
+    } finally {
+      await close();
+    }
+  });
 });
 
 describe("get_gig", () => {
@@ -347,6 +369,40 @@ describe("get_status_summary: secret-leak regression", () => {
       expect(result.isError).toBeUndefined();
       const summary = parseJsonResult(result) as { sourcesLabel: string };
       expect(summary.sourcesLabel).toBe("0 sources configured");
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("get_status_summary: groupId scoping (multi-group-architecture epic, Slice 4)", () => {
+  it("scopes 'last scan' to only gigs matching groupId -- source counts/profile-complete stay global", async () => {
+    const saveResult = saveConfig(validConfigDoc());
+    expect(saveResult.ok).toBe(true);
+
+    // An OLDER gig for group A, then a NEWER gig for group B in a
+    // separate scan -- the unscoped summary reflects the newer scan, the
+    // groupId:"A"-scoped one reflects only the older one.
+    recordScan(
+      [{ sourceId: "braintrust", gigs: [{ ...makeGig({ sourceId: "braintrust", externalId: "1", title: "A" }), matchedGroupIds: ["A"] }] }],
+      { now: "2026-01-01T00:00:00.000Z" },
+    );
+    recordScan(
+      [{ sourceId: "braintrust", gigs: [{ ...makeGig({ sourceId: "braintrust", externalId: "2", title: "B" }), matchedGroupIds: ["B"] }] }],
+      { now: "2026-06-01T00:00:00.000Z" },
+    );
+
+    const { client, close } = await connectedClient();
+    try {
+      const unscoped = await client.callTool({ name: "get_status_summary", arguments: {} });
+      const scopedA = await client.callTool({ name: "get_status_summary", arguments: { groupId: "A" } });
+
+      const unscopedSummary = parseJsonResult(unscoped) as { lastScanLabel: string; sourcesLabel: string };
+      const scopedASummary = parseJsonResult(scopedA) as { lastScanLabel: string; sourcesLabel: string };
+
+      expect(unscopedSummary.lastScanLabel).not.toBe(scopedASummary.lastScanLabel);
+      // Source counts are global, unaffected by groupId scoping.
+      expect(scopedASummary.sourcesLabel).toBe(unscopedSummary.sourcesLabel);
     } finally {
       await close();
     }

@@ -135,6 +135,8 @@ export interface ListGigsArgs {
   tier?: Tier;
   status?: GigStatus;
   search?: string;
+  /** multi-group-architecture epic, Slice 4. Filters to gigs whose matchedGroupIds contains this GroupConfig.id -- reuses store/gigs.ts's own GigFilter.groupId (real JSON containment, mga-2). Omit to include every group. */
+  groupId?: string;
 }
 
 /**
@@ -156,6 +158,7 @@ export async function handleListGigs(args: ListGigsArgs): Promise<CallToolResult
   try {
     const filter: GigFilter = {};
     if (args.status) filter.status = args.status;
+    if (args.groupId) filter.groupId = args.groupId;
     let gigs = listGigs(filter);
     if (args.tier) gigs = gigs.filter((g) => g.tier === args.tier);
     const term = args.search?.trim().toLowerCase();
@@ -204,6 +207,11 @@ export async function handleUpdateGigStatus(args: UpdateGigStatusArgs): Promise<
   }
 }
 
+export interface GetStatusSummaryArgs {
+  /** multi-group-architecture epic, Slice 4. When set, "last scan" reflects only gigs matching this group (source-count/profile-complete stay global -- those aren't group-scoped concepts). Omit for the existing global summary. */
+  groupId?: string;
+}
+
 /**
  * Sources configured / profile complete / last scan time — wraps the
  * relocated computeStatusStrip() (src/lib/status/status-strip.ts), fed by
@@ -215,9 +223,9 @@ export async function handleUpdateGigStatus(args: UpdateGigStatusArgs): Promise<
  * no config.json yet), so this tool never throws on "no config configured
  * yet" the way run_scan's loadConfig() does.
  */
-export async function handleGetStatusSummary(): Promise<CallToolResult> {
+export async function handleGetStatusSummary(args: GetStatusSummaryArgs = {}): Promise<CallToolResult> {
   try {
-    const gigs = listGigs();
+    const gigs = listGigs(args.groupId ? { groupId: args.groupId } : {});
     const rawConfig = readRawConfig();
     const status = computeStatusStrip(gigs, rawConfig);
     return toolOk(status);
@@ -272,6 +280,10 @@ export function createServer(): McpServer {
           .string()
           .optional()
           .describe("Case-insensitive substring search over the gig's title and company. Omit for no text filter."),
+        groupId: z
+          .string()
+          .optional()
+          .describe("Filter to gigs matching this GroupConfig.id (multi-group-architecture epic). Omit to include every group."),
       },
     },
     (args) => handleListGigs(args),
@@ -315,8 +327,14 @@ export function createServer(): McpServer {
     {
       description:
         "A glance-level dashboard status: how many sources are configured (and how many need attention), whether the profile is complete, and when the last scan ran. Never includes a resolved secret value — presence/shape/count information only.",
+      inputSchema: {
+        groupId: z
+          .string()
+          .optional()
+          .describe("Scope 'last scan' to gigs matching this GroupConfig.id (multi-group-architecture epic). Source counts/profile-complete stay global. Omit for the existing global summary."),
+      },
     },
-    () => handleGetStatusSummary(),
+    (args) => handleGetStatusSummary(args),
   );
 
   server.registerTool(

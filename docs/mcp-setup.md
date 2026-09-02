@@ -19,10 +19,10 @@ your MCP client (below) starts and stops the process for you.
 
 Exactly as registered in `src/mcp/server.ts`:
 
-- **`list_gigs`** — List tracked gigs, optionally filtered by role-area tier, pipeline status, and/or a case-insensitive text search over title+company.
+- **`list_gigs`** — List tracked gigs, optionally filtered by role-area tier, pipeline status, a case-insensitive text search over title+company, and/or a specific group (`groupId`, multi-group installs).
 - **`get_gig`** — Fetch a single tracked gig by its key.
 - **`update_gig_status`** — Set a tracked gig's pipeline status (e.g. mark it 'applied' after you apply).
-- **`get_status_summary`** — A glance-level dashboard status: how many sources are configured (and how many need attention), whether the profile is complete, and when the last scan ran. Never includes a resolved secret value.
+- **`get_status_summary`** — A glance-level dashboard status: how many sources are configured (and how many need attention), whether the profile is complete, and when the last scan ran. Optional `groupId` scopes "last scan" to one group. Never includes a resolved secret value.
 - **`run_scan`** — Runs one radar scan across every enabled, configured source. Slow and network-bound — don't call it repeatedly in a tight loop.
 
 ## Claude Desktop (`claude_desktop_config.json`)
