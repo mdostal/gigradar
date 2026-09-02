@@ -6,6 +6,7 @@
 // "as is" per the owner's own words, reusing the SAME real data/actions
 // dashboard-client.tsx already uses (never a second, parallel data model).
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fraunces, IBM_Plex_Mono, Libre_Franklin } from "next/font/google";
 import type { GigStatus, OutcomeReason, StoredGig } from "@/lib/store";
@@ -476,16 +477,23 @@ export function TodayClient({
                               {generatingDraftKeys.has(gig.key) ? "Generating…" : draftButtonLabel(draftedGigKeys.has(gig.key))}
                             </button>
                           )}
-                          <button type="button" disabled={generatingPrepKeys.has(gig.key)} onClick={() => handleGeneratePrep(gig.key)} className={styles.btn}>
-                            {generatingPrepKeys.has(gig.key) ? "Analyzing…" : "Fit & prep analysis"}
-                          </button>
+                          {gig.status === "interview" ? (
+                            // encodeURIComponent(): see dashboard-client.tsx's own renderPrepSection() comment -- gig.key's raw colon breaks the [key] dynamic segment match otherwise.
+                            <Link href={`/gigs/${encodeURIComponent(gig.key)}/interview`} className={`${styles.btn} ${styles.btnPrimary}`}>
+                              Open interview workspace →
+                            </Link>
+                          ) : (
+                            <button type="button" disabled={generatingPrepKeys.has(gig.key)} onClick={() => handleGeneratePrep(gig.key)} className={styles.btn}>
+                              {generatingPrepKeys.has(gig.key) ? "Analyzing…" : "Fit & prep analysis"}
+                            </button>
+                          )}
                           <a href={gig.url} target="_blank" rel="noreferrer noopener" className={`${styles.btn} ${styles.btnGhost}`}>
                             View listing ↗
                           </a>
                         </div>
                         {draftErrorByKey[gig.key] && <p className={styles.detailError}>{draftErrorByKey[gig.key]}</p>}
-                        {prepErrorByKey[gig.key] && <p className={styles.detailError}>{prepErrorByKey[gig.key]}</p>}
-                        {prepByKey[gig.key] && (
+                        {gig.status !== "interview" && prepErrorByKey[gig.key] && <p className={styles.detailError}>{prepErrorByKey[gig.key]}</p>}
+                        {gig.status !== "interview" && prepByKey[gig.key] && (
                           <p className={styles.detailPrep}>
                             Fit score: {prepByKey[gig.key]!.score}/100 — {prepByKey[gig.key]!.recommendation}
                           </p>

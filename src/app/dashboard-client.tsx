@@ -11,6 +11,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useEffect, useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { GigStatus, OutcomeReason, StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
@@ -563,9 +564,30 @@ export function DashboardClient({
     );
   }
 
-  /** Same rationale as renderDraftSection() above, for the "Prep" column. */
+  /**
+   * Same rationale as renderDraftSection() above, for the "Prep" column.
+   * Once a gig is interviewing, this becomes a link to its own dedicated
+   * workspace page (gigradar-command-center epic, interview-workspace-page
+   * story) instead of the inline <details> dump below -- "fire off a full
+   * prep packet" is that page's own primary action now.
+   */
   function renderPrepSection(gig: StoredGig) {
     const packet = prepByKey[gig.key];
+    if (gig.status === "interview") {
+      // encodeURIComponent(): gig.key is "sourceId:externalId" (gigKey() in
+      // store/gigs.ts) -- the raw colon is a reserved URL character, and
+      // leaving it unencoded here made the [key] dynamic segment fail to
+      // match its own gig on the interview workspace route (a real 404,
+      // caught live during this story's own verification).
+      return (
+        <Link
+          href={`/gigs/${encodeURIComponent(gig.key)}/interview`}
+          className="whitespace-nowrap rounded-md border border-theme-surface-border bg-theme-surface px-2 py-1 text-sm font-medium text-theme-text hover:bg-theme-surface-raised"
+        >
+          Open interview workspace →
+        </Link>
+      );
+    }
     return (
       <>
         <button
