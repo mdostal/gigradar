@@ -5,18 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const startChatSessionMock = vi.fn();
 const endChatSessionMock = vi.fn();
+const resumeChatSessionMock = vi.fn();
 const sendMessageMock = vi.fn();
 const resolveApprovalMock = vi.fn();
 vi.mock("@/lib/chat/agent-chat-loop", () => ({
   startChatSession: (...args: unknown[]) => startChatSessionMock(...args),
   endChatSession: (...args: unknown[]) => endChatSessionMock(...args),
+  resumeChatSession: (...args: unknown[]) => resumeChatSessionMock(...args),
   sendMessage: (...args: unknown[]) => sendMessageMock(...args),
   resolveApproval: (...args: unknown[]) => resolveApprovalMock(...args),
 }));
 
 import { setEnvVar } from "@/lib/config/env-store";
 import { saveConfig, type ConfigEdits } from "@/lib/config/save";
-import { endChatSessionAction, resolveChatApprovalAction, sendChatMessageAction, startChatSessionAction } from "../actions";
+import { endChatSessionAction, resolveChatApprovalAction, resumeChatSessionAction, sendChatMessageAction, startChatSessionAction } from "../actions";
 
 function baseConfigEdits(): ConfigEdits {
   return {
@@ -55,6 +57,7 @@ beforeEach(async () => {
   process.env.XDG_CONFIG_HOME = keyTmpDir;
   startChatSessionMock.mockReset();
   endChatSessionMock.mockReset();
+  resumeChatSessionMock.mockReset();
   sendMessageMock.mockReset();
   resolveApprovalMock.mockReset();
 });
@@ -88,6 +91,25 @@ describe("endChatSessionAction", () => {
   });
 });
 
+describe("resumeChatSessionAction", () => {
+  it("returns resumed:true when the lib call finds a persisted session", async () => {
+    resumeChatSessionMock.mockReturnValue(true);
+
+    const result = await resumeChatSessionAction("s1");
+
+    expect(result).toEqual({ ok: true, data: { resumed: true } });
+    expect(resumeChatSessionMock).toHaveBeenCalledWith("s1");
+  });
+
+  it("returns resumed:false (never an error) when nothing was persisted for this id", async () => {
+    resumeChatSessionMock.mockReturnValue(false);
+
+    const result = await resumeChatSessionAction("never-persisted");
+
+    expect(result).toEqual({ ok: true, data: { resumed: false } });
+  });
+});
+
 describe("sendChatMessageAction", () => {
   it("returns a specific error naming the Anthropic credential, never calls sendMessage", async () => {
     const result = await sendChatMessageAction("s1", "hello");
@@ -98,18 +120,36 @@ describe("sendChatMessageAction", () => {
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
-  it("resolves the credential via resolveLlmCredential() and forwards the message to sendMessage()", async () => {
+  it("returns a specific config-invalid error, never calls sendMessage, when no valid config.json exists yet", async () => {
     setEnvVar("ANTHROPIC_API_KEY", "fake-key");
+
+    const result = await sendChatMessageAction("s1", "hello");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("/config");
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves the credential + a real validated Config, and forwards the message to sendMessage()", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "fake-key");
+    saveConfig(baseConfigEdits());
     sendMessageMock.mockResolvedValue({ type: "message", text: "hi there" });
 
     const result = await sendChatMessageAction("s1", "hello");
 
     expect(result).toEqual({ ok: true, data: { type: "message", text: "hi there" } });
-    expect(sendMessageMock).toHaveBeenCalledWith("s1", { kind: "api-key", provider: "anthropic", value: "fake-key" }, "hello");
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      "s1",
+      { kind: "api-key", provider: "anthropic", value: "fake-key" },
+      "hello",
+      expect.objectContaining({ profile: expect.objectContaining({ name: "Jane Doe" }) }),
+    );
   });
 
   it("returns {ok:false} when sendMessage() itself throws (e.g. unknown session)", async () => {
     setEnvVar("ANTHROPIC_API_KEY", "fake-key");
+    saveConfig(baseConfigEdits());
     sendMessageMock.mockRejectedValue(new Error("no chat session"));
 
     const result = await sendChatMessageAction("never-started", "hello");

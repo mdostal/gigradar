@@ -16,6 +16,13 @@ export {
   setDraftStatus,
 } from "./drafts.js";
 export { getInterviewPrep, listInterviewPrep, saveInterviewPrep } from "./prep.js";
+export {
+  deleteChatSessionHistory,
+  listChatPreferences,
+  loadChatSessionHistory,
+  recordChatPreference,
+  saveChatSessionHistory,
+} from "./chat.js";
 export type { GetDbOptions } from "./db.js";
 export type {
   DraftFilter,
@@ -26,6 +33,7 @@ export type {
   ScanSummary,
   SourceScanBatch,
   StoredAutoFireDecision,
+  StoredChatPreference,
   StoredDraft,
   StoredGig,
   StoredInterviewPrep,

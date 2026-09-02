@@ -12,7 +12,7 @@
 import crypto from "node:crypto";
 import { actionErr, actionOk } from "@/lib/actions/result";
 import type { ActionResult } from "@/lib/actions/result";
-import { endChatSession, resolveApproval, sendMessage, startChatSession, type ChatLoopEvent } from "@/lib/chat/agent-chat-loop";
+import { endChatSession, resolveApproval, resumeChatSession, sendMessage, startChatSession, type ChatLoopEvent } from "@/lib/chat/agent-chat-loop";
 import { resolveLlmCredential } from "@/lib/config/env-store";
 import { readRawConfig } from "@/lib/config/save";
 import { ConfigSchema } from "@/lib/config/schema";
@@ -27,10 +27,22 @@ export async function startChatSessionAction(): Promise<ActionResult<{ sessionId
   return actionOk({ sessionId });
 }
 
-/** Ends a chat session, discarding its history. Idempotent. */
+/** Ends a chat session, discarding its history (including persisted memory). Idempotent. */
 export async function endChatSessionAction(sessionId: string): Promise<ActionResult<null>> {
   endChatSession(sessionId);
   return actionOk(null);
+}
+
+/**
+ * chat-copilot-self-tuning epic. Tries to rehydrate `sessionId` from
+ * persisted memory (survives a server restart within the same browser
+ * tab's remembered session id -- see chat-client.tsx's localStorage
+ * wiring). `resumed: false` means the caller should fall back to
+ * startChatSessionAction() for a fresh id instead.
+ */
+export async function resumeChatSessionAction(sessionId: string): Promise<ActionResult<{ resumed: boolean }>> {
+  const resumed = resumeChatSession(sessionId);
+  return actionOk({ resumed });
 }
 
 export async function sendChatMessageAction(sessionId: string, message: string): Promise<ActionResult<ChatLoopEvent>> {
@@ -39,8 +51,15 @@ export async function sendChatMessageAction(sessionId: string, message: string):
     return actionErr(new Error(MISSING_API_KEY_ERROR));
   }
 
+  const parsedConfig = ConfigSchema.safeParse(readRawConfig());
+  if (!parsedConfig.success) {
+    return actionErr(
+      new Error("gigradar config: your saved configuration is incomplete or invalid — check /config before chatting."),
+    );
+  }
+
   try {
-    const event = await sendMessage(sessionId, credential, message);
+    const event = await sendMessage(sessionId, credential, message, parsedConfig.data);
     return actionOk(event);
   } catch (e) {
     return actionErr(e);

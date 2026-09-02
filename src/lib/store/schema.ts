@@ -117,4 +117,30 @@ CREATE TABLE IF NOT EXISTS issues (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_issues_open ON issues(resolved_at);
+
+-- chat-copilot-self-tuning epic. One row per chat session, whole-blob
+-- upsert on every save (mirrors application_drafts' single-row-per-key
+-- pattern) -- LoopEntry.history (agent-chat-loop.ts) is already an
+-- in-memory array serialized/deserialized as one unit everywhere it's
+-- used, so a one-row-per-message table would just reconstruct that array
+-- on every read for no benefit at this single-user app's real scale.
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  session_id  TEXT PRIMARY KEY,
+  history     TEXT NOT NULL,      -- JSON-stringified Anthropic.MessageParam[]
+  updated_at  TEXT NOT NULL       -- ISO datetime, set on every save
+) STRICT;
+
+-- Append-only preference notes (mirrors autofire_decisions' append-only
+-- audit-log pattern) -- a preference is a fact recorded at a point in
+-- time, never mutated in place. Written by the chat loop's ungated
+-- note_preference tool and by an approved propose_config_edit's own
+-- reason field.
+CREATE TABLE IF NOT EXISTS chat_preferences (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id  TEXT,               -- nullable: which session this came from, for traceability
+  note        TEXT NOT NULL,
+  created_at  TEXT NOT NULL       -- ISO datetime
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_chat_preferences_created ON chat_preferences(created_at);
 `;

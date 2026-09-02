@@ -198,6 +198,8 @@ interface DraftConfig {
    * enabled-flag tri-state needed here, always sent as a plain boolean.
    */
   autoDraftOnScan: boolean;
+  /** chat-copilot-self-tuning epic — same "omitted/false are identical" no-tri-state pattern as autoDraftOnScan above. */
+  chatAutoApproveConfigEdits: boolean;
   notifyOnGreenMatch: boolean;
   /** dashboard-redesign story — same "omitted/false are identical" no-tri-state pattern as autoDraftOnScan/notifyOnGreenMatch above; see types.ts's Config.autoPrepOnApply doc comment for what this actually triggers (a status change, not a scan). */
   autoPrepOnApply: boolean;
@@ -348,6 +350,7 @@ function configToDraft(config: Config): DraftConfig {
     aiVerify: group?.aiVerify ?? false,
     schedule: config.schedule ?? "",
     autoDraftOnScan: config.autoDraftOnScan ?? false,
+    chatAutoApproveConfigEdits: config.chatAutoApproveConfigEdits ?? false,
     notifyOnGreenMatch: config.notifyOnGreenMatch ?? false,
     autoPrepOnApply: config.autoPrepOnApply ?? false,
     appIcon: config.appIcon ?? DEFAULT_APP_ICON_ID,
@@ -531,6 +534,7 @@ function draftToEdits(draft: DraftConfig, groupId: string, groupLabel: string): 
   // Always sent as plain booleans -- see DraftConfig's own comment on why
   // these two don't need roleArea/schedule's enabled-flag tri-state.
   edits.autoDraftOnScan = draft.autoDraftOnScan;
+  edits.chatAutoApproveConfigEdits = draft.chatAutoApproveConfigEdits;
   edits.notifyOnGreenMatch = draft.notifyOnGreenMatch;
   edits.autoPrepOnApply = draft.autoPrepOnApply;
   edits.appIcon = draft.appIcon;
@@ -2423,7 +2427,21 @@ export function ConfigClient({
             checked={draft.autoPrepOnApply}
             onChange={(v) => setDraft({ ...draft, autoPrepOnApply: v })}
           />
+          <CheckboxField
+            label="Auto-approve config changes the chat co-pilot proposes"
+            checked={draft.chatAutoApproveConfigEdits}
+            onChange={(v) => setDraft({ ...draft, chatAutoApproveConfigEdits: v })}
+          />
         </div>
+        {draft.chatAutoApproveConfigEdits && (
+          <p className="mt-2 text-xs text-theme-text-dim">
+            Off by default — with this on, when you ask the chat co-pilot (/chat) to change a config setting
+            (rate floors, keywords, group toggles, etc.), it applies the change immediately instead of waiting
+            for your approval. You&apos;ll still see a clear warning banner naming exactly what changed. Every
+            other chat action (marking a gig applied, generating a draft, running a scan, adding a source) still
+            always requires your explicit approval — this only affects config-edit proposals.
+          </p>
+        )}
         {draft.autoPrepOnApply && (
           <p className="mt-2 text-xs text-theme-text-dim">
             Off by default — this makes a real LLM call the moment a gig's status changes to Applied (skipped if

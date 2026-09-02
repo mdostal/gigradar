@@ -49,6 +49,8 @@ import { getGig, listGigs, setStatus } from "../store/gigs.js";
 import { saveInterviewPrep } from "../store/prep.js";
 import type { GigFilter, GigStatus, StoredGig } from "../store/types.js";
 import { readRawConfig, saveConfig } from "../config/save.js";
+import type { ConfigEdits } from "../config/save.js";
+import { loadSessionHistory, deleteSessionHistory, recordPreference, saveSessionHistory } from "./memory.js";
 import type { Config, MatchResult, SourceConfig, Tier } from "../types.js";
 
 const MODULE_PREFIX = "gigradar agent-chat-loop";
@@ -71,8 +73,11 @@ const DISCONNECT_GMAIL_TOOL = "disconnect_gmail";
 const TAKE_SCREENSHOT_TOOL = "take_screenshot";
 const LIST_SOURCE_PRESETS_TOOL = "list_source_presets";
 const ADD_SOURCE_TOOL = "add_source";
+// chat-copilot-self-tuning epic.
+const PROPOSE_CONFIG_EDIT_TOOL = "propose_config_edit";
+const NOTE_PREFERENCE_TOOL = "note_preference";
 
-/** Every tool NOT in this set is read-only and auto-executes; every tool IN this set is approval-gated, no exceptions. */
+/** Every tool NOT in this set is read-only and auto-executes; every tool IN this set is approval-gated, no exceptions (except propose_config_edit specifically, when Config.chatAutoApproveConfigEdits is true -- see runTurnLoop()). note_preference is DELIBERATELY excluded -- a memory note is never a config.json/behavior change, owner's own ruling (design-discussion.md §6, decision point 2). */
 const WRITE_TOOLS = new Set([
   UPDATE_GIG_STATUS_TOOL,
   GENERATE_DRAFT_TOOL,
@@ -84,6 +89,7 @@ const WRITE_TOOLS = new Set([
   START_GMAIL_CONNECT_TOOL,
   DISCONNECT_GMAIL_TOOL,
   ADD_SOURCE_TOOL,
+  PROPOSE_CONFIG_EDIT_TOOL,
 ]);
 
 const GIG_STATUS_VALUES = ["new", "applied", "interview", "archived", "ignored"] as const;
@@ -228,6 +234,43 @@ const CHAT_TOOLS: Anthropic.Tool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: PROPOSE_CONFIG_EDIT_TOOL,
+    description:
+      "Propose a specific, concrete change to gigradar's own config (rate floors, coreTitles/keywords/redKeywords, a group's aiVerify toggle, source settings, etc.). Requires explicit user approval before it's written (unless the user has separately turned on auto-approve for config edits). Never propose a vague change -- name the exact field(s) and old/new value(s) in `summary`, and `edits` must send any array field (e.g. `groups`, `sources`) as a COMPLETE replacement, never a partial diff.",
+    input_schema: {
+      type: "object",
+      properties: {
+        summary: {
+          type: "string",
+          description:
+            "One human-readable line naming the EXACT change, e.g. \"Add 'cfo', 'chief financial' to the CTO group's redKeywords\". Shown verbatim on the approval card.",
+        },
+        edits: {
+          type: "object",
+          description:
+            "The exact ConfigEdits-shaped partial object to pass to saveConfig() on approval -- e.g. {\"groups\":[{...the whole edited group, not just the changed field...}]}. `groups`/`sources` are always sent as a COMPLETE replacement array, same shallow-merge convention every other config write in this codebase already follows.",
+        },
+        reason: {
+          type: "string",
+          description: "Why -- becomes a durable preference note once approved, so gigradar remembers the REASONING behind the change, not just the change itself.",
+        },
+      },
+      required: ["summary", "edits", "reason"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: NOTE_PREFERENCE_TOOL,
+    description:
+      "Jot down something the user said they do/don't want, for future reference -- e.g. \"CFO/Finance titles are never a fit for the CTO group.\" This is a memory note ONLY: it does not change any gigradar config or matching behavior by itself. Runs immediately, no approval needed. If the user's feedback implies a concrete config change they want made now, use propose_config_edit instead (or in addition).",
+    input_schema: {
+      type: "object",
+      properties: { note: { type: "string", description: "The preference, in your own words, concise and specific." } },
+      required: ["note"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 interface PendingApproval {
@@ -268,6 +311,14 @@ interface ChatScreenshot {
 export type ChatLoopEvent =
   | { type: "message"; text: string; screenshots?: ChatScreenshot[] }
   | { type: "proposal"; tool: string; input: Record<string, unknown>; description: string; screenshots?: ChatScreenshot[] }
+  /**
+   * chat-copilot-self-tuning epic. Emitted ONLY when propose_config_edit
+   * auto-executes because Config.chatAutoApproveConfigEdits is true --
+   * NEVER folded into the plain "message" event, so the chat UI can
+   * render a visually distinct warning banner (the owner's own "popup
+   * warning" requirement) instead of a normal reply bubble.
+   */
+  | { type: "auto_applied"; tool: string; input: Record<string, unknown>; description: string }
   | { type: "turn_limit_reached" };
 
 /** Starts a fresh chat session, discarding any prior history for this id. */
@@ -275,9 +326,24 @@ export function startChatSession(sessionId: string): void {
   sessions.set(sessionId, { history: [] });
 }
 
-/** Removes session state for `sessionId`. Idempotent -- calling it for an already-gone/unknown session is a silent no-op. */
+/**
+ * Rehydrates `sessionId` from persisted memory (chat-copilot-self-tuning
+ * epic) if it exists, returning whether it found one. Callers fall back to
+ * startChatSession() when this returns false -- mirrors that function's
+ * explicit-fresh-start contract, just additive: this is a SECOND entry
+ * point, not a change to startChatSession()'s own behavior.
+ */
+export function resumeChatSession(sessionId: string): boolean {
+  const history = loadSessionHistory(sessionId);
+  if (!history) return false;
+  sessions.set(sessionId, { history });
+  return true;
+}
+
+/** Removes session state for `sessionId`, including its persisted memory. Idempotent -- calling it for an already-gone/unknown session is a silent no-op. */
 export function endChatSession(sessionId: string): void {
   sessions.delete(sessionId);
+  deleteSessionHistory(sessionId);
 }
 
 function requireSession(sessionId: string): LoopEntry {
@@ -327,8 +393,14 @@ interface ReadOnlyToolResult {
   screenshot?: ChatScreenshot;
 }
 
-async function executeReadOnlyTool(toolUse: Anthropic.ToolUseBlock, entry: LoopEntry): Promise<ReadOnlyToolResult> {
+async function executeReadOnlyTool(toolUse: Anthropic.ToolUseBlock, entry: LoopEntry, sessionId: string): Promise<ReadOnlyToolResult> {
   const input = toolUse.input as Record<string, unknown>;
+
+  if (toolUse.name === NOTE_PREFERENCE_TOOL) {
+    const note = String(input.note ?? "");
+    recordPreference(note, sessionId);
+    return { message: toolResultMessage(toolUse.id, "Noted.") };
+  }
 
   if (toolUse.name === LIST_GIGS_TOOL) {
     const gigs = runListGigs(input as { tier?: string; status?: string; search?: string });
@@ -412,6 +484,8 @@ function describeProposal(tool: string, input: Record<string, unknown>): string 
       return `Disconnect source "${input.sourceId}"'s connected Gmail account`;
     case ADD_SOURCE_TOOL:
       return input.presetId ? `Add source from the "${input.presetId}" preset` : `Add source "${input.sourceId}" (${input.url})`;
+    case PROPOSE_CONFIG_EDIT_TOOL:
+      return String(input.summary ?? "");
     default:
       return tool;
   }
@@ -454,7 +528,14 @@ function withSessionStatePathRaw(rawSources: unknown, sourceId: string, sessionS
  * its own restriction -- every credential kind `Source.fetch()` itself
  * accepts now reaches a real scan here too.
  */
-async function executeWriteTool(tool: string, input: Record<string, unknown>, credential: LlmCredential, config: Config, entry: LoopEntry): Promise<string> {
+async function executeWriteTool(
+  tool: string,
+  input: Record<string, unknown>,
+  credential: LlmCredential,
+  config: Config,
+  entry: LoopEntry,
+  sessionId: string,
+): Promise<string> {
   if (tool === UPDATE_GIG_STATUS_TOOL) {
     const key = String(input.key ?? "");
     const status = String(input.status ?? "") as GigStatus;
@@ -594,10 +675,18 @@ async function executeWriteTool(tool: string, input: Record<string, unknown>, cr
     return outcome;
   }
 
+  if (tool === PROPOSE_CONFIG_EDIT_TOOL) {
+    const saveResult = saveConfig(input.edits as ConfigEdits);
+    if (!saveResult.ok) throw new Error(saveResult.error);
+    const reason = String(input.reason ?? "");
+    if (reason) recordPreference(reason, sessionId);
+    return `Applied: ${String(input.summary ?? "")}`;
+  }
+
   throw new Error(`${MODULE_PREFIX}: unrecognized write tool "${tool}".`);
 }
 
-async function runTurnLoop(entry: LoopEntry, credential: LlmCredential): Promise<ChatLoopEvent> {
+async function runTurnLoop(entry: LoopEntry, credential: LlmCredential, config: Config, sessionId: string): Promise<ChatLoopEvent> {
   const client = createAnthropicClient(credential);
   // Screenshots taken during THIS call's read-only tool chain -- scoped to
   // this one sendMessage()/resolveApproval() call, not entry-level state.
@@ -629,6 +718,22 @@ async function runTurnLoop(entry: LoopEntry, credential: LlmCredential): Promise
 
     if (WRITE_TOOLS.has(toolUse.name)) {
       const input = toolUse.input as Record<string, unknown>;
+
+      // chat-copilot-self-tuning epic: ONLY propose_config_edit ever skips
+      // the approval pause, and ONLY when the owner has explicitly opted
+      // in via Config.chatAutoApproveConfigEdits (off by default). Every
+      // other write tool is completely unaffected by this toggle.
+      if (toolUse.name === PROPOSE_CONFIG_EDIT_TOOL && config.chatAutoApproveConfigEdits === true) {
+        const description = describeProposal(toolUse.name, input);
+        try {
+          const outcome = await executeWriteTool(toolUse.name, input, credential, config, entry, sessionId);
+          entry.history.push(toolResultMessage(toolUse.id, outcome));
+        } catch (e) {
+          entry.history.push(toolResultMessage(toolUse.id, e instanceof Error ? e.message : String(e), true));
+        }
+        return { type: "auto_applied", tool: toolUse.name, input, description };
+      }
+
       entry.pendingApproval = { toolUseId: toolUse.id, tool: toolUse.name, input };
       return {
         type: "proposal",
@@ -639,7 +744,7 @@ async function runTurnLoop(entry: LoopEntry, credential: LlmCredential): Promise
       };
     }
 
-    const result = await executeReadOnlyTool(toolUse, entry);
+    const result = await executeReadOnlyTool(toolUse, entry, sessionId);
     entry.history.push(result.message);
     if (result.screenshot) screenshots.push(result.screenshot);
   }
@@ -652,15 +757,22 @@ async function runTurnLoop(entry: LoopEntry, credential: LlmCredential): Promise
  * a final text answer, proposes a write action, or hits MAX_TURNS.
  * `credential` is used to construct the Anthropic client HERE, inside this
  * function, and nowhere else -- same discipline every other LLM call
- * site in this repo follows.
+ * site in this repo follows. `config` is needed (chat-copilot-self-tuning
+ * epic) so a mid-turn propose_config_edit call can check
+ * chatAutoApproveConfigEdits -- resolved by the CALLER, never here, same
+ * discipline `resolveApproval()`'s own `config` param already has.
+ * Persists `entry.history` (memory.ts) before returning, so a server
+ * restart mid-conversation never loses this turn.
  */
-export async function sendMessage(sessionId: string, credential: LlmCredential, userMessage: string): Promise<ChatLoopEvent> {
+export async function sendMessage(sessionId: string, credential: LlmCredential, userMessage: string, config: Config): Promise<ChatLoopEvent> {
   const entry = requireSession(sessionId);
   if (entry.pendingApproval) {
     throw new Error(`${MODULE_PREFIX}: a proposed action is still awaiting approval -- resolve it before sending another message.`);
   }
   entry.history.push({ role: "user", content: userMessage });
-  return runTurnLoop(entry, credential);
+  const event = await runTurnLoop(entry, credential, config, sessionId);
+  saveSessionHistory(sessionId, entry.history);
+  return event;
 }
 
 /**
@@ -683,15 +795,19 @@ export async function resolveApproval(sessionId: string, credential: LlmCredenti
 
   if (!approve) {
     entry.history.push(toolResultMessage(pending.toolUseId, "The user rejected this proposed action. It was NOT executed."));
-    return runTurnLoop(entry, credential);
+    const event = await runTurnLoop(entry, credential, config, sessionId);
+    saveSessionHistory(sessionId, entry.history);
+    return event;
   }
 
   try {
-    const outcome = await executeWriteTool(pending.tool, pending.input, credential, config, entry);
+    const outcome = await executeWriteTool(pending.tool, pending.input, credential, config, entry, sessionId);
     entry.history.push(toolResultMessage(pending.toolUseId, outcome));
   } catch (e) {
     entry.history.push(toolResultMessage(pending.toolUseId, e instanceof Error ? e.message : String(e), true));
   }
 
-  return runTurnLoop(entry, credential);
+  const event = await runTurnLoop(entry, credential, config, sessionId);
+  saveSessionHistory(sessionId, entry.history);
+  return event;
 }

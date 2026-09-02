@@ -185,4 +185,5 @@ export const ConfigSchema = z.object({
    * existed.
    */
   llmProvider: z.enum(["anthropic", "openai", "google"]).optional(),
+  chatAutoApproveConfigEdits: z.boolean().optional(),
 });
