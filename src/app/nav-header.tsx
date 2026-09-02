@@ -24,6 +24,7 @@ import type { IssuesBadgeInfo } from "./issues-badge";
 export const NAV_LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/today", label: "Today" },
+  { href: "/metrics", label: "Metrics" },
   { href: "/drafts", label: "Drafts" },
   { href: "/profile-assist", label: "Profile assist" },
   { href: "/chat", label: "Chat" },

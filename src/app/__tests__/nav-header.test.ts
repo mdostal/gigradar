@@ -15,11 +15,14 @@ import { NAV_LINKS } from "../nav-header";
 // (`product-review-followups` epic); `/today` by the `daily-shortlist-page`
 // story (`gigradar-command-center` epic) -- sits right after Dashboard,
 // the fast daily-check-in counterpart to Dashboard's full working view.
+// `/metrics` by the `metrics-page` story (same epic) -- the founding
+// "weekly throughput overview" success criterion, sits right after Today.
 describe("NAV_LINKS", () => {
-  it("has working links to /, /today, /drafts, /profile-assist, /chat, /issues, /setup, and /config, in that order", () => {
+  it("has working links to /, /today, /metrics, /drafts, /profile-assist, /chat, /issues, /setup, and /config, in that order", () => {
     expect(NAV_LINKS).toEqual([
       { href: "/", label: "Dashboard" },
       { href: "/today", label: "Today" },
+      { href: "/metrics", label: "Metrics" },
       { href: "/drafts", label: "Drafts" },
       { href: "/profile-assist", label: "Profile assist" },
       { href: "/chat", label: "Chat" },
