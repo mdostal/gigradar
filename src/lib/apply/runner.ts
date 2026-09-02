@@ -8,6 +8,7 @@ import { registerAllSources } from "../sources/register-all.js";
 import { gate } from "../matching/gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
 import { matchGroups } from "../matching/group-match.js";
+import { applyAiVerification } from "../matching/ai-verify.js";
 import { gigKey, recordScan, saveDraft } from "../store/index.js";
 import type { DbOption, RecordScanOptions, SourceScanBatch } from "../store/index.js";
 import { loadConfig } from "../config/load.js";
@@ -116,6 +117,10 @@ export async function runRadar(
     // source (not per gig) since it never varies within one source's batch.
     const scopedGroupIds = sc.groupIds ?? config.groups.map((grp) => grp.id);
     const scopedGroups = config.groups.filter((grp) => scopedGroupIds.includes(grp.id));
+    // ai-match-verification epic: lookup for applyAiVerification() below,
+    // built once per source (not per gig) since scopedGroups never varies
+    // within one source's batch.
+    const scopedGroupsById = new Map(scopedGroups.map((grp) => [grp.id, grp]));
     // The first in-scope group anchors this gig's BACKWARD-COMPATIBLE flat
     // tier/matchedProfileIds/reasons/score (Gig.tier, Gig.matchedProfileIds)
     // — for a not-yet-multi-group install (exactly one group, every source
@@ -137,7 +142,14 @@ export async function runRadar(
         ? gate(g, primaryGroup.needs, config.profile)
         : { gig: g, pass: false, reasons: ["no group in scope for this source"], score: 0, matchedProfiles: [] };
       const tierResult = tier(g, primaryGroup?.roleArea ?? EMPTY_ROLE_AREA_CONFIG);
-      const { matchedGroupIds, groupTiers } = matchGroups(g, scopedGroups, config.profile);
+      const { matchedGroupIds: heuristicMatchedGroupIds, groupTiers } = matchGroups(g, scopedGroups, config.profile);
+      // ai-match-verification epic: a second, LLM-driven check, spent only
+      // on groups the heuristic ALREADY matched and that opted in via
+      // GroupConfig.aiVerify — see matching/ai-verify.ts's header comment.
+      // No-op (matchedGroupIds/aiFlags pass through unchanged) when no
+      // group in scope has aiVerify on, or no LLM credential resolved this
+      // cycle — byte-identical to before this feature existed either way.
+      const { matchedGroupIds, aiFlags } = await applyAiVerification(g, heuristicMatchedGroupIds, scopedGroupsById, runOpts.credential);
       // Stamp tier + matchedProfileIds/matchedGroupIds/matchedGroupTiers
       // onto the persisted gig (not the original `g`, so a caller's own
       // Gig object is never mutated) — this is the object that both the
@@ -149,6 +161,7 @@ export async function runRadar(
         matchedProfileIds: gateResult.matchedProfiles,
         matchedGroupIds,
         matchedGroupTiers: groupTiers,
+        ...(Object.keys(aiFlags).length > 0 ? { aiFlags } : {}),
       };
 
       deduped.push(gigWithTier);

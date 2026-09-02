@@ -75,6 +75,7 @@ export const GroupConfigSchema = z.object({
   label: z.string().min(1),
   needs: NeedsSchema,
   roleArea: RoleAreaConfigSchema.optional(),
+  aiVerify: z.boolean().optional(),
 });
 
 /**

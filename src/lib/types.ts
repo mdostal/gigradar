@@ -178,6 +178,27 @@ export interface GroupConfig {
   needs: Needs;
   /** Optional, same do-nothing-default semantics as the old Config.roleArea: omitted => every gig tiers "yellow" for this group. */
   roleArea?: RoleAreaConfig;
+  /**
+   * ai-match-verification epic. Opt-in, off by default (keyword-only
+   * heuristic matching, byte-identical to before this field existed):
+   * when true, every gig this group's heuristic gate/tier already matched
+   * gets a SECOND, LLM-driven check (`matching/ai-verify.ts`'s
+   * `verifyGroupMatch()`) — a real semantic read on whether the gig's
+   * actual ROLE TYPE fits this group's intent, catching cases keyword
+   * matching can't (e.g. "Interim Finance Director" matching on the
+   * generic word "interim" despite being nowhere near an engineering
+   * role). Only runs for gigs that ALREADY heuristically matched this
+   * group — never a replacement for the gate, never spent on gigs that
+   * already failed it. A gig the AI does NOT confirm is removed from this
+   * group's `Gig.matchedGroupIds` for THIS group only; the verdict and
+   * reason are always recorded on `Gig.aiFlags[group.id]`, confirmed or
+   * not, so nothing is silently dropped without a trace. Requires a
+   * resolved LLM credential at scan time (same `resolveLlmCredential()`
+   * every other LLM call site uses) — silently skipped (heuristic result
+   * stands, no `aiFlags` entry) for a cycle with none, same graceful-
+   * degradation posture as `Config.autoDraftOnScan`.
+   */
+  aiVerify?: boolean;
 }
 
 /** Full user configuration. Lives in the user's own storage, never in the repo. */
@@ -387,6 +408,17 @@ export interface Gig {
    * your SWE search" for the same real gig.
    */
   matchedGroupTiers?: Record<string, Tier>;
+  /**
+   * ai-match-verification epic — one entry per `GroupConfig.id` whose
+   * `aiVerify: true` actually ran an LLM check on this gig (see
+   * `GroupConfig.aiVerify`'s own doc comment), `confirmed`/`reason` from
+   * `matching/ai-verify.ts`'s `verifyGroupMatch()`. A group this gig
+   * never heuristically matched, or whose `aiVerify` is off/unset, or
+   * that ran with no LLM credential resolved, has NO entry here — this is
+   * an audit trail of checks that actually happened, never a full
+   * per-group map.
+   */
+  aiFlags?: Record<string, { confirmed: boolean; reason: string }>;
 }
 
 /**
