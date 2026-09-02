@@ -90,7 +90,7 @@ export function GigDetailPanel({
               <span className="text-xs text-theme-text-dim">·</span>
               <span className="text-xs text-theme-text-dim">{STATUS_LABEL[gig.status]}</span>
             </div>
-            <h2 className="mt-1 truncate text-lg font-bold tracking-tight text-theme-text">{gig.title}</h2>
+            <h2 className="mt-1 truncate font-theme-heading text-lg font-bold tracking-tight text-theme-text">{gig.title}</h2>
             {gig.company && <p className="text-sm text-theme-text-dim">{gig.company}</p>}
           </div>
           <button
@@ -131,7 +131,7 @@ export function GigDetailPanel({
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <div>
               <dt className="text-xs font-medium text-theme-text-dim">Rate</dt>
-              <dd className="text-theme-text">{formatRate(gig.rate)}</dd>
+              <dd className="font-theme-mono text-theme-text">{formatRate(gig.rate)}</dd>
             </div>
             <div>
               <dt className="text-xs font-medium text-theme-text-dim">Weekly hours</dt>

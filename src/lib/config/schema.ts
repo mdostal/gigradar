@@ -179,7 +179,7 @@ export const ConfigSchema = z.object({
   autoFire: AutoFireConfigSchema.optional(),
   appIcon: z.string().optional(),
   // ui-theme-system epic: see types.ts's Config.uiTheme doc comment.
-  uiTheme: z.enum(["radar", "editorial", "terminal"]).optional(),
+  uiTheme: z.enum(["radar", "editorial", "terminal", "signal-deck"]).optional(),
   /**
    * llm-provider-harness epic (supersedes llm-credential-modes' original
    * "oauth-token" kind -- live-tested and found non-functional: a

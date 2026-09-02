@@ -32,12 +32,12 @@ export default function HomePage() {
   return (
     <main className="mx-auto max-w-[88rem] p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-2xl font-bold tracking-tight text-theme-text">Dashboard</h1>
-        <p className="text-sm text-theme-text-dim">
+        <h1 className="font-theme-heading text-2xl font-bold tracking-tight text-theme-text">Dashboard</h1>
+        <p className="font-theme-mono text-sm text-theme-text-dim">
           {gigs.length} gig{gigs.length === 1 ? "" : "s"} tracked
         </p>
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-theme-text-dim">
+      <div className="mt-3 flex flex-wrap items-center gap-2 font-theme-mono text-xs uppercase tracking-wide text-theme-text-dim">
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.sourcesLabel}</span>
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.profileLabel}</span>
         <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.lastScanLabel}</span>

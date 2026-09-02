@@ -1,0 +1,42 @@
+id: interview-workspace-page
+epic: gigradar-command-center
+title: "New per-gig Interview workspace page -- prep packet + Materials, promoted out of a table row"
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Once a gig's status is "interview", it stops being a table row with a
+  <details> tag and becomes its own page. Two real pieces:
+  1. The full prep packet (generatePrepPacket(), already backend-ready --
+     career-crm epic) gets a real page surface, all 7 sections legible,
+     not collapsed text.
+  2. A new Materials/answer-key feature -- grounded ONLY in the owner's
+     real Profile/ApplyProfileConfig/resume data, zero fabrication (same
+     guardrail language draft.ts/prep.ts already enforce), staged-for-
+     review posture matching graduated-auto-fire-trust's own approval
+     gate. Ports the SHAPE of the legacy gig-radar's per-platform
+     answer-key concept (universal fields + per-platform sections, "never
+     submit -- human reviews," explicit no-fabrication guardrails) --
+     never the owner's actual personal content, which stays off this
+     machine.
+  "Fire off a full prep packet" is promoted to this page's primary action.
+
+acceptance_criteria:
+  - "New route (e.g. /gigs/[key]/interview) renders the complete PrepPacketContent -- score, rationale, topStrengths, keyGaps, recommendation, predictedQuestions, starlaStories, atsScore -- as a real page, not a collapsed detail."
+  - "A Materials section presents grounded-only content (name/email/rate/etc. from real Profile/ApplyProfileConfig, resume-derived where applicable) with an explicit, visible no-fabrication statement and a staged/reviewed status before anything is treated as final -- mirrors graduated-auto-fire-trust's approval posture, reuses it rather than inventing a second one."
+  - "Dashboard/Daily-Shortlist rows for interview-status gigs link to this page instead of showing prep inline."
+  - "No real personal content (names, emails, rate figures, platform account details) from the legacy gig-radar research is copied into this repo -- only the SHAPE of the pattern."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/prep.ts
+      purpose: "existing generatePrepPacket() -- reused, not reimplemented."
+    - path: src/app/dashboard-client.tsx
+      purpose: "the <details>-based inline prep display this story replaces for interview-status gigs."
+
+references:
+  - path: .pHive/epics/gigradar-command-center/docs/design-discussion.md
+    relevant_excerpt: "Legacy gig-radar research section -- interview-prep doc structure and answer-key pattern, SHAPE only."

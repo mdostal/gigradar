@@ -1,0 +1,68 @@
+/*
+ * gigradar-command-center epic: Signal Deck, the new default theme --
+ * promoted from ui-overhaul-via-ui-squads's verified, bug-fixed
+ * "mission-control / signal-radar" Dashboard concept. Token values are
+ * pulled directly from that verified concept's own CSS, mapped onto this
+ * theme system's established token names (see radar.css for the pattern
+ * this file follows). Dark-first (matches the concept's own deliberate
+ * single-theme commitment), with a light variant added here for parity
+ * with every other theme file, per that same established pattern -- not
+ * present in the original concept, authored fresh in the same hue family.
+ *
+ * Tier and status colors are not redefined here -- those are
+ * theme-invariant, defined once in globals.css root.
+ */
+[data-theme="signal-deck"] {
+  --page-bg: #0a1310;
+  --surface-bg: #121e19;
+  --surface-bg-raised: #17251f;
+  --surface-border: #24352c;
+  --surface-border-strong: #34493d;
+  --text-primary: #e6ece7;
+  --text-secondary: #9bb2a3;
+  --text-faint: #668072;
+  --accent: #4fa8d8;
+  --accent-ink: #071a20;
+  --accent-dim: rgba(79, 168, 216, 0.14);
+
+  /*
+   * var(--font-signal-deck-*) come from next/font/google in layout.tsx --
+   * self-hosted, bundled at build time, never a runtime request to
+   * Google's CDN. See layout.tsx's own comment on this font block for why
+   * (a local-first app should never add an external network dependency to
+   * page load).
+   */
+  --font-heading: var(--font-signal-deck-heading), ui-sans-serif, sans-serif;
+  --font-body: var(--font-signal-deck-body), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-signal-deck-mono), ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  [data-theme="signal-deck"]:not([data-theme-mode="dark"]) {
+    --page-bg: #f0f4f2;
+    --surface-bg: #ffffff;
+    --surface-bg-raised: #e8efeb;
+    --surface-border: #cdd9d3;
+    --surface-border-strong: #aec0b7;
+    --text-primary: #0e1c17;
+    --text-secondary: #4c6459;
+    --text-faint: #82998d;
+    --accent: #1c7fa8;
+    --accent-ink: #ffffff;
+    --accent-dim: rgba(28, 127, 168, 0.1);
+  }
+}
+
+[data-theme="signal-deck"][data-theme-mode="light"] {
+  --page-bg: #f0f4f2;
+  --surface-bg: #ffffff;
+  --surface-bg-raised: #e8efeb;
+  --surface-border: #cdd9d3;
+  --surface-border-strong: #aec0b7;
+  --text-primary: #0e1c17;
+  --text-secondary: #4c6459;
+  --text-faint: #82998d;
+  --accent: #1c7fa8;
+  --accent-ink: #ffffff;
+  --accent-dim: rgba(28, 127, 168, 0.1);
+}

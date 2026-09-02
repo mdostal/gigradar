@@ -1,0 +1,14 @@
+name: gigradar-command-center
+title: "Multi-page IA (Signal Deck / Daily Shortlist / Metrics / Interview workspace) + Signal Deck & Signal Desk as new themes"
+methodology: classic
+stories:
+  - id: signal-deck-main-dashboard
+    depends_on: []
+  - id: daily-shortlist-page
+    depends_on: []
+  - id: metrics-page
+    depends_on: []
+  - id: interview-workspace-page
+    depends_on: []
+  - id: signal-desk-theme
+    depends_on: [signal-deck-main-dashboard]

@@ -1,0 +1,33 @@
+id: daily-shortlist-page
+epic: gigradar-command-center
+title: "New /today route: Daily Shortlist, the fast daily check-in"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  New route using the verified Daily Shortlist concept's IA: a "Today's
+  Picks" section (green+new, freshly seen, briefing-card style) up top,
+  full roster grouped by status below. Ships "as is" per the owner's own
+  words -- the already-verified concept, not redesigned further. Own
+  dedicated look (per the owner's resolved answer), not theme-swappable,
+  but consumes shared theme color tokens so it still tints consistently
+  with whichever theme is active.
+
+acceptance_criteria:
+  - "New /today route (or equivalent) renders real DashboardData, same data source as the main dashboard."
+  - "Today's Picks section surfaces green+new gigs, most-recently-seen first."
+  - "Full roster below groups by status (New/Applied/Interview/Archived/Ignored), matching the concept's folder-tab styling."
+  - "Reuses existing Draft/Analyze/status-change/chat actions -- no new backend logic, this story is IA only."
+  - "Uses shared theme CSS custom properties for color, not a hardcoded palette."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/dashboard-data.ts
+      purpose: "existing DashboardData loader, reused for this route."
+
+references:
+  - path: .pHive/epics/gigradar-command-center/docs/design-discussion.md
+    relevant_excerpt: "IA section, item 2."

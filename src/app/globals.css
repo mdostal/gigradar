@@ -5,6 +5,7 @@
 @import "./themes/radar.css";
 @import "./themes/editorial.css";
 @import "./themes/terminal.css";
+@import "./themes/signal-deck.css";
 
 /*
  * Brand tokens (icon-picker / styling-pass follow-up) -- the exact palette
@@ -57,9 +58,22 @@
   --color-theme-surface: var(--surface-bg);
   --color-theme-surface-raised: var(--surface-bg-raised);
   --color-theme-surface-border: var(--surface-border);
+  /*
+   * gigradar-command-center epic: every theme file already defines
+   * --surface-border-strong/--text-faint/--accent-ink/--accent-dim (see
+   * e.g. radar.css) but they were never exposed as Tailwind utilities
+   * until now -- real, precise theme-aware styling (a strong-emphasis
+   * border, faint tertiary text, readable text ON an accent-filled
+   * background) needed them. Additive -- no existing utility renamed or
+   * removed.
+   */
+  --color-theme-surface-border-strong: var(--surface-border-strong);
   --color-theme-text: var(--text-primary);
   --color-theme-text-dim: var(--text-secondary);
+  --color-theme-text-faint: var(--text-faint);
   --color-theme-accent: var(--accent);
+  --color-theme-accent-ink: var(--accent-ink);
+  --color-theme-accent-dim: var(--accent-dim);
   --color-theme-tier-green: var(--tier-green);
   --color-theme-tier-yellow: var(--tier-yellow);
   --color-theme-tier-red: var(--tier-red);
