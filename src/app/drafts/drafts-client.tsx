@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import type { DraftStatus } from "@/lib/store";
 import type { DraftContent, DraftFormat } from "@/lib/types";
 import { markSubmittedAction, setDraftStatusAction, updateDraftContentAction } from "./actions";
+import { bulkMarkAppliedElsewhereAction } from "../actions";
 import { DRAFT_STATUS_TABS, filterDrafts, formatCopyReadyDraft, type DraftListItem, type DraftStatusFilter } from "./drafts-filter";
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
 import { formatRate, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "../dashboard-client";
@@ -75,7 +76,7 @@ function formatDate(iso: string | null): string {
  * copy-ready draft both appear, and a 'Mark submitted' action becomes
  * available").
  */
-function DraftCard({ item }: { item: DraftListItem }) {
+function DraftCard({ item, checked, onToggleChecked }: { item: DraftListItem; checked: boolean; onToggleChecked: () => void }) {
   const [coverText, setCoverText] = useState(item.content.coverText);
   const [answers, setAnswers] = useState(item.content.answers);
   const [isSaving, startSaveTransition] = useTransition();
@@ -131,6 +132,7 @@ function DraftCard({ item }: { item: DraftListItem }) {
           <p className="text-sm text-slate-500">{item.gigCompany ?? "—"}</p>
         </div>
         <div className="flex items-center gap-1.5">
+          <input type="checkbox" aria-label={`Select ${item.gigTitle}`} checked={checked} onChange={onToggleChecked} />
           <ContextualChatTrigger kind="draft" itemKey={item.gigKey} label={item.gigTitle} />
           <span
             className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_CLASS[item.status]}`}
@@ -291,6 +293,39 @@ export function DraftsClient({ items }: { items: DraftListItem[] }) {
   const [status, setStatus] = useState<DraftStatusFilter>("all");
   const filtered = filterDrafts(items, status);
 
+  // mark-applied-elsewhere-bulk-action story: same manual-reconciliation
+  // fallback as the giglist's checkbox column (dashboard-client.tsx),
+  // operating on gigKey directly -- bulkMarkAppliedElsewhereAction() takes
+  // real gig keys, and every DraftListItem already carries one.
+  const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set());
+  const [bulkPending, startBulkTransition] = useTransition();
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
+  function toggleChecked(gigKey: string) {
+    setCheckedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(gigKey)) next.delete(gigKey);
+      else next.add(gigKey);
+      return next;
+    });
+  }
+
+  function handleBulkMarkAppliedElsewhere() {
+    setBulkError(null);
+    const keys = [...checkedKeys];
+    startBulkTransition(async () => {
+      const result = await bulkMarkAppliedElsewhereAction(keys);
+      if (!result.ok) {
+        setBulkError(result.error);
+        return;
+      }
+      if (result.data.errors.length > 0) {
+        setBulkError(`${result.data.updated} marked applied; ${result.data.errors.length} failed (${result.data.errors.map((e) => e.message).join("; ")})`);
+      }
+      setCheckedKeys(new Set());
+    });
+  }
+
   return (
     <div className="mt-6 flex flex-col gap-4">
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filter by draft status">
@@ -312,9 +347,27 @@ export function DraftsClient({ items }: { items: DraftListItem[] }) {
         {filtered.length} of {items.length} draft{items.length === 1 ? "" : "s"}
       </p>
 
+      {checkedKeys.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+          <span className="font-mono text-slate-500">{checkedKeys.size} selected</span>
+          <button
+            type="button"
+            disabled={bulkPending}
+            onClick={handleBulkMarkAppliedElsewhere}
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {bulkPending ? "Marking…" : "Mark as applied elsewhere"}
+          </button>
+          <button type="button" onClick={() => setCheckedKeys(new Set())} className="text-xs font-medium text-slate-500 hover:underline">
+            Clear selection
+          </button>
+          {bulkError && <span className="text-xs text-red-600">{bulkError}</span>}
+        </div>
+      )}
+
       <div className="flex flex-col gap-4">
         {filtered.map((item) => (
-          <DraftCard key={item.gigKey} item={item} />
+          <DraftCard key={item.gigKey} item={item} checked={checkedKeys.has(item.gigKey)} onToggleChecked={() => toggleChecked(item.gigKey)} />
         ))}
         {filtered.length === 0 && <p className="text-center text-slate-400">No drafts match the current filter.</p>}
       </div>

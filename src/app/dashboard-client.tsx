@@ -15,7 +15,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { GigStatus, OutcomeReason, StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
-import { generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
+import { bulkMarkAppliedElsewhereAction, generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
 import { DASHBOARD_PREFS_STORAGE_KEY, deserializeDashboardPrefs, serializeDashboardPrefs } from "./dashboard-prefs";
 import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, shortProfileLabel, type SeenWindow } from "./dashboard-filter";
@@ -436,6 +436,38 @@ export function DashboardClient({
   // rather than pointing at a stale/wrong index into a shifted array.
   const [selectedGigKey, setSelectedGigKey] = useState<string | null>(null);
 
+  // mark-applied-elsewhere-bulk-action story: checkbox multi-select for the
+  // manual reconciliation fallback -- a SEPARATE concept from
+  // selectedGigKey above (that's the single-row detail-panel selection).
+  const [checkedKeys, setCheckedKeys] = useState<Set<string>>(new Set());
+  const [bulkPending, startBulkTransition] = useTransition();
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
+  function toggleChecked(key: string) {
+    setCheckedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function handleBulkMarkAppliedElsewhere() {
+    setBulkError(null);
+    const keys = [...checkedKeys];
+    startBulkTransition(async () => {
+      const result = await bulkMarkAppliedElsewhereAction(keys);
+      if (!result.ok) {
+        setBulkError(result.error);
+        return;
+      }
+      if (result.data.errors.length > 0) {
+        setBulkError(`${result.data.updated} marked applied; ${result.data.errors.length} failed (${result.data.errors.map((e) => e.message).join("; ")})`);
+      }
+      setCheckedKeys(new Set());
+    });
+  }
+
   const sources = useMemo(() => distinctSources(gigs), [gigs]);
 
   // Counts are over the FULL `gigs` array, not the currently-filtered rows
@@ -678,6 +710,30 @@ export function DashboardClient({
   }
 
   const columns: ColumnDef<StoredGig>[] = [
+    {
+      id: "select",
+      header: () => (
+        <input
+          type="checkbox"
+          aria-label="Select all visible gigs"
+          checked={rows.length > 0 && rows.every((r) => checkedKeys.has(r.original.key))}
+          onChange={(e) => {
+            setCheckedKeys(e.target.checked ? new Set(rows.map((r) => r.original.key)) : new Set());
+          }}
+        />
+      ),
+      enableSorting: false,
+      enableColumnFilter: false,
+      cell: ({ row }) => (
+        <input
+          type="checkbox"
+          aria-label={`Select ${row.original.title}`}
+          checked={checkedKeys.has(row.original.key)}
+          onChange={() => toggleChecked(row.original.key)}
+        />
+      ),
+      meta: { filterKind: "none" },
+    },
     {
       id: "view",
       header: "",
@@ -1009,6 +1065,28 @@ export function DashboardClient({
       <p className="text-sm text-theme-text-dim">
         {rows.length} of {gigs.length} gig{gigs.length === 1 ? "" : "s"}
       </p>
+
+      {checkedKeys.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-theme-surface-border bg-theme-surface-raised px-3 py-2 text-sm">
+          <span className="font-theme-mono text-theme-text-dim">{checkedKeys.size} selected</span>
+          <button
+            type="button"
+            disabled={bulkPending}
+            onClick={handleBulkMarkAppliedElsewhere}
+            className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-xs font-medium text-theme-text transition-colors hover:bg-theme-surface-raised disabled:opacity-50"
+          >
+            {bulkPending ? "Marking…" : "Mark as applied elsewhere"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setCheckedKeys(new Set())}
+            className="text-xs font-medium text-theme-text-dim hover:underline"
+          >
+            Clear selection
+          </button>
+          {bulkError && <span className="text-xs text-red-600">{bulkError}</span>}
+        </div>
+      )}
 
       {/*
         max-h-[70vh] + overflow-auto makes THIS div the sticky-positioning

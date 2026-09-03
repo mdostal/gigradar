@@ -1,10 +1,38 @@
 id: mark-applied-elsewhere-bulk-action
 epic: dashboard-drafts-data-integrity
 title: "Manual \"Mark as applied elsewhere\" bulk action — the escape hatch for the 11 sources with no status reconciliation"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Shipped on both the giglist (dashboard-client.tsx, a TanStack-table
+  checkbox column) and drafts (drafts-client.tsx, a checkbox per
+  DraftCard). New bulkMarkAppliedElsewhereAction() calls setStatus()
+  directly rather than looping updateGigStatusAction() per key -- a real
+  design decision, not laziness: that action's "applied" branch fires a
+  real LLM interview-prep generation (autoPrepOnApply) as a side effect,
+  correct for one gigradar-driven application but wrong for a bulk
+  "already applied outside gigradar" action (would silently fire N real
+  LLM calls the owner never asked for). Test coverage confirms
+  generatePrepPacket is never called by the bulk path.
+
+  Resolved the outcomeReason/outcomeNote design question from this story's
+  own description differently than assumed: read both fields' real doc
+  comments (store/types.ts) and OutcomeReason's actual value set
+  ("rejected"|"withdrawn"|"expired_unapplied") -- none of these describe
+  "applied elsewhere," and outcomeReason/outcomeNote are documented for a
+  different, narrower concern (terminal/negative outcomes, scraped status
+  text). Forcing a wrong-shaped value in there to distinguish
+  gigradar-driven from manually-marked applications would be a real,
+  separate schema decision, not an ad-hoc field reuse -- left genuinely
+  open rather than guessed at.
+
+  Also fixed the SAME revalidatePath("/") regression found in the prior
+  two stories: updateGigStatusAction() still only revalidated "/" after
+  the giglist moved to /gigs; now revalidates both (existing test updated
+  to match).
 
 description: |
   Confirmed via code search: only `src/lib/sources/wellfound-status.ts` and
