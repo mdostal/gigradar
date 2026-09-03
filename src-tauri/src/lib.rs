@@ -16,6 +16,12 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+mod embedded_webview;
+use embedded_webview::{
+    embedded_webview_close, embedded_webview_hide, embedded_webview_navigate,
+    embedded_webview_show, EmbeddedWebviewHandle,
+};
+
 mod updater;
 use updater::{get_update_channel, get_update_status, install_update, snooze_update, UpdateState};
 
@@ -125,11 +131,16 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(UpdateState::default())
         .manage(SidecarHandle::default())
+        .manage(EmbeddedWebviewHandle::default())
         .invoke_handler(tauri::generate_handler![
             get_update_channel,
             get_update_status,
             install_update,
             snooze_update,
+            embedded_webview_show,
+            embedded_webview_hide,
+            embedded_webview_navigate,
+            embedded_webview_close,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
