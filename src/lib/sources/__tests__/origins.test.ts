@@ -10,6 +10,8 @@
 //      naming convention.
 import { describe, expect, it } from "vitest";
 import {
+  GOOGLE_SSO_LOGIN_URL,
+  GOOGLE_SSO_ORIGINS,
   KNOWN_SOURCES,
   resolveAllowedOrigins,
   resolveLoginUrl,
@@ -17,6 +19,7 @@ import {
   SOURCE_LOGIN_URLS,
   SOURCE_ORIGINS,
   SOURCE_PROFILE_URLS,
+  SOURCES_OFFERING_GOOGLE_SSO,
 } from "../origins.js";
 import type { SourceConfig } from "../../types.js";
 
@@ -189,5 +192,37 @@ describe("resolveAllowedOrigins/resolveLoginUrl/resolveProfileUrl fallback", () 
     expect(resolveAllowedOrigins(CUSTOM_ID, cfg)).toBeUndefined();
     expect(resolveLoginUrl(CUSTOM_ID, cfg)).toBeUndefined();
     expect(resolveProfileUrl(CUSTOM_ID, cfg)).toBeUndefined();
+  });
+});
+
+// oauth-session-capture-v2 epic, google-sso-session-persistence story.
+describe("GOOGLE_SSO_ORIGINS / SOURCES_OFFERING_GOOGLE_SSO", () => {
+  it("GOOGLE_SSO_ORIGINS is scoped to Google's own domains only, never any real source's own origin", () => {
+    expect(GOOGLE_SSO_ORIGINS).toEqual(["accounts.google.com", "google.com"]);
+    for (const sourceOrigins of Object.values(SOURCE_ORIGINS)) {
+      for (const origin of sourceOrigins) {
+        expect(GOOGLE_SSO_ORIGINS).not.toContain(origin);
+      }
+    }
+  });
+
+  it("GOOGLE_SSO_LOGIN_URL is a real https:// URL pointed at Google, never a target source's own login page", () => {
+    expect(GOOGLE_SSO_LOGIN_URL).toMatch(/^https:\/\/accounts\.google\.com/);
+  });
+
+  it("SOURCES_OFFERING_GOOGLE_SSO only lists real, registered KNOWN_SOURCES ids", () => {
+    const knownIds = new Set(KNOWN_SOURCES.map((s) => s.id));
+    for (const id of SOURCES_OFFERING_GOOGLE_SSO) {
+      expect(knownIds.has(id)).toBe(true);
+    }
+  });
+
+  it("SOURCES_OFFERING_GOOGLE_SSO includes ateam and wellfound (both live-confirmed to offer \"Continue with Google\")", () => {
+    expect(SOURCES_OFFERING_GOOGLE_SSO).toEqual(expect.arrayContaining(["ateam", "wellfound"]));
+  });
+
+  it("never contains 'google' itself -- Google is not a job source", () => {
+    expect(SOURCES_OFFERING_GOOGLE_SSO).not.toContain("google");
+    expect(SOURCE_ORIGINS["google"]).toBeUndefined();
   });
 });

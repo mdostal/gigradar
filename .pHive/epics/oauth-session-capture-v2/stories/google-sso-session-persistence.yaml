@@ -1,10 +1,56 @@
 id: google-sso-session-persistence
 epic: oauth-session-capture-v2
 title: "Google/SSO login persists across separate capture sessions -- and reuses across every SSO-gated source"
-status: pending
+status: in_progress
 complexity: high
 methodology: classic
 depends_on: [real-chrome-spawn-attach]
+
+progress_note: |
+  BUILT 2026-09-03, per this story's own "RECOMMENDED PRIMARY MECHANISM"
+  (steps a-d below) -- the storageState-capture/inject approach, NOT the
+  native-Chrome-profile-persistence root-cause path (that hypothesis
+  remains genuinely unconfirmed, and per this story's own text is no
+  longer the critical path).
+
+  Shipped: (a) a new Google-only capture entry point
+  (startGoogleCaptureAction() -> startCapture("google",
+  GOOGLE_SSO_LOGIN_URL, GOOGLE_SSO_ORIGINS) in session-capture.ts, scoped
+  via a NEW, deliberately separate GOOGLE_SSO_ORIGINS allowlist in
+  origins.ts -- never merged into SOURCE_ORIGINS); (b) persisted via the
+  already-built Portunus session backend
+  (finishGoogleCaptureAction() -> finishCapture(captureId, "portunus"));
+  (c) injection: startCapture() gained an optional `seedStorageState`
+  param, re-filtered to GOOGLE_SSO_ORIGINS regardless of what's passed in
+  (defense-in-depth) -- injected via context.addCookies() on the
+  persistent-profile's existing context, or via
+  newContext({storageState}) on a fresh one; startCaptureAction() reads a
+  saved Google connection from Portunus and passes it through
+  automatically for any source in the new SOURCES_OFFERING_GOOGLE_SSO
+  list (currently `ateam`, `wellfound` -- both LIVE-CONFIRMED via their
+  own adapters' isSignInPage() comments to offer "Continue with Google";
+  `gofractional` deliberately excluded, never confirmed); (d) UI: a new
+  "Google connection" section in /config, above Sources, reusing the
+  SAME <CaptureLoginControl> component every other source's Capture
+  Login already uses (sourceId="google") -- plus a per-row note on
+  ateam/wellfound when a Google connection exists. 21 new unit tests
+  (session-capture.test.ts, origins.test.ts, capture-actions.test.ts),
+  all passing; typecheck/build clean; UI live-verified rendering
+  correctly in an isolated data dir.
+
+  NOT YET DONE, genuinely requires the owner: real live verification
+  (this story's own AC2) -- capture a real Google login via /config's new
+  "Capture login" button, then start a Capture Login for ateam or
+  wellfound and confirm it shows an already-authenticated "continue as
+  you" prompt rather than a full password/2FA re-entry. Deliberately NOT
+  simulated/clicked-through by the agent building this -- opening a real,
+  visible Chrome window and completing a real Google sign-in belongs to
+  the human, per the owner's own words this session ("the reason to embed
+  the [browser] is to allow the human to... work WITH the LLM"), not
+  something to fake or bypass. AC1 (root-causing WHY native Chrome-profile
+  persistence alone doesn't survive) remains genuinely unconfirmed by
+  design -- this mechanism sidesteps needing that answer, per the story's
+  own text; still worth understanding eventually, not blocking.
 
 description: |
   Live-debugging session 2026-08-31 (product-review-followups epic,

@@ -14,7 +14,8 @@ import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
 import { deleteResume, getResumePath, saveResume } from "@/lib/documents/resume-store";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
 import { customLlmSource } from "@/lib/sources/custom-llm-source";
-import { resolveAllowedOrigins, resolveLoginUrl } from "@/lib/sources/origins";
+import { GOOGLE_SSO_LOGIN_URL, GOOGLE_SSO_ORIGINS, SOURCES_OFFERING_GOOGLE_SSO, resolveAllowedOrigins, resolveLoginUrl } from "@/lib/sources/origins";
+import { readSessionViaPortunus, PORTUNUS_SESSION_ACCOUNT } from "@/lib/auth/session-backend";
 import type { ActionResult } from "@/lib/actions/result";
 import type { ExtractProfileInput } from "@/lib/profile-ingestion/extract";
 import type { Config, Profile, SourceConfig, Tier } from "@/lib/types";
@@ -96,6 +97,17 @@ export async function saveConfigAction(edits: ConfigEdits): Promise<ActionResult
  * *mutation*" rule (docs/ARCHITECTURE.md's "Server Actions" section) rather
  * than calling it unconditionally on every action regardless of whether
  * anything the page reads actually changed.
+ *
+ * oauth-session-capture-v2 epic, google-sso-session-persistence story:
+ * when `sourceId` is one of `SOURCES_OFFERING_GOOGLE_SSO` (live-confirmed
+ * to offer "Continue with Google" on its own login page — see origins.ts's
+ * own doc comment), this tries reading a previously-captured Google
+ * connection from Portunus and seeds the fresh capture's context with it —
+ * so the human sees an already-authenticated "Continue with Google"
+ * prompt instead of a full password/2FA re-entry. Tolerant of "no Google
+ * connection saved yet" (the normal, expected first-time state) — that
+ * failure is swallowed here, never surfaced as this action's own error;
+ * the capture proceeds exactly as it always has, just without a seed.
  */
 export async function startCaptureAction(sourceId: string): Promise<ActionResult<{ captureId: string }>> {
   const raw = readRawConfig();
@@ -109,8 +121,23 @@ export async function startCaptureAction(sourceId: string): Promise<ActionResult
   }
   const allowedOrigins = resolveAllowedOrigins(sourceId, cfg);
 
+  let seedStorageState: Awaited<ReturnType<typeof readSessionViaPortunus>> | undefined;
+  if (SOURCES_OFFERING_GOOGLE_SSO.includes(sourceId)) {
+    try {
+      seedStorageState = await readSessionViaPortunus("google", PORTUNUS_SESSION_ACCOUNT);
+    } catch {
+      // No saved Google connection yet (or Portunus unavailable) — proceed unseeded, exactly like today.
+    }
+  }
+
   try {
-    const { captureId } = await startCapture(sourceId, loginUrl, allowedOrigins);
+    // seedStorageState passed only when actually present -- keeps the call
+    // byte-identical to every pre-existing, non-Google-SSO source's own
+    // unseeded call shape rather than always passing an explicit trailing
+    // `undefined`.
+    const { captureId } = seedStorageState
+      ? await startCapture(sourceId, loginUrl, allowedOrigins, seedStorageState)
+      : await startCapture(sourceId, loginUrl, allowedOrigins);
     return actionOk({ captureId });
   } catch (e) {
     return actionErr(e);
@@ -747,4 +774,85 @@ export async function assignGmailConnectionAction(fromSourceId: string, toSource
   }
   revalidatePath("/config");
   return actionOk(null);
+}
+
+// ---------------------------------------------------------------------------
+// Shared Google connection (oauth-session-capture-v2 epic,
+// google-sso-session-persistence story) — a ONE-TIME, cookie-based capture
+// of the human's real Google sign-in (via the SAME session-capture.ts
+// mechanism every other source's "Capture login" already uses, just
+// pointed at accounts.google.com instead of a target source, and scoped
+// to GOOGLE_SSO_ORIGINS instead of a source's own allowlist), persisted
+// via the already-built Portunus session backend under site="google".
+// startCaptureAction() above reads it back and seeds it into any
+// SOURCES_OFFERING_GOOGLE_SSO source's own fresh capture. Deliberately NOT
+// the same mechanism as the Gmail OAuth token-set connection above — this
+// is real browser cookies from a real headed-Chrome login, not an OAuth2
+// token exchange, because there is no OAuth client for "generic Google
+// SSO passthrough," only for the specific Gmail-API scopes gmail-digest
+// needs.
+// ---------------------------------------------------------------------------
+
+/**
+ * Wraps `startCapture("google", GOOGLE_SSO_LOGIN_URL, GOOGLE_SSO_ORIGINS)` —
+ * same shape as `startCaptureAction()` above, just with a fixed sourceId/
+ * loginUrl/allowlist rather than resolving them from a configured source
+ * (Google isn't a configured source; there's nothing to look up).
+ */
+export async function startGoogleCaptureAction(): Promise<ActionResult<{ captureId: string }>> {
+  try {
+    const { captureId } = await startCapture("google", GOOGLE_SSO_LOGIN_URL, [...GOOGLE_SSO_ORIGINS]);
+    return actionOk({ captureId });
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Wraps `finishCapture(captureId, "portunus")` — ALWAYS Portunus, never
+ * local: a shared Google identity has no single owning source's
+ * `settings.sessionBackend` to read a backend choice from (unlike
+ * `finishCaptureAction()` above), and Portunus is what this story's own
+ * design already settled on as the storage choice (see that story's
+ * `RECOMMENDED PRIMARY MECHANISM`, step b). Requires Portunus to be
+ * available — surfaces `finishCapture()`'s own error verbatim if it isn't,
+ * never a silent local-file fallback (that would defeat the entire point:
+ * `startCaptureAction()`'s own Google-connection seed lookup only ever
+ * checks Portunus).
+ */
+export async function finishGoogleCaptureAction(captureId: string): Promise<ActionResult<null>> {
+  try {
+    await finishCapture(captureId, "portunus");
+    return actionOk(null);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/** Wraps `cancelCapture(captureId)` for the Google connection flow — byte-identical semantics to `cancelCaptureAction()` above. */
+export async function cancelGoogleCaptureAction(captureId: string): Promise<ActionResult<null>> {
+  try {
+    await cancelCapture(captureId);
+    return actionOk(null);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * Whether a Google connection is currently saved in Portunus — read via
+ * the SAME `readSessionViaPortunus()` call `startCaptureAction()` above
+ * makes when seeding a new capture, so this status always reflects exactly
+ * what that seed lookup would find. Tolerant: "not found" (or Portunus
+ * unavailable) resolves to `{connected: false}`, never an error — this is
+ * a status read for a UI badge, not a capability check that should block
+ * anything.
+ */
+export async function getGoogleConnectionStatusAction(): Promise<ActionResult<{ connected: boolean }>> {
+  try {
+    await readSessionViaPortunus("google", PORTUNUS_SESSION_ACCOUNT);
+    return actionOk({ connected: true });
+  } catch {
+    return actionOk({ connected: false });
+  }
 }

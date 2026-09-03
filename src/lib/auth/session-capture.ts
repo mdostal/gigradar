@@ -66,7 +66,7 @@ import path from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { hasAnyEncryptedFile } from "../config/load.js";
 import { encrypt, getOrCreateKey } from "../security/vault.js";
-import { SOURCE_ORIGINS } from "../sources/origins.js";
+import { GOOGLE_SSO_ORIGINS, SOURCE_ORIGINS } from "../sources/origins.js";
 import { sendDesktopNotification } from "../notify/desktop.js";
 import { getDefaultDataDir } from "../store/path.js";
 import { filterStorageStateToAllowlist, type StorageState } from "./browser-session.js";
@@ -170,8 +170,26 @@ async function safeCloseBrowser(browser: Browser, realChrome: RealChromeHandle):
  * finish time — resolved once, reused, rather than a second lookup pass.
  * Omitted (every existing caller) falls through to finishCapture()'s
  * original SOURCE_ORIGINS[sourceId] behavior, unchanged.
+ *
+ * `seedStorageState` (oauth-session-capture-v2 epic,
+ * google-sso-session-persistence story): optional — a previously-captured
+ * Google-scoped storageState (read from Portunus by the caller) to seed
+ * this FRESH capture's browser context with, so a source offering
+ * "Continue with Google" recognizes the already-authenticated browser
+ * instead of demanding a full password/2FA re-entry. Re-filtered through
+ * `GOOGLE_SSO_ORIGINS` here regardless of what the caller already did —
+ * belt-and-suspenders: this function must never inject a cookie for any
+ * origin outside Google's own, no matter what the caller passes in.
+ * Omitted (every existing caller) is byte-identical to today's behavior —
+ * a bare, unseeded context.
  */
-export async function startCapture(sourceId: string, loginUrl: string, allowedOrigins?: string[]): Promise<{ captureId: string }> {
+export async function startCapture(
+  sourceId: string,
+  loginUrl: string,
+  allowedOrigins?: string[],
+  seedStorageState?: StorageState,
+): Promise<{ captureId: string }> {
+  const scopedSeed = seedStorageState ? filterStorageStateToAllowlist(seedStorageState, [...GOOGLE_SSO_ORIGINS]) : undefined;
   const realChrome = await spawnRealChrome();
 
   let browser: Browser;
@@ -204,7 +222,20 @@ export async function startCapture(sourceId: string, loginUrl: string, allowedOr
     // startCapture() calls. Falls back to `newContext()` when not
     // persistent (today's original behavior, unchanged) or if the
     // persistent profile somehow has no context yet.
-    context = realChrome.persistent ? (browser.contexts()[0] ?? (await browser.newContext())) : await browser.newContext();
+    const existingContext = realChrome.persistent ? browser.contexts()[0] : undefined;
+    if (existingContext) {
+      // A persistent profile's own default context already exists — its
+      // storageState can't be set via a constructor option the way a fresh
+      // context's can, so a seed gets injected via addCookies() instead,
+      // right on this same context, before anything ever navigates.
+      // context.addCookies() only sets cookies (never localStorage/
+      // sessionStorage "origins" entries) — sufficient here since a Google
+      // SSO session is cookie-based, not localStorage-based.
+      context = existingContext;
+      if (scopedSeed) await context.addCookies(scopedSeed.cookies);
+    } else {
+      context = scopedSeed ? await browser.newContext({ storageState: scopedSeed }) : await browser.newContext();
+    }
   } catch (e) {
     await safeCloseBrowser(browser, realChrome);
     throw new Error(

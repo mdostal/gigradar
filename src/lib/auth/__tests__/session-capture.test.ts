@@ -84,6 +84,10 @@ function createFakeContext(page: unknown, storageStateResult: unknown) {
     pages: vi.fn().mockReturnValue([page]),
     storageState: vi.fn().mockResolvedValue(storageStateResult),
     close: vi.fn().mockResolvedValue(undefined),
+    // google-sso-session-persistence story: startCapture()'s seed-injection
+    // path calls this on an EXISTING (persistent-profile) context, since its
+    // storageState can't be set via a constructor option after the fact.
+    addCookies: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -298,6 +302,56 @@ describe("startCapture / finishCapture: happy path", () => {
     await startCapture(SOURCE_ID, LOGIN_URL);
 
     expect(page.goto).toHaveBeenCalledWith(LOGIN_URL);
+  });
+
+  describe("seedStorageState (google-sso-session-persistence story)", () => {
+    const GOOGLE_COOKIE = {
+      name: "SID",
+      value: "google-session-value",
+      domain: "accounts.google.com",
+      path: "/",
+      expires: -1,
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax" as const,
+    };
+    const NON_GOOGLE_COOKIE = { ...GOOGLE_COOKIE, name: "other", domain: "evil.example.com" };
+    const SEED = { cookies: [GOOGLE_COOKIE, NON_GOOGLE_COOKIE], origins: [] };
+
+    it("seeds a FRESH (non-persistent) context via newContext({storageState}), filtered to Google-only origins", async () => {
+      const { browser } = setUpFakeBrowserChain(GOOD_STORAGE_STATE);
+
+      await startCapture(SOURCE_ID, LOGIN_URL, undefined, SEED);
+
+      expect(browser.newContext).toHaveBeenCalledTimes(1);
+      expect(browser.newContext).toHaveBeenCalledWith({ storageState: { cookies: [GOOGLE_COOKIE], origins: [] } });
+    });
+
+    it("injects a seed into an EXISTING persistent-profile context via addCookies(), filtered to Google-only origins -- never newContext()", async () => {
+      const page = createFakePage({});
+      const existingContext = createFakeContext(page, GOOD_STORAGE_STATE);
+      const browser = createFakeBrowser("unused", [existingContext]);
+      spawnRealChromeMock.mockResolvedValue({ ...FAKE_REAL_CHROME_HANDLE, persistent: true });
+      attachToRealChromeMock.mockResolvedValue(browser);
+
+      await startCapture(SOURCE_ID, LOGIN_URL, undefined, SEED);
+
+      expect(browser.newContext).not.toHaveBeenCalled();
+      expect(existingContext.addCookies).toHaveBeenCalledTimes(1);
+      expect(existingContext.addCookies).toHaveBeenCalledWith([GOOGLE_COOKIE]);
+    });
+
+    it("never calls addCookies() when no seed is supplied, even on the persistent-reuse path", async () => {
+      const page = createFakePage({});
+      const existingContext = createFakeContext(page, GOOD_STORAGE_STATE);
+      const browser = createFakeBrowser("unused", [existingContext]);
+      spawnRealChromeMock.mockResolvedValue({ ...FAKE_REAL_CHROME_HANDLE, persistent: true });
+      attachToRealChromeMock.mockResolvedValue(browser);
+
+      await startCapture(SOURCE_ID, LOGIN_URL);
+
+      expect(existingContext.addCookies).not.toHaveBeenCalled();
+    });
   });
 
   it("fires a desktop notification once the browser window is genuinely open (product-review-followups epic)", async () => {

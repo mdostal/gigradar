@@ -188,6 +188,34 @@ export function resolveLoginUrl(sourceId: string, cfg: SourceConfig): string | u
 }
 
 /**
+ * oauth-session-capture-v2 epic, google-sso-session-persistence story. A
+ * Google-only allowlist, DELIBERATELY separate from `SOURCE_ORIGINS` above
+ * (never merged into it, never keyed by a real `Source.id`) -- Google is
+ * not a job source, it's a shared IDENTITY every SSO-gated source's own
+ * "Continue with Google" button redirects through. Capturing a session
+ * scoped to ONLY these two origins is what makes it safe to later inject
+ * into a fresh per-source capture without ever leaking a target source's
+ * own cookies into it, or vice versa.
+ */
+export const GOOGLE_SSO_ORIGINS: readonly string[] = ["accounts.google.com", "google.com"];
+
+/** Where a Google-scoped Capture Login navigates -- Google's own real sign-in entry point, never a target source's login page. */
+export const GOOGLE_SSO_LOGIN_URL = "https://accounts.google.com/";
+
+/**
+ * Every registered source LIVE-CONFIRMED (via that adapter's own
+ * isSignInPage()/isAuthenticatedX() comment, not guessed) to offer
+ * "Continue with Google" on its real login page -- see ateam.ts's
+ * isSignInPage() (confirms "Continue with Google" AND "Continue with
+ * Github") and wellfound.ts's isSignInPage() (confirms "Continue with
+ * Google" alongside an email/password form). `gofractional` is
+ * deliberately NOT listed here -- its own file only defensively EXCLUDES
+ * Google/Clerk SSO from its allowlist, it never confirms Google is one of
+ * its actual sign-in options; listing it would be a guess, not a finding.
+ */
+export const SOURCES_OFFERING_GOOGLE_SSO: readonly string[] = ["ateam", "wellfound"];
+
+/**
  * Same config-driven fallback shape as resolveLoginUrl() above, for the
  * profile-edit URL profile-assist navigates a persistent session to.
  * SOURCE_PROFILE_URLS only covers the 3 hand-written browser-session
