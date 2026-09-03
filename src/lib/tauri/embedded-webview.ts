@@ -48,3 +48,33 @@ export async function navigateEmbeddedWebview(url: string): Promise<void> {
 export async function closeEmbeddedWebview(): Promise<void> {
   await invokeTauri("embedded_webview_close");
 }
+
+/**
+ * embedded-webview-cookie-extraction-macos story. Reads the real session
+ * cookies (including HttpOnly ones) currently held by the embedded
+ * webview -- e.g. after a human completes a real login in it. Byte-
+ * compatible with `browser-session.ts`'s own `StorageState` type; feeds
+ * directly into `filterStorageStateToAllowlist()` with no adapter layer.
+ * macOS-only at the native level (see `src-tauri/src/embedded_webview_cookies.rs`) --
+ * throws a specific "only implemented on macOS" error on other platforms,
+ * same never-silent-failure discipline as every other export here.
+ */
+export interface EmbeddedStorageStateCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires: number;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: string;
+}
+
+export interface EmbeddedStorageState {
+  cookies: EmbeddedStorageStateCookie[];
+  origins: { origin: string; localStorage: Array<{ name: string; value: string }> }[];
+}
+
+export async function readEmbeddedWebviewSession(): Promise<EmbeddedStorageState> {
+  return invokeTauri<EmbeddedStorageState>("embedded_webview_read_session");
+}

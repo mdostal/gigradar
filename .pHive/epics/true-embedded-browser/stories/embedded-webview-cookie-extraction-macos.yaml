@@ -1,7 +1,7 @@
 id: embedded-webview-cookie-extraction-macos
 epic: true-embedded-browser
 title: "Read real session cookies back out of the embedded webview after a human logs in (macOS, native WKWebView cookie store)"
-status: pending
+status: in_progress
 complexity: high
 methodology: classic
 depends_on: [embedded-webview-child-mechanism]
@@ -70,6 +70,67 @@ risks:
   - severity: high
     description: "Even if cookie reading works, WKWebView's cookie store may not include EVERY cookie a full browser session needs (e.g. cookies set via redirects mid-OAuth-flow might not have committed yet at the exact moment read_session() is called)."
     mitigation: "Live-verify against a REAL multi-step OAuth flow (not just a simple single-domain login) as part of this story's own acceptance testing, not just a simple case."
+
+progress_note: |
+  BUILT 2026-09-03 -- the mandatory spike this story requires is DONE
+  and the news is GOOD: the FULL native API chain already exists as
+  real, `header-translator`-generated Rust bindings, already present
+  TRANSITIVELY in this dependency tree (objc2-web-kit 0.3.2,
+  objc2-foundation 0.3.2 -- pulled in by tauri-runtime-wry's own macOS
+  webview backend, confirmed via `cargo tree`/`cargo check`'s own
+  dependency graph, not assumed): WKWebView::configuration() ->
+  WKWebViewConfiguration::websiteDataStore() ->
+  WKWebsiteDataStore::httpCookieStore() ->
+  WKHTTPCookieStore::getAllCookies(block), and every NSHTTPCookie field
+  needed (name/value/domain/path/expiresDate/isSecure/isHTTPOnly/
+  sameSitePolicy) is a real, safe accessor. No hand-written objc FFI
+  needed. Declared objc2/objc2-foundation/objc2-web-kit/block2/tokio as
+  real DIRECT dependencies (target_os = "macos"-scoped in Cargo.toml,
+  never attempted on other platforms) rather than relying on the
+  transitive versions.
+
+  THREE REAL BUGS CAUGHT AND FIXED DURING THIS SAME SPIKE, before ever
+  reaching a clean compile (exactly what "mandatory spike first" is
+  for): (1) an early draft called getAllCookies() from INSIDE a
+  run_on_main_thread() closure and then blocked that SAME closure
+  waiting on its own completion -- a real deadlock, since the main
+  thread can't process its own queued completion block while
+  synchronously blocked. Fixed by making the command `async` and
+  bridging via a `tokio::sync::oneshot` the command awaits (never
+  blocks any thread) instead. (2) Tried to send Tauri's `PlatformWebview`
+  (wraps a raw, `!Send` `*mut c_void`) across a `std::sync::mpsc`
+  channel -- compile error, and also unnecessary: `with_webview()`
+  already dispatches its own closure onto the main thread internally,
+  so the extra manual dispatch was redundant AND unsound. (3)
+  `block2::RcBlock::new()` requires an `Fn` closure (an ObjC block's
+  contract allows repeat invocation even though getAllCookies' own
+  contract promises exactly once) -- a closure that consumes a oneshot
+  Sender via `.send(self)` is only `FnOnce`; fixed via
+  `Arc<Mutex<Option<Sender>>>` + `.take()`, which ALSO closed a real
+  use-after-free risk a bare borrowed `&Mutex` would have had if the
+  async command were ever cancelled before WebKit's completion fired.
+
+  `cargo check`/`cargo build`/`cargo clippy` all pass CLEAN --
+  `src-tauri/src/embedded_webview_cookies.rs` (the real implementation)
+  + a non-macOS stub (lib.rs) that throws a specific "only implemented
+  on macOS" error, per this story's own acceptance criteria. Frontend
+  bridge (`readEmbeddedWebviewSession()`,
+  `src/lib/tauri/embedded-webview.ts`) + a "Read session" button added
+  to the Story 1 spike page, deliberately never logging real cookie
+  VALUES to the visible page (CLAUDE.md's Secret handling discipline --
+  names/domains only).
+
+  STILL GENUINELY UNVERIFIED, exactly per this story's own acceptance
+  criteria: whether `Retained::retain()` on Tauri's raw WKWebView
+  pointer is actually sound at runtime, and whether a real post-login
+  session cookie (especially from a real multi-step Google OAuth
+  redirect chain) actually comes back correctly. This needs a live run
+  against a real embedded webview with a real login completed in it --
+  deferred for the SAME reason Story 1's own live-verification was
+  deferred (the real production gigradar.app + its own background
+  scheduler were actively running on this machine tonight; a competing
+  dev instance risked a real collision) -- not a technical blocker,
+  just not safe to attempt unattended tonight.
 
 references:
   - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md

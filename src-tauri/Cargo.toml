@@ -36,3 +36,19 @@ tauri = { version = "2.11.3", features = ["tray-icon", "unstable"] }
 tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
+# true-embedded-browser epic, embedded-webview-cookie-extraction-macos
+# story: real HttpOnly session-cookie reads via WKHTTPCookieStore --
+# objc2/objc2-foundation/objc2-web-kit are already present TRANSITIVELY
+# (pulled in by tauri-runtime-wry's own macOS webview backend, confirmed
+# via `cargo tree`) but not otherwise usable as direct dependencies
+# without declaring them explicitly; block2 backs WKHTTPCookieStore's own
+# async completion-handler API. macOS-only (see this module's own
+# #[cfg(target_os = "macos")] gate) -- `target_os`-scoped in
+# [target.'cfg(...)'.dependencies] below so these never even attempt to
+# build on Windows/Linux.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSHTTPCookie", "NSArray", "NSString", "NSDate"] }
+objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKHTTPCookieStore"] }
+block2 = "0.6"
+tokio = { version = "1", features = ["sync"] }

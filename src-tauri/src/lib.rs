@@ -22,6 +22,24 @@ use embedded_webview::{
     embedded_webview_show, EmbeddedWebviewHandle,
 };
 
+// true-embedded-browser epic, embedded-webview-cookie-extraction-macos
+// story: real HttpOnly cookie reads via native WKHTTPCookieStore access
+// -- genuinely macOS-only (see that module's own header comment). The
+// command itself is registered on every platform (so the frontend bridge
+// never has to special-case its own invoke() call by OS); non-macOS just
+// throws a specific, actionable error, per that story's own acceptance
+// criteria -- never a silent empty result.
+#[cfg(target_os = "macos")]
+mod embedded_webview_cookies;
+#[cfg(target_os = "macos")]
+use embedded_webview_cookies::embedded_webview_read_session;
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn embedded_webview_read_session() -> Result<serde_json::Value, String> {
+    Err("gigradar embedded-webview: cookie extraction is only implemented on macOS.".to_string())
+}
+
 mod updater;
 use updater::{get_update_channel, get_update_status, install_update, snooze_update, UpdateState};
 
@@ -141,6 +159,7 @@ pub fn run() {
             embedded_webview_hide,
             embedded_webview_navigate,
             embedded_webview_close,
+            embedded_webview_read_session,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

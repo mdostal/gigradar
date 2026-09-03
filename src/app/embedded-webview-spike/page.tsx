@@ -10,7 +10,7 @@
 // and this page can be deleted once they land, unless it turns out useful
 // to keep as a standing debug tool (owner's own call, not assumed here).
 import { useRef, useState } from "react";
-import { closeEmbeddedWebview, hideEmbeddedWebview, showEmbeddedWebview } from "@/lib/tauri/embedded-webview";
+import { closeEmbeddedWebview, hideEmbeddedWebview, readEmbeddedWebviewSession, showEmbeddedWebview } from "@/lib/tauri/embedded-webview";
 import { isTauri } from "@/lib/is-tauri";
 
 export default function EmbeddedWebviewSpikePage() {
@@ -48,6 +48,22 @@ export default function EmbeddedWebviewSpikePage() {
     }
   }
 
+  const [sessionResult, setSessionResult] = useState<string>("");
+  async function handleReadSession() {
+    setSessionResult("reading…");
+    try {
+      const session = await readEmbeddedWebviewSession();
+      // Never log cookie VALUES to a visible page -- names/domains only,
+      // per this app's own standing secret-handling discipline
+      // (CLAUDE.md's Secret handling section).
+      setSessionResult(
+        `${session.cookies.length} cookie(s): ${session.cookies.map((c) => `${c.name}@${c.domain}${c.httpOnly ? " (HttpOnly)" : ""}`).join(", ")}`,
+      );
+    } catch (e) {
+      setSessionResult(`error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   return (
     <main className="mx-auto max-w-4xl p-6">
       <h1 className="font-theme-heading text-2xl font-bold text-theme-text">Embedded webview spike</h1>
@@ -76,7 +92,11 @@ export default function EmbeddedWebviewSpikePage() {
         <button type="button" onClick={handleClose} className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised">
           Close
         </button>
+        <button type="button" onClick={handleReadSession} className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised">
+          Read session (macOS only)
+        </button>
       </div>
+      {sessionResult && <p className="mt-2 font-theme-mono text-xs text-theme-text-dim">{sessionResult}</p>}
 
       <div
         ref={paneRef}
