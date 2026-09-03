@@ -1,7 +1,7 @@
 id: embedded-webview-child-mechanism
 epic: true-embedded-browser
 title: "Rust-side child webview embedded in the main Tauri window, controllable from the Next.js frontend"
-status: pending
+status: in_progress
 complexity: high
 methodology: classic
 depends_on: []
@@ -77,6 +77,37 @@ risks:
   - severity: medium
     description: "This is the first real Tauri IPC command in this codebase -- the dev-vs-packaged-mode guard (electron/browser mode has no Tauri context) could be missed or handled inconsistently by whoever calls these commands next (Stories 3/4)."
     mitigation: "A single, dedicated frontend bridge module (not ad-hoc invoke() calls scattered per caller) that ALL downstream stories import from, with the mode-guard enforced once, centrally."
+
+progress_note: |
+  BUILT 2026-09-03. The real spike this story's first acceptance
+  criterion demands is DONE and confirmed: `Window::add_child()` only
+  compiles when the `tauri` crate is built with the "unstable" Cargo
+  feature -- found by reading the vendored crate source directly
+  (`~/.cargo/registry/.../tauri-2.11.5/src/window/mod.rs`'s own
+  `#[cfg(any(test, all(desktop, feature = "unstable")))]` gate), not
+  assumed from web-search examples. Added `"unstable"` to Cargo.toml's
+  tauri feature list. `src-tauri/src/embedded_webview.rs` (new) --
+  embedded_webview_show/hide/navigate/close, a long-lived reused
+  Webview handle (never recreated per call, per this story's own
+  design_decisions) -- `cargo check` in src-tauri/ passes CLEAN against
+  the real pinned dependency. Frontend bridge
+  (`src/lib/tauri/embedded-webview.ts`) reuses the ALREADY-EXISTING
+  `isTauri()`/dynamic-invoke() pattern (`src/lib/is-tauri.ts`,
+  `update-notifier.tsx`) -- this story's own YAML was WRONG to claim zero
+  prior Tauri IPC usage in this repo; corrected here. A temporary,
+  clearly-labeled spike page (`src/app/embedded-webview-spike/`, not
+  linked from nav) exists for the remaining live-verification step.
+
+  NOT YET DONE: the "real screenshot, packaged/dev Tauri app, real
+  external page rendering inside the window" acceptance criterion.
+  Deliberately NOT attempted this session: the REAL, live, production
+  gigradar.app (with its own real background scheduler) was actively
+  running on this same machine, bound to port 3000, against real data --
+  launching `npx tauri dev` risked a real port/process collision with
+  it. This is a safe, verifiable-later step (a `GIGRADAR_PORT`/isolated
+  `XDG_DATA_HOME` dev run, done while the owner is present or the real
+  app is confirmed idle), not a technical blocker -- the load-bearing
+  compile-verification is already real and done.
 
 references:
   - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md

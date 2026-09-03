@@ -24,7 +24,15 @@ log = "0.4"
 # tray-icon: tauri-real-auto-update story's channel-toggle UI is a native
 # tray menu item, not a Next.js page (see structured-outline.md) -- needs
 # this feature on to use tauri::tray/tauri::menu at all.
-tauri = { version = "2.11.3", features = ["tray-icon"] }
+# unstable: true-embedded-browser epic, embedded-webview-child-mechanism
+# story -- Window::add_child()/WebviewBuilder (a real child webview
+# embedded in the main window) is gated behind this feature flag in the
+# vendored tauri crate itself (confirmed by reading
+# ~/.cargo/registry/.../tauri-2.11.5/src/window/mod.rs directly, not
+# assumed from docs) -- see that story's own design-discussion.md for why
+# this is an accepted, deliberate risk (the API itself may still evolve
+# before Tauri stabilizes it).
+tauri = { version = "2.11.3", features = ["tray-icon", "unstable"] }
 tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
