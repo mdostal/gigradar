@@ -1,10 +1,43 @@
 id: dashboard-overview-page
 epic: dashboard-drafts-data-integrity
 title: "Build the real Dashboard at \"/\": sonar header + customizable glance tiles + today view + compact metrics + links out"
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [sonar-sweep-header-widget, relocate-giglist-to-all-gigs]
+
+progress_note: |
+  Shipped, epic complete. Real, considered choices made against genuinely
+  open questions rather than guessed:
+
+  - Tile customization: own localStorage key (dashboard-overview-prefs.ts),
+    mirroring dashboard-prefs.ts's exact read-on-mount/write-on-change
+    pattern -- NOT Config/saveConfig, since this is a per-viewer UI
+    preference, not durable cross-device settings (same distinction
+    Config.uiTheme vs. dashboard-prefs.ts already draws in this codebase).
+  - "Today" component: picked the checkmark-or-top-5 combined form (both,
+    not either/or as the story flagged as a possible simplification) --
+    isWithinSeenWindow(firstSeen, "24h", now) reused verbatim from
+    dashboard-filter.ts (the SAME "today" definition /today itself uses),
+    not a second, potentially-inconsistent one.
+  - Compact metrics teaser: exported BarChart from metrics/metrics-client.tsx
+    and computeDiscoveredByDay()/computeRunRate() from metrics-calc.ts
+    reused as-is -- zero forked aggregation logic, per this story's own
+    explicit constraint.
+  - Per-group Dashboard ([group]/page.tsx): /today and /metrics have no
+    group-scoped equivalent yet (checked -- genuinely don't exist), so
+    those two links stay unscoped; only "Go to All Gigs" is group-aware
+    (gigsHref prop -> /${groupId}/gigs). Flagged here, not silently
+    assumed away.
+
+  Live-verified against an isolated dev server (temp XDG_DATA_HOME, port
+  3100) via curl + HTML inspection -- all sections (glance tiles, Today,
+  metrics teaser, sonar header) render with no errors. Did not open a
+  real browser window, same reasoning as the sonar-sweep-header-widget
+  story. npm test (1417 passing, +6 new for the tile prefs) + npm run
+  typecheck both clean.
+
+  All 5 stories of this epic are now complete.
 
 description: |
   Owner's own words (verbatim, this is the spec — not a paraphrase):
