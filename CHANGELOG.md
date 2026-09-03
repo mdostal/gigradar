@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-09-03
+
+### Fixed
+
+- `/config` took up to ~2.8s to respond (vs. 0.01-0.3s for every other
+  route) — a sequential loop spawned one real `portunus` subprocess per
+  configured source. Now runs concurrently.
+
 ## [0.31.0] - 2026-09-03
 
 ### Added
