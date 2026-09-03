@@ -26,6 +26,18 @@ use tauri::{LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder, Webv
 #[derive(Default)]
 pub struct EmbeddedWebviewHandle(Mutex<Option<Webview>>);
 
+impl EmbeddedWebviewHandle {
+    /// A cheap clone of the live `Webview` handle, for callers OUTSIDE
+    /// this module that need it directly (e.g.
+    /// embedded_webview_cookies.rs's own read_session command) --
+    /// `Webview` itself is a thin, `Clone`-able reference type (Tauri's
+    /// own convention, same as `AppHandle`), never the actual native
+    /// webview resource. `None` when show() hasn't been called yet.
+    pub fn webview_handle(&self) -> Option<Webview> {
+        self.0.lock().ok()?.clone()
+    }
+}
+
 const CHILD_LABEL: &str = "embedded-browser";
 const MAIN_WINDOW_LABEL: &str = "main";
 
