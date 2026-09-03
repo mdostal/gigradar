@@ -8,11 +8,13 @@ import { readRawConfig } from "@/lib/config/save";
 import { listDrafts, listGigs, listInterviewPrep } from "@/lib/store";
 import type { StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
-import { computeStatusStrip, type StatusStripView } from "@/lib/status/status-strip";
+import { computeLastScanIso, computeStatusStrip, type StatusStripView } from "@/lib/status/status-strip";
 
 export interface DashboardData {
   gigs: StoredGig[];
   status: StatusStripView;
+  /** Same MAX(gig.lastSeen) computeStatusStrip() already formats into status.lastScanLabel — surfaced separately here so the sonar-sweep header can tick it live client-side rather than render a frozen string (sonar-sweep-header-widget story). */
+  lastScanIso: string | null;
   engagementProfiles: { id: string; label: string }[];
   draftedGigKeys: Set<string>;
   prepByGigKey: Record<string, PrepPacketContent>;
@@ -83,9 +85,10 @@ export function loadDashboardData(groupId?: string): DashboardData {
   const gigs = listGigs(groupId ? { groupId } : {});
   const rawConfig = readRawConfig();
   const status = computeStatusStrip(gigs, rawConfig);
+  const lastScanIso = computeLastScanIso(gigs);
   const engagementProfiles = extractEngagementProfileSummaries(rawConfig, groupId);
   const draftedGigKeys = new Set(listDrafts().map((d) => d.gigKey));
   const prepByGigKey: Record<string, PrepPacketContent> = {};
   for (const p of listInterviewPrep()) prepByGigKey[p.gigKey] = p.content;
-  return { gigs, status, engagementProfiles, draftedGigKeys, prepByGigKey };
+  return { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey };
 }

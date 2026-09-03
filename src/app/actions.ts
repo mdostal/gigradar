@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getGig, getInterviewPrep, saveInterviewPrep, setStatus } from "@/lib/store";
 import type { GigStatus } from "@/lib/store";
 import { actionErr, actionOk, type ActionResult } from "@/lib/actions/result";
-import { stageApplication } from "@/lib/apply/runner";
+import { runRadar, stageApplication } from "@/lib/apply/runner";
 import { generatePrepPacket, type PrepPacketContent } from "@/lib/apply/prep";
 import { loadConfig } from "@/lib/config/load";
 import { resolveLlmCredential } from "@/lib/config/env-store";
@@ -245,7 +245,10 @@ export async function reconcileGoFractionalStatusesAction(): Promise<ActionResul
 
   try {
     const result = await reconcileGoFractionalStatuses(source);
-    if (result.updated.length > 0) revalidatePath("/");
+    if (result.updated.length > 0) {
+      revalidatePath("/");
+      revalidatePath("/gigs");
+    }
     return actionOk(result);
   } catch (e) {
     return actionErr(e);
@@ -273,8 +276,53 @@ export async function reconcileWellfoundStatusesAction(): Promise<ActionResult<R
 
   try {
     const result = await reconcileWellfoundStatuses(source);
-    if (result.updated.length > 0) revalidatePath("/");
+    if (result.updated.length > 0) {
+      revalidatePath("/");
+      revalidatePath("/gigs");
+    }
     return actionOk(result);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sweep now (dashboard-drafts-data-integrity epic, sonar-sweep-header-widget
+// story). The manual, on-demand counterpart to the scheduler's own scheduled
+// runRadarFn() cycle (src/scheduler/index.ts) -- runs a real scan across
+// every configured source right now. Same loadConfig()+runRadar() call
+// shape as the MCP server's run_scan tool (src/mcp/server.ts's
+// handleRunScan(), "the ONE [MCP] tool allowed to call loadConfig()" per
+// that file's own comment -- scoped to MCP's 5 tools, not a repo-wide
+// restriction; this app's Server Actions already call loadConfig()
+// elsewhere, e.g. reconcileGoFractionalStatusesAction() above). Returns
+// counts/error strings ONLY, matching run_scan's own safe return contract
+// -- never a resolved secret, per CLAUDE.md's Secret handling section.
+// ---------------------------------------------------------------------------
+
+export interface SweepResult {
+  passedCount: number;
+  newCount: number;
+  errors: { sourceId: string; message: string }[];
+}
+
+export async function sweepNowAction(): Promise<ActionResult<SweepResult>> {
+  let config;
+  try {
+    config = loadConfig();
+  } catch (e) {
+    return actionErr(e);
+  }
+
+  try {
+    const { passed, errors, newlyInsertedKeys } = await runRadar(config, {}, { credential: resolveLlmCredential() });
+    revalidatePath("/");
+    revalidatePath("/gigs");
+    return actionOk({
+      passedCount: passed.length,
+      newCount: newlyInsertedKeys.length,
+      errors: errors.map((e) => ({ sourceId: e.sourceId, message: e.message })),
+    });
   } catch (e) {
     return actionErr(e);
   }
