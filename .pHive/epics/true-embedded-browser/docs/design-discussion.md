@@ -137,6 +137,16 @@ byte-identical.
   only. Automated scanning/scraping/drafting keeps using Playwright
   exactly as today -- this epic does not attempt to make gigradar's
   scraping engine run inside a WKWebView.
+  **Concrete consequence, found late during this epic's own execution
+  (embedded-guided-apply-assist story) and worth stating explicitly so
+  it isn't missed again**: profile-assist's own "guided"/"full-auto"
+  modes let the LLM click/type via `clickSessionAtAction()`/
+  `typeIntoSessionAction()` -- a Playwright-screenshot-and-coordinate
+  mechanism, i.e. exactly the automation this bullet says stays on
+  Playwright. Those two modes therefore CANNOT move to the embedded
+  webview, full stop -- only "manual" mode (pure human mouse/keyboard,
+  no LLM clicking) is even a candidate. This is a real, permanent
+  exception to "no separate OS window, ever," not a temporary gap.
 - **True cross-app window docking** (already explicitly out of scope per
   Epic 3's own design-discussion, unchanged) -- the embedded webview lives
   INSIDE the gigradar app window itself, which is the actual fix; tracking
