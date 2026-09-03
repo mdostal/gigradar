@@ -51,7 +51,8 @@ function Tile({ value, label, hint }: { value: number | string; label: string; h
 }
 
 /** A minimal, hand-rolled SVG bar chart -- no charting library dependency for one chart type on one page (see metrics-page.yaml's own acceptance criteria discussion). Bars read from real DayBucket[] data; a zero-count day still renders a visible baseline tick, never silently skipped. */
-function BarChart({ buckets, color }: { buckets: DayBucket[]; color: string }) {
+/** Exported (dashboard-drafts-data-integrity epic, dashboard-overview-page story) so the Dashboard's compact metrics teaser can render the same small bar chart at a smaller size, instead of forking a second implementation. */
+export function BarChart({ buckets, color }: { buckets: DayBucket[]; color: string }) {
   const max = Math.max(1, ...buckets.map((b) => b.count));
   const width = 640;
   const height = 120;
