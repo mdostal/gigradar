@@ -1,7 +1,7 @@
 id: ccst-3-chat-and-config-ui
 epic: chat-copilot-self-tuning
 title: "/chat UI (resumed history, auto-applied banner) + /config auto-approve toggle"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [ccst-2-chat-loop-memory-and-config-edit-tool]

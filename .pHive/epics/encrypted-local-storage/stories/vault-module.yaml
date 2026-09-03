@@ -1,7 +1,7 @@
 id: vault-module
 epic: encrypted-local-storage
 title: "Vault module: AES-256-GCM encrypt/decrypt, key storage, key-loss detection"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

@@ -1,7 +1,7 @@
 id: autofire-scheduler-wiring
 epic: graduated-auto-fire-trust
 title: "Wire evaluateAutoFire() into the scheduler cycle, right after autoDraftOnScan stages a draft"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: [autofire-decision-engine] # repointed off gofractional-submit-adapter (paused, see that story's pause_note) -- "no adapter registered" is a safe, correct terminal state

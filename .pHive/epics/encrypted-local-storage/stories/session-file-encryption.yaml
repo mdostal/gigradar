@@ -1,7 +1,7 @@
 id: session-file-encryption
 epic: encrypted-local-storage
 title: "Encrypt captured session-state files at rest (session-capture.ts write, browser-session.ts migrate-on-read)"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [vault-module]

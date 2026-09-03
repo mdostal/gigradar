@@ -1,7 +1,7 @@
 id: mga-3-group-aware-matching-pipeline
 epic: multi-group-architecture
 title: matchGroups() + rewire runRadar() to evaluate every gig against every in-scope group
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [mga-1-group-types-and-config-migration, mga-2-gig-store-group-columns]

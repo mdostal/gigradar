@@ -1,7 +1,7 @@
 id: clean-and-guard-profile-data-quality
 epic: deep-dive-audit-and-testing-framework
 title: "Clean the owner's live role-title-in-skills contamination + add cross-field sanity check on config save"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

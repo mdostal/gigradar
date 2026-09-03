@@ -1,7 +1,7 @@
 id: ai-sdk-tool-loops
 epic: llm-provider-harness
 title: "Vercel AI SDK for the two multi-turn tool-loop call sites, adopting native toolApproval"
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [ai-sdk-single-shot]

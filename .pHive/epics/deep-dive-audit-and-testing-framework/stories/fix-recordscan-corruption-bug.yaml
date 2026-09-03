@@ -1,7 +1,7 @@
 id: fix-recordscan-corruption-bug
 epic: deep-dive-audit-and-testing-framework
 title: "Fix recordScan()/flagUnavailableForSource() mass-archiving genuinely-applied gigs on partial-batch backfill writes"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

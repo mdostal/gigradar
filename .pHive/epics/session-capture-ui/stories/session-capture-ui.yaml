@@ -1,7 +1,7 @@
 id: session-capture-ui
 epic: session-capture-ui
 title: Session capture UI — capture-login flow in the config editor
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [origin-registry-extraction, session-capture-mechanism]

@@ -1,7 +1,7 @@
 id: claude-md-and-setup-docs
 epic: agent-integration
 title: "CLAUDE.md + copy-pasteable MCP client config for Claude Desktop/Code"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: [mcp-server-core]

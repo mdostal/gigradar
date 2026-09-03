@@ -1,7 +1,7 @@
 id: issues-dashboard-ui
 epic: notifications-epic
 title: "Nav badge (open-issue count/severity) + /issues page with Resolve"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [issues-real-call-sites]

@@ -1,7 +1,7 @@
 id: autofire-config-ui
 epic: graduated-auto-fire-trust
 title: "/config Auto-fire section: global kill switch, per-pair rule editor, live trust-status display"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [autofire-scheduler-wiring]

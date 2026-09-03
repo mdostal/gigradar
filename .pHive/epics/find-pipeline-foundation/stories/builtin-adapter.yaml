@@ -1,7 +1,7 @@
 id: builtin-adapter
 epic: find-pipeline-foundation
 title: Real BuiltIn Source adapter (generalization proof)
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: [braintrust-adapter-runner-integration]

@@ -1,7 +1,7 @@
 id: dashboard-results-view
 epic: dashboard-config-ui
 title: Dashboard results view — gigs list, filter/sort/search, status actions
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [app-foundation]

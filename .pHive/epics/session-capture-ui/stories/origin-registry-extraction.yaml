@@ -1,7 +1,7 @@
 id: origin-registry-extraction
 epic: session-capture-ui
 title: Extract shared per-source origin allowlist registry
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

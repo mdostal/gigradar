@@ -1,7 +1,7 @@
 id: claude-code-harness-tool-loops
 epic: llm-provider-harness
 title: "claude-code-harness for the multi-turn tool-loop call sites"
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [claude-code-harness-single-shot, ai-sdk-tool-loops]

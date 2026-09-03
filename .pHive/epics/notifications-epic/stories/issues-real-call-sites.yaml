@@ -1,7 +1,7 @@
 id: issues-real-call-sites
 epic: notifications-epic
 title: "Wire raiseIssue() into runCycle's source errors + auto-draft/auto-fire failures"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: [issues-data-model]

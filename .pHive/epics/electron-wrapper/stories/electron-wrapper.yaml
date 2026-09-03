@@ -1,7 +1,7 @@
 id: electron-wrapper
 epic: electron-wrapper
 title: "electron/main.ts: spawn next start, poll for readiness, open a native window"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

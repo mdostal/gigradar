@@ -1,7 +1,7 @@
 id: env-encryption
 epic: encrypted-local-storage
 title: "Encrypt .env at rest (dotenv.parse()-based, migrate-on-read)"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [vault-module]

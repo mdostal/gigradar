@@ -1,7 +1,7 @@
 id: braintrust-adapter-runner-integration
 epic: find-pipeline-foundation
 title: Real Braintrust Source adapter, wired through persistence end-to-end
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [persistence-layer-sqlite]

@@ -1,7 +1,7 @@
 id: verification-challenge-detection
 epic: verification-copilot
 title: "Shared verification-challenge detection wired into withBrowserSession(), routed to a distinct issue"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

@@ -1,7 +1,7 @@
 id: ssrf-hardening
 epic: security-hardening
 title: "SSRF hardening in fetchAndExtractLink() — IP validation, timeout, size cap"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

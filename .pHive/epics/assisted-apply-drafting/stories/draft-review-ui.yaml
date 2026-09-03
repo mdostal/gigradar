@@ -1,7 +1,7 @@
 id: draft-review-ui
 epic: assisted-apply-drafting
 title: "Draft review/approve UI + submitted-to-applied status sync"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [draft-generation-foundation]

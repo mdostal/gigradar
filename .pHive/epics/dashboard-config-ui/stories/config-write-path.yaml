@@ -1,7 +1,7 @@
 id: config-write-path
 epic: dashboard-config-ui
 title: Secret-safe config write path (src/lib/config/save.ts)
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [app-foundation]
