@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-09-03
+
+### Added
+
+- **Real Dashboard at `/`**: an animated sonar-sweep header (rotating
+  scan icon, live Sources/Profile/Last-sweep readout, a real "Sweep now"
+  button that triggers an actual scan), a small set of customizable
+  glance tiles, a "Today" teaser, and a compact metrics teaser — each
+  section links deeper into its own full page rather than duplicating it.
+  The giglist/table that used to live at `/` moved to a new **All Gigs**
+  (`/gigs`) page.
+- **Bulk "Mark as applied elsewhere"** on both the giglist and Drafts —
+  a manual reconciliation fallback for sources gigradar can't yet sync
+  application status from directly.
+- Draft review cards now show rate/TC, tier, and source for the gig
+  behind each draft, instead of just a title and company.
+
+### Fixed
+
+- The scheduler's headed-Chrome fallback (`real-chrome.ts`) could target
+  the wrong window via Chrome's own ambiguous `window 1` addressing —
+  now targets the exact spawned process by pid.
+- Unattended scans (scheduled or button-triggered) never fall back to a
+  headed browser window on a headless auth failure anymore — they raise
+  an Issue instead, matching this project's own "the app should work
+  behind the scenes" design goal.
+- Several Server Actions only called `revalidatePath("/")` after gigs
+  moved off that route to `/gigs`, leaving the giglist showing stale data
+  after a sync/status change.
+
 ## [0.30.0] - 2026-09-03
 
 ### Added
