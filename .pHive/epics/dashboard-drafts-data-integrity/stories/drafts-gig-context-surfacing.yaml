@@ -1,0 +1,66 @@
+id: drafts-gig-context-surfacing
+epic: dashboard-drafts-data-integrity
+title: "Surface rate/tier/source on each draft card so reviewing near-duplicate drafts isn't a blind guess"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Confirmed, reproduced live this session: `src/app/drafts/page.tsx` calls
+  `getGig(draft.gigKey)` — which returns the FULL `Gig` record, including
+  `rate: {min, max, unit}` and `tier` — but only forwards `{title, company,
+  url}` into `DraftListItem` (`src/app/drafts/drafts-filter.ts`). Verified
+  via full read of both `drafts/page.tsx` and `drafts-client.tsx`: zero
+  references to rate/compensation/tier anywhere in the drafts UI. Live-
+  reproduced against the owner's real gigs.db: 120+ near-duplicate
+  "Software Engineer II/III" postings from one source (builtin, the
+  JPMorgan-Chase-style listings the owner flagged), most missing rate data,
+  several with inconsistent tier. Approving/rejecting drafts against
+  employers this similar is currently a blind guess — the card shows only a
+  title and a company name.
+
+  Fix is plumbing, not new data collection — every field needed already
+  exists on `Gig`:
+  1. Add `rate` (Gig's existing `{min, max, unit}` shape), `tier`, and
+     `sourceId` to `DraftListItem` (`drafts-filter.ts`).
+  2. Populate them in `drafts/page.tsx`'s existing `getGig()` call — the
+     record is already fetched in full, this is just forwarding more of it.
+  3. Render them on `DraftCard` (`drafts-client.tsx`) in the card header,
+     ALONGSIDE title/company — not hidden behind the "approved" status the
+     way the gig URL currently is (draft-review-ui's own established
+     pattern of hiding info behind approval state is correct for the copy-
+     ready draft/URL, but wrong for review-time context the user needs
+     BEFORE deciding approve/reject). A tier badge (reuse the tier-color
+     convention already used elsewhere, e.g. dashboard-client.tsx's tier
+     chips) and a formatted rate string ("$180-220/hr" / "$155k-185k/yr" /
+     "Not stated" when rate is absent) are both real, visible, always-on
+     card elements.
+  4. `sourceId` renders as a small label too (e.g. "GOFRACTIONAL") — this
+     was ALSO flagged live: knowing which of ~13 sources a duplicate-
+     looking draft came from is itself useful triage context. Reuse
+     whatever source-label convention already exists (check `origins.ts`'s
+     `KNOWN_SOURCES` for a display label before inventing new copy).
+
+acceptance_criteria:
+  - "Every draft card shows company, a formatted rate/TC string (or an explicit \"Not stated\"), a tier badge, and a source label — visible at all times, not gated behind approval status."
+  - "No new data fetching or computation — rate/tier/sourceId are forwarded from the Gig record drafts/page.tsx already reads via getGig(), never recomputed."
+  - "Live-verified against the owner's real drafts: the 6 near-duplicate JPMorgan-Chase-style drafts the owner flagged are now visually distinguishable by rate/tier/source at a glance, without opening each one."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/drafts/page.tsx
+      purpose: "Already calls getGig() with the full record — the exact place to forward rate/tier/sourceId instead of discarding them."
+    - path: src/app/drafts/drafts-filter.ts
+      purpose: "DraftListItem interface — add rate/tier/sourceId fields here."
+    - path: src/app/drafts/drafts-client.tsx
+      purpose: "DraftCard component — render the new fields in the card header."
+    - path: src/lib/types.ts
+      purpose: "Gig.rate / Gig.tier shape (source of truth for the fields being threaded through) — line ~427 `rate?: { min?: number; max?: number; unit: \"hour\" | \"month\" | \"year\" }`."
+    - path: src/lib/sources/origins.ts
+      purpose: "KNOWN_SOURCES — check for an existing source display-label convention before inventing new copy for the source badge."
+
+references:
+  - path: .pHive/epics/dashboard-drafts-data-integrity/docs/design-discussion.md
+    relevant_excerpt: "§3 — confirmed, reproduced bug: rate/tier silently dropped between getGig() and DraftListItem."

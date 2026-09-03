@@ -1,0 +1,14 @@
+name: dashboard-drafts-data-integrity
+title: "Recover the real Signal Deck dashboard (sonar header + glance overview) and fix two data-integrity gaps in Drafts/status tracking"
+methodology: classic
+stories:
+  - id: sonar-sweep-header-widget
+    depends_on: []
+  - id: relocate-giglist-to-all-gigs
+    depends_on: []
+  - id: dashboard-overview-page
+    depends_on: [sonar-sweep-header-widget, relocate-giglist-to-all-gigs]
+  - id: drafts-gig-context-surfacing
+    depends_on: []
+  - id: mark-applied-elsewhere-bulk-action
+    depends_on: []

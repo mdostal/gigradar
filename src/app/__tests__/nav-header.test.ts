@@ -18,9 +18,10 @@ import { NAV_LINKS } from "../nav-header";
 // `/metrics` by the `metrics-page` story (same epic) -- the founding
 // "weekly throughput overview" success criterion, sits right after Today.
 describe("NAV_LINKS", () => {
-  it("has working links to /, /today, /metrics, /drafts, /profile-assist, /chat, /issues, /setup, and /config, in that order", () => {
+  it("has working links to /, /gigs, /today, /metrics, /drafts, /profile-assist, /chat, /issues, /setup, and /config, in that order", () => {
     expect(NAV_LINKS).toEqual([
       { href: "/", label: "Dashboard" },
+      { href: "/gigs", label: "All Gigs" },
       { href: "/today", label: "Today" },
       { href: "/metrics", label: "Metrics" },
       { href: "/drafts", label: "Drafts" },

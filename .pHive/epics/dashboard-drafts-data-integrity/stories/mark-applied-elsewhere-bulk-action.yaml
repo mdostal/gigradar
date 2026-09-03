@@ -1,0 +1,63 @@
+id: mark-applied-elsewhere-bulk-action
+epic: dashboard-drafts-data-integrity
+title: "Manual \"Mark as applied elsewhere\" bulk action — the escape hatch for the 11 sources with no status reconciliation"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Confirmed via code search: only `src/lib/sources/wellfound-status.ts` and
+  `src/lib/sources/gofractional-status.ts` implement `reconcile*Statuses()`.
+  `ateam.ts`, `braintrust.ts`, `fractionalfinders.ts`, `fractionaljobs.ts`,
+  `fractionus.ts`, `linkedin.ts`, `gmail-digest-source.ts`,
+  `custom-llm-source.ts`, `custom-source-recipe.ts` have none — an
+  application made directly on any of those platforms never syncs back,
+  which the owner correctly suspected is why some "new"/unapplied-looking
+  gigs (including likely some of the 120+ near-duplicate builtin-source
+  postings) are actually already applied to. Building real per-source
+  reconciliation for all 9 remaining sources is its own multi-story epic
+  (each source's DOM/auth shape needs its own research spike — see this
+  epic's design-discussion.md §4); this story instead closes the immediate
+  gap with a manual, always-available fallback.
+
+  `updateGigStatusAction()` (`src/app/actions.ts`, already used by
+  `dashboard-client.tsx`'s per-row status `<select>`) already sets a single
+  gig's status to `"applied"` one at a time. This story:
+  1. Adds MULTI-select to the giglist (`/gigs`, per the relocate story —
+     coordinate route naming, don't block on it if sequenced first) and to
+     the drafts view — checkboxes per row, a visible "N selected" count.
+  2. A bulk action button: "Mark as applied elsewhere" — calls
+     `updateGigStatusAction()` per selected key (or a new, real bulk
+     variant if a loop of the existing action is meaningfully slower/less
+     safe — check the existing action's transaction shape before deciding
+     which). Sets `status: "applied"`.
+  3. Since `Gig.outcomeReason` already exists (status-reconciliation-
+     outcomes epic: rejected/withdrawn/expired_unapplied) and is
+     specifically for tracking WHY a status changed, check whether an
+     "applied outside gigradar" signal belongs there too (e.g. a new
+     `outcomeReason` value, or `outcomeNote` free text) so future metrics
+     (the "AI-replaced vs. positioning problem" question already flagged
+     in project memory) can distinguish gigradar-driven applications from
+     manually-marked ones. Don't silently conflate the two.
+
+acceptance_criteria:
+  - "Multi-select + a \"Mark as applied elsewhere\" bulk action exists on both the giglist and the drafts view, live-verified against the real app."
+  - "Bulk-marking N gigs applied is a single clear user action, not N individual dropdown changes."
+  - "Gigs marked this way are distinguishable later (via outcomeReason/outcomeNote or an equivalent field) from gigs gigradar itself tracked through to submission — not silently identical in the data model."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/actions.ts
+      purpose: "updateGigStatusAction() — the existing single-gig status-set Server Action this story extends to bulk use."
+    - path: src/app/dashboard-client.tsx
+      purpose: "Existing per-row status <select> (~line 1117) and updateGigStatusAction() call site (~line 477) — the pattern this story adds multi-select on top of."
+    - path: src/lib/store/gigs.ts
+      purpose: "Line ~393 explicit status-set function + outcomeReason field — check before adding a new reason value vs. reusing an existing one."
+    - path: src/lib/sources/wellfound-status.ts
+      purpose: "Real reconciliation precedent (2 of 13 sources) — read for how outcomeReason is set on a real status-sync path, so this story's manual path stays consistent with it."
+
+references:
+  - path: .pHive/epics/dashboard-drafts-data-integrity/docs/design-discussion.md
+    relevant_excerpt: "§4 — status reconciliation covers 2 of ~13 sources; this story is the immediate manual fallback, full per-source reconciliation is a flagged follow-on epic."

@@ -1,0 +1,72 @@
+id: relocate-giglist-to-all-gigs
+epic: dashboard-drafts-data-integrity
+title: "Move today's giglist/table off \"/\" onto a real \"All Gigs\" route, freeing \"/\" for the real Dashboard"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+progress_note: |
+  Shipped. Giglist relocated verbatim to /gigs and /[group]/gigs; "/" and
+  "/[group]" now redirect there as the interim state until
+  dashboard-overview-page replaces them with the real Dashboard.
+  nav-header.tsx gained an "All Gigs" entry (and its own test updated); the
+  interview workspace's "← Dashboard" back-link now reads "← All Gigs" and
+  points at /gigs. npm test + npm run typecheck both clean.
+
+description: |
+  Owner's own words on the current `/` route: "the table view IS NOT THE
+  DASHBOARD -- that is our giglist or all gigs -- dashboard is a mix of
+  metrics, charts, the last scan, etc." Today `/` renders `dashboard-data.ts`
+  + `dashboard-client.tsx` (the filter/table UI) under an `<h1>Dashboard</h1>`
+  heading — genuinely just the giglist, mislabeled. This story is a
+  relocate, not a rewrite: move the EXISTING giglist/filter/table component
+  to a new route (e.g. `/gigs`), keep its behavior byte-identical, and
+  update the heading to something honest ("All Gigs"). `dashboard-client.tsx`
+  itself does not need to change — only its route and the page-level
+  wrapper.
+
+  Two real call sites to update, not just one: `src/app/page.tsx` (the
+  unscoped "All groups" view, `multi-group-architecture` epic) AND
+  `src/app/[group]/page.tsx` (the per-group equivalent, Slice 3 of that
+  same epic) — both currently share `loadDashboardData()` and render the
+  same giglist UI; both need the same relocation, mirrored per-group (e.g.
+  `/[group]/gigs`).
+
+  Update `src/app/nav-header.tsx`'s nav entries to reflect the new IA:
+  Dashboard (new `/`, built by the dependent `dashboard-overview-page`
+  story) sits first, "All Gigs" (this story's new route) follows it,
+  ahead of Drafts/Metrics/etc.
+
+acceptance_criteria:
+  - "The giglist/filter/table UI (today's dashboard-client.tsx behavior) is reachable at a new, clearly-labeled route (e.g. /gigs) with identical filtering/sorting/status behavior to today — zero functional regression, verified against real data."
+  - "The per-group equivalent (/[group]/) gets the same relocation, mirrored (e.g. /[group]/gigs)."
+  - "nav-header.tsx reflects the new route and label (\"All Gigs\", not \"Dashboard\")."
+  - "The bare `/` route no longer renders the giglist table — it is left free for the dashboard-overview-page story to build on (this story does not need to build anything at `/` itself, just vacate it; a redirect or minimal placeholder is acceptable if execution order lands before that story)."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/page.tsx
+      purpose: "Current unscoped giglist route — the one being relocated."
+    - path: src/app/[group]/page.tsx
+      purpose: "Per-group giglist route — needs the same relocation, mirrored."
+    - path: src/app/dashboard-client.tsx
+      purpose: "The 1139-line filter/table component itself — moves/is-imported-from-elsewhere unchanged, not rewritten."
+    - path: src/app/dashboard-data.ts
+      purpose: "loadDashboardData() — the data-assembly function both routes already share; keep shared, just called from the new route file(s)."
+    - path: src/app/nav-header.tsx
+      purpose: "Nav entries to update for the new route + label."
+
+design_decisions:
+  - decision: This is a pure relocate — dashboard-client.tsx's internals are explicitly out of scope for this story.
+    rationale: "Keeps this story low-risk and fast to land ahead of dashboard-overview-page, which depends on `/` being free. Any real improvements to the giglist UI itself belong in a separate, future story."
+
+risks:
+  - severity: low
+    description: "Any hardcoded internal links to \"/\" elsewhere in the app (e.g. a gig-detail page's \"back to dashboard\" link) may now point at the wrong place."
+    mitigation: "Grep for href=\"/\" and router.push(\"/\") across src/app before finishing this story; update any that meant \"back to the giglist\" specifically."
+
+references:
+  - path: .pHive/epics/dashboard-drafts-data-integrity/docs/design-discussion.md
+    relevant_excerpt: "§2 resolved IA — three distinct surfaces (Dashboard / All Gigs / Metrics), owner's own verbatim direction."
