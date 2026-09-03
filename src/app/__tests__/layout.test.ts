@@ -12,6 +12,7 @@ vi.mock("next/font/google", () => ({
   Oxanium: () => ({ variable: "mock-oxanium" }),
   IBM_Plex_Sans: () => ({ variable: "mock-ibm-plex-sans" }),
   IBM_Plex_Mono: () => ({ variable: "mock-ibm-plex-mono" }),
+  Public_Sans: () => ({ variable: "mock-public-sans" }),
 }));
 
 import { extractGroupSummaries } from "../layout";

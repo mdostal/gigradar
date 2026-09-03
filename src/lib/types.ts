@@ -350,7 +350,7 @@ export interface Config {
    * migration needed for existing installs" pattern as appIcon above. Not
    * a secret, cosmetic only.
    */
-  uiTheme?: "radar" | "editorial" | "terminal" | "signal-deck";
+  uiTheme?: "radar" | "editorial" | "terminal" | "signal-deck" | "signal-desk";
   /**
    * llm-provider-harness epic (supersedes llm-credential-modes' original
    * "oauth-token" kind -- live-tested and found non-functional). "api-key"

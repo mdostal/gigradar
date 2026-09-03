@@ -6,6 +6,7 @@
 @import "./themes/editorial.css";
 @import "./themes/terminal.css";
 @import "./themes/signal-deck.css";
+@import "./themes/signal-desk.css";
 
 /*
  * Brand tokens (icon-picker / styling-pass follow-up) -- the exact palette
