@@ -2,6 +2,41 @@ id: embedded-guided-apply-assist
 epic: true-embedded-browser
 title: "Guided profile-assist/apply sessions use the embedded webview instead of a positioned OS-level window"
 status: pending
+
+progress_note: |
+  REAL, DISQUALIFYING FINDING (2026-09-03) -- this story's own scope as
+  originally written is NOT achievable. `clickSessionAtAction()`/
+  `typeIntoSessionAction()` (src/app/profile-assist/actions.ts) --
+  the mechanism "guided"/"full-auto" mode's own LLM-driven clicking uses
+  -- work by taking a RATIO-scaled coordinate against a Playwright
+  SCREENSHOT and returning a fresh screenshot back. That is Playwright/CDP
+  automation, full stop. This epic's own design-discussion.md §2 already
+  established, as a hard finding, that CDP does not exist for Tauri's
+  embedded webview on macOS (WKWebView has no CDP support at all --
+  only Windows' WebView2 does). This means clickSessionAtAction()/
+  typeIntoSessionAction() CANNOT be retargeted at the embedded webview,
+  under any circumstances, on this platform -- not a workaround-able gap,
+  a hard architectural wall this epic's own earlier research already
+  identified but this story's own original scope failed to apply to
+  itself.
+
+  CORRECTED SCOPE: only "manual" mode (pure human mouse/keyboard, no LLM
+  clicking involved at all) could genuinely move to the embedded webview.
+  "guided" and "full-auto" modes MUST keep using a real,
+  Playwright-controlled OS window (today's positionChromeWindowSideBySide()
+  approach), unchanged, because the LLM's own ability to click/type
+  through them fundamentally requires CDP.
+
+  This INVERTS this story's own original open question (which asked
+  "should manual mode ALSO move to embedded, given guided/full-auto
+  already would") -- the real answer is the reverse: manual is the ONLY
+  candidate, and guided/full-auto structurally cannot follow. Given this
+  also means the epic's own "no separate OS window, ever" framing does
+  NOT fully hold for guided/full-auto assist sessions specifically (a
+  real, permanent exception, not a temporary gap), this needs the
+  owner's own explicit direction before any implementation -- deliberately
+  NOT built this session. See the overnight-status artifact from this
+  session for the live version of this decision.
 complexity: medium
 methodology: classic
 depends_on: [embedded-webview-child-mechanism]
