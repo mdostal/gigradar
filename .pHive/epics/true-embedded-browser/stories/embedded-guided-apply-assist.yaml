@@ -1,0 +1,70 @@
+id: embedded-guided-apply-assist
+epic: true-embedded-browser
+title: "Guided profile-assist/apply sessions use the embedded webview instead of a positioned OS-level window"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [embedded-webview-child-mechanism]
+
+description: |
+  Replaces assist-session.ts's `positionChromeWindowSideBySide()` real
+  OS-window flow (guided/full-auto profile-assist) with the embedded
+  webview from Story 1. Unlike Story 3 (Capture Login), this does NOT
+  depend on Story 2's cookie extraction -- profile-assist already reads a
+  storageState from disk/Portunus BEFORE opening the browser (see
+  assist-session.ts's existing `readSessionViaPortunus()`/
+  `readStorageStateFile()` calls); this story only needs to SHOW that
+  already-authenticated session inside the embedded pane, not extract a
+  NEW session back out of it afterward.
+
+  1. `startAssistSession()` (assist-session.ts): for the packaged Tauri
+     app, seed the embedded webview with the already-loaded
+     `scopedStorageState` (via Tauri's own cookie-SETTING path, if one
+     exists at this Tauri version -- research as part of this story,
+     since design-discussion.md §2's research only confirmed reading is
+     unsolved, not setting; a setter may already exist even though a
+     getter (Story 2) doesn't) and navigate to `profileUrl`, instead of
+     spawning real-chrome + positioning it.
+  2. The embedded live-view pane (`embedded-view-interactive` story,
+     already shipped) and the guided/full-auto assist flow (clickSessionAtAction/
+     typeIntoSessionAction) now operate against the SAME embedded webview
+     directly, rather than screenshotting/relaying a separate OS window's
+     content -- a real simplification, not just a relocation, once this
+     lands (verify whether the screenshot-relay mechanism can be retired
+     entirely or still serves a distinct purpose -- don't assume, check).
+  3. "manual" mode: per assist-session.ts's own existing comment ("a real
+     browser window is open on your desktop, use it directly"), this
+     mode's whole point is a real, directly-usable window -- CONFIRM with
+     the owner whether manual mode should ALSO move to the embedded pane
+     (consistent with "no separate OS window, ever") or deliberately stay
+     as a real OS window (since manual mode users may want a normal,
+     full-featured Chrome window, not a constrained embedded view) --
+     flagged as a real open question for the owner in this epic's own
+     status artifact, not assumed either way.
+
+acceptance_criteria:
+  - "In the packaged Tauri app, starting a guided or full-auto profile-assist session shows the already-authenticated profile page INSIDE the embedded pane -- no separate OS-level positioned window ever appears for these two modes."
+  - "The existing clickSessionAtAction/typeIntoSessionAction guided-interaction mechanism (or its embedded-webview equivalent) still works end-to-end against the embedded surface -- live-verified, not just unit-tested."
+  - "Manual mode's real behavior (embedded vs. real OS window) is resolved via the owner's own explicit answer to this story's own open question, not silently assumed."
+  - "electron/browser runtime mode keeps today's existing positioned-OS-window flow unchanged."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/assist-session.ts
+      purpose: "startAssistSession() -- the exact function this story modifies for the packaged-Tauri-app case."
+    - path: src/app/profile-assist/profile-assist-client.tsx
+      purpose: "the embedded live-view pane / guided-mode UI this story's embedded webview becomes the real backing surface for."
+
+design_decisions:
+  - decision: This story does not depend on Story 2 (cookie extraction) -- only on Story 1 (the child-webview mechanism itself).
+    rationale: "Profile-assist already has a valid storageState BEFORE opening the browser (loaded from disk/Portunus) -- it only needs to SHOW that session, never extract a new one afterward. Sequencing it independent of Story 2 lets it ship without waiting on that story's real, unresolved risk."
+
+risks:
+  - severity: medium
+    description: "Whether Tauri (at this repo's pinned version) exposes any cookie-SETTING API for a webview is genuinely unconfirmed -- Story 1/2's research only checked cookie READING."
+    mitigation: "This story's own step 1 explicitly scopes real research into cookie-setting as its own first step, not an assumption carried over from Story 2's (different) finding."
+
+references:
+  - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
+    relevant_excerpt: "§3 resolved architecture."

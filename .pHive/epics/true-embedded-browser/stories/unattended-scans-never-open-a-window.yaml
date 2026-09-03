@@ -1,0 +1,73 @@
+id: unattended-scans-never-open-a-window
+epic: true-embedded-browser
+title: "A headed browser NEVER opens for an unattended path -- raise an Issue instead, always"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  The "behind the scenes for most of it" half of the owner's own framing
+  (design-discussion.md §1). Today, `withBrowserSession()`'s headed
+  fallback tier (browser-session.ts's `acquireViaStorageStateSnapshot(...,
+  headless:false, ...)` and `acquireViaPersistentRealChrome()`) CAN fire
+  from a genuinely unattended caller (a scheduled scan, `runRadar()`, auto-
+  draft, status reconciliation) with no human present -- real-chrome.ts's
+  pid-targeted minimize (PR #117, shipped) now correctly hides that window
+  rather than risking touching an unrelated one, but a real OS-level
+  window still exists and briefly renders before minimizing succeeds (or
+  fails, best-effort).
+
+  This story closes that gap for good: an unattended caller must NEVER
+  open a headed window at all, full stop -- not minimized, not
+  positioned, not briefly flashed. When headless fails for an unattended
+  path, raise a real Issue (notify/issues.ts, the existing mechanism)
+  telling the owner to re-run Capture Login (via the new embedded flow,
+  once Story 3 ships -- or today's existing flow, if this story lands
+  first) rather than falling through to a headed browser at all.
+
+  1. `withBrowserSession()`/`BrowserSessionOptions` gains a real, required
+     `attended: boolean` flag (or equivalent) that EVERY call site must
+     set explicitly -- no defaulting, so a new call site can't silently
+     inherit the wrong behavior. Scheduled/unattended callers (scan
+     runner, auto-draft, auto-fire, status reconciliation) pass `false`;
+     Capture Login / guided assist / anything with a human already
+     present passes `true`.
+  2. When `attended: false` and the headless tier fails
+     (SessionAuthError/VerificationChallengeError), the headed fallback
+     tiers are SKIPPED entirely -- raise an Issue with a specific,
+     actionable message ("re-run Capture Login for {sourceId}") instead,
+     and throw/return the same error shape callers already handle today
+     (no new failure mode for existing error-handling call sites to learn).
+  3. When `attended: true`, today's exact behavior is preserved
+     byte-identical -- this story changes nothing about the
+     human-present path.
+
+acceptance_criteria:
+  - "Given attended:false and headless auth fails, withBrowserSession() raises a real Issue naming the source and never opens a headed browser at all -- proven by asserting the headed-launch code path is never reached, not just that a window 'closes quickly'."
+  - "Given attended:true (unchanged from today), the existing three-tier headless-then-headed-then-persistent-real-chrome chain still works exactly as before -- zero regression, proven by the existing test suite continuing to pass unmodified for every attended:true case."
+  - "Every real call site in this codebase (runner.ts's scan path, auto-draft, auto-fire, status reconciliation, Capture Login, profile-assist) is updated to pass an explicit attended value -- grep-verified, none left defaulting or unset."
+  - "The raised Issue's message is specific and actionable (names the source, says what to do), never a generic failure string."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/browser-session.ts
+      purpose: "withBrowserSession()/BrowserSessionOptions -- where the new attended flag is added and enforced."
+    - path: src/lib/notify/issues.ts
+      purpose: "raiseIssue() -- the existing mechanism this story's new unattended-headless-failure case routes through, reused not reinvented."
+    - path: src/lib/apply/runner.ts
+      purpose: "runRadar() and every other scan-time caller of withBrowserSession() -- needs attended:false wired through explicitly."
+
+design_decisions:
+  - decision: attended is a REQUIRED parameter (no default), forcing every call site to make an explicit, reviewable choice.
+    rationale: "A silently-defaulted flag is exactly how this class of bug (a headed window firing somewhere nobody expected) tends to recur -- see PR #117's own root cause. Requiring every caller to state its intent explicitly makes a wrong choice visible in review, not just in production."
+
+risks:
+  - severity: low
+    description: "Some existing call site might currently rely on the headed fallback succeeding unattended (e.g. a scheduled scan that's been silently depending on headed-mode working) -- disabling that path could turn a previously-recovering failure into a hard stop."
+    mitigation: "This is the INTENDED behavior change (an Issue, not a silent recovery, is the correct owner-notification path per this repo's own established 'flag it, don't fail permanently, but don't silently auto-recover unattended either' discipline) -- not a risk to design around, just to document clearly in the PR."
+
+references:
+  - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
+    relevant_excerpt: "§3 resolved architecture -- \"unattended/automated work... stays headless, no window, ever.\""

@@ -1,0 +1,76 @@
+id: embedded-webview-cookie-extraction-macos
+epic: true-embedded-browser
+title: "Read real session cookies back out of the embedded webview after a human logs in (macOS, native WKWebView cookie store)"
+status: pending
+complexity: high
+methodology: classic
+depends_on: [embedded-webview-child-mechanism]
+
+description: |
+  THE highest-risk, most novel piece of this epic -- see design-discussion.md
+  §2 finding 3. `document.cookie` injection does NOT see HttpOnly/secure
+  cookies (real auth session cookies almost always are both) -- Tauri has
+  no first-class cookie-manager API yet (open feature requests:
+  tauri-apps/tauri#11330, #5823; tauri-apps/wry#518). The real path is
+  Tauri's `PlatformWebview` handle -- on macOS this is a raw `WKWebView`
+  pointer, and the actual cookie read goes through WKWebView's own
+  `WKHTTPCookieStore` (`webView.configuration.websiteDataStore.httpCookieStore`),
+  which requires native Objective-C/Swift interop from Rust (the `objc2`/
+  `objc2-web-kit` crates, or hand-written objc FFI) -- genuine systems
+  code, not a documented Tauri call.
+
+  MANDATORY FIRST STEP: a real, standalone spike proving cookies can
+  ACTUALLY be read this way against a real WKWebView instance, BEFORE any
+  of the rest of this story is attempted. If the spike fails or proves
+  impractical (e.g. WKHTTPCookieStore's async callback shape doesn't
+  bridge cleanly to Tauri's command/Promise model, or App Sandbox
+  entitlements block it), STOP and report back -- do not force a fragile
+  workaround into production code. This is exactly the kind of finding
+  that needs the owner's own decision on whether to keep going, per this
+  epic's own risk posture.
+
+  1. Native bridge (`src-tauri/src/embedded_webview_cookies.rs`, macOS-only
+     via `#[cfg(target_os = "macos")]`, mirroring real-chrome.ts's own
+     platform-gating convention): read all cookies for the embedded
+     webview's current origin (or the whole cookie store, filtered) via
+     WKHTTPCookieStore, convert each `NSHTTPCookie` into the SAME
+     `StorageStateCookie` shape `browser-session.ts` already defines
+     (name/value/domain/path/expires/httpOnly/secure/sameSite) -- exact
+     field-for-field compatibility, not a new shape.
+  2. A new Tauri command, `embedded_webview_read_session(): Promise<StorageState>`,
+     wired to the frontend bridge from Story 1.
+  3. Non-macOS: throws a clear "not supported on this platform" error --
+     no attempt at a Windows/Linux equivalent (see design-discussion.md
+     §4, explicitly out of scope).
+
+acceptance_criteria:
+  - "A real, documented spike confirms WKHTTPCookieStore cookies are readable from Rust via the embedded webview's PlatformWebview handle, BEFORE the rest of this story is built -- if it fails, this story stops and reports back rather than forcing a workaround."
+  - "Given a human completes a real login in the embedded webview (e.g. a real Google or GoFractional login, live-verified), embedded_webview_read_session() returns a StorageState whose cookies[] includes the real, resulting HttpOnly session cookie(s) -- not just non-HttpOnly ones document.cookie could already see."
+  - "The returned StorageState's shape is byte-compatible with browser-session.ts's own StorageState/StorageStateCookie types -- feeds directly into filterStorageStateToAllowlist() with no adapter/conversion layer needed downstream."
+  - "On non-macOS, the command throws a clear, specific 'not supported on this platform' error, never a silent empty result."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/browser-session.ts
+      purpose: "StorageState/StorageStateCookie type definitions this story's output must exactly match, and filterStorageStateToAllowlist() -- the existing, unchanged safety-critical scoping this story's output feeds into."
+    - path: src/lib/auth/real-chrome.ts
+      purpose: "the `#[cfg(target_os = ...)]` / `process.platform !== \"darwin\"` platform-gating convention this story's own macOS-only code should mirror."
+
+design_decisions:
+  - decision: A mandatory, dedicated spike BEFORE any production code, with explicit permission to stop and report back if it fails.
+    rationale: "This is genuinely unproven -- no first-class Tauri API, no confirmed prior art found in research. Forcing a fragile native-interop workaround into a security-sensitive code path (real session cookies) is worse than a clean 'this needs the owner's own call' stop."
+  - decision: Output shape is byte-identical to the EXISTING StorageState type, never a new one.
+    rationale: "Lets every downstream consumer (filterStorageStateToAllowlist(), writeSessionViaPortunus(), withBrowserSession()) work completely unchanged -- this story's whole job is producing a drop-in-compatible session snapshot, not inventing a parallel session model."
+
+risks:
+  - severity: critical
+    description: "Native WKWebView cookie-store access from Rust may simply not be practically achievable within reasonable effort (sandboxing, async-bridging complexity, undocumented behavior) -- this is a real, not hypothetical, risk given zero confirmed prior art was found."
+    mitigation: "The mandatory spike-first requirement in this story's own acceptance criteria. A failed spike is a valid, expected outcome to report, not a story failure to hide or route around."
+  - severity: high
+    description: "Even if cookie reading works, WKWebView's cookie store may not include EVERY cookie a full browser session needs (e.g. cookies set via redirects mid-OAuth-flow might not have committed yet at the exact moment read_session() is called)."
+    mitigation: "Live-verify against a REAL multi-step OAuth flow (not just a simple single-domain login) as part of this story's own acceptance testing, not just a simple case."
+
+references:
+  - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
+    relevant_excerpt: "§2 finding 3, §3 resolved architecture (the handoff mechanism)."

@@ -142,6 +142,24 @@ export interface BrowserSessionOptions {
    * never inspect or return page content; it returns only a boolean.
    */
   isAuthenticated: (page: Page) => Promise<boolean>;
+  /**
+   * true-embedded-browser epic, unattended-scans-never-open-a-window
+   * story: REQUIRED, no default -- every call site must state explicitly
+   * whether a human is genuinely present and a headed browser window is
+   * an acceptable outcome. `false` (every scan/reconciliation call site
+   * today: runner.ts's adapters, status reconciliation) means the headed
+   * (tier 2) and persistent-real-chrome (tier 3) fallbacks are NEVER
+   * attempted -- a headless auth failure re-throws immediately, full
+   * stop, no OS-level window ever opens. `true` is reserved for a future
+   * caller with a human genuinely present and expecting a browser window
+   * (none exists in this codebase yet — Capture Login/profile-assist use
+   * their own separate real-chrome mechanism, not this function).
+   * Required (not optional/defaulted) so a new call site can't silently
+   * inherit the wrong behavior — see PR #117's own root cause (a
+   * silently-wrong assumption about which window automation should
+   * touch) for exactly the class of bug this guards against recurring.
+   */
+  attended: boolean;
 }
 
 /**
@@ -612,7 +630,7 @@ async function acquireViaPersistentRealChrome<T>(
  * missing/unreadable/malformed — see readStorageStateFile().
  */
 export async function withBrowserSession<T>(options: BrowserSessionOptions, run: (page: Page) => Promise<T>): Promise<T> {
-  const { sourceId, storageStatePathSetting, sessionBackend, allowedOrigins, url } = options;
+  const { sourceId, storageStatePathSetting, sessionBackend, allowedOrigins, url, attended } = options;
 
   if (allowedOrigins.length === 0) {
     throw new Error(
@@ -646,6 +664,16 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
     return await acquireViaStorageStateSnapshot(options, scopedStorageState, run, /* headless */ true, /* minimizeAfterAuth */ false);
   } catch (e) {
     if (!isSessionOrChallengeError(e)) throw e; // an unrelated failure (e.g. from run() itself) -- never retried
+    // true-embedded-browser epic, unattended-scans-never-open-a-window
+    // story: attended:false means NO headed browser may ever open for
+    // this call, full stop -- re-throw the headless failure immediately
+    // rather than falling through to tier 2/3's real, visible windows.
+    // The re-thrown error is the SAME VerificationChallengeError/
+    // SessionAuthError tier 1 already produced -- runner.ts/scheduler's
+    // EXISTING error-routing (instanceof VerificationChallengeError ->
+    // "Needs human verification" issue; anything else -> "Source fetch
+    // failed" issue) already handles both correctly, unchanged.
+    if (!attended) throw e;
     // Headless failing isn't itself surfaced further -- tier 2 (headed) is
     // always at least as diagnostic, and is what a human capturing a fresh
     // session actually saw, so its own error is what propagates below.

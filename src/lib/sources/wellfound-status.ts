@@ -159,6 +159,13 @@ async function fetchApplicationsPage(url: string, sessionStatePath: string | und
       allowedOrigins: [...ALLOWED_ORIGINS],
       url,
       isAuthenticated: isAuthenticatedWellfound,
+      // true-embedded-browser epic: false even though this CAN be
+      // triggered by a real button click (SyncStatusButton) -- a human
+      // clicking "Sync" expects a background data refresh, not a surprise
+      // headed browser window. See withBrowserSession()'s own attended
+      // doc comment and design-discussion.md's own framing (status
+      // reconciliation is unattended-style regardless of trigger source).
+      attended: false,
     },
     (page) => scrapeApplicationStatuses(page),
   );

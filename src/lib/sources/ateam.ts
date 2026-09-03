@@ -303,6 +303,10 @@ export const ateamSource: Source = {
         allowedOrigins: [...ALLOWED_ORIGINS],
         url: MISSION_CONTROL_URL,
         isAuthenticated: isAuthenticatedATeam,
+        // true-embedded-browser epic: this is an unattended scan -- a
+        // headed browser must never open here, see withBrowserSession()'s
+        // own attended doc comment.
+        attended: false,
       },
       async (page) => scrapeListings(page),
     );

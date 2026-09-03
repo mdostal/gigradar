@@ -1,0 +1,83 @@
+id: embedded-webview-child-mechanism
+epic: true-embedded-browser
+title: "Rust-side child webview embedded in the main Tauri window, controllable from the Next.js frontend"
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Foundational story -- no cookie extraction, no automation handoff, just:
+  can a real, arbitrary URL render inside the gigradar app's own window
+  (not a separate OS window), positioned/sized/shown/hidden/navigated
+  under the frontend's control.
+
+  Real research findings this story builds on (see
+  .pHive/epics/true-embedded-browser/docs/design-discussion.md §2):
+  `Window::add_child()` + `WebviewBuilder` (Rust, tauri crate 2.11.3,
+  already this repo's pinned version) is the real mechanism -- still an
+  UNSTABLE Cargo feature as of Tauri v2's current docs/issue tracker
+  (tauri-apps/tauri#10079, #8280), functional but not API-frozen. This
+  story's own first step is a REAL spike proving the exact API shape
+  compiles and renders against THIS repo's pinned Tauri version, before
+  committing to the full command surface below -- do not assume the
+  web-research examples are byte-accurate against 2.11.3 without checking.
+
+  1. `src-tauri/src/embedded_webview.rs` (new): Rust commands exposed via
+     `#[tauri::command]` --
+     `embedded_webview_show(url: String, x: f64, y: f64, width: f64, height: f64)`,
+     `embedded_webview_hide()`, `embedded_webview_navigate(url: String)`,
+     `embedded_webview_close()`. Creates the child webview lazily on first
+     `show()`, reuses it across calls (never tears down and recreates per
+     call -- matches this repo's own real-chrome.ts persistent-profile
+     precedent: a long-lived surface, not spun up fresh每次).
+  2. Frontend bridge: a thin TypeScript wrapper (`src/lib/tauri/embedded-webview.ts`
+     or similar) calling these commands via `@tauri-apps/api`'s `invoke()`
+     -- this repo's Next.js frontend currently has ZERO Tauri IPC usage
+     (electron/browser modes never needed it); this is the first real
+     Tauri-command call site in the whole app, so get the
+     dev-vs-packaged-mode guard right (electron/browser mode: these calls
+     must no-op or throw a clear "embedded webview only available in the
+     packaged Tauri app" error, never silently pretend to work -- see
+     docs/ARCHITECTURE.md's "Two runtime modes" section this adds a real
+     third mode's own real capability gate to).
+  3. Positioning: the embedded webview must sit within the gigradar app's
+     own window bounds (a real panel/region of the UI, e.g. a dedicated
+     `/embedded-session` route's layout reserving screen space for it) --
+     coordinates come from the frontend's own layout measurement (e.g. a
+     ref'd `<div>`'s `getBoundingClientRect()`), not a hardcoded guess.
+
+acceptance_criteria:
+  - "A real spike proves Window::add_child()/WebviewBuilder compiles and renders a real URL inside the main window against this repo's pinned Tauri 2.11.3, before the full command surface is built on top of it -- documented (not assumed) in this story's own PR description."
+  - "embedded_webview_show(url, x, y, width, height) renders that URL inside the app's own window -- live-verified (a real screenshot of the packaged/dev Tauri app showing a real external page, e.g. https://example.com, INSIDE the gigradar window, no separate OS window ever appearing)."
+  - "The embedded webview persists/reuses across multiple show()/hide() calls -- never torn down and recreated each time (matches real-chrome.ts's own persistent-profile precedent)."
+  - "In electron/browser runtime mode (no Tauri context available), calling the frontend bridge throws a clear, specific 'embedded webview only available in the packaged Tauri app' error -- never a silent no-op, never a confusing raw IPC failure."
+  - "Positioning/sizing is computed from real frontend layout measurement, not hardcoded pixel guesses -- resizing the app window and re-showing the embedded view lands it in the right place."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src-tauri/src/main.rs
+      purpose: "existing Tauri app entry point -- where the new embedded_webview module gets registered (commands + any app-level state)."
+    - path: src-tauri/tauri.conf.json
+      purpose: "app.windows[] is currently empty (window creation is dynamic, Rust-side) -- confirm how the MAIN window this child webview attaches to actually gets created before writing add_child() code against it."
+    - path: docs/ARCHITECTURE.md
+      purpose: "\"Two runtime modes\" section -- this story adds Tauri's first real IPC-command usage, a third mode's own real new capability, needs documenting there."
+
+design_decisions:
+  - decision: A real compile-and-render spike BEFORE the full command surface, not after.
+    rationale: "add_child()/WebviewBuilder is explicitly unstable and evolving -- committing to a full API design against web-search examples that may not match this repo's exact pinned 2.11.3 version would risk building on a guess. Confirm first."
+  - decision: The embedded webview is long-lived/reused, never recreated per show() call.
+    rationale: "Mirrors real-chrome.ts's own persistent-profile precedent (project memory gigradar-real-chrome-persistent-profile.md) -- a fresh webview per call would also mean re-navigating/re-authenticating state was already established, defeating the point for anything requiring session continuity across an interactive flow."
+
+risks:
+  - severity: high
+    description: "add_child()/WebviewBuilder is an unstable Cargo feature -- the exact API shape may not match what web research found, or may change on a future Tauri version bump this repo takes."
+    mitigation: "This story's own first acceptance criterion is a real spike confirming the API against this repo's actual pinned version before building further. Pin the exact Tauri version this was verified against in code comments."
+  - severity: medium
+    description: "This is the first real Tauri IPC command in this codebase -- the dev-vs-packaged-mode guard (electron/browser mode has no Tauri context) could be missed or handled inconsistently by whoever calls these commands next (Stories 3/4)."
+    mitigation: "A single, dedicated frontend bridge module (not ad-hoc invoke() calls scattered per caller) that ALL downstream stories import from, with the mode-guard enforced once, centrally."
+
+references:
+  - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
+    relevant_excerpt: "§2 research findings, §3 resolved architecture."
