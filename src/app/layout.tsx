@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { IBM_Plex_Mono, IBM_Plex_Sans, Oxanium } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans, Oxanium, Public_Sans } from "next/font/google";
 import "./globals.css";
 import { resolveAppIcon } from "@/lib/app-icons";
 import { readRawConfig } from "@/lib/config/save";
@@ -26,6 +26,17 @@ import { UpdateNotifier } from "./update-notifier";
 const signalDeckHeadingFont = Oxanium({ subsets: ["latin"], weight: ["600", "700"], variable: "--font-signal-deck-heading" });
 const signalDeckBodyFont = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-signal-deck-body" });
 const signalDeckMonoFont = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-signal-deck-mono" });
+
+/**
+ * gigradar-command-center epic, signal-desk-theme story. Signal Desk's own
+ * real typeface (Public Sans for both heading and body -- the verified
+ * concept never used a separate display face; see signal-desk.css's own
+ * --font-heading/--font-body both pointing at this one variable) plus its
+ * IBM Plex Mono numerals, same self-hosted-not-CDN reasoning as Signal
+ * Deck's fonts above.
+ */
+const signalDeskBodyFont = Public_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-signal-desk-body" });
+const signalDeskMonoFont = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-signal-desk-mono" });
 
 /**
  * Dynamic (not a static `export const metadata`) so the favicon reflects
@@ -83,7 +94,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html
       lang="en"
       data-theme={theme}
-      className={`${signalDeckHeadingFont.variable} ${signalDeckBodyFont.variable} ${signalDeckMonoFont.variable}`}
+      className={`${signalDeckHeadingFont.variable} ${signalDeckBodyFont.variable} ${signalDeckMonoFont.variable} ${signalDeskBodyFont.variable} ${signalDeskMonoFont.variable}`}
     >
       <body className="theme-body min-h-screen antialiased">
         <NavHeader issuesBadge={issuesBadgeInfo(openIssues)} iconSrc={icon.path} groups={groups} />

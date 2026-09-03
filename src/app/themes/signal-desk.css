@@ -1,0 +1,75 @@
+/*
+ * gigradar-command-center epic, signal-desk-theme story. Signal Desk, the
+ * calm-ops counterpart to Signal Deck's mission-control look -- a 5th
+ * additive Config.uiTheme option, ui-overhaul-via-ui-squads's own verified
+ * "Concept B" design. Token values are pulled directly from that verified
+ * concept's own CSS, mapped onto this theme system's established token
+ * names (see radar.css/editorial.css for the pattern this file follows).
+ * Light-first (matches the concept's own deliberate `color-scheme:light`
+ * commitment, same as editorial -- the opposite of radar/signal-deck's
+ * dark-first), with a dark variant added here for parity with every other
+ * theme file, per that same established pattern.
+ *
+ * The concept's own two surface tones (--surface/--surface-sunken) map
+ * onto surface-bg/surface-bg-raised even though "sunken" and "raised"
+ * aren't literal synonyms -- gigradar's two-tone system just needs a
+ * primary and a secondary/differentiated panel tone, and those are the
+ * only two the concept defines.
+ *
+ * Tier and status colors are not redefined here -- those are
+ * theme-invariant, defined once in globals.css root.
+ */
+[data-theme="signal-desk"] {
+  --page-bg: #f5f6f8;
+  --surface-bg: #ffffff;
+  --surface-bg-raised: #eef0f3;
+  --surface-border: #dfe3e8;
+  --surface-border-strong: #c7cdd6;
+  --text-primary: #161a20;
+  --text-secondary: #565f6b;
+  --text-faint: #8993a1;
+  --accent: #2f5266;
+  --accent-ink: #ffffff;
+  --accent-dim: #e6edf1;
+
+  /*
+   * var(--font-signal-desk-*) come from next/font/google in layout.tsx --
+   * self-hosted, bundled at build time, never a runtime request to
+   * Google's CDN. The concept uses ONE family (Public Sans) for both
+   * headings and body -- no separate display face -- so both tokens point
+   * at the same variable.
+   */
+  --font-heading: var(--font-signal-desk-body), ui-sans-serif, sans-serif;
+  --font-body: var(--font-signal-desk-body), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-signal-desk-mono), ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="signal-desk"]:not([data-theme-mode="light"]) {
+    --page-bg: #10141a;
+    --surface-bg: #171c24;
+    --surface-bg-raised: #10141a;
+    --surface-border: #262e3a;
+    --surface-border-strong: #333e4d;
+    --text-primary: #e7ebf0;
+    --text-secondary: #a3adba;
+    --text-faint: #6b7684;
+    --accent: #8fc2dc;
+    --accent-ink: #0c1218;
+    --accent-dim: #1c2c34;
+  }
+}
+
+[data-theme="signal-desk"][data-theme-mode="dark"] {
+  --page-bg: #10141a;
+  --surface-bg: #171c24;
+  --surface-bg-raised: #10141a;
+  --surface-border: #262e3a;
+  --surface-border-strong: #333e4d;
+  --text-primary: #e7ebf0;
+  --text-secondary: #a3adba;
+  --text-faint: #6b7684;
+  --accent: #8fc2dc;
+  --accent-ink: #0c1218;
+  --accent-dim: #1c2c34;
+}

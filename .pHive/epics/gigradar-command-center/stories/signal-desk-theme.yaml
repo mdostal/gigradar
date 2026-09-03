@@ -1,7 +1,7 @@
 id: signal-desk-theme
 epic: gigradar-command-center
 title: "Signal Desk (calm ops) as a 5th selectable Config.uiTheme option"
-status: pending
+status: complete
 complexity: small
 methodology: classic
 depends_on: [signal-deck-main-dashboard]

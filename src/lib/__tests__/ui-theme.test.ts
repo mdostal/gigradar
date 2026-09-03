@@ -12,6 +12,7 @@ describe("resolveUiTheme()", () => {
     expect(resolveUiTheme("terminal")).toBe("terminal");
     expect(resolveUiTheme("radar")).toBe("radar");
     expect(resolveUiTheme("signal-deck")).toBe("signal-deck");
+    expect(resolveUiTheme("signal-desk")).toBe("signal-desk");
   });
 
   it("falls back to the default for an unknown value", () => {
