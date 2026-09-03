@@ -36,6 +36,9 @@ export default function DraftsPage() {
         gigTitle: gig.title,
         gigCompany: gig.company,
         gigUrl: gig.url,
+        gigRate: gig.rate,
+        gigTier: gig.tier,
+        gigSourceId: gig.sourceId,
       },
     ];
   });

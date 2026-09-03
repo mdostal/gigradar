@@ -1,10 +1,20 @@
 id: drafts-gig-context-surfacing
 epic: dashboard-drafts-data-integrity
 title: "Surface rate/tier/source on each draft card so reviewing near-duplicate drafts isn't a blind guess"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Shipped. Pure plumbing, no new computation: rate/tier/sourceId forwarded
+  from getGig()'s already-fetched full record through DraftListItem to
+  DraftCard, rendered always-on (not gated behind approval). Reused
+  existing conventions rather than inventing new ones: formatRate() and
+  TIER_BADGE_STYLE/TIER_BADGE_FALLBACK_STYLE (both already exported from
+  dashboard-client.tsx) and a KNOWN_SOURCES-backed source-label lookup
+  (same registry status-strip.ts already reads from). npm test + npm run
+  typecheck both clean.
 
 description: |
   Confirmed, reproduced live this session: `src/app/drafts/page.tsx` calls
