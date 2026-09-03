@@ -170,6 +170,10 @@ export const customLlmSource: Source = {
           allowedOrigins,
           url,
           isAuthenticated: async () => true,
+          // true-embedded-browser epic: this is an unattended scan -- a
+          // headed browser must never open here, see withBrowserSession()'s
+          // own attended doc comment.
+          attended: false,
         },
         (page) => extractViaRecipeOrDerive(page, cfg, hint, credential),
       );

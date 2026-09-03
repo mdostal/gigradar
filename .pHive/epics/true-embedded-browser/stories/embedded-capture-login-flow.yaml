@@ -1,0 +1,66 @@
+id: embedded-capture-login-flow
+epic: true-embedded-browser
+title: "Capture Login runs through the embedded webview instead of a separate OS-level real-Chrome window"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [embedded-webview-cookie-extraction-macos]
+
+description: |
+  Replaces session-capture.ts's real-chrome-spawned OS window (for every
+  source with `auth: "browser-session"`, plus the new Google-SSO capture
+  flow from google-sso-session-persistence) with the embedded webview from
+  Stories 1-2, for the packaged Tauri app specifically (electron/browser
+  runtime modes keep today's real-chrome-window behavior unchanged -- see
+  design-discussion.md's own mode-guard requirement in Story 1).
+
+  1. New capture entry point mirroring startCapture()/finishCapture()/
+     cancelCapture()'s exact lifecycle shape (session-capture.ts), but
+     backed by the embedded webview: `embedded_webview_show(loginUrl, ...)`
+     to open it (INSIDE the app, no OS window), then on the human's
+     explicit "I'm done" click, `embedded_webview_read_session()` (Story
+     2) -> `filterStorageStateToAllowlist()` (unchanged) -> the SAME
+     local-vault/Portunus persistence finishCapture() already uses.
+  2. UI: config-client.tsx's CaptureLoginControl component (reused, not
+     reinvented -- same component google-sso-session-persistence's own
+     "Google connection" section already reuses) now renders the embedded
+     pane inline where the OS-window flow used to just show a "browser
+     window opened" waiting message.
+  3. NO POLLING, NO RETRY against the embedded webview while a human might
+     be using it -- mirrors session-capture.ts's own existing, correct
+     discipline (see project memory
+     feedback_fire_and_forget_scripts_against_live_chrome.md for exactly
+     the failure mode this must never repeat). The embedded view "just
+     sits there" until the explicit done/cancel signal.
+  4. Runtime-mode fallback: in electron/browser mode (no Tauri context),
+     this new entry point is simply UNAVAILABLE -- the existing
+     startCaptureAction()/real-chrome-window flow remains the only path
+     there, unchanged. Never a broken half-implementation in modes that
+     can't support it.
+
+acceptance_criteria:
+  - "In the packaged Tauri app, clicking 'Capture login' for a browser-session source opens the login page INSIDE the embedded pane -- no separate OS-level Chrome window ever appears."
+  - "A real, live-verified capture (a real login, e.g. GoFractional or the Google-SSO flow) completes: the resulting session persists via the EXISTING local-vault/Portunus backend, identically to today's real-chrome-window flow's own output."
+  - "While the embedded pane is open and a human may be interacting with it, this module makes ZERO automated calls into it (no polling, no re-navigation, no retry) until the human's own explicit done/cancel action."
+  - "In electron/browser runtime mode, the UI falls back to today's existing real-chrome-window Capture Login flow, unchanged -- never a broken or half-available embedded option."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: "startCapture()/finishCapture()/cancelCapture()'s exact lifecycle shape this story's embedded equivalent mirrors -- and the discipline (no polling) it must preserve."
+    - path: src/app/config/config-client.tsx
+      purpose: "CaptureLoginControl -- the component this story extends to render the embedded pane inline, reused not reinvented."
+
+design_decisions:
+  - decision: Electron/browser mode keeps today's real-chrome-window flow entirely unchanged, rather than trying to retrofit embedding there too.
+    rationale: "True embedding is a Tauri-specific capability (design-discussion.md §2) -- there's no equivalent for Electron/plain-browser modes, and building a fake/partial version there would be worse than clearly keeping the existing, working path."
+
+risks:
+  - severity: medium
+    description: "A real login flow (especially Google SSO, which redirects through multiple domains) exercised inside the embedded webview for the first time may surface real edge cases the cookie-extraction spike's own simpler test case didn't cover."
+    mitigation: "Live-verify against the SAME real Google-SSO and GoFractional flows this session's earlier google-sso-session-persistence story already built the target allowlists/mechanism for -- reuse those, don't invent new test targets."
+
+references:
+  - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
+    relevant_excerpt: "§3 resolved architecture -- the capture-then-reuse handoff this story implements the human-facing half of."

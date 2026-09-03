@@ -347,6 +347,7 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
         storageStatePathSetting: storageStatePath,
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "ok",
@@ -380,6 +381,7 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
         storageStatePathSetting: storageStatePath,
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "ok",
@@ -406,6 +408,7 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
         // false (tier 1, headless -- fails, triggering the headed retry this test verifies), true (tier 2, headed).
+        attended: true,
         isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true),
       },
       async () => "ok",
@@ -430,6 +433,7 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
         storageStatePathSetting: storageStatePath,
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "ok",
@@ -453,11 +457,130 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "ok",
       ),
     ).rejects.toThrow(/failed to launch a browser for source "test-source"/);
+  });
+});
+
+// true-embedded-browser epic, unattended-scans-never-open-a-window story.
+// attended:false means a headed browser must NEVER open at all -- these
+// tests assert the headed/persistent-real-chrome tiers are never even
+// ATTEMPTED (not just that a window closes quickly), which is the actual
+// guarantee this story exists to make.
+describe("withBrowserSession: attended:false never opens a headed browser (true-embedded-browser epic)", () => {
+  it("when headless auth fails, re-throws immediately -- never attempts the headed (tier 2) launch at all", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({});
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          attended: false,
+          isAuthenticated: async () => false,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(/gigradar browser-session: session expired\/invalid for source "test-source"/);
+
+    // Headless (tier 1) ran exactly once; the headed retry never fired.
+    expect(launchServerMock).toHaveBeenCalledTimes(1);
+    expect(launchServerMock).toHaveBeenCalledWith({ headless: true, channel: "chrome" });
+  });
+
+  it("when headless auth fails, never attempts the persistent-real-chrome (tier 3) fallback either", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({});
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          attended: false,
+          isAuthenticated: async () => false,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow();
+
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+  });
+
+  it("re-throws the SAME VerificationChallengeError tier 1 produced -- runner.ts's instanceof routing (\"Needs human verification\") still works unchanged", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({ title: vi.fn().mockResolvedValue("Just a moment... | Cloudflare") });
+    const isAuthenticated = vi.fn();
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          attended: false,
+          isAuthenticated,
+        },
+        async () => "unreachable",
+      ),
+    ).rejects.toThrow(VerificationChallengeError);
+
+    expect(isAuthenticated).not.toHaveBeenCalled();
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+  });
+
+  it("when headless auth SUCCEEDS, behaves identically to attended:true -- attended only changes what happens on FAILURE", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({});
+
+    const result = await withBrowserSession(
+      {
+        sourceId: "test-source",
+        storageStatePathSetting: storageStatePath,
+        allowedOrigins: TARGET_ALLOWLIST,
+        url: "https://app.targetsource.example/jobs",
+        attended: false,
+        isAuthenticated: async () => true,
+      },
+      async () => "ok",
+    );
+
+    expect(result).toBe("ok");
+    expect(launchServerMock).toHaveBeenCalledTimes(1);
+    expect(minimizeChromeWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("when run() itself throws (not an auth failure), the error propagates unchanged regardless of attended -- never mistaken for an auth failure to skip", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({});
+
+    await expect(
+      withBrowserSession(
+        {
+          sourceId: "test-source",
+          storageStatePathSetting: storageStatePath,
+          allowedOrigins: TARGET_ALLOWLIST,
+          url: "https://app.targetsource.example/jobs",
+          attended: false,
+          isAuthenticated: async () => true,
+        },
+        async () => {
+          throw new Error("scrape logic blew up, unrelated to auth");
+        },
+      ),
+    ).rejects.toThrow("scrape logic blew up, unrelated to auth");
+
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
   });
 });
 
@@ -473,6 +596,7 @@ describe("readStorageStateFile: encryption at rest, migrate-on-read (AC)", () =>
         storageStatePathSetting: storageStatePath,
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "ok",
@@ -499,6 +623,7 @@ describe("readStorageStateFile: encryption at rest, migrate-on-read (AC)", () =>
         storageStatePathSetting: storageStatePath,
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "ok",
@@ -521,6 +646,7 @@ describe("readStorageStateFile: encryption at rest, migrate-on-read (AC)", () =>
         storageStatePathSetting: storageStatePath,
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "ok",
@@ -555,6 +681,7 @@ describe("readStorageStateFile: encryption at rest, migrate-on-read (AC)", () =>
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -595,6 +722,7 @@ describe("readStorageStateFile: key-loss detection via getOrCreateKey()'s hasAny
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -619,6 +747,7 @@ describe("withBrowserSession: cleanup on every exit path", () => {
         storageStatePathSetting: storageStatePath,
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async (page) => {
@@ -644,6 +773,7 @@ describe("withBrowserSession: cleanup on every exit path", () => {
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => false,
         },
         runCallback,
@@ -666,6 +796,7 @@ describe("withBrowserSession: cleanup on every exit path", () => {
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => {
@@ -689,6 +820,7 @@ describe("withBrowserSession: cleanup on every exit path", () => {
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => {
@@ -714,6 +846,7 @@ describe("withBrowserSession: storageState file validation (distinct from the au
           storageStatePathSetting: missingPath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -733,6 +866,7 @@ describe("withBrowserSession: storageState file validation (distinct from the au
           storageStatePathSetting: missingPath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -756,6 +890,7 @@ describe("withBrowserSession: storageState file validation (distinct from the au
           storageStatePathSetting: badPath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -776,6 +911,7 @@ describe("withBrowserSession: storageState file validation (distinct from the au
           storageStatePathSetting: wrongShapePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -797,6 +933,7 @@ describe("withBrowserSession: required origin allowlist", () => {
           storageStatePathSetting: storageStatePath,
           allowedOrigins: [],
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -819,6 +956,7 @@ describe("withBrowserSession: reuses load.ts's env: string resolution for the st
         storageStatePathSetting: "env:GIGRADAR_TEST_STORAGE_STATE_PATH",
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "resolved-ok",
@@ -835,6 +973,7 @@ describe("withBrowserSession: reuses load.ts's env: string resolution for the st
           storageStatePathSetting: "env:GIGRADAR_TEST_STORAGE_STATE_PATH_UNSET",
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -855,6 +994,7 @@ describe("withBrowserSession: reuses load.ts's env: string resolution for the st
           storageStatePathSetting: storageStatePath, // literal path, not "env:"-prefixed
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "ok",
@@ -895,6 +1035,7 @@ describe("checkChromiumAvailable / withBrowserSession: Chromium binary availabil
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -916,6 +1057,7 @@ describe("withBrowserSession: sessionBackend \"portunus\" (oauth-session-capture
         sessionBackend: "portunus",
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "ok",
@@ -938,6 +1080,7 @@ describe("withBrowserSession: sessionBackend \"portunus\" (oauth-session-capture
         sessionBackend: "portunus",
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "ok",
@@ -956,6 +1099,7 @@ describe("withBrowserSession: sessionBackend \"portunus\" (oauth-session-capture
           sessionBackend: "portunus",
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -972,6 +1116,7 @@ describe("withBrowserSession: sessionBackend \"portunus\" (oauth-session-capture
           sourceId: "test-source",
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -994,6 +1139,7 @@ describe("withBrowserSession: verification-challenge detection (verification-cop
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
           isAuthenticated,
+          attended: true,
         },
         async () => "unreachable",
       ),
@@ -1013,6 +1159,7 @@ describe("withBrowserSession: verification-challenge detection (verification-cop
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -1034,6 +1181,7 @@ describe("withBrowserSession: verification-challenge detection (verification-cop
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -1052,6 +1200,7 @@ describe("withBrowserSession: verification-challenge detection (verification-cop
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "ok",
@@ -1070,6 +1219,7 @@ describe("withBrowserSession: verification-challenge detection (verification-cop
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => true,
         },
         async () => "unreachable",
@@ -1096,6 +1246,7 @@ describe("withBrowserSession: no scraped page content ever appears in errors/log
           storageStatePathSetting: storageStatePath,
           allowedOrigins: TARGET_ALLOWLIST,
           url: "https://app.targetsource.example/jobs",
+          attended: true,
           isAuthenticated: async () => false,
         },
         async () => "unreachable",
@@ -1120,6 +1271,7 @@ describe("withBrowserSession: no scraped page content ever appears in errors/log
         storageStatePathSetting: storageStatePath,
         allowedOrigins: TARGET_ALLOWLIST,
         url: "https://app.targetsource.example/jobs",
+        attended: true,
         isAuthenticated: async () => true,
       },
       async () => "ok",
@@ -1136,7 +1288,7 @@ describe("withBrowserSession: self-healing persistent-real-chrome fallback (owne
     setUpFakeBrowserChain();
 
     await withBrowserSession(
-      { sourceId: "test-source", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: async () => true },
+      { sourceId: "test-source", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: async () => true, attended: true },
       async () => "ok",
     );
 
@@ -1149,7 +1301,7 @@ describe("withBrowserSession: self-healing persistent-real-chrome fallback (owne
 
     await expect(
       withBrowserSession(
-        { sourceId: "test-source", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: async () => true },
+        { sourceId: "test-source", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: async () => true, attended: true },
         async () => {
           throw new Error("scrape logic blew up, unrelated to auth");
         },
@@ -1166,7 +1318,7 @@ describe("withBrowserSession: self-healing persistent-real-chrome fallback (owne
 
     // false (tier 1, headless), false (tier 2, headed), true (tier 3, persistent real chrome -- the fallback this test actually verifies).
     const result = await withBrowserSession(
-      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true) },
+      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true), attended: true },
       async () => "recovered-via-real-chrome",
     );
 
@@ -1187,7 +1339,7 @@ describe("withBrowserSession: self-healing persistent-real-chrome fallback (owne
 
     // false (tier 1, headless), false (tier 2, headed), true (tier 3, the persistent-real-chrome fallback this test verifies the write-back for).
     await withBrowserSession(
-      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true) },
+      { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true), attended: true },
       async () => "ok",
     );
 
@@ -1203,7 +1355,7 @@ describe("withBrowserSession: self-healing persistent-real-chrome fallback (owne
 
     await expect(
       withBrowserSession(
-        { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: async () => false },
+        { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated: async () => false, attended: true },
         async () => "unreachable",
       ),
     ).rejects.toThrow(/persistent-real-chrome retry ALSO failed: Google Chrome not found.*Run Capture Login/s);
@@ -1217,7 +1369,7 @@ describe("withBrowserSession: self-healing persistent-real-chrome fallback (owne
     const isAuthenticated = vi.fn();
     await expect(
       withBrowserSession(
-        { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated },
+        { sourceId: "gofractional", storageStatePathSetting: storageStatePath, allowedOrigins: TARGET_ALLOWLIST, url: "https://app.targetsource.example/jobs", isAuthenticated, attended: true },
         async () => "unreachable",
       ),
     ).rejects.toThrow(VerificationChallengeError);

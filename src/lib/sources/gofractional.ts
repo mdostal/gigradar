@@ -302,6 +302,10 @@ export const gofractionalSource: Source = {
         allowedOrigins: [...ALLOWED_ORIGINS],
         url: JOBS_URL,
         isAuthenticated: isAuthenticatedGoFractional,
+        // true-embedded-browser epic: this is an unattended scan -- a
+        // headed browser must never open here, see withBrowserSession()'s
+        // own attended doc comment.
+        attended: false,
       },
       async (page) => {
         // isAuthenticatedGoFractional() above already ruled out the

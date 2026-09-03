@@ -1,0 +1,14 @@
+name: true-embedded-browser
+title: "Real in-app embedded webview for human-interactive browser work -- replaces separate OS-level windows for login/apply flows"
+methodology: classic
+stories:
+  - id: embedded-webview-child-mechanism
+    depends_on: []
+  - id: embedded-webview-cookie-extraction-macos
+    depends_on: [embedded-webview-child-mechanism]
+  - id: embedded-capture-login-flow
+    depends_on: [embedded-webview-cookie-extraction-macos]
+  - id: embedded-guided-apply-assist
+    depends_on: [embedded-webview-child-mechanism]
+  - id: unattended-scans-never-open-a-window
+    depends_on: []
