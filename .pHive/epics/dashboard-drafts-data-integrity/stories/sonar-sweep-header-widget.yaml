@@ -1,10 +1,41 @@
 id: sonar-sweep-header-widget
 epic: dashboard-drafts-data-integrity
 title: "Build the real sonar-sweep header (\"sonar dish\") from the recovered Signal Deck concept"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Shipped. Real research resolution for the "Sweep now" trigger (point 3 in
+  this story's own description): runRadar()/loadConfig() are plain,
+  side-effect-isolated functions already called directly from a Next.js
+  Server Action context elsewhere in this codebase's own precedent (the
+  MCP server's handleRunScan() -- "the ONE [MCP] tool allowed to call
+  loadConfig()" turned out to be scoped to MCP's 5 tools only, not a
+  repo-wide restriction; src/app/actions.ts already calls loadConfig()
+  from several existing actions). New sweepNowAction() in actions.ts
+  reuses that exact shape. No IPC/signal-file mechanism needed.
+
+  Mounted on /gigs and /[group]/gigs (NOT "/" -- by the time this story
+  executed, story 1 (relocate-giglist-to-all-gigs) had already shipped and
+  turned "/" into a bare redirect with nothing to replace; /gigs is where
+  the plain-pill status strip this story replaces actually lived by then).
+  dashboard-overview-page will move/share this component onto the real "/"
+  Dashboard once it lands.
+
+  Also fixed a real regression story 1 introduced: reconcileGoFractional/
+  WellfoundStatusesAction() still only called revalidatePath("/") after
+  the giglist moved to /gigs -- both now also revalidate "/gigs".
+
+  Live-verified against an isolated dev server (temp XDG_DATA_HOME, port
+  3100, never the real data dir) -- rendered HTML confirmed the scope SVG,
+  sweep/blip animation classes, and "Sweep now" button all present, no
+  error boundary, no hydration warnings in the server log. Did not use
+  Playwright/a real browser window for this -- the owner was actively at
+  the keyboard this session and a flashing browser window is the exact
+  disruption this whole epic exists to eliminate; curl + HTML inspection
+  was sufficient and zero-risk.
 
 description: |
   Recovers a real, previously-specified deliverable that silently fell out

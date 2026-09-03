@@ -1,6 +1,7 @@
 import { DashboardClient } from "../dashboard-client";
 import { SyncStatusButton } from "../sync-status-button";
-import { reconcileGoFractionalStatusesAction, reconcileWellfoundStatusesAction } from "../actions";
+import { SonarSweepHeader } from "../sonar-sweep-header";
+import { reconcileGoFractionalStatusesAction, reconcileWellfoundStatusesAction, sweepNowAction } from "../actions";
 import { loadDashboardData } from "../dashboard-data";
 
 // gigradar is a single-user, 127.0.0.1-bound local app with no CDN/edge cache
@@ -27,20 +28,24 @@ export const dynamic = "force-dynamic";
 // dashboard-data.ts's loadDashboardData(), called here with no groupId
 // (every gig, byte-identical to this page's own pre-relocation behavior).
 export default function AllGigsPage() {
-  const { gigs, status, engagementProfiles, draftedGigKeys, prepByGigKey } = loadDashboardData();
+  const { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey } = loadDashboardData();
+  // Computed once, server-side — see sonar-sweep-header.tsx's own header
+  // comment on why (a client component calling Date.now() itself during
+  // render would produce a hydration-mismatch, the exact bug metrics/
+  // page.tsx already hit and documented once).
+  const now = Date.now();
 
   return (
     <main className="mx-auto max-w-[88rem] p-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <SonarSweepHeader status={status} lastScanIso={lastScanIso} now={now} sweepAction={sweepNowAction} />
+
+      <div className="mt-4 flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="font-theme-heading text-2xl font-bold tracking-tight text-theme-text">All Gigs</h1>
         <p className="font-theme-mono text-sm text-theme-text-dim">
           {gigs.length} gig{gigs.length === 1 ? "" : "s"} tracked
         </p>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 font-theme-mono text-xs uppercase tracking-wide text-theme-text-dim">
-        <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.sourcesLabel}</span>
-        <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.profileLabel}</span>
-        <span className="rounded-full border border-theme-surface-border bg-theme-surface px-3 py-1">{status.lastScanLabel}</span>
         <SyncStatusButton sourceLabel="GoFractional" action={reconcileGoFractionalStatusesAction} />
         <SyncStatusButton sourceLabel="Wellfound" action={reconcileWellfoundStatusesAction} />
       </div>
