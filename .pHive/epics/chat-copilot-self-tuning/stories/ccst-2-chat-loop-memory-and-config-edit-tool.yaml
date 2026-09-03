@@ -1,7 +1,7 @@
 id: ccst-2-chat-loop-memory-and-config-edit-tool
 epic: chat-copilot-self-tuning
 title: Chat-loop rehydration + propose_config_edit/note_preference tools + auto-approve toggle
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [ccst-1-chat-memory-store-and-module]

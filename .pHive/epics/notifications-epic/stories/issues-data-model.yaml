@@ -1,7 +1,7 @@
 id: issues-data-model
 epic: notifications-epic
 title: "issues table + raiseIssue()/resolveIssue()/listIssues() + dedupe-on-open"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

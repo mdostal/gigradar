@@ -1,7 +1,7 @@
 id: app-foundation
 epic: dashboard-config-ui
 title: Next.js app-router scaffold, Tailwind, NODE_OPTIONS interop proof, localhost-only binding
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

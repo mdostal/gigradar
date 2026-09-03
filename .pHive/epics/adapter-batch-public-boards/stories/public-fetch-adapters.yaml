@@ -1,7 +1,7 @@
 id: public-fetch-adapters
 epic: adapter-batch-public-boards
 title: "FractionalJobs, Fractionus, FractionalFinders adapters + real local config activation"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

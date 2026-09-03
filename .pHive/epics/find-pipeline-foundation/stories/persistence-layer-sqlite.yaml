@@ -1,7 +1,7 @@
 id: persistence-layer-sqlite
 epic: find-pipeline-foundation
 title: SQLite-backed persistence layer with upsert/delisting logic
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

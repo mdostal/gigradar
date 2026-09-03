@@ -1,7 +1,7 @@
 id: auto-draft-on-scan
 epic: auto-draft-on-scan
 title: "Config.autoDraftOnScan + scheduler integration, capped at 5/cycle, green-tier only"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

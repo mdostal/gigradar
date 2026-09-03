@@ -1,7 +1,7 @@
 id: windows-key-data-separation
 epic: security-hardening
 title: "Windows fallback: separate key path from data path"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

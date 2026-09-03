@@ -1,7 +1,7 @@
 id: autofire-decision-engine
 epic: graduated-auto-fire-trust
 title: "evaluateAutoFire() full decision tree + SubmitAdapter interface/registry (no adapters registered yet)"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [autofire-trust-data-model]

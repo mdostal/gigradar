@@ -1,7 +1,7 @@
 id: ai-sdk-single-shot
 epic: llm-provider-harness
 title: "Vercel AI SDK for api-key mode's single-shot call sites, multi-provider config"
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: []

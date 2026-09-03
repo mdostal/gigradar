@@ -1,7 +1,7 @@
 id: role-templates
 epic: role-templates
 title: Role/engagement templates — data + picker in the config UI
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

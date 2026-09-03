@@ -1,7 +1,7 @@
 id: recover-misarchived-applied-gigs
 epic: deep-dive-audit-and-testing-framework
 title: "Best-effort recovery pass for gigs mis-archived by the corruption bug"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: [fix-recordscan-corruption-bug]

@@ -1,7 +1,7 @@
 id: mga-1-group-types-and-config-migration
 epic: multi-group-architecture
 title: Group types, config schema, and migrate-on-read for legacy flat configs
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

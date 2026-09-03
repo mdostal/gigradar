@@ -1,11 +1,11 @@
 id: portunus-session-backend
 epic: oauth-session-capture-v2
 title: "Portunus as an optional, owner-selectable session-vault backend"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [real-chrome-spawn-attach]
-status: done
+status: complete
 
 description: |
   Vertical Plan Slice 2. Live-confirmed this session: Portunus's CLI

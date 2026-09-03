@@ -1,7 +1,7 @@
 id: mcp-server-core
 epic: agent-integration
 title: "MCP server: 5 tools over stdio, source registration, error boundaries"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

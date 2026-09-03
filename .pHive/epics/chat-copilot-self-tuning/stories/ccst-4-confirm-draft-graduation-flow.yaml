@@ -1,7 +1,7 @@
 id: ccst-4-confirm-draft-graduation-flow
 epic: chat-copilot-self-tuning
 title: Confirm the existing draft-graduation (semi-auto to full-auto) flow matches the owner's description
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

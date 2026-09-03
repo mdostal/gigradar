@@ -1,7 +1,7 @@
 id: session-capture-mechanism
 epic: session-capture-ui
 title: Stateful browser-session capture mechanism (start/finish/cancel)
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [origin-registry-extraction]

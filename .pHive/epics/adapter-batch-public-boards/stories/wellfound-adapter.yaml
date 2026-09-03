@@ -1,7 +1,7 @@
 id: wellfound-adapter
 epic: adapter-batch-public-boards
 title: "Wellfound adapter (browser-session, __NEXT_DATA__ extraction)"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

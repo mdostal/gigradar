@@ -1,7 +1,7 @@
 id: sidecar-health-check
 epic: deep-dive-audit-and-testing-framework
 title: "Detect a dead Tauri sidecar and raise a dashboard issue instead of silently sitting dead for days"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

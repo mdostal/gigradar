@@ -1,7 +1,7 @@
 id: mga-2-gig-store-group-columns
 epic: multi-group-architecture
 title: Add matched_group_ids and matched_group_tiers to the gig store
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: [mga-1-group-types-and-config-migration]

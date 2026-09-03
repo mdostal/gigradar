@@ -1,7 +1,7 @@
 id: embedded-view-readonly
 epic: embedded-profile-assist
 title: "Read-only embedded live-view pane in /profile-assist"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

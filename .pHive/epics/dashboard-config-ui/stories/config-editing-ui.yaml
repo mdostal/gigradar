@@ -1,7 +1,7 @@
 id: config-editing-ui
 epic: dashboard-config-ui
 title: Config editing UI — Profile/Needs/Sources/RoleArea/schedule form
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [app-foundation, config-write-path]

@@ -1,7 +1,7 @@
 id: tiering-role-area-classifier
 epic: find-pipeline-foundation
 title: Role-area tiering module (green/yellow/red) wired into the runner
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [braintrust-adapter-runner-integration]

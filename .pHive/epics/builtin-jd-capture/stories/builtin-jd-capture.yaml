@@ -1,7 +1,7 @@
 id: builtin-jd-capture
 epic: builtin-jd-capture
 title: "builtin.ts: fetch full description from each listing's detail page, bounded concurrency"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

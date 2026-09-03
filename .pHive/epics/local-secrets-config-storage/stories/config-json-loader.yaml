@@ -1,7 +1,7 @@
 id: config-json-loader
 epic: local-secrets-config-storage
 title: Local config.json loader with zod validation, outside the repo tree
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []

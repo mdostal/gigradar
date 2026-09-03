@@ -1,7 +1,7 @@
 id: draft-generation-foundation
 epic: assisted-apply-drafting
 title: "Config.applyProfile + application_drafts table + generateDraft()/stageApplication()"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []

@@ -1,7 +1,7 @@
 id: playwright-e2e-scaffold-and-ci
 epic: deep-dive-audit-and-testing-framework
 title: "Real Playwright E2E scaffold (dashboard/config/chat smoke specs) + CI workflow gating npm test/typecheck/e2e on every PR"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
