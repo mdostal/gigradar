@@ -4,14 +4,60 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-09-03
+
 ### Added
 
-- **LLM credential modes.** A `Config.llmCredentialKind` selector alongside
-  the Anthropic API key field in `/config`, laying groundwork for
-  alternatives to a raw pasted key (the shipped `oauth-token` kind is not
-  yet functional end-to-end — see `docs/ARCHITECTURE.md` / the
-  `llm-provider-harness` epic docs for the real mechanism this is being
-  replaced with).
+- **Command Center redesign**: a new multi-page information architecture.
+  **Signal Deck** is now the default theme and main `/` dashboard (status
+  strip, radial signal meter, reworked row interactions). **Daily
+  Shortlist** (`/today`) is a fast daily check-in view separate from the
+  full working dashboard. **Metrics** (`/metrics`) is a real
+  applied/failed/run-rate throughput dashboard with graphs — this
+  project's own founding, previously-unbuilt success criterion, finally
+  shipped. **Interview workspace** (`/gigs/[key]/interview`) gives an
+  interviewing gig its own dedicated page for the full prep packet and
+  grounded application materials, promoted out of a table row. **Signal
+  Desk** ships as a 5th selectable theme (a calmer, lighter look).
+- **Multi-group support**: track separate groups (e.g. different role
+  profiles) each with their own sources, needs, and dashboard —
+  per-group dashboard routing, MCP `groupId` support, and dashboard
+  filtering/grouping by matched engagement profile.
+- **AI-driven match verification** (opt-in per group): an LLM
+  double-check on top of keyword-based tiering, to catch false positives
+  like "Interim Finance Director" matching on "interim."
+- **Customizable tiering**: score-threshold and percentile modes as
+  alternatives to keyword-based GREEN/YELLOW/RED tiering, configurable
+  per group.
+- **Chat co-pilot**: persistent memory across sessions, a gated
+  config-edit proposal tool, and contextual hover chat available from
+  Dashboard, Drafts, and Config.
+- **Platform-aware application drafting**: draft content (proposal /
+  why-fit / form-fields / cover-letter) now resolves per-platform instead
+  of a one-size-fits-all cover letter.
+- **Headless-first scanning** with an automatic headed fallback only when
+  a source actually needs it, plus an interactive embedded profile-assist
+  pane for guided sessions instead of a flashing native window taking
+  over the screen.
+- Real resume/career context now reaches draft generation and match
+  verification, not just profile ingestion.
+- A real Playwright end-to-end test scaffold, with CI now gating every
+  PR.
+- A dead sidecar process now raises a real issue instead of the app
+  silently looking frozen.
+
+### Fixed
+
+- GoFractional company-name scraping bug (a doubled leading letter).
+- `recordScan()` no longer mass-archives genuinely-applied gigs on a
+  backfill write — a real data-corruption bug found and fixed during a
+  deep-dive audit.
+- SSRF hardening in the profile-link fetcher: DNS-resolution-based IP
+  validation (loopback/link-local/RFC1918, including the cloud metadata
+  address), a request timeout, and a streaming response-size cap.
+- Windows fallback now separates the encryption-key directory from the
+  data directory (was previously the same path, defeating the point of
+  the separation).
 
 ## [0.25.2] - 2026-08-17
 
