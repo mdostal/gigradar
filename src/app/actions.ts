@@ -69,7 +69,40 @@ export async function updateGigStatusAction(
   }
 
   revalidatePath("/");
+  revalidatePath("/gigs");
   return actionOk({ key, status });
+}
+
+// ---------------------------------------------------------------------------
+// Bulk "mark as applied elsewhere" (dashboard-drafts-data-integrity epic,
+// mark-applied-elsewhere-bulk-action story). The manual fallback for the 9
+// of ~13 sources with no real status-reconciliation adapter (see this
+// epic's docs/design-discussion.md §4) -- lets the owner clear gigs they
+// applied to directly on a platform gigradar can't sync status from.
+//
+// Deliberately calls setStatus() directly rather than looping
+// updateGigStatusAction() per key: that action's own "applied" branch
+// fires a REAL LLM interview-prep generation (autoPrepOnApply) as a
+// side effect, correct for a single, gigradar-driven application but
+// wrong here -- bulk-marking N gigs "already applied outside gigradar"
+// should never silently trigger N real LLM calls the owner didn't ask
+// for. A single revalidatePath() after the loop, not one per key.
+// ---------------------------------------------------------------------------
+
+export async function bulkMarkAppliedElsewhereAction(keys: string[]): Promise<ActionResult<{ updated: number; errors: { key: string; message: string }[] }>> {
+  const errors: { key: string; message: string }[] = [];
+  let updated = 0;
+  for (const key of keys) {
+    try {
+      setStatus(key, "applied");
+      updated++;
+    } catch (e) {
+      errors.push({ key, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  revalidatePath("/");
+  revalidatePath("/gigs");
+  return actionOk({ updated, errors });
 }
 
 // ---------------------------------------------------------------------------

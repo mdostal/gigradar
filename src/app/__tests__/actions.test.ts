@@ -26,7 +26,7 @@ import { resolveLlmCredential } from "@/lib/config/env-store";
 import { generatePrepPacket } from "@/lib/apply/prep";
 import { closeDb, getInterviewPrep, getGig, recordScan } from "@/lib/store";
 import { saveConfig } from "@/lib/config/save";
-import { updateGigStatusAction } from "../actions";
+import { bulkMarkAppliedElsewhereAction, updateGigStatusAction } from "../actions";
 
 // A fresh temp-file DB per test, pointed at via GIGRADAR_DB_PATH — the same
 // env var src/lib/store/db.ts's getDb() resolves by default, since the
@@ -75,7 +75,7 @@ afterEach(() => {
 });
 
 describe("updateGigStatusAction", () => {
-  it("updates the gig's status, returns {ok:true,data}, and calls revalidatePath('/')", async () => {
+  it("updates the gig's status, returns {ok:true,data}, and calls revalidatePath for both '/' and '/gigs'", async () => {
     recordScan([
       { sourceId: "src-a", gigs: [{ sourceId: "src-a", externalId: "1", title: "T", url: "https://example.test/1" }] },
     ]);
@@ -84,8 +84,9 @@ describe("updateGigStatusAction", () => {
 
     expect(result).toEqual({ ok: true, data: { key: "src-a:1", status: "applied" } });
     expect(getGig("src-a:1")?.status).toBe("applied");
-    expect(revalidatePath).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).toHaveBeenCalledTimes(2);
     expect(revalidatePath).toHaveBeenCalledWith("/");
+    expect(revalidatePath).toHaveBeenCalledWith("/gigs");
   });
 
   it("returns {ok:false,error} for an unknown key instead of throwing, and never calls revalidatePath", async () => {
@@ -183,5 +184,48 @@ describe("updateGigStatusAction", () => {
       expect(result).toEqual({ ok: true, data: { key: "src-a:1", status: "applied" } });
       expect(getInterviewPrep("src-a:1")).toBeUndefined();
     });
+  });
+});
+
+describe("bulkMarkAppliedElsewhereAction", () => {
+  it("marks every given key applied, calls revalidatePath once for '/' and '/gigs' (not once per key), and never triggers autoPrepOnApply", async () => {
+    saveConfig(baseConfig({ autoPrepOnApply: true }));
+    recordScan([
+      {
+        sourceId: "src-a",
+        gigs: [
+          { sourceId: "src-a", externalId: "1", title: "T1", url: "https://example.test/1" },
+          { sourceId: "src-a", externalId: "2", title: "T2", url: "https://example.test/2" },
+        ],
+      },
+    ]);
+
+    const result = await bulkMarkAppliedElsewhereAction(["src-a:1", "src-a:2"]);
+
+    expect(result).toEqual({ ok: true, data: { updated: 2, errors: [] } });
+    expect(getGig("src-a:1")?.status).toBe("applied");
+    expect(getGig("src-a:2")?.status).toBe("applied");
+    expect(revalidatePath).toHaveBeenCalledTimes(2);
+    expect(revalidatePath).toHaveBeenCalledWith("/");
+    expect(revalidatePath).toHaveBeenCalledWith("/gigs");
+    // The whole point of NOT reusing updateGigStatusAction() in a loop --
+    // see actions.ts's own comment on bulkMarkAppliedElsewhereAction().
+    expect(generatePrepPacket).not.toHaveBeenCalled();
+  });
+
+  it("collects per-key errors for unknown keys instead of throwing, and still marks the valid ones", async () => {
+    recordScan([
+      { sourceId: "src-a", gigs: [{ sourceId: "src-a", externalId: "1", title: "T1", url: "https://example.test/1" }] },
+    ]);
+
+    const result = await bulkMarkAppliedElsewhereAction(["src-a:1", "does-not:exist"]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.updated).toBe(1);
+      expect(result.data.errors).toHaveLength(1);
+      expect(result.data.errors[0]?.key).toBe("does-not:exist");
+    }
+    expect(getGig("src-a:1")?.status).toBe("applied");
   });
 });
