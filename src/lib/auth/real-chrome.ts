@@ -316,15 +316,19 @@ export function closeRealChrome(handle: RealChromeHandle): void {
 // on the owner's desktop for the duration of an unattended scan or a
 // guided/full-auto profile-assist session. Both are macOS-only (this
 // module is already macOS-gated -- see resolveRealChromePath()) and
-// BEST-EFFORT: a failure here (Chrome not yet frontmost, an AppleScript
-// permissions prompt never answered, whatever) is logged and swallowed,
+// BEST-EFFORT: a failure here (System Events accessibility permission not
+// granted, Chrome not yet frontmost, whatever) is logged and swallowed,
 // never thrown -- the caller already has a working, authenticated browser
 // at this point, and losing the window-placement nicety must never turn
 // into a failed scan/session. Same execFile-argv-level-no-shell discipline
 // src/lib/notify/desktop.ts already established for its own osascript
-// call -- `window 1 of application "Google Chrome"` is addressed directly
-// rather than "front window", so this works even if Chrome isn't the
-// frontmost app at the moment this fires.
+// call. Each function below is addressed by the SPECIFIC PID of the
+// Chrome process it's meant to affect (via System Events' `first process
+// whose unix id is <pid>`) -- see minimizeChromeWindow()'s own doc
+// comment for the real, live-reproduced bug this replaced (blindly
+// addressing Chrome's own shared `window 1`, which has no notion of which
+// process spawned a given window and could touch the owner's own
+// unrelated Chrome windows).
 // -----------------------------------------------------------------------
 
 function runOsascript(script: string, logContext: string): Promise<void> {
@@ -337,39 +341,74 @@ function runOsascript(script: string, logContext: string): Promise<void> {
 }
 
 /**
- * Minimizes Chrome's frontmost window immediately -- used for the
- * unattended-scan headed fallback (browser-session.ts), where no human is
- * present to look at the window at all; it only needs to keep existing for
- * CDP automation to keep working (minimizing does not stop Playwright from
- * screenshotting/clicking -- both operate on the render tree, not physical
- * on-screen pixels).
+ * REAL BUG, FOUND AND FIXED LIVE 2026-09-03: both functions below used to
+ * address `window 1 of application "Google Chrome"` — Chrome's own
+ * AppleScript dictionary, which has NO notion of "which process spawned
+ * this window." Every Chrome window on the machine, from every source
+ * (the owner's own everyday browsing, a DIFFERENT gigradar-spawned
+ * window, anything) shares that ONE "Google Chrome" application object —
+ * "window 1" is whatever Chrome itself considers first (not necessarily
+ * the automation window, not necessarily even stable), so this could
+ * silently minimize/reposition the owner's own unrelated Chrome window,
+ * or throw (live-reproduced: "Can't make miniaturized of window 1 into
+ * type specifier") when window 1 happened to be some window that doesn't
+ * support the property at all. Confirmed live while the owner was
+ * actively trying to use a DIFFERENT window at the moment an unattended
+ * scan's headed fallback fired.
+ *
+ * THE FIX: target the window by the SPECIFIC PID of the Chrome process
+ * this module itself spawned (`RealChromeHandle.process.pid`, or
+ * Playwright's own `browser.process()?.pid` for the
+ * `channel: "chrome"`-launched fast-path tier in browser-session.ts) via
+ * System Events' accessibility API (`first process whose unix id is
+ * <pid>`) instead of Chrome's own ambiguous, shared window list. This can
+ * only ever reach the window this exact process owns — never the owner's
+ * own browsing, never a different spawned instance.
+ *
+ * TRADE-OFF: System Events UI-scripting requires macOS Accessibility
+ * permission for whatever process runs `osascript` (unlike Chrome's own
+ * AppleScript dictionary, which needed none) — if ungranted, these calls
+ * simply fail (same best-effort, logged-and-swallowed posture as before),
+ * degrading to "the window doesn't get minimized/positioned," never to
+ * "the wrong window gets touched."
  */
-export async function minimizeChromeWindow(): Promise<void> {
+export async function minimizeChromeWindow(pid: number): Promise<void> {
   if (process.platform !== "darwin") return;
-  await runOsascript('tell application "Google Chrome" to set miniaturized of window 1 to true', "minimizing the Chrome window");
+  await runOsascript(
+    `tell application "System Events" to tell (first process whose unix id is ${pid}) to set value of attribute "AXMinimized" of window 1 to true`,
+    "minimizing the Chrome window",
+  );
 }
 
 /**
- * Positions Chrome's frontmost window to the right half of the primary
- * display -- used for guided/full-auto profile-assist sessions, where a
- * human IS expected to be present and the owner explicitly asked for a
- * real, glanceable, directly-usable window (not a hidden one) they can work
- * side-by-side with the app, complementing (not replacing) the embedded
- * live-view pane. See this epic's design-discussion.md for why true
- * cross-app docking (tracking the gigradar app's own window live) is out of
- * scope here -- this is a fixed half-of-screen placement, computed fresh
- * each call from the primary display's current bounds via Finder's own
- * desktop-window bounds (the same source `System Events`/`Finder`-based
- * screen-geometry scripts conventionally use on macOS).
+ * Positions the specific Chrome window owned by process `pid` to the right
+ * half of the primary display -- used for guided/full-auto profile-assist
+ * sessions, where a human IS expected to be present and the owner
+ * explicitly asked for a real, glanceable, directly-usable window (not a
+ * hidden one) they can work side-by-side with the app, complementing (not
+ * replacing) the embedded live-view pane. See this epic's
+ * design-discussion.md for why true cross-app docking (tracking the
+ * gigradar app's own window live) is out of scope here -- this is a fixed
+ * half-of-screen placement, computed fresh each call from the primary
+ * display's current bounds via Finder's own desktop-window bounds (the
+ * same source `System Events`/`Finder`-based screen-geometry scripts
+ * conventionally use on macOS). See minimizeChromeWindow()'s own doc
+ * comment above for why `pid`-targeted System Events addressing replaced
+ * Chrome's own ambiguous `window 1` addressing.
  */
-export async function positionChromeWindowSideBySide(): Promise<void> {
+export async function positionChromeWindowSideBySide(pid: number): Promise<void> {
   if (process.platform !== "darwin") return;
   await runOsascript(
     [
       'tell application "Finder" to set screenBounds to bounds of window of desktop',
       "set screenWidth to item 3 of screenBounds",
       "set screenHeight to item 4 of screenBounds",
-      'tell application "Google Chrome" to set bounds of window 1 to {(screenWidth / 2) as integer, 0, screenWidth, screenHeight}',
+      'tell application "System Events"',
+      `  tell (first process whose unix id is ${pid})`,
+      "    set position of window 1 to {(screenWidth / 2) as integer, 0}",
+      "    set size of window 1 to {(screenWidth / 2) as integer, screenHeight}",
+      "  end tell",
+      "end tell",
     ].join("\n"),
     "positioning the Chrome window side-by-side",
   );

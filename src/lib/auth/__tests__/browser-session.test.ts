@@ -39,9 +39,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const launchMock = vi.fn();
 const executablePathMock = vi.fn();
 
+// real bug fix, 2026-09-03: launchScopedChromium() now uses
+// launchServer()+connect() (not plain launch()) so it can get the real
+// spawned process's pid back for minimizeChromeWindow()'s pid-targeted
+// System Events addressing (see real-chrome.ts's own doc comment on the
+// live-reproduced bug this replaced). `connect` is wired straight through
+// to the SAME `launchMock` every existing test in this file already
+// controls via mockResolvedValue(fakeBrowser)/mockRejectedValue(...) --
+// that's still "does launching a usable browser succeed," it just happens
+// via connect() now instead of launch() directly. `launchServerMock`
+// defaults to a fake, always-succeeding BrowserServer (own beforeEach
+// below) since no existing test cares about the server-launch step
+// itself, only the end-to-end "browser available or not" outcome
+// launchMock/connect already represents.
+const launchServerMock = vi.fn();
+const connectMock = vi.fn((...args: unknown[]) => launchMock(...args));
+
 vi.mock("playwright", () => ({
   chromium: {
     launch: (...args: unknown[]) => launchMock(...args),
+    launchServer: (...args: unknown[]) => launchServerMock(...args),
+    connect: (...args: unknown[]) => connectMock(...args),
     executablePath: (...args: unknown[]) => executablePathMock(...args),
   },
 }));
@@ -116,6 +134,14 @@ beforeEach(() => {
   // never let that scan see a real user's actual data directory.
   process.env.XDG_DATA_HOME = tmpDir;
   launchMock.mockReset();
+  launchServerMock.mockReset();
+  launchServerMock.mockResolvedValue({
+    wsEndpoint: () => "ws://fake-server",
+    process: () => ({ pid: 24681 }),
+    close: vi.fn().mockResolvedValue(undefined),
+  });
+  connectMock.mockReset();
+  connectMock.mockImplementation((...args: unknown[]) => launchMock(...args));
   executablePathMock.mockReset();
   readSessionViaPortunusMock.mockReset();
   spawnRealChromeMock.mockReset();
@@ -360,8 +386,11 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
     );
 
     // Tier 1 (headless) succeeds — the headed fast path/fallback never run.
-    expect(launchMock).toHaveBeenCalledTimes(1);
-    expect(launchMock).toHaveBeenCalledWith({ headless: true, channel: "chrome" });
+    // launchServerMock (not launchMock/connectMock) carries {headless,
+    // channel} now -- see launchScopedChromium()'s own doc comment for why
+    // launchServer()+connect() replaced plain launch().
+    expect(launchServerMock).toHaveBeenCalledTimes(1);
+    expect(launchServerMock).toHaveBeenCalledWith({ headless: true, channel: "chrome" });
     // No visible window ever existed -- nothing to minimize.
     expect(minimizeChromeWindowMock).not.toHaveBeenCalled();
   });
@@ -382,9 +411,9 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
       async () => "ok",
     );
 
-    expect(launchMock).toHaveBeenCalledTimes(2);
-    expect(launchMock).toHaveBeenNthCalledWith(1, { headless: true, channel: "chrome" });
-    expect(launchMock).toHaveBeenNthCalledWith(2, { headless: false, channel: "chrome" });
+    expect(launchServerMock).toHaveBeenCalledTimes(2);
+    expect(launchServerMock).toHaveBeenNthCalledWith(1, { headless: true, channel: "chrome" });
+    expect(launchServerMock).toHaveBeenNthCalledWith(2, { headless: false, channel: "chrome" });
     expect(minimizeChromeWindowMock).toHaveBeenCalledTimes(1);
   });
 
@@ -406,9 +435,9 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
       async () => "ok",
     );
 
-    expect(launchMock).toHaveBeenCalledTimes(2);
-    expect(launchMock).toHaveBeenNthCalledWith(1, { headless: true, channel: "chrome" });
-    expect(launchMock).toHaveBeenNthCalledWith(2, { headless: true });
+    expect(launchServerMock).toHaveBeenCalledTimes(2);
+    expect(launchServerMock).toHaveBeenNthCalledWith(1, { headless: true, channel: "chrome" });
+    expect(launchServerMock).toHaveBeenNthCalledWith(2, { headless: true });
   });
 
   it("throws a source-scoped error when both real Chrome and bundled Chromium fail to launch", async () => {

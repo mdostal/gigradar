@@ -45,7 +45,7 @@ vi.mock("../session-backend.js", () => ({
   readSessionViaPortunus: (...args: unknown[]) => readSessionViaPortunusMock(...args),
 }));
 
-const FAKE_REAL_CHROME_HANDLE = { process: { kill: vi.fn() }, cdpPort: 54732, userDataDir: "/fake/tmp/gigradar-real-chrome" };
+const FAKE_REAL_CHROME_HANDLE = { process: { kill: vi.fn(), pid: 13579 }, cdpPort: 54732, userDataDir: "/fake/tmp/gigradar-real-chrome" };
 
 import {
   endAssistSession,
@@ -211,7 +211,11 @@ describe("window positioning (embedded-browser-and-guided-session epic)", () => 
 
     await startAssistSession(SOURCE_ID, "guided", writeStorageStateFixture());
 
+    // Called with the SPECIFIC spawned process's pid -- see real-chrome.ts's
+    // minimizeChromeWindow() doc comment for why this matters (never
+    // Chrome's own ambiguous shared window list).
     expect(positionChromeWindowSideBySideMock).toHaveBeenCalledTimes(1);
+    expect(positionChromeWindowSideBySideMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE.process.pid);
   });
 
   it("does NOT reposition the window for manual mode -- 'a real browser window is open on your desktop, use it directly' is the intended UX there", async () => {

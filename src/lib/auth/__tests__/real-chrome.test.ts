@@ -338,38 +338,56 @@ describe("closeRealChrome", () => {
 });
 
 describe("minimizeChromeWindow / positionChromeWindowSideBySide (embedded-browser-and-guided-session epic)", () => {
-  it("minimizeChromeWindow shells out to osascript via execFile (argv-level, never a shell) targeting window 1 directly, not \"front window\"", async () => {
+  // Real bug, found and fixed live 2026-09-03: these used to address
+  // Chrome's own shared `window 1 of application "Google Chrome"`, which
+  // has no notion of which process spawned a given window -- could touch
+  // the owner's own unrelated Chrome windows, or throw when window 1
+  // wasn't the automation window at all. Now targeted by the SPECIFIC
+  // spawned process's pid via System Events, never Chrome's own ambiguous
+  // window list. These tests assert that pid-scoping directly.
+  const FAKE_PID = 54321;
+
+  it("minimizeChromeWindow shells out to osascript via execFile (argv-level, never a shell), scoped to the given pid via System Events -- never Chrome's own shared window list", async () => {
     const { minimizeChromeWindow } = await import("../real-chrome.js");
 
-    await minimizeChromeWindow();
+    await minimizeChromeWindow(FAKE_PID);
 
     expect(execFileMock).toHaveBeenCalledTimes(1);
     const [cmd, args] = execFileMock.mock.calls[0] as [string, string[], unknown, unknown];
     expect(cmd).toBe("osascript");
     expect(args[0]).toBe("-e");
-    expect(args[1]).toContain('tell application "Google Chrome" to set miniaturized of window 1 to true');
+    expect(args[1]).toContain("System Events");
+    expect(args[1]).toContain(`first process whose unix id is ${FAKE_PID}`);
+    expect(args[1]).toContain('set value of attribute "AXMinimized" of window 1 to true');
+    // The old, ambiguous addressing must be gone entirely.
+    expect(args[1]).not.toContain('tell application "Google Chrome" to set miniaturized');
   });
 
-  it("positionChromeWindowSideBySide queries the real screen bounds via Finder, then sets Chrome's window 1 bounds to the right half", async () => {
+  it("positionChromeWindowSideBySide queries the real screen bounds via Finder, then sets the given pid's window position/size to the right half via System Events", async () => {
     const { positionChromeWindowSideBySide } = await import("../real-chrome.js");
 
-    await positionChromeWindowSideBySide();
+    await positionChromeWindowSideBySide(FAKE_PID);
 
     expect(execFileMock).toHaveBeenCalledTimes(1);
     const [cmd, args] = execFileMock.mock.calls[0] as [string, string[], unknown, unknown];
     expect(cmd).toBe("osascript");
     const script = args[1];
     expect(script).toContain('tell application "Finder" to set screenBounds to bounds of window of desktop');
-    expect(script).toContain('tell application "Google Chrome" to set bounds of window 1 to');
+    expect(script).toContain("System Events");
+    expect(script).toContain(`first process whose unix id is ${FAKE_PID}`);
+    expect(script).toContain("set position of window 1 to");
+    expect(script).toContain("set size of window 1 to");
     expect(script).toContain("screenWidth / 2");
+    // The old, ambiguous addressing must be gone entirely.
+    expect(script).not.toContain('tell application "Google Chrome" to set bounds');
   });
 
   it("both are no-ops (never call execFile) on a non-macOS platform", async () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     const { minimizeChromeWindow, positionChromeWindowSideBySide } = await import("../real-chrome.js");
 
-    await minimizeChromeWindow();
-    await positionChromeWindowSideBySide();
+    await minimizeChromeWindow(FAKE_PID);
+    await positionChromeWindowSideBySide(FAKE_PID);
 
     expect(execFileMock).not.toHaveBeenCalled();
   });
@@ -380,7 +398,7 @@ describe("minimizeChromeWindow / positionChromeWindowSideBySide (embedded-browse
     );
     const { minimizeChromeWindow, positionChromeWindowSideBySide } = await import("../real-chrome.js");
 
-    await expect(minimizeChromeWindow()).resolves.toBeUndefined();
-    await expect(positionChromeWindowSideBySide()).resolves.toBeUndefined();
+    await expect(minimizeChromeWindow(FAKE_PID)).resolves.toBeUndefined();
+    await expect(positionChromeWindowSideBySide(FAKE_PID)).resolves.toBeUndefined();
   });
 });

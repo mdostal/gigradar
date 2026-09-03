@@ -346,10 +346,42 @@ let warnedNoRealChrome = false;
  * the OAuth-rejection caveat is unresolved in that fallback case. The
  * fallback warning is logged once per process (not once per launch) to
  * avoid repeat-launch log spam.
+ *
+ * Uses `launchServer()` + `connect()` rather than plain `chromium.launch()`
+ * -- the ONLY way to get the real spawned process's pid back (a plain
+ * `Browser` from `.launch()` exposes no such accessor). The pid is what
+ * lets minimizeChromeWindow()/positionChromeWindowSideBySide() (real-
+ * chrome.ts) target THIS SPECIFIC window via System Events instead of
+ * Chrome's own ambiguous, shared `window 1` -- see minimizeChromeWindow()'s
+ * own doc comment for the real, live-reproduced bug that fixed. The
+ * returned `close()` tears down BOTH the connected `Browser` and the
+ * underlying `BrowserServer` -- closing only one would leave the other's
+ * process/connection dangling.
  */
-export async function launchScopedChromium(headless: boolean, logContext: string): Promise<Browser> {
+export async function launchScopedChromium(
+  headless: boolean,
+  logContext: string,
+): Promise<{ browser: Browser; pid: number | undefined; close: () => Promise<void> }> {
+  async function launchAndConnect(channel: "chrome" | undefined): Promise<{ browser: Browser; pid: number | undefined; close: () => Promise<void> }> {
+    const server = await chromium.launchServer(channel ? { headless, channel } : { headless });
+    try {
+      const browser = await chromium.connect(server.wsEndpoint());
+      return {
+        browser,
+        pid: server.process().pid,
+        close: async () => {
+          await browser.close().catch(() => {});
+          await server.close().catch(() => {});
+        },
+      };
+    } catch (e) {
+      await server.close().catch(() => {});
+      throw e;
+    }
+  }
+
   try {
-    return await chromium.launch({ headless, channel: "chrome" });
+    return await launchAndConnect("chrome");
   } catch {
     if (!warnedNoRealChrome) {
       warnedNoRealChrome = true;
@@ -360,7 +392,7 @@ export async function launchScopedChromium(headless: boolean, logContext: string
       );
     }
     try {
-      return await chromium.launch({ headless });
+      return await launchAndConnect(undefined);
     } catch (e) {
       throw new Error(
         `${MODULE_PREFIX}: failed to launch a browser for ${logContext}: ${e instanceof Error ? e.message : String(e)}`,
@@ -441,19 +473,22 @@ async function acquireViaStorageStateSnapshot<T>(
 ): Promise<T> {
   const { sourceId, url, isAuthenticated } = options;
   checkChromiumAvailable();
-  const browser: Browser = await launchScopedChromium(headless, `source "${sourceId}"`);
+  const { browser, pid, close } = await launchScopedChromium(headless, `source "${sourceId}"`);
   try {
     const context = await browser.newContext({ storageState: scopedStorageState });
     try {
       const page = await context.newPage();
       await navigateAndCheckAuth(page, url, sourceId, isAuthenticated);
-      if (minimizeAfterAuth) await minimizeChromeWindow();
+      // pid -- the real Chrome process THIS launch spawned -- see
+      // minimizeChromeWindow()'s own doc comment for why the specific pid
+      // matters, not just "some Chrome window".
+      if (minimizeAfterAuth && pid) await minimizeChromeWindow(pid);
       return await run(page);
     } finally {
       await context.close();
     }
   } finally {
-    await browser.close();
+    await close();
   }
 }
 
@@ -513,7 +548,10 @@ async function acquireViaPersistentRealChrome<T>(
       // from an unattended-scan caller (withBrowserSession()'s own chain) —
       // never with a human actively present, so minimizing immediately once
       // auth is confirmed is always correct here, unconditionally.
-      await minimizeChromeWindow();
+      // handle.process.pid -- the SPECIFIC spawned Chrome process, never
+      // Chrome's own ambiguous shared window list (see
+      // minimizeChromeWindow()'s own doc comment).
+      if (handle.process.pid) await minimizeChromeWindow(handle.process.pid);
       const result = await run(page);
 
       if (storageStatePathToRefresh) {

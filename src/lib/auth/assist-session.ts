@@ -220,8 +220,12 @@ export async function startAssistSession(
   // "a real browser window is open on your desktop, use it directly"
   // (profile-assist-client.tsx's own manual-mode copy), so repositioning it
   // there would fight the actual feature.
-  if (mode !== "manual") {
-    void positionChromeWindowSideBySide();
+  // realChrome.process.pid -- the SPECIFIC spawned Chrome process, never
+  // Chrome's own ambiguous shared window list (see
+  // real-chrome.ts's minimizeChromeWindow() doc comment for the real,
+  // live-reproduced bug this avoids).
+  if (mode !== "manual" && realChrome.process.pid) {
+    void positionChromeWindowSideBySide(realChrome.process.pid);
   }
 
   const sessionId = crypto.randomUUID();
