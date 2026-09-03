@@ -6,6 +6,14 @@ import type { DraftContent, DraftFormat } from "@/lib/types";
 import { markSubmittedAction, setDraftStatusAction, updateDraftContentAction } from "./actions";
 import { DRAFT_STATUS_TABS, filterDrafts, formatCopyReadyDraft, type DraftListItem, type DraftStatusFilter } from "./drafts-filter";
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
+import { formatRate, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "../dashboard-client";
+import { KNOWN_SOURCES } from "@/lib/sources/origins";
+
+/** id -> display label, built once from the same registry the setup wizard/Capture Login already read from (status-strip.ts's own precedent) — never a second, hand-typed copy. Falls back to the raw id (upper-cased) for a source not in the registry (a hand-added custom-llm/gmail-digest source). */
+const SOURCE_LABEL: ReadonlyMap<string, string> = new Map(KNOWN_SOURCES.map((s) => [s.id, s.label]));
+function sourceLabel(sourceId: string): string {
+  return SOURCE_LABEL.get(sourceId) ?? sourceId.toUpperCase();
+}
 
 const STATUS_TAB_LABEL: Record<DraftStatusFilter, string> = {
   all: "All",
@@ -130,6 +138,22 @@ function DraftCard({ item }: { item: DraftListItem }) {
             {item.status}
           </span>
         </div>
+      </div>
+
+      {/* drafts-gig-context-surfacing story: always visible, not gated
+          behind approval status — the whole point is having this BEFORE
+          deciding approve/reject on a handful of near-identical drafts. */}
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+        <span
+          className="inline-flex rounded-full px-2 py-0.5 font-medium ring-1 ring-inset ring-current/30"
+          style={item.gigTier ? TIER_BADGE_STYLE[item.gigTier] : TIER_BADGE_FALLBACK_STYLE}
+        >
+          {item.gigTier ?? "unrated"}
+        </span>
+        <span className="font-mono text-slate-500">{formatRate(item.gigRate)}</span>
+        <span className="rounded border border-slate-200 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-slate-500">
+          {sourceLabel(item.gigSourceId)}
+        </span>
       </div>
 
       <p className="mt-1 text-xs text-slate-400">

@@ -11,6 +11,7 @@ function makeItem(overrides: Partial<DraftListItem> & { gigKey: string }): Draft
     gigTitle: "Fractional CTO",
     gigCompany: "Acme",
     gigUrl: `https://example.test/${overrides.gigKey}`,
+    gigSourceId: "gofractional",
     ...overrides,
   };
 }

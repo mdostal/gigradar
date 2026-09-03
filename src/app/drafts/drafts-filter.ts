@@ -3,7 +3,7 @@
 // this project — see src/app/dashboard-filter.ts's header comment for the
 // same convention this file follows).
 import type { DraftStatus } from "@/lib/store";
-import type { DraftContent } from "@/lib/types";
+import type { DraftContent, Gig } from "@/lib/types";
 
 export type DraftStatusFilter = DraftStatus | "all";
 
@@ -21,6 +21,16 @@ export interface DraftListItem {
   gigCompany?: string;
   /** The real, per-listing gig URL — never a search page (docs/ARCHITECTURE.md's data-integrity rule). */
   gigUrl: string;
+  /**
+   * drafts-gig-context-surfacing story: forwarded from Gig.rate/Gig.tier/
+   * Gig.sourceId (already read in full by drafts/page.tsx's getGig() call,
+   * previously discarded before reaching this interface) so reviewing
+   * several near-identical drafts isn't a blind guess — see this epic's
+   * docs/design-discussion.md §3.
+   */
+  gigRate?: Gig["rate"];
+  gigTier?: Gig["tier"];
+  gigSourceId: string;
 }
 
 /** Status filter only — newest-generated-first ordering already comes from listDrafts() itself. */
