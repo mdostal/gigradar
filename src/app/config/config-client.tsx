@@ -8,25 +8,29 @@ import { DEFAULT_UI_THEME, UI_THEMES, type UiThemeId } from "@/lib/ui-theme";
 import type { ConfigEdits } from "@/lib/config/save";
 import { mergeDedupe } from "@/lib/profile-ingestion/merge";
 import { findRoleSkillOverlap } from "./profile-data-quality";
-import { KNOWN_SOURCES, SOURCE_ORIGINS } from "@/lib/sources/origins";
+import { KNOWN_SOURCES, SOURCES_OFFERING_GOOGLE_SSO, SOURCE_ORIGINS } from "@/lib/sources/origins";
 import { SOURCE_PRESETS, sourceConfigFromPreset } from "@/lib/sources/source-presets";
 import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
 import {
   assignGmailConnectionAction,
   cancelCaptureAction,
+  cancelGoogleCaptureAction,
   checkCaptureReadinessAction,
   type ConnectedGmailSource,
   disconnectGmailAction,
   extractProfileFromResumeAction,
   finishCaptureAction,
+  finishGoogleCaptureAction,
   getAutoFireApprovedCountAction,
+  getGoogleConnectionStatusAction,
   listConnectedGmailSourcesAction,
   removeResumeAction,
   saveConfigAction,
   setLlmApiKeyAction,
   startCaptureAction,
   startGmailOAuthAction,
+  startGoogleCaptureAction,
   testCustomSourceExtractionAction,
 } from "./actions";
 
@@ -1648,6 +1652,53 @@ export function ConfigClient({
     setRowCapture(i, { status: "idle" });
   }
 
+  // Shared Google connection (oauth-session-capture-v2 epic,
+  // google-sso-session-persistence story) — deliberately its OWN state, NOT
+  // keyed by row index like `captureState` above: this isn't a per-source
+  // row, it's a single shared connection reused across every source in
+  // SOURCES_OFFERING_GOOGLE_SSO. Reuses the SAME <CaptureLoginControl>
+  // component (sourceId="google") for the waiting/finishing/cancelling UI —
+  // one real capture mechanism, two callers, never a second component.
+  const [googleCaptureState, setGoogleCaptureState] = useState<CaptureUIState>({ status: "idle" });
+  const [googleConnected, setGoogleConnected] = useState<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    void getGoogleConnectionStatusAction().then((result) => {
+      if (result.ok) setGoogleConnected(result.data.connected);
+    });
+  }, []);
+
+  async function handleStartGoogleCapture() {
+    setGoogleCaptureState({ status: "starting" });
+    const result = await startGoogleCaptureAction();
+    if (!result.ok) {
+      setGoogleCaptureState({ status: "error", message: result.error });
+      return;
+    }
+    setGoogleCaptureState({ status: "waiting", captureId: result.data.captureId, sourceId: "google" });
+  }
+
+  async function handleFinishGoogleCapture(captureId: string) {
+    setGoogleCaptureState({ status: "finishing", captureId, sourceId: "google" });
+    const result = await finishGoogleCaptureAction(captureId);
+    if (!result.ok) {
+      setGoogleCaptureState({ status: "error", message: result.error });
+      return;
+    }
+    setGoogleCaptureState({ status: "success-portunus" });
+    setGoogleConnected(true);
+  }
+
+  async function handleCancelGoogleCapture(captureId: string) {
+    setGoogleCaptureState({ status: "cancelling", captureId, sourceId: "google" });
+    const result = await cancelGoogleCaptureAction(captureId);
+    if (!result.ok) {
+      setGoogleCaptureState({ status: "error", message: result.error });
+      return;
+    }
+    setGoogleCaptureState({ status: "idle" });
+  }
+
   // "Check if I'm ready" readiness state (oauth-session-capture-v2 epic,
   // llm-capture-readiness-check story) — deliberately its OWN state map,
   // separate from `captureState` above: a readiness check is advisory and
@@ -2280,6 +2331,31 @@ export function ConfigClient({
       )}
 
       <section className={sectionClass}>
+        <h2 className="text-lg font-semibold text-theme-text">Google connection</h2>
+        <p className="mt-1 text-sm text-theme-text-dim">
+          Some sources below (A.Team, Wellfound) offer &ldquo;Continue with Google&rdquo; on their own login page. Capture your
+          Google sign-in once here and any of them can reuse it — a lightweight &ldquo;continue as you&rdquo; instead of a full
+          password/2FA re-entry every time.
+        </p>
+        {googleConnected === true && googleCaptureState.status === "idle" && (
+          <p role="status" className="mt-2 text-xs text-green-700">
+            Connected — re-capture below if it stops working for a source.
+          </p>
+        )}
+        <CaptureLoginControl
+          sourceId="google"
+          state={googleCaptureState}
+          onStart={handleStartGoogleCapture}
+          onFinish={() => {
+            if (googleCaptureState.status === "waiting") void handleFinishGoogleCapture(googleCaptureState.captureId);
+          }}
+          onCancel={() => {
+            if (googleCaptureState.status === "waiting") void handleCancelGoogleCapture(googleCaptureState.captureId);
+          }}
+        />
+      </section>
+
+      <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Sources</h2>
         <div className="mt-3 flex flex-col gap-4">
           {draft.sources.map((source, i) => (
@@ -2541,6 +2617,9 @@ export function ConfigClient({
                     if (rowState?.status === "waiting") handleCheckReadiness(i, rowState.captureId, rowState.sourceId);
                   }}
                 />
+              )}
+              {SOURCES_OFFERING_GOOGLE_SSO.includes(source.id) && googleConnected === true && (
+                <p className="mt-1 text-xs text-theme-text-dim">Will reuse your saved Google connection above.</p>
               )}
             </div>
           ))}

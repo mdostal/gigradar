@@ -35,12 +35,35 @@ vi.mock("@/lib/auth/capture-guidance", () => ({
   checkCaptureReadiness: (...args: unknown[]) => checkCaptureReadinessMock(...args),
 }));
 
+// google-sso-session-persistence story: startCaptureAction()'s new
+// Google-connection seed lookup, and the standalone Google capture actions,
+// both go through readSessionViaPortunus() -- mocked here for the same
+// reason session-capture.ts itself is mocked above (no real Portunus CLI in
+// this test run). Only readSessionViaPortunus itself is overridden --
+// importOriginal() keeps sessionBackendFrom()/PORTUNUS_SESSION_ACCOUNT/etc.
+// real, since finishCaptureAction()'s own pre-existing tests below depend
+// on the REAL sessionBackendFrom().
+const readSessionViaPortunusMock = vi.fn();
+vi.mock("@/lib/auth/session-backend", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/auth/session-backend")>();
+  return { ...actual, readSessionViaPortunus: (...args: unknown[]) => readSessionViaPortunusMock(...args) };
+});
+
 import { revalidatePath } from "next/cache";
 import { getConfigPath } from "@/lib/config/load";
 import { setEnvVar } from "@/lib/config/env-store";
 import { decrypt } from "@/lib/security/vault";
-import { SOURCE_LOGIN_URLS } from "@/lib/sources/origins";
-import { cancelCaptureAction, checkCaptureReadinessAction, finishCaptureAction, startCaptureAction } from "../actions";
+import { GOOGLE_SSO_LOGIN_URL, GOOGLE_SSO_ORIGINS, SOURCE_LOGIN_URLS } from "@/lib/sources/origins";
+import {
+  cancelCaptureAction,
+  cancelGoogleCaptureAction,
+  checkCaptureReadinessAction,
+  finishCaptureAction,
+  finishGoogleCaptureAction,
+  getGoogleConnectionStatusAction,
+  startCaptureAction,
+  startGoogleCaptureAction,
+} from "../actions";
 
 // Same isolation pattern as actions.test.ts / save.test.ts: every test
 // points XDG_DATA_HOME (config.json) AND XDG_CONFIG_HOME (the vault key —
@@ -65,6 +88,9 @@ beforeEach(() => {
   cancelCaptureMock.mockReset();
   getCapturePageMock.mockReset();
   checkCaptureReadinessMock.mockReset();
+  // Default: no Google connection saved yet (the normal first-time state) --
+  // individual tests override this to exercise the seeded path.
+  readSessionViaPortunusMock.mockReset().mockRejectedValue(new Error("not found"));
 });
 
 afterEach(() => {
@@ -132,6 +158,42 @@ describe("startCaptureAction", () => {
 
     expect(startCaptureMock).toHaveBeenCalledWith("ateam", SOURCE_LOGIN_URLS["ateam"], ["a.team", "platform.a.team"]);
     expect(result).toEqual({ ok: true, data: { captureId: "capture-456" } });
+  });
+
+  // google-sso-session-persistence story.
+  describe("Google-connection seeding", () => {
+    const GOOGLE_STORAGE_STATE = { cookies: [{ name: "SID", value: "x", domain: "accounts.google.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" as const }], origins: [] };
+
+    it("for ateam (SOURCES_OFFERING_GOOGLE_SSO): reads the saved Google connection and passes it as startCapture()'s 4th arg", async () => {
+      startCaptureMock.mockResolvedValue({ captureId: "capture-789" });
+      readSessionViaPortunusMock.mockResolvedValue(GOOGLE_STORAGE_STATE);
+
+      const result = await startCaptureAction("ateam");
+
+      expect(readSessionViaPortunusMock).toHaveBeenCalledWith("google", "gigradar");
+      expect(startCaptureMock).toHaveBeenCalledWith("ateam", SOURCE_LOGIN_URLS["ateam"], ["a.team", "platform.a.team"], GOOGLE_STORAGE_STATE);
+      expect(result).toEqual({ ok: true, data: { captureId: "capture-789" } });
+    });
+
+    it("for gofractional (NOT in SOURCES_OFFERING_GOOGLE_SSO): never looks up a Google connection at all", async () => {
+      startCaptureMock.mockResolvedValue({ captureId: "capture-999" });
+
+      await startCaptureAction("gofractional");
+
+      expect(readSessionViaPortunusMock).not.toHaveBeenCalled();
+      // 3-arg call, exactly like every pre-existing non-Google-SSO source.
+      expect(startCaptureMock).toHaveBeenCalledWith("gofractional", SOURCE_LOGIN_URLS["gofractional"], ["gofractional.com"]);
+    });
+
+    it("for ateam with no saved Google connection yet: proceeds unseeded (3-arg call), never surfaces the lookup failure as this action's own error", async () => {
+      startCaptureMock.mockResolvedValue({ captureId: "capture-000" });
+      // readSessionViaPortunusMock already defaults to a rejection (beforeEach).
+
+      const result = await startCaptureAction("ateam");
+
+      expect(startCaptureMock).toHaveBeenCalledWith("ateam", SOURCE_LOGIN_URLS["ateam"], ["a.team", "platform.a.team"]);
+      expect(result).toEqual({ ok: true, data: { captureId: "capture-000" } });
+    });
   });
 
   it("returns {ok:false,error} without calling startCapture() for a source id with no registered login URL", async () => {
@@ -372,5 +434,71 @@ describe("checkCaptureReadinessAction (oauth-session-capture-v2 epic, llm-captur
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.error).toContain("did not include the expected structured readiness result");
+  });
+});
+
+// google-sso-session-persistence story: the standalone Google-connection
+// capture actions (fixed sourceId="google", fixed Portunus backend, no
+// per-source config lookup).
+describe("startGoogleCaptureAction / finishGoogleCaptureAction / cancelGoogleCaptureAction / getGoogleConnectionStatusAction", () => {
+  it("startGoogleCaptureAction: calls startCapture(\"google\", GOOGLE_SSO_LOGIN_URL, GOOGLE_SSO_ORIGINS)", async () => {
+    startCaptureMock.mockResolvedValue({ captureId: "capture-google-1" });
+
+    const result = await startGoogleCaptureAction();
+
+    expect(startCaptureMock).toHaveBeenCalledWith("google", GOOGLE_SSO_LOGIN_URL, [...GOOGLE_SSO_ORIGINS]);
+    expect(result).toEqual({ ok: true, data: { captureId: "capture-google-1" } });
+  });
+
+  it("startGoogleCaptureAction: surfaces startCapture()'s specific error verbatim", async () => {
+    startCaptureMock.mockRejectedValue(new Error("gigradar session-capture: failed to launch Chromium for source \"google\": boom"));
+
+    const result = await startGoogleCaptureAction();
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("failed to launch Chromium");
+  });
+
+  it("finishGoogleCaptureAction: always calls finishCapture(captureId, \"portunus\") -- never local", async () => {
+    finishCaptureMock.mockResolvedValue({ backend: "portunus", site: "google", account: "gigradar" });
+
+    const result = await finishGoogleCaptureAction("capture-google-1");
+
+    expect(finishCaptureMock).toHaveBeenCalledWith("capture-google-1", "portunus");
+    expect(result).toEqual({ ok: true, data: null });
+  });
+
+  it("finishGoogleCaptureAction: surfaces finishCapture()'s specific error verbatim (e.g. Portunus unavailable)", async () => {
+    finishCaptureMock.mockRejectedValue(new Error("gigradar session-capture: portunus is not available"));
+
+    const result = await finishGoogleCaptureAction("capture-google-1");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error).toContain("portunus is not available");
+  });
+
+  it("cancelGoogleCaptureAction: calls cancelCapture(captureId)", async () => {
+    const result = await cancelGoogleCaptureAction("capture-google-1");
+
+    expect(cancelCaptureMock).toHaveBeenCalledWith("capture-google-1");
+    expect(result).toEqual({ ok: true, data: null });
+  });
+
+  it("getGoogleConnectionStatusAction: {connected:true} when a Google session is stored in Portunus", async () => {
+    readSessionViaPortunusMock.mockResolvedValue({ cookies: [], origins: [] });
+
+    const result = await getGoogleConnectionStatusAction();
+
+    expect(readSessionViaPortunusMock).toHaveBeenCalledWith("google", "gigradar");
+    expect(result).toEqual({ ok: true, data: { connected: true } });
+  });
+
+  it("getGoogleConnectionStatusAction: {connected:false} (never an error) when nothing is stored yet", async () => {
+    // readSessionViaPortunusMock already defaults to a rejection (beforeEach).
+    const result = await getGoogleConnectionStatusAction();
+
+    expect(result).toEqual({ ok: true, data: { connected: false } });
   });
 });
