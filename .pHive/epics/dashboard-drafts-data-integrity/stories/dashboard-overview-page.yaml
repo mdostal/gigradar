@@ -1,0 +1,85 @@
+id: dashboard-overview-page
+epic: dashboard-drafts-data-integrity
+title: "Build the real Dashboard at \"/\": sonar header + customizable glance tiles + today view + compact metrics + links out"
+status: pending
+complexity: high
+methodology: classic
+depends_on: [sonar-sweep-header-widget, relocate-giglist-to-all-gigs]
+
+description: |
+  Owner's own words (verbatim, this is the spec — not a paraphrase):
+
+  "keep FULL metrics separate. Make dashboard an overview with a small
+  metric component and allow us to customize what shows. Have it do a
+  small top 5 for today or a checkmark if all of today is finished/covered
+  -- similar, a component view in -- then a view into all gigs and just
+  some general metrics and charts ON all gigs and whats been happening --
+  maybe the ready to act etc and then go to gigs -- dashboard is a human
+  readable dashboard that forwards you along and gives you a look at a
+  glance of progress and where we are so we can dig in"
+
+  Builds the real "/" Dashboard now that both dependencies have cleared the
+  ground: the sonar-sweep header (component from the depended-on story) and
+  a vacated "/" route (the giglist relocated to /gigs by the other
+  depended-on story). This is a GLANCE page, not a data-dense one — every
+  section here should end in a link deeper (to /gigs or /metrics), never
+  try to replace either.
+
+  Composition, top to bottom:
+  1. The sonar-sweep header (mount the component from
+     `sonar-sweep-header-widget`, don't rebuild it).
+  2. A small set of CUSTOMIZABLE glance tiles. The 4 stat tiles already
+     specified in the recovered Signal Deck concept (Ready to act — green &
+     new / New signals, all tiers / In play — applied & interview / Tracked
+     total) are the starting library, but the owner explicitly asked to
+     "customize what shows" — build this as a picker over a small,
+     versioned set of tile types (persisted somewhere real — check whether
+     `Config` already has a place for per-user UI preferences, e.g. the
+     existing `uiTheme` field's precedent in `src/lib/config/schema.ts`, or
+     whether this needs a new lightweight preference; don't invent a new
+     storage mechanism if one already exists), not a fixed 4-tile layout.
+  3. A "Today" component — EITHER a small top-5-for-today list (newest
+     green/yellow matches surfaced today) OR, when nothing new appeared
+     today, a plain "today's scan is fully covered" checkmark state. The
+     owner explicitly offered both as acceptable and left the choice to
+     whichever renders more clearly against real data — pick one, document
+     the choice and why in this story's own progress_note, don't build
+     both.
+  4. A compact "general metrics and charts on all gigs" component — reuse
+     `loadMetricsData()`/whatever aggregation `/metrics` already computes
+     rather than a new computation path; one small chart/sparkline plus a
+     "See full metrics →" link to `/metrics`. Do not duplicate `/metrics`'s
+     full range-selector/detail UI here — that page stays the deep-dive,
+     this is the teaser.
+  5. A clear CTA into the relocated giglist (`/gigs`).
+
+acceptance_criteria:
+  - "`/` renders the sonar-sweep header, a customizable glance-tile set, a Today component (top-5 or checkmark), a compact metrics/chart summary linking to /metrics, and a CTA into /gigs — verified against the real running app, real data."
+  - "The tile set is genuinely user-customizable (which tiles show, from a small defined library) — not a hardcoded fixed 4-tile layout."
+  - "/metrics itself is untouched by this story — the compact dashboard component reuses its existing data/aggregation, it does not fork a second copy of that logic."
+  - "The per-group route (/[group]/) gets the same Dashboard treatment, scoped to that group's own gigs — mirroring how dashboard-data.ts already supports an optional groupId."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/metrics-data.ts
+      purpose: "loadMetricsData() — the aggregation to reuse (not duplicate) for the compact metrics component."
+    - path: src/app/metrics/metrics-client.tsx
+      purpose: "The full metrics page this story's compact component teases and links to; read for the existing BarChart component in case it's directly reusable at a smaller size."
+    - path: src/lib/config/schema.ts
+      purpose: "Config schema — check for an existing per-user UI-preference field (uiTheme precedent) before inventing new storage for the customizable-tile picker."
+    - path: src/app/dashboard-data.ts
+      purpose: "loadDashboardData() already supports an optional groupId (multi-group-architecture epic) — the per-group Dashboard variant should follow the same pattern."
+
+design_decisions:
+  - decision: The Today component picks ONE of (top-5 list, checkmark state) rather than building both as a toggle.
+    rationale: "Owner explicitly offered both as acceptable and deferred the choice to implementation, given the real data shape — avoids over-building a feature the owner didn't actually ask for both halves of."
+
+risks:
+  - severity: medium
+    description: "\"Customizable\" tile picker scope could balloon into a full dashboard-builder if not bounded."
+    mitigation: "Bound to a small, fixed LIBRARY of tile types (the 4 Signal-Deck tiles plus maybe 1-2 more) with a simple show/hide picker — not a drag-and-drop layout engine. Keep it proportionate to a glance page, not a BI tool."
+
+references:
+  - path: .pHive/epics/dashboard-drafts-data-integrity/docs/design-discussion.md
+    relevant_excerpt: "§2 recovered Dashboard spec, owner's own verbatim direction — the authoritative source for this story's scope."

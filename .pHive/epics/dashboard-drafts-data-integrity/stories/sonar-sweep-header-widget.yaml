@@ -1,0 +1,98 @@
+id: sonar-sweep-header-widget
+epic: dashboard-drafts-data-integrity
+title: "Build the real sonar-sweep header (\"sonar dish\") from the recovered Signal Deck concept"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Recovers a real, previously-specified deliverable that silently fell out
+  of the `gigradar-command-center` epic's `signal-deck-main-dashboard`
+  story: the animated sonar-scope icon + live instrument readout + "Sweep
+  now" button from the owner's own approved Signal Deck concept (Artifact
+  `730c378b-c24c-4ab0-840e-a56185854145`). See this epic's
+  docs/design-discussion.md §1 for the exact, verified markup/CSS/animation
+  timing extracted from that artifact — build against that spec, not a
+  fresh interpretation.
+
+  The DATA this needs already exists and is already wired: `/` currently
+  renders three plain-text pills (`src/app/page.tsx` lines ~41-43) sourced
+  from `computeStatusStrip()` (`src/lib/status/status-strip.ts`) —
+  `sourcesLabel` ("N sources configured (M need attention)"), `profileLabel`
+  ("Profile: complete"/"needs setup"), `lastScanLabel` ("Last scan: X ago",
+  computed from `computeLastScanIso()` = MAX(gig.lastSeen)). This story
+  replaces those plain pills with the real animated instrument cluster —
+  do NOT recompute this data differently, reuse `computeStatusStrip()`
+  as-is.
+
+  What's genuinely new, in order of risk:
+  1. The SVG scope icon + CSS animations (§1's exact markup: concentric
+     circles + crosshair, rotating gradient sweep wedge at 4s linear
+     infinite, 3 staggered pulsing blips). Straightforward port — the
+     source markup is already verified and complete.
+  2. The instruments cluster layout (Sources / Profile / Last sweep +
+     button), restyled from today's plain pills to match the concept's
+     `.instrument` treatment, still fed by the same `computeStatusStrip()`
+     data — a live-ticking "Last scan" label should update client-side
+     (setInterval, matching the concept's `tickClock()`), not just at
+     initial page load.
+  3. A REAL "Sweep now" trigger — genuinely unresolved, needs its own
+     research: today there is NO on-demand "run a scan right now" path
+     from the web UI at all (grep-verified — only the standalone
+     `npm run scheduler` process and the MCP server's `run_scan` tool can
+     trigger a scan). The scheduler (`src/scheduler/index.ts`) runs in a
+     SEPARATE OS process from the Next.js server, so a server action can't
+     just call into its live `Cron` job. Research whether the underlying
+     scan pipeline function the scheduler calls is a plain, side-effect-
+     isolated function importable and safely runnable directly from a
+     Next.js Server Action (most likely correct, matching how
+     `reconcileGoFractionalStatuses()`/`reconcileWellfoundStatuses()` are
+     already called directly from server actions today), or whether an
+     IPC/signal path to the running scheduler process is required instead.
+     Document whichever is chosen and why in this story's own
+     `progress_note` once resolved — don't guess in advance here.
+  4. Respect `prefers-reduced-motion` exactly as the concept spec does
+     (animations off, sweep wedge left static-visible, blips at fixed
+     mid-opacity).
+
+  Build this as a real, reusable component (e.g.
+  `src/app/sonar-sweep-header.tsx`) — the `dashboard-overview-page` story
+  (depends on this one) mounts it as the new `/` route's header; until that
+  story lands, wire it onto the CURRENT `/` route in place of today's
+  plain-pill status strip so this ships and is visible on its own.
+
+acceptance_criteria:
+  - "The sonar-scope icon renders with a continuously rotating sweep wedge (4s) and 3 staggered pulsing blips, matching design-discussion.md §1's markup/timing."
+  - "prefers-reduced-motion: reduce disables the spin/pulse animations, leaving a static, still-legible icon."
+  - "The Sources/Profile/Last-sweep instrument readout shows the SAME values computeStatusStrip() already computes today — no new data source, no discrepancy with the old plain-pill strip it replaces."
+  - "\"Last sweep\" updates live (relative time ticks forward) without a full page reload, matching the concept's tickClock() behavior."
+  - "\"Sweep now\" triggers a REAL scan (not a mock toast) and the header reflects the new Last-sweep time once it completes, live-verified against the real app."
+  - "The component is a standalone, reusable module mountable on both the current `/` route (interim) and the new Dashboard route the dependent story builds."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/status/status-strip.ts
+      purpose: "computeStatusStrip()/computeSourceCounts()/computeProfileComplete()/computeLastScanIso()/formatRelativeTime() — the exact data this widget renders, already correct and tested; reuse verbatim."
+    - path: src/app/page.tsx
+      purpose: "Current `/` route — lines ~41-43 render the plain-pill strip this story's component replaces (interim, until dashboard-overview-page relocates this route)."
+    - path: src/app/dashboard-data.ts
+      purpose: "loadDashboardData() already calls computeStatusStrip() and returns `status` — the exact prop this component consumes."
+    - path: src/scheduler/index.ts
+      purpose: "The standalone scan-scheduling process — research target for step 3 (real Sweep-now trigger); read its runCycle()/buildCycleConfig() to find the underlying scan function to (likely) call directly from a server action."
+    - path: src/app/sync-status-button.tsx
+      purpose: "Existing precedent for a client button calling a Server Action and rendering syncing/done/error state — same shape \"Sweep now\" should follow, NOT a new pattern."
+
+design_decisions:
+  - decision: Reuse computeStatusStrip() verbatim rather than recomputing sonar-header data separately.
+    rationale: "That function is already correct, tested, and live-fixed once already (see its own header comment on the 2026-08-31 false-positive fix) — recomputing it a second way risks silently reintroducing that exact bug."
+
+risks:
+  - severity: high
+    description: "The real Sweep-now trigger mechanism is genuinely unresolved research, not a known integration point."
+    mitigation: "Scoped as this story's own explicit research step (see description point 3) rather than assumed; if the pipeline function can't be safely invoked in-process from Next.js (e.g. long-running, blocks the request), fall back to an IPC/signal-file mechanism to the scheduler process and document the choice."
+
+references:
+  - path: .pHive/epics/dashboard-drafts-data-integrity/docs/design-discussion.md
+    relevant_excerpt: "§1 recovered sonar-sweep header spec — exact markup, CSS, and animation timing verified against the source Artifact."

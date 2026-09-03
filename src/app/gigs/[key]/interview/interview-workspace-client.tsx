@@ -107,8 +107,8 @@ export function InterviewWorkspaceClient({
 
   return (
     <main className="mx-auto max-w-4xl p-6">
-      <Link href="/" className="text-sm font-medium text-theme-text-dim hover:underline">
-        ← Dashboard
+      <Link href="/gigs" className="text-sm font-medium text-theme-text-dim hover:underline">
+        ← All Gigs
       </Link>
 
       <div className="mt-2 flex flex-wrap items-start justify-between gap-2">
