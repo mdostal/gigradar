@@ -1,122 +1,74 @@
-import { isPortunusAvailable } from "@/lib/auth/session-backend";
-import { checkSessionReadiness, type SessionReadiness } from "@/lib/auth/session-readiness";
-import { ConfigSchema } from "@/lib/config/schema";
-import { readRawConfig } from "@/lib/config/save";
-import { listIssues } from "@/lib/notify/issues";
-import type { Config } from "@/lib/types";
-import { ConfigClient } from "./config-client";
+import Link from "next/link";
+import { loadConfigPageData } from "./config-data";
+import { CONFIG_SECTIONS } from "./config-sections";
 import { TauriVersionReadout } from "./tauri-version-readout";
 
-// Single-user local app, no CDN — see src/app/page.tsx's header comment.
-// This route already has the best in-app revalidatePath() coverage of the
-// six pages (every mutating config action revalidates it), so this is a
-// near-zero-cost completeness fix for the residual gap: config.json edited
-// out-of-band, or Portunus installed/uninstalled, while the server is
-// already running.
+// config-dashboard-and-section-pages story: the real Config Dashboard home
+// — owner's own verbatim synthesis: "maintain the top level view of the
+// config to have a config dashboard like the nice card design." Ported
+// from Concept C (Artifact 0bb8af7b-cb7d-47ec-a54c-d55b984371ba) — a card
+// per section, each a compact real-data summary, clicking through to that
+// section's own full page (the SAME destination the sidebar's own link
+// for that section goes to). Auto-fire keeps a visibly distinct, more-
+// serious card treatment (a hazard-stripe top edge) — this section can
+// trigger real applications, it should never look as casual as Appearance.
 export const dynamic = "force-dynamic";
 
-/**
- * The blank/empty-shaped starting document for first-run setup — never
- * written to disk on its own (the user has to actually submit the form),
- * just what pre-populates the form's controlled inputs. `roleArea` and
- * `schedule` are deliberately absent (not `{}`/`""`), matching their
- * documented "omitted is valid" semantics (src/lib/types.ts) — the form
- * itself renders those sections as disabled/off by default rather than
- * enabled-but-empty.
- */
-function blankConfig(): Config {
-  return {
-    profile: { name: "", roles: [], skills: [], timezone: "" },
-    groups: [
-      {
-        id: "default-search-1",
-        label: "Default Search 1",
-        needs: {
-          engagementProfiles: [],
-          freshStageOnly: false,
-          remoteOnly: false,
-        },
-      },
-    ],
-    sources: [],
-  };
-}
+const STATUS_BADGE_CLASS: Record<"ok" | "warn" | "danger" | "neutral", string> = {
+  ok: "bg-theme-tier-green/15 text-theme-tier-green",
+  warn: "bg-theme-tier-yellow/15 text-theme-tier-yellow",
+  danger: "bg-theme-tier-red/15 text-theme-tier-red",
+  neutral: "bg-theme-surface-raised text-theme-text-dim",
+};
 
-/**
- * The config-editing UI (`config-editing-ui` story). A Server Component that
- * pre-populates the form by reading config.json RAW — via `readRawConfig()`
- * (config-write-path's `save.ts`) — never via `loadConfig()`
- * (src/lib/config/load.ts), which resolves "env:" references to real secret
- * values. `ConfigSchema.safeParse()` below is pure structural validation
- * (the same schema `saveConfig()` itself validates against before writing);
- * it never reads `process.env` or resolves anything, so any `"env:VAR_NAME"`
- * string in the raw document comes through to the form completely
- * unchanged, exactly as it appears on disk.
- *
- * First-run handling: `readRawConfig()` is ENOENT-tolerant (resolves to
- * `{}` when no config.json exists yet), so `configExists` is false and
- * `ConfigSchema.safeParse({})` naturally fails (an object missing required
- * `profile`/`needs`/`sources`) — in that case (and the defensive case where
- * an existing file fails validation for some other reason) the form falls
- * back to `blankConfig()` rather than rendering an error page.
- */
-export default async function ConfigPage() {
-  const raw = readRawConfig();
-  const configExists = Object.keys(raw).length > 0;
-  const parsed = ConfigSchema.safeParse(raw);
-  const initial: Config = parsed.success ? parsed.data : blankConfig();
+const STATUS_LABEL: Record<"ok" | "warn" | "danger" | "neutral", string> = {
+  ok: "Ready",
+  warn: "Needs attention",
+  danger: "Armed",
+  neutral: "—",
+};
 
-  // Real, live `portunus --version` check (oauth-session-capture-v2 epic,
-  // portunus-session-backend story) — the Settings editor's backend picker
-  // is shown ONLY when this is true, hidden (not just disabled) otherwise.
-  // See session-backend.ts's own doc comment on why "hidden" is the correct
-  // posture for OSS users without Portunus installed.
-  const portunusAvailable = await isPortunusAvailable();
-
-  // source-login-status-badge story: computed here, server-side, and
-  // threaded down as a plain prop — same pattern as portunusAvailable
-  // directly above. checkSessionReadiness() never spawns a browser or calls
-  // an LLM, so this is cheap enough to run once per source on every render
-  // (same cost class as the isPortunusAvailable() check itself).
-  const sessionReadiness: Record<string, SessionReadiness> = {};
-  for (const source of initial.sources) {
-    sessionReadiness[source.id] = await checkSessionReadiness(source);
-  }
-
-  // ui-theme-system epic, source-status-features story: a "Connected"
-  // badge shows a lighter secondary note when its source has an open
-  // issue -- NOT a keyword-match on the issue's message text (rejected in
-  // design-discussion.md §3c: "session expired" string-matching would
-  // misfire on an unrelated network blip). Structured match on the
-  // issue's own context.sourceId field instead, which raiseIssue() already
-  // sets for every source-scoped issue (see src/lib/notify/issues.ts).
-  const sourcesWithOpenIssues = new Set(
-    listIssues({ open: true })
-      .map((issue) => issue.context?.sourceId)
-      .filter((id): id is string => typeof id === "string"),
-  );
-
-  let subtitle: string;
-  if (!configExists) {
-    subtitle = "No config.json found yet — fill in the form below to create one (first-run setup).";
-  } else if (parsed.success) {
-    subtitle = "Editing your existing config.json.";
-  } else {
-    subtitle =
-      "An existing config.json failed validation, so a blank form is shown below — saving will overwrite the invalid file once the form itself validates.";
-  }
+export default async function ConfigDashboardPage() {
+  const data = await loadConfigPageData();
 
   return (
-    <main className="mx-auto max-w-4xl p-6">
-      <h1 className="text-2xl font-bold tracking-tight text-theme-text">Configure gigradar</h1>
-      <p className="text-sm text-theme-text-dim">{subtitle}</p>
+    <main className="mx-auto max-w-6xl p-6">
+      <h1 className="font-theme-heading text-2xl font-bold tracking-tight text-theme-text">Config Dashboard</h1>
+      <p className="text-sm text-theme-text-dim">{data.subtitle}</p>
       <TauriVersionReadout />
-      <ConfigClient
-        initial={initial}
-        portunusAvailable={portunusAvailable}
-        sessionReadiness={sessionReadiness}
-        sourcesWithOpenIssues={[...sourcesWithOpenIssues]}
-      />
+
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {CONFIG_SECTIONS.map((section) => {
+          const status = section.status(data);
+          const isAutomation = section.id === "automation";
+          return (
+            <Link
+              key={section.id}
+              href={section.href}
+              className={`relative flex flex-col gap-2 overflow-hidden rounded-lg border p-4 transition-colors hover:bg-theme-surface-raised ${
+                isAutomation && status === "danger"
+                  ? "border-theme-tier-red/40 bg-theme-tier-red/5"
+                  : "border-theme-surface-border bg-theme-surface"
+              }`}
+            >
+              {isAutomation && status === "danger" && (
+                <div
+                  className="absolute inset-x-0 top-0 h-1"
+                  style={{ background: "repeating-linear-gradient(135deg, var(--tier-yellow) 0 8px, transparent 8px 16px)" }}
+                  aria-hidden="true"
+                />
+              )}
+              <div className="flex items-center justify-between">
+                <span className="font-theme-heading text-sm font-semibold text-theme-text">{section.label}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${STATUS_BADGE_CLASS[status]}`}>
+                  {STATUS_LABEL[status]}
+                </span>
+              </div>
+              <p className="font-theme-mono text-xs text-theme-text-dim">{section.summary(data)}</p>
+            </Link>
+          );
+        })}
+      </div>
     </main>
   );
 }
