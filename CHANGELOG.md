@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-09-04
+
+### Fixed
+
+- Gigs that stopped being re-seen by their source (delisted, or source
+  listing churn) kept whatever tier they were first stamped with forever,
+  even after redKeywords/coreTitles config changed — a real, live example
+  being a stale "Fractional COO" match still showing green weeks after
+  "coo" was added to the exclusion list. Gigs still in `new` status are
+  now periodically re-tiered against current config once they've gone
+  stale (3+ days unseen), and archived with a real `expired_unapplied`
+  reason once they're old enough (30+ days) that re-tiering no longer
+  makes sense.
+- The giglist's filter row was invisible after scrolling even slightly —
+  only the column-label row was pinned, not the filter row beneath it.
+  Both rows are now sticky with matching heights, so filters stay usable
+  the whole way down the list.
+
+### Changed
+
+- The sync-status control on the giglist (GoFractional/Wellfound) is now
+  a single dropdown driven by a real per-source registry instead of two
+  hardcoded buttons — a future third reconciliation adapter needs one
+  registry entry, not a UI change.
+
 ## [0.32.0] - 2026-09-04
 
 ### Fixed
