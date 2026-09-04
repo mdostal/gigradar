@@ -1,10 +1,35 @@
 id: config-dashboard-rich-cards
 epic: config-detail-and-scan-hardening
 title: "Config Dashboard cards show real, rich per-card detail instead of one generic line"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  ConfigSectionMeta.summary(data): string replaced with details(data):
+  {label,value}[] in config-sections.ts; page.tsx renders a <dl> of rows
+  per card instead of one <p>. New src/lib/schedule/describe-cron.ts (10
+  unit tests) humanizes the common cron shapes this app's schedule field
+  actually produces (single/multiple daily runs, weekday range/list),
+  falling back to the raw cron string for anything else -- never a wrong
+  guess. Sources card now reads the real per-source sessionReadiness map
+  (already loaded in ConfigPageData) for a genuine healthy/needs-login
+  breakdown instead of the old settings-presence-only heuristic. Groups
+  card shows each group's real rate range (minRate/highRate/rateUnit,
+  formatted per unit) plus its real aiVerify on/off state. Verified no
+  generic "Google connection" concept exists in the schema -- did not add
+  a 7th card for it, per the epic's own explicit scope decision.
+
+  Live-verified: full suite (108 files, 1435 passed, 3 skipped) + tsc
+  clean; curl-verified against an isolated dev server seeded with a
+  schema-valid fixture config covering every new data path (rate anchor,
+  home base, two groups with different rate units and aiVerify states,
+  a multi-hour weekday cron, a partially-armed autoFire with kill switch
+  on, mixed source session-readiness) -- every expected row confirmed
+  present in the real rendered HTML (a few false negatives in the first
+  grep pass were JSON/HTML-escaping artifacts in the query itself, not
+  real misses -- confirmed by re-grepping the escaped forms).
 
 description: |
   Owner's own words, comparing a screenshot of the approved concept against

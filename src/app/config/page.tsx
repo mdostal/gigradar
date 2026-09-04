@@ -64,7 +64,14 @@ export default async function ConfigDashboardPage() {
                   {STATUS_LABEL[status]}
                 </span>
               </div>
-              <p className="font-theme-mono text-xs text-theme-text-dim">{section.summary(data)}</p>
+              <dl className="flex flex-col gap-0.5">
+                {section.details(data).map((row) => (
+                  <div key={row.label} className="flex items-baseline justify-between gap-2 font-theme-mono text-xs">
+                    <dt className="text-theme-text-dim">{row.label}</dt>
+                    <dd className="truncate text-right text-theme-text-dim">{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
             </Link>
           );
         })}
