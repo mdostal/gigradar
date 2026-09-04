@@ -138,4 +138,38 @@ describe("runRadar: applyAiVerification() wiring (ai-match-verification epic)", 
     const stored = getGig("braintrust:1", { db });
     expect(stored?.aiFlags).toBeUndefined();
   });
+
+  describe("ai-verify-tier-integration story (config-rebuild-and-match-quality epic)", () => {
+    /** Same makeConfig() shape but with a real roleArea so tier() computes GREEN off a coreTitles hit — makeConfig()'s own g1 has no roleArea at all, which always ties to YELLOW regardless of AI verification, so it can't exercise the downgrade path this story adds. */
+    function makeConfigWithGreenRoleArea(): Config {
+      const cfg = makeConfig(true);
+      cfg.groups[0]!.roleArea = { coreTitles: ["cto"], keywords: [], redKeywords: [] };
+      return cfg;
+    }
+
+    it("downgrades a GREEN tier to YELLOW when the primary group's AI verification rejects the match, with the reason appended", async () => {
+      nextGigs = [makeGig("1")]; // title "Fractional CTO" -- matches coreTitles "cto" -> green, pre-AI
+      const rejection: AiVerifyResult = { confirmed: false, reason: "Actually a finance role, not engineering." };
+      mockApplyAiVerification.mockResolvedValueOnce({ matchedGroupIds: [], aiFlags: { g1: rejection } });
+
+      const result = await runRadar(makeConfigWithGreenRoleArea(), { db });
+
+      expect(result.results[0]?.tier).toBe("yellow");
+      expect(result.results[0]?.reasons.join(" ")).toContain(rejection.reason);
+      const stored = getGig("braintrust:1", { db });
+      expect(stored?.tier).toBe("yellow");
+    });
+
+    it("leaves a GREEN tier untouched when AI verification confirms the match", async () => {
+      nextGigs = [makeGig("1")];
+      const confirmation: AiVerifyResult = { confirmed: true, reason: "Genuinely a CTO-type role." };
+      mockApplyAiVerification.mockResolvedValueOnce({ matchedGroupIds: ["g1"], aiFlags: { g1: confirmation } });
+
+      const result = await runRadar(makeConfigWithGreenRoleArea(), { db });
+
+      expect(result.results[0]?.tier).toBe("green");
+      const stored = getGig("braintrust:1", { db });
+      expect(stored?.tier).toBe("green");
+    });
+  });
 });

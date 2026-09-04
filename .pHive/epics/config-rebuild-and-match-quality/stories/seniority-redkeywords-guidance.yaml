@@ -1,0 +1,42 @@
+id: seniority-redkeywords-guidance
+epic: config-rebuild-and-match-quality
+title: "Add seniority-exclusion terms to the owner's real redKeywords config"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Resolved mechanism (owner's own answer): seniority terms go into the
+  EXISTING redKeywords list — same mechanism already used for wrong-role
+  exclusion (cfo, cmo, etc., confirmed present in the owner's real config
+  this session), no new config concept, no core code change (redKeywords
+  is 100% user-supplied per tiering.ts's own doc comment and
+  docs/ARCHITECTURE.md's core/user-layer boundary).
+
+  This is a CONFIG DATA change for the owner's own real installation, not
+  a code story — the "implementation" is: propose a real, concrete list of
+  seniority-exclusion terms (e.g. "entry level", "associate", "junior",
+  "software engineer i", "intern") based on the live-reproduced junk this
+  session (Entry Level Software Engineer, Associate Software Engineer,
+  Software Engineer I, 2027 Entry Level Software Engineer), and apply it
+  to the owner's real config via the real saveConfig() path (same
+  mechanism the /config Save button uses) — never hand-edit config.json
+  directly (it's encrypted at rest).
+
+acceptance_criteria:
+  - "The owner's real redKeywords list includes seniority-exclusion terms, applied via the real config-save path, verified by re-reading the config afterward (readRawConfig(), not assumed)."
+  - "The previously-live-reproduced junk listings (Entry Level Software Engineer, Associate Software Engineer, Software Engineer I) tier RED on the next scan/re-tier pass — verify against real data, not a synthetic test case only."
+  - "No core code changed for this story — confirmed by an empty/near-empty diff outside config data."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/config/save.ts
+      purpose: "readRawConfig()/saveConfig() — the only correct read/write path for the owner's real, encrypted config.json."
+    - path: src/lib/matching/tiering.ts
+      purpose: "Confirms redKeywords matching is whole-word, case-insensitive — so 'software engineer i' as a phrase (not just 'i') needs the right exact wording to match correctly."
+
+references:
+  - path: .pHive/epics/config-rebuild-and-match-quality/docs/design-discussion.md
+    relevant_excerpt: "§5."

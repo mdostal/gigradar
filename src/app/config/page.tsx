@@ -71,23 +71,17 @@ export default async function ConfigPage() {
   // is shown ONLY when this is true, hidden (not just disabled) otherwise.
   // See session-backend.ts's own doc comment on why "hidden" is the correct
   // posture for OSS users without Portunus installed.
-  //
-  // dashboard-drafts-data-integrity epic, config-page-latency-fix story:
-  // this used to run BEFORE the per-source loop below, sequentially — a
-  // real, measured bug (live-verified: /config took 2.78s to respond vs.
-  // 0.01-0.3s for every other route). isPortunusAvailable() and every
-  // per-source checkSessionReadiness() call are now kicked off together and
-  // awaited concurrently via Promise.all — each Portunus-backed source's
-  // readiness check spawns its OWN real, uncached `portunus` subprocess
-  // (checkSessionReadiness()'s own doc comment: "same cost as
-  // isPortunusAvailable()'s own check"), so N sources used to mean N
-  // sequential process spawns; this bounds the total wait to the SLOWEST
-  // single check instead of their sum.
-  const [portunusAvailable, sessionReadinessEntries] = await Promise.all([
-    isPortunusAvailable(),
-    Promise.all(initial.sources.map(async (source) => [source.id, await checkSessionReadiness(source)] as const)),
-  ]);
-  const sessionReadiness: Record<string, SessionReadiness> = Object.fromEntries(sessionReadinessEntries);
+  const portunusAvailable = await isPortunusAvailable();
+
+  // source-login-status-badge story: computed here, server-side, and
+  // threaded down as a plain prop — same pattern as portunusAvailable
+  // directly above. checkSessionReadiness() never spawns a browser or calls
+  // an LLM, so this is cheap enough to run once per source on every render
+  // (same cost class as the isPortunusAvailable() check itself).
+  const sessionReadiness: Record<string, SessionReadiness> = {};
+  for (const source of initial.sources) {
+    sessionReadiness[source.id] = await checkSessionReadiness(source);
+  }
 
   // ui-theme-system epic, source-status-features story: a "Connected"
   // badge shows a lighter secondary note when its source has an open

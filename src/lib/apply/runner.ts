@@ -181,8 +181,27 @@ export async function runRadar(
         primaryGroup && primaryGroup.tierScoring && primaryGroup.tierScoring.kind !== "keyword"
           ? computeTier(groupScores[primaryGroup.id]!, primaryGroup.tierScoring, scorePopulations[primaryGroup.id] ?? [])
           : tier(g, primaryGroup?.roleArea ?? EMPTY_ROLE_AREA_CONFIG);
-      const flatTier = primaryTierResult.tier;
-      const flatReasons = primaryTierResult.reasons;
+      // ai-verify-tier-integration story (config-rebuild-and-match-quality
+      // epic): applyAiVerification()'s verdict used to be computed and
+      // persisted (aiFlags, ai_flags DB column) but never actually
+      // affected flatTier or reached the UI anywhere — confirmed live
+      // this session ("This is supposed to have multiple levels and an AI
+      // assistant on top to help sort and it seems that is not happening
+      // at all," owner's own words). Real fix, scoped to match
+      // ai-verify.ts's own stated philosophy ("never a replacement for
+      // [the heuristic]"): a GREEN match the AI explicitly rejected
+      // (confirmed: false) downgrades to YELLOW — still visible, still
+      // reviewable, never silently hidden or hard-rejected — with the
+      // model's own reason appended to flatReasons so it shows up
+      // wherever reasons already render. yellow/red are left untouched
+      // (nothing to downgrade to; the badge/tooltip in dashboard-client.tsx
+      // still surfaces the AI's reason regardless of tier).
+      const primaryAiFlag = primaryGroup ? aiFlags[primaryGroup.id] : undefined;
+      const aiDowngraded = primaryAiFlag?.confirmed === false && primaryTierResult.tier === "green";
+      const flatTier = aiDowngraded ? "yellow" : primaryTierResult.tier;
+      const flatReasons = aiDowngraded
+        ? [...primaryTierResult.reasons, `⚠ AI verification: ${primaryAiFlag!.reason} (downgraded green → yellow)`]
+        : primaryTierResult.reasons;
       const flatScore = primaryGroup ? groupScores[primaryGroup.id]! : gateResult.score;
       // Stamp tier + matchedProfileIds/matchedGroupIds/matchedGroupTiers
       // onto the persisted gig (not the original `g`, so a caller's own
