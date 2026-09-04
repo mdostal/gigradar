@@ -1456,16 +1456,21 @@ function AutoFireRulesEditor({
  * on Save — the same `{ok,error}` Server Action convention
  * `updateGigStatusAction` established (src/app/actions.ts).
  */
+/** config-dashboard-and-section-pages story: each real /config/<section> route mounts this SAME component with a different activeSection, so only that one section's <section> block (already individually wrapped below) renders — the field logic/validation/draft state itself is unchanged, this only changes what's visible per route. */
+export type ConfigSection = "profile" | "sources" | "groups" | "schedule" | "automation" | "appearance";
+
 export function ConfigClient({
   initial,
   portunusAvailable,
   sessionReadiness,
   sourcesWithOpenIssues: sourcesWithOpenIssuesList,
+  activeSection,
 }: {
   initial: Config;
   portunusAvailable: boolean;
   sessionReadiness: Record<string, SessionReadiness>;
   sourcesWithOpenIssues: string[];
+  activeSection: ConfigSection;
 }) {
   const sourcesWithOpenIssues = new Set(sourcesWithOpenIssuesList);
   const [draft, setDraft] = useState<DraftConfig>(() => configToDraft(initial));
@@ -1966,6 +1971,7 @@ export function ConfigClient({
         </div>
       )}
 
+      {activeSection === "profile" && (
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Profile</h2>
         <div className="mt-3 flex flex-col gap-3">
@@ -2238,7 +2244,9 @@ export function ConfigClient({
           </div>
         </div>
       </section>
+      )}
 
+      {activeSection === "groups" && (
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Groups (searches)</h2>
         <p className="text-xs text-theme-text-dim">
@@ -2301,8 +2309,9 @@ export function ConfigClient({
           </div>
         )}
       </section>
+      )}
 
-      {selectedGroup && (
+      {selectedGroup && activeSection === "groups" && (
         <section className={sectionClass}>
           <h2 className="text-lg font-semibold text-theme-text">Needs — {selectedGroup.label || "(untitled group)"}</h2>
           <p className="text-xs text-theme-text-dim">
@@ -2330,6 +2339,7 @@ export function ConfigClient({
         </section>
       )}
 
+      {activeSection === "sources" && (
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Google connection</h2>
         <p className="mt-1 text-sm text-theme-text-dim">
@@ -2354,7 +2364,9 @@ export function ConfigClient({
           }}
         />
       </section>
+      )}
 
+      {activeSection === "sources" && (
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Sources</h2>
         <div className="mt-3 flex flex-col gap-4">
@@ -2653,8 +2665,9 @@ export function ConfigClient({
           </button>
         </div>
       </section>
+      )}
 
-      {selectedGroup && (
+      {selectedGroup && activeSection === "groups" && (
         <section className={sectionClass}>
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-theme-text">Role area (optional) — {selectedGroup.label || "(untitled group)"}</h2>
@@ -2787,7 +2800,8 @@ export function ConfigClient({
         </section>
       )}
 
-      <section className={sectionClass}>
+      {activeSection === "schedule" && (
+        <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Schedule (optional)</h2>
         <label>
           <span className={labelClass}>Cron expression</span>
@@ -2841,7 +2855,9 @@ export function ConfigClient({
           </p>
         )}
       </section>
+      )}
 
+      {activeSection === "automation" && (
       <section className={sectionClass}>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-theme-text">Apply profile (optional)</h2>
@@ -2940,7 +2956,9 @@ export function ConfigClient({
           </div>
         )}
       </section>
+      )}
 
+      {activeSection === "automation" && (
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Auto-fire (optional)</h2>
         <p className="text-xs text-theme-text-dim">
@@ -2963,7 +2981,9 @@ export function ConfigClient({
           onChange={(rules) => setDraft({ ...draft, autoFire: { ...draft.autoFire, rules } })}
         />
       </section>
+      )}
 
+      {activeSection === "appearance" && (
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold text-theme-text">Appearance</h2>
         <p className="text-xs text-theme-text-dim">
@@ -2992,6 +3012,7 @@ export function ConfigClient({
           <ThemePicker value={draft.uiTheme} onChange={(uiTheme) => setDraft({ ...draft, uiTheme })} />
         </div>
       </section>
+      )}
 
       <div>
         <button
