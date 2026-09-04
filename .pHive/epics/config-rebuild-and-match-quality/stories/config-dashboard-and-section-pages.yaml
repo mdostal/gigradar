@@ -1,0 +1,62 @@
+id: config-dashboard-and-section-pages
+epic: config-rebuild-and-match-quality
+title: "Rebuild /config as a card-grid dashboard + collapsible sidebar + real per-section pages"
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Owner's real, verbatim synthesis (this epic's design-discussion.md §1) of
+  three previously-published concepts: "take the side bar, make it
+  collapsible, maintain the top level view of the config to have a config
+  dashboard like the nice card design and then the side view lets you skip
+  to the fullpage section and the card design click in also takes you into
+  the full page section -- basically a config dashboard and a home and a
+  config specific page for each area."
+
+  Replace the current single 3007-line flat-scroll config-client.tsx with:
+  1. `/config` — a real dashboard home: the card-grid layout from Concept
+     C (Artifact 0bb8af7b-cb7d-47ec-a54c-d55b984371ba, read its full HTML
+     for the real markup/status-chip/hazard-treatment patterns to port),
+     one card per section (Profile, Sources, Groups & Needs, Schedule,
+     Automation/Auto-fire, Appearance), each a compact summary with a real
+     completeness/status read.
+  2. A collapsible sidebar (Concept A, Artifact
+     f9e1f4a9-c75f-469c-90c3-3e6b78235854 — port its real sidebar
+     status-map pattern), present on the dashboard and every section page.
+  3. Real, separate routes per section (e.g. `/config/profile`,
+     `/config/sources`, `/config/groups`, `/config/schedule`,
+     `/config/automation`, `/config/appearance`) — both a sidebar click
+     and a dashboard-card click land on the same real page, never an
+     inline expand/accordion.
+  4. Auto-fire keeps a visually distinct, more-serious treatment (Concept
+     C's hazard-stripe/kill-switch framing) on both its card and its own
+     page — never styled as casually as Appearance.
+  5. Split the existing 3007-line config-client.tsx's form logic across
+     the new section pages rather than rewriting from scratch — the field
+     logic/validation/save action itself is not the problem, the flat
+     single-page structure is.
+
+acceptance_criteria:
+  - "/config renders the card-grid dashboard home; each card's status summary reflects real config state (not placeholder)."
+  - "Both the sidebar and a dashboard-card click for the same section land on the identical real page — verified for at least 2 sections."
+  - "Auto-fire's card and page are visibly distinct (hazard treatment) from the other sections."
+  - "Every field that existed in the old flat config-client.tsx still exists somewhere in the new structure — no silent field loss (cross-check against the old file before removing it)."
+  - "Live-verified against a real running instance (isolated data dir), not just typechecked."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "The current 3007-line flat form — source of every field being redistributed, not rewritten from scratch."
+    - path: src/app/config/page.tsx
+      purpose: "Current Server Component wrapper — becomes the new dashboard home's data-loading shell."
+    - path: src/app/config/actions.ts
+      purpose: "saveConfigAction and friends — reused as-is, this story is IA only, not a data-layer rewrite."
+
+references:
+  - path: .pHive/epics/config-rebuild-and-match-quality/docs/design-discussion.md
+    relevant_excerpt: "§1 — owner's own verbatim synthesis, the authoritative spec for this story."
+  - path: .pHive/epics/config-rebuild-and-match-quality/docs/design-discussion.md
+    relevant_excerpt: "Artifact URLs f9e1f4a9 (sidebar concept) and 0bb8af7b (card-grid concept) — read their real HTML before building, don't reinterpret from memory."

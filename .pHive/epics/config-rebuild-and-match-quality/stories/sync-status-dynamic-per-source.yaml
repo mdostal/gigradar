@@ -1,0 +1,45 @@
+id: sync-status-dynamic-per-source
+epic: config-rebuild-and-match-quality
+title: "Generalize the hardcoded 2-source sync-status UI into a dynamic list that scales"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Confirmed via code read: src/app/gigs/page.tsx and
+  src/app/[group]/gigs/page.tsx each hardcode exactly two
+  <SyncStatusButton> instances (GoFractional, Wellfound) — the only 2 of
+  ~13 sources with a real reconcile*Statuses() adapter
+  (src/lib/sources/gofractional-status.ts, wellfound-status.ts). Owner:
+  "sync statuses should be across all of them and then allowed for each
+  one in a drop down or something -- as you sign up and add accounts,
+  more should appear."
+
+  Build a small registry (mirroring KNOWN_SOURCES's own
+  id->{label,...} pattern in src/lib/sources/origins.ts) mapping sourceId
+  -> its reconcile Server Action, and render the sync UI (a dropdown or
+  equivalent — owner's own suggestion, not mandated verbatim) by iterating
+  that registry instead of two hardcoded JSX lines. Adding a third real
+  reconcile*Statuses() adapter in the future (a separate, already-flagged
+  follow-on epic) should require zero UI changes — just a new registry
+  entry.
+
+acceptance_criteria:
+  - "The sync UI lists every source with a real reconciliation adapter, not a fixed 2 — verified by reading the registry, not counting hardcoded JSX."
+  - "Adding a hypothetical third adapter to the registry (a quick manual test, not necessarily a real new adapter) makes it appear in the UI with zero other code changes."
+  - "Existing GoFractional/Wellfound sync behavior is unchanged — this is a UI generalization, not a reconciliation-logic change."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/gigs/page.tsx
+      purpose: "The two hardcoded <SyncStatusButton> instances being generalized."
+    - path: src/app/sync-status-button.tsx
+      purpose: "The existing, real, reusable button component (sourceLabel + action props) — already generic per-source, just never driven by a real list."
+    - path: src/lib/sources/origins.ts
+      purpose: "KNOWN_SOURCES — the id->label registry pattern to mirror for the new reconcile-adapter registry."
+
+references:
+  - path: .pHive/epics/config-rebuild-and-match-quality/docs/design-discussion.md
+    relevant_excerpt: "§2."
