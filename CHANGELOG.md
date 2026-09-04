@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-09-04
+
+### Changed
+
+- The Config Dashboard's 6 cards now show real, multi-row detail —
+  rate anchor/home base/timezone on Profile, a healthy/needs-login
+  breakdown on Sources, each group's real rate range and AI-verify
+  state on Groups, a human-readable schedule (new small cron
+  humanizer, falling back to the raw cron string for anything it
+  doesn't recognize), and kill-switch/rules-armed detail on Automation
+  — instead of one generic line per card.
+- The group-switcher pills (shown once 2+ groups are configured) now
+  link to the giglist while you're browsing gigs, and to the Dashboard
+  everywhere else, instead of always dropping you onto the Dashboard.
+  Relabeled "Search:" to "Groups:" and "All groups" to "All Groups."
+
+### Fixed
+
+- Two groups sharing the same label could produce duplicate React keys
+  on the Config Dashboard's Groups & Needs card.
+
 ## [0.33.0] - 2026-09-04
 
 ### Fixed
