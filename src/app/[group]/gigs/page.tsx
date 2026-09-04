@@ -1,9 +1,10 @@
 import { notFound } from "next/navigation";
 import { readRawConfig } from "@/lib/config/save";
 import { DashboardClient } from "../../dashboard-client";
-import { SyncStatusButton } from "../../sync-status-button";
+import { SyncStatusDropdown } from "../../sync-status-dropdown";
 import { SonarSweepHeader } from "../../sonar-sweep-header";
-import { reconcileGoFractionalStatusesAction, reconcileWellfoundStatusesAction, sweepNowAction } from "../../actions";
+import { sweepNowAction } from "../../actions";
+import { SYNC_STATUS_SOURCES } from "../../sync-status-registry";
 import { loadDashboardData, resolveGroupLabel } from "../../dashboard-data";
 
 // dashboard-drafts-data-integrity epic, relocate-giglist-to-all-gigs story.
@@ -35,8 +36,7 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
         </p>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 font-theme-mono text-xs uppercase tracking-wide text-theme-text-dim">
-        <SyncStatusButton sourceLabel="GoFractional" action={reconcileGoFractionalStatusesAction} />
-        <SyncStatusButton sourceLabel="Wellfound" action={reconcileWellfoundStatusesAction} />
+        <SyncStatusDropdown sources={SYNC_STATUS_SOURCES} />
       </div>
       <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} initialPrepByGigKey={prepByGigKey} engagementProfiles={engagementProfiles} />
     </main>
