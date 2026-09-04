@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-09-04
+
+### Fixed
+
+- AI verification (`GroupConfig.aiVerify`) was already correctly running
+  and its verdict was already correctly persisted — but the displayed
+  tier never consulted it, so a semantically-rejected match still showed
+  as a strong green match. A green tier the AI rejects now downgrades to
+  yellow with the model's real reason, visible as a badge on the giglist.
+
+### Changed
+
+- Rebuilt `/config` as a real dashboard: a card-grid home (one card per
+  section, real status at a glance) plus a collapsible sidebar, with
+  every section (Profile, Sources, Groups & Needs, Schedule, Automation,
+  Appearance) now its own dedicated page instead of one long scroll.
+
 ## [0.31.1] - 2026-09-03
 
 ### Fixed
