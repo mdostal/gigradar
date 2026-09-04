@@ -1,0 +1,48 @@
+id: giglist-filter-audit-and-fix
+epic: config-rebuild-and-match-quality
+title: "Audit and fix the giglist's filter UI — owner cannot find or use it"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Owner's own words: "if the filters exist, i sure as fuck can't use or
+  see them." Real research required before any fix — do not assume the
+  cause. Read dashboard-client.tsx's actual filter row rendering (column
+  filters keyed off TanStack table state, per this session's own reading
+  of the file for the checkbox-column addition) and determine which is
+  true:
+  1. Genuinely broken (a filter control exists but doesn't actually narrow
+     the rows).
+  2. Present but undiscoverable (buried, unlabeled, or visually
+     indistinguishable from non-interactive text — a UX problem, not a
+     functional one).
+  3. Present and working, but doesn't filter BY what the owner actually
+     wants (e.g. no way to filter by tier/group/seniority the way the
+     owner is trying to use it).
+
+  The live-reproduced junk (COO, entry-level engineers showing as
+  green/yellow) turned out to be a real TIERING bug (see
+  ai-verify-tier-integration and stale-tier-retier-and-archive stories in
+  this same epic), not necessarily a filter bug — but the filter UI's own
+  discoverability is a real, separate complaint that needs its own
+  verification and fix regardless of whether the tiering fixes alone
+  resolve what the owner is seeing.
+
+acceptance_criteria:
+  - "A clear, written finding (in this story's own progress_note) of which of the three failure modes above is actually true, backed by reading the real code — not assumed."
+  - "Whatever the real problem is, fixed: either a functional bug, a discoverability/UX fix (more visible controls, clearer affordances), or new filter dimensions added (tier/group at minimum)."
+  - "Live-verified: set a filter, confirm the giglist actually narrows to match, confirm the filter control itself is visually obvious without hunting."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/dashboard-client.tsx
+      purpose: "The giglist's own filter implementation — column filters, tier/status/source/profile-match/seen-window controls. Full read required, not a skim."
+    - path: src/app/dashboard-filter.ts
+      purpose: "Pure filter-logic helpers (isWithinSeenWindow, etc.) already reused elsewhere this session — check whether the UI actually wires these correctly."
+
+references:
+  - path: .pHive/epics/config-rebuild-and-match-quality/docs/design-discussion.md
+    relevant_excerpt: "§3 — owner's own words, and the explicit instruction not to assume the cause."

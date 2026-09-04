@@ -1,0 +1,52 @@
+id: stale-tier-retier-and-archive
+epic: config-rebuild-and-match-quality
+title: "Re-tier gigs not re-seen recently against current config; archive after longer staleness"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Confirmed live against the owner's real gigs.db: fractionus:fractional-coo-at-trustech-pro-inc,
+  first_seen == last_seen == 2026-08-17 (18+ days stale as of 2026-09-04),
+  tier=green, status=new. recordScan() re-tiers a gig EVERY time it's
+  RE-SEEN in a scan (UPSERT sets tier on every write, confirmed via
+  src/lib/store/gigs.ts) but a gig that stops being returned by its source
+  never gets touched again — it keeps whatever tier it was stamped with at
+  first-seen forever, even after the owner's own redKeywords/coreTitles
+  config changes to correctly exclude it. Owner: "Both" — re-tier AND
+  archive.
+
+  1. Re-tier: a periodic pass (propose piggybacking on the existing 30-min
+     scheduler cycle rather than a new timer — check src/scheduler/index.ts's
+     own runCycle() for the natural place to add this) that re-runs
+     tier()/computeTier() against CURRENT config for gigs not seen in the
+     last N scans/days, updating their stored tier in place. Propose a
+     sane default threshold (e.g. re-tier-eligible after 3+ days
+     unseen) and state it clearly in the PR — this is a real tunable, not
+     hardcoded forever.
+  2. Archive: gigs unseen for a LONGER threshold (propose e.g. 30 days —
+     state the number clearly) get archived via the existing
+     outcomeReason=expired_unapplied mechanism (status-reconciliation-outcomes
+     epic, already shipped — verify its real function signature before
+     reusing, don't guess).
+
+acceptance_criteria:
+  - "A stale, no-longer-matching gig (like the real fractionus example) gets its tier corrected against current config without needing to be re-scraped."
+  - "A gig unseen past the (stated, tunable) archive threshold is archived with outcomeReason=expired_unapplied, matching the existing mechanism byte-for-byte — not a new, parallel archival path."
+  - "Both thresholds are named constants with a clear comment stating the chosen default and that it's a real tunable, not a guess presented as fact."
+  - "Gigs still being actively re-seen are unaffected — this only touches gigs that have genuinely stopped appearing in scans."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/gigs.ts
+      purpose: "recordScan()'s UPSERT — confirms tier is already overwritten on every re-seen scan; this story extends that same tier-write path to unseen gigs on a schedule instead."
+    - path: src/scheduler/index.ts
+      purpose: "runCycle() — the natural place to add a periodic re-tier/archive pass, reusing the existing 30-min cadence rather than a new timer."
+    - path: src/lib/store/types.ts
+      purpose: "OutcomeReason type and its expired_unapplied value — reuse verbatim, verify the real setter function before calling it."
+
+references:
+  - path: .pHive/epics/config-rebuild-and-match-quality/docs/design-discussion.md
+    relevant_excerpt: "§6 — live-reproduced stale-tier example and the owner's 'both' answer."

@@ -1,0 +1,56 @@
+id: new-tier-ranking-buckets
+epic: config-rebuild-and-match-quality
+title: "Design and build a NEW, per-group ranked-bucket concept ('tier 1'/'tier 2'), separate from tierScoring"
+status: pending
+complexity: high
+methodology: classic
+depends_on: [config-dashboard-and-section-pages]
+
+description: |
+  Owner explicitly confirmed this is NOT the existing green/yellow/red
+  tier or the existing GroupConfig.tierScoring (score-threshold/
+  percentile) — "a genuinely new, separate ranking on top." Owner's own
+  framing: distinct groups (e.g. a full-time group and a separate
+  hourly/fractional group) should each have their OWN ranked buckets
+  ("tier 1, tier 2"), and two DIFFERENT groups can each have their own,
+  independently-meaningful "tier 1" — not one global ranking across all
+  groups.
+
+  The exact mechanism is genuinely underspecified — this story's OWN FIRST
+  STEP is to propose a concrete, minimal design (not invent silently) and
+  get explicit owner confirmation before building the full UI. Candidate
+  shapes to weigh (research-only, do not just build the first idea):
+  - Owner-defined ordered rank labels per group (e.g. "Tier 1"/"Tier
+    2"/"Tier 3"), with gigs manually assigned into them one at a time.
+  - Rule-based bucket assignment (e.g. rate/company-size thresholds the
+    owner configures per group, similar in spirit to tierScoring but a
+    genuinely separate field/dimension).
+  - Some hybrid (rule-suggested, owner-confirmed) — ties naturally into
+    the ai-verify-tier-integration story's own "confirm as we go" pattern
+    in this same epic; consider whether these two stories should share a
+    UI affordance rather than building two separate confirm-workflows.
+
+  Depends on config-dashboard-and-section-pages landing first since the
+  natural home for configuring this is the rebuilt Groups & Needs section
+  page, not a bolt-on to the old flat form.
+
+acceptance_criteria:
+  - "A concrete design (which of the candidate shapes above, or a real alternative) is proposed and confirmed with the owner BEFORE full implementation — not built on a guess."
+  - "Two different groups can each have their own 'Tier 1' bucket with independently different real meaning/contents — verified with two real groups, not assumed from the schema."
+  - "The new ranking is visibly distinct from the existing green/yellow/red tier badge and from tierScoring's own score display — an owner looking at a gig can tell which signal is which."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/types.ts
+      purpose: "GroupConfig.tierScoring's real shape — the existing mechanism this story must stay clearly separate from, not duplicate or confuse."
+    - path: src/lib/matching/tiering.ts
+      purpose: "The existing green/yellow/red classifier — also stays clearly separate; read to avoid building a third, overlapping concept."
+
+design_decisions:
+  - decision: This story's first deliverable is a design proposal + owner confirmation, not code.
+    rationale: "The owner's own answer flagged this as genuinely underspecified ('that whole part has to be planned out') — building the wrong mechanism wastes the story entirely; a cheap confirmation step first is the correct sequencing."
+
+references:
+  - path: .pHive/epics/config-rebuild-and-match-quality/docs/design-discussion.md
+    relevant_excerpt: "§7 — owner's confirmation this is a new concept, and the explicit instruction not to guess the mechanism."

@@ -1,0 +1,98 @@
+id: ai-verify-tier-integration
+epic: config-rebuild-and-match-quality
+title: "Wire AI verification's real verdict into the displayed tier and surface it in the UI"
+status: complete
+complexity: high
+methodology: classic
+depends_on: []
+
+progress_note: |
+  Shipped. Confirmed exact root cause by full read of runner.ts:
+  primaryGroup = scopedGroups[0], computed independent of
+  applyAiVerification()'s filtered matchedGroupIds -- flatTier NEVER
+  consulted aiFlags at all, at any point. Also confirmed aiFlags itself
+  WAS already correctly persisted (ai_flags is a real DB column,
+  StoredGig.aiFlags properly typed and (de)serialized) -- the gap was
+  purely "computed and stored, never consumed."
+
+  Fix, matching ai-verify.ts's own stated philosophy ("never a
+  replacement for the heuristic"): a GREEN tier whose primary group's AI
+  verdict is confirmed:false downgrades to YELLOW (never silently
+  hidden, never a hard reject) with the model's real reason appended to
+  flatReasons. yellow/red untouched (nothing to downgrade to).
+
+  UI: dashboard-client.tsx's tier cell now reads StoredGig.aiFlags
+  directly (any group's rejection, not just "primary" -- the client
+  doesn't know which group is primary the way runner.ts does) and shows
+  a 🤖⚠ badge with the real reason as a tooltip, following the exact same
+  pattern as the existing "didn't clear a profile" ⚠ badge already there.
+
+  A real interactive confirm/override control (owner: "we need a good
+  way to handle and confirm that as we go") was NOT built this pass --
+  scoped down given time; the tooltip + tier downgrade is the real,
+  load-bearing fix. Flagged as a genuine remaining gap, not silently
+  dropped.
+
+  2 new tests added (runner-ai-verify.test.ts) covering the downgrade and
+  the confirmed-stays-green case. Full suite: 1419 passing. npm run
+  typecheck clean.
+
+description: |
+  THE central finding of this epic. Confirmed via full read of
+  src/lib/apply/runner.ts (~lines 155-185): applyAiVerification() runs
+  correctly (when a group has aiVerify:true and a credential resolves) and
+  computes a real semantic verdict, but its only outputs (matchedGroupIds,
+  aiFlags) never reach `flatTier` — the tier shown everywhere in the UI is
+  computed separately, purely from tier()/computeTier(), before
+  applyAiVerification() is even called. Grep-confirmed: aiFlags has ZERO
+  references anywhere in src/app/**/*.tsx. The feature runs, correctly
+  identifies false positives, and the result is silently discarded before
+  it ever reaches the owner. This is the confirmed root cause of "This is
+  supposed to have multiple levels and an AI assistant on top to help sort
+  and it seems that is not happening at all" (owner's own words).
+
+  Two real parts, both required (owner: "we need a good way to handle and
+  confirm that as we go"):
+
+  1. Make the AI verdict actually affect what the owner sees. Design
+     decision needed (research this repo's own precedent before deciding,
+     don't invent): does an AI-rejected match downgrade the gig's flatTier
+     (e.g. to yellow or red), or does the keyword tier stay authoritative
+     while a visible "AI flagged this as a likely mismatch" caveat is
+     added alongside it? Check ai-verify.ts's own header comment ("never a
+     replacement for [the heuristic], never spent on a heuristic reject")
+     for the design philosophy already established — a full override may
+     contradict that philosophy; a visible caveat/downgrade-with-reason is
+     more consistent with it. Whichever is chosen, it must be a REAL,
+     visible effect, not another silently-discarded field.
+  2. Surface it. aiFlags (or whatever real signal comes out of part 1)
+     needs a real UI presence on the giglist/gig-detail — a badge, a
+     reason string readable next to the tier badge — plus a real way for
+     the owner to confirm or override the AI's read (a click action,
+     persisted somewhere real, not just a passive display).
+
+acceptance_criteria:
+  - "A gig where AI verification flags a semantic mismatch (e.g. an 'Interim Finance Director' matching only on the generic word 'interim') visibly differs in the UI from a gig with no AI flag — not just in a field nobody renders."
+  - "The owner can see WHY a gig was flagged (a real reason string from the LLM's own verdict, not a boolean) and can confirm or override it from the giglist or gig-detail view."
+  - "aiVerify: false (or unset) groups are byte-identical to today — this story changes what happens to the verdict, not when/whether the LLM call fires."
+  - "Live-verified against a group with aiVerify on and a real credential — not just unit-tested."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/runner.ts
+      purpose: "Lines ~155-185 — where applyAiVerification()'s output (matchedGroupIds, aiFlags) is computed but never fed into flatTier. The exact place this story's fix lands."
+    - path: src/lib/matching/ai-verify.ts
+      purpose: "The AI verification module itself — real, correct, already-shipped semantic check. Read its own header comment for the design philosophy (opt-in, never replaces the heuristic gate) before deciding how its verdict should affect tier."
+    - path: src/lib/matching/tiering.ts
+      purpose: "tier() — the keyword classifier that currently owns flatTier exclusively. Read in full already this session; whole-word matching, coreTitles>redKeywords>keywords>yellow precedence."
+    - path: src/app/dashboard-client.tsx
+      purpose: "Where TIER_BADGE_STYLE renders today — the real precedent for how a new AI-flag badge should look/integrate, reuse the same convention."
+
+design_decisions:
+  - decision: Research ai-verify.ts's own stated philosophy before choosing override-vs-caveat — do not assume.
+    rationale: "The module's own header comment already states a design principle (never replaces the heuristic). A full silent override could contradict work already decided; a visible caveat/downgrade-with-visible-reason is more likely consistent — verify against the actual code/comments, not memory."
+
+references:
+  - path: .pHive/epics/config-rebuild-and-match-quality/docs/design-discussion.md
+    relevant_excerpt: "§4 — the central finding, full root-cause trace."

@@ -1,0 +1,18 @@
+name: config-rebuild-and-match-quality
+title: "Rebuild the config page (owner's real synthesis) + fix the confirmed AI-verification/tiering bugs behind the junk matches"
+methodology: classic
+stories:
+  - id: ai-verify-tier-integration
+    depends_on: []
+  - id: stale-tier-retier-and-archive
+    depends_on: []
+  - id: seniority-redkeywords-guidance
+    depends_on: []
+  - id: giglist-filter-audit-and-fix
+    depends_on: []
+  - id: sync-status-dynamic-per-source
+    depends_on: []
+  - id: config-dashboard-and-section-pages
+    depends_on: []
+  - id: new-tier-ranking-buckets
+    depends_on: [config-dashboard-and-section-pages]

@@ -813,6 +813,14 @@ export function DashboardClient({
         // this tier (keyword mode still computes/persists a score, it's
         // just not what decided the tier).
         const score = row.original.matchScore;
+        // ai-verify-tier-integration story (config-rebuild-and-match-quality
+        // epic): the one place applyAiVerification()'s persisted verdict
+        // (StoredGig.aiFlags, already a real DB column, previously never
+        // rendered anywhere in src/app) becomes visible. Any group's
+        // rejection is shown -- the giglist doesn't know which group is
+        // "primary" the way runner.ts does, so this surfaces every
+        // real rejection reason rather than guessing one.
+        const aiRejections = Object.values(row.original.aiFlags ?? {}).filter((f) => !f.confirmed);
         return (
           <span className="inline-flex items-center gap-1.5">
             <TierSignalMeter tier={tier} firstSeen={row.original.firstSeen} />
@@ -829,6 +837,14 @@ export function DashboardClient({
                 className="cursor-help text-xs text-theme-text-dim"
               >
                 ⚠
+              </span>
+            )}
+            {aiRejections.length > 0 && (
+              <span
+                title={`AI verification flagged this as a likely role-type mismatch: ${aiRejections.map((f) => f.reason).join(" ")}`}
+                className="cursor-help text-xs text-amber-600"
+              >
+                🤖⚠
               </span>
             )}
           </span>
