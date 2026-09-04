@@ -46,7 +46,7 @@ import { resolveLlmCredential } from "../lib/config/env-store.js";
 import { sendDesktopNotification } from "../lib/notify/desktop.js";
 import { raiseIssue, resolveIssuesForSource } from "../lib/notify/issues.js";
 import { registerAllSources } from "../lib/sources/register-all.js";
-import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting } from "../lib/store/index.js";
+import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting, runStaleGigMaintenance } from "../lib/store/index.js";
 import { getSubmitAdapter } from "../lib/submit/adapter.js";
 import type { ApplyProfileConfig, Config, MatchResult, SourceConfig } from "../lib/types.js";
 import { BackoffTracker, DEFAULT_MAX_BACKOFF_MS } from "./backoff.js";
@@ -501,6 +501,17 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
       // pattern as runAutoDraft() above) — see that function's own doc
       // comment for the full behavior.
       await runNotifyOnGreenMatch(config, result.passed, result.newlyInsertedKeys, notifyFn);
+
+      // stale-tier-retier-and-archive story: piggybacks on this same
+      // 30-min cycle rather than a separate timer. Uses the FULL config
+      // (not cycleConfig) -- a source currently in backoff shouldn't stop
+      // its already-stored gigs from being re-tiered/archived against the
+      // owner's real, current redKeywords/coreTitles. Only ever touches
+      // status:"new" gigs (see maintenance.ts's own header comment).
+      const { retiered, archived } = runStaleGigMaintenance(config);
+      if (retiered > 0 || archived > 0) {
+        console.log(`gigradar scheduler: stale-gig maintenance — ${retiered} re-tiered, ${archived} archived (expired_unapplied).`);
+      }
     } catch (e) {
       // Anything that reaches here is, by construction, OUTSIDE runRadar()'s
       // own per-source try/catch (that function never throws for a single

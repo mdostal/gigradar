@@ -1,10 +1,39 @@
 id: stale-tier-retier-and-archive
 epic: config-rebuild-and-match-quality
 title: "Re-tier gigs not re-seen recently against current config; archive after longer staleness"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Shipped. Real defaults, stated explicitly: RETIER_AFTER_DAYS = 3,
+  ARCHIVE_AFTER_DAYS = 30 (src/lib/store/maintenance.ts's own exported
+  constants — real tunables, not buried). New setTier() store primitive
+  (matching setStatus()/setOutcome()'s existing convention) makes the
+  re-tier write possible without faking a scan batch.
+
+  Piggybacks on the existing 30-min scheduler cycle (runCycle()) rather
+  than a new timer, using the FULL config (not the backoff-filtered
+  cycleConfig) so a source currently in backoff doesn't block its
+  already-stored gigs from being corrected. Only ever touches
+  status:"new" gigs — applied/interview gigs are never silently
+  re-tiered or archived.
+
+  Real, honest scope limit: re-tier only recomputes the KEYWORD
+  classifier (tiering.ts's tier()) — a group using score-based
+  tierScoring (percentile/threshold) needs the full population of other
+  tracked gigs' scores to re-derive a tier correctly, which this
+  maintenance pass does not reconstruct outside a real scan. Those gigs
+  are left untouched by re-tier (still eligible for archive on their own
+  staleness). Test coverage confirms this explicitly.
+
+  6 new tests (maintenance.test.ts), including the exact real bug this
+  fixes: a stale COO match tiered green under old config correctly
+  downgrades to red once the owner's current redKeywords (which already
+  include "coo") get re-applied. Full suite: 1425 passing. Typecheck
+  clean.
+
 
 description: |
   Confirmed live against the owner's real gigs.db: fractionus:fractional-coo-at-trustech-pro-inc,

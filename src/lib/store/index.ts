@@ -2,8 +2,10 @@
 // anything outside src/lib/store should use — see docs/ARCHITECTURE.md.
 export { DEFAULT_BUSY_TIMEOUT_MS, closeDb, getDb } from "./db.js";
 export { getDefaultDataDir, getDefaultDbPath } from "./path.js";
-export { getGig, gigKey, listGigs, listGroupScores, recordScan, setOutcome, setStatus } from "./gigs.js";
+export { getGig, gigKey, listGigs, listGroupScores, recordScan, setOutcome, setStatus, setTier } from "./gigs.js";
 export type { DbOption, RecordScanOptions } from "./gigs.js";
+export { ARCHIVE_AFTER_DAYS, RETIER_AFTER_DAYS, runStaleGigMaintenance } from "./maintenance.js";
+export type { StaleGigMaintenanceResult } from "./maintenance.js";
 export {
   getDraft,
   listAutoFireDecisions,

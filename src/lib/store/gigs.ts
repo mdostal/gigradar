@@ -420,3 +420,20 @@ export function setOutcome(key: string, reason: OutcomeReason | null, note: stri
     throw new Error(`gigradar store: setOutcome: no gig with key "${key}"`);
   }
 }
+
+/**
+ * stale-tier-retier-and-archive story (config-rebuild-and-match-quality
+ * epic): explicitly re-stamps a gig's `tier` outside a scan — recordScan()
+ * already overwrites tier on every RE-SEEN scan (its own UPSERT), but a
+ * gig that stops being returned by its source never gets touched again;
+ * this is the same write, callable directly for that maintenance pass
+ * without needing a fake scan batch. Throws if the key doesn't exist, same
+ * convention as setStatus()/setOutcome().
+ */
+export function setTier(key: string, tier: Gig["tier"], opts: DbOption = {}): void {
+  const db = opts.db ?? getDb();
+  const result = db.prepare("UPDATE gigs SET tier = :tier WHERE key = :key").run({ tier: tier ?? null, key });
+  if (Number(result.changes) === 0) {
+    throw new Error(`gigradar store: setTier: no gig with key "${key}"`);
+  }
+}
