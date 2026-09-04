@@ -45,7 +45,36 @@ when its source *did* return results this scan but that gig didn't reappear
 A pure function, sibling to `gate.ts`, that classifies a gated gig as
 green/yellow/red role-area fit against a user-supplied `RoleAreaConfig` (see
 Contracts above). Runs after `gate()` in `runRadar()`; the result is stamped
-onto the persisted record and the returned `MatchResult`.
+onto the persisted record and the returned `MatchResult`. Whole-word,
+case-insensitive matching; precedence is `coreTitles` > `redKeywords` >
+`keywords` > yellow-fallback (no keyword hit is never a hard reject).
+
+**AI-verify tier integration** (`ai-verify-tier-integration` story,
+`config-rebuild-and-match-quality` epic): a group with `GroupConfig.aiVerify`
+set gets a second, LLM-driven pass over `tiering.ts`'s keyword verdict —
+`matching/ai-verify.ts`'s `applyAiVerification()` returns
+`{matchedGroupIds, aiFlags}`, where each flag is `{confirmed, reason}`. In
+`apply/runner.ts`, a group whose keyword verdict is green but whose AI flag
+says `confirmed: false` gets downgraded to yellow — the flag's own `reason`
+is appended to the gig's tier reasons and rendered as a `🤖⚠` badge (tooltip
+= the reason) on the giglist. This exists specifically to catch keyword
+false positives the pure classifier can't see — e.g. "Interim Finance
+Director" matching on the bare substring "interim." AI verification only
+ever *downgrades* green→yellow; it never promotes or hard-rejects, keeping
+`tiering.ts` itself the sole authority on red.
+
+**Stale-tier maintenance** (`stale-tier-retier-and-archive` story, same
+epic): `recordScan()`'s UPSERT only re-stamps tier on a gig's own re-scan —
+a gig a source stops returning (delisted, or source churn) never got
+re-tiered again, even after the owner's own `redKeywords`/`coreTitles`
+config changed. `src/lib/store/maintenance.ts`'s `runStaleGigMaintenance()`
+closes that gap for every `status: "new"` gig: re-tiers against current
+config once a gig is `RETIER_AFTER_DAYS` (3) old (skipped for groups using a
+score-based `tierScoring` mode, which isn't meaningfully re-appliable this
+way), and archives it (`status: "archived"`,
+`outcomeReason: "expired_unapplied"`) once it hits `ARCHIVE_AFTER_DAYS`
+(30). Runs at the end of every scheduler cycle (`scheduler/index.ts`), after
+`runNotifyOnGreenMatch()`.
 
 ## Config loading (`src/lib/config/`)
 
@@ -629,23 +658,53 @@ leaves no orphaned `next-server` process behind, and launching with port
 3000 already occupied by an unrelated real service (not gigradar) falls
 back to a free port and starts successfully instead of failing outright.
 
-## The dashboard (`src/app/page.tsx`)
+## The dashboard (`src/app/page.tsx`) and the giglist (`src/app/gigs/`)
 
-The results view — `dashboard-results-view` story, `dashboard-config-ui`
-epic. `src/app/page.tsx` is a Server Component that calls `listGigs()` (no
-filter, so the full stored set) once per request and passes it straight to
+Two separate routes, deliberately — owner's own correction that landed the
+split: "the table view IS NOT THE DASHBOARD — that is our giglist or all
+gigs — dashboard is a mix of metrics, charts, the last scan, etc."
+(`dashboard-drafts-data-integrity` epic, `dashboard-overview-page` +
+`relocate-giglist-to-all-gigs` stories).
+
+- **`/` — the real Dashboard** (`src/app/page.tsx`): a Server Component
+  that renders `SonarSweepHeader` (below) plus `DashboardOverviewClient` —
+  glance tiles, a "Today" summary, and a metrics teaser built from
+  `loadDashboardData()` + `listDrafts()`. No results table lives here.
+- **`/gigs` — All Gigs** (`src/app/gigs/page.tsx`) and **`/[group]/gigs` —
+  the per-group equivalent**: the actual results table, and the route the
+  rest of this section describes.
+- **`SonarSweepHeader`** (`src/app/sonar-sweep-header.tsx`): shared by both
+  `/` and every `/gigs` route. Shows last-scan status/time and a "Sweep
+  now" button wired to the `sweepNowAction` Server Action — computed
+  server-side (`now = Date.now()`) and passed down as a prop, never called
+  client-side during render, to avoid the hydration mismatch
+  `metrics/page.tsx` hit once doing exactly that.
+- **`SyncStatusDropdown`** (`src/app/sync-status-dropdown.tsx`,
+  `sync-status-dynamic-per-source` story): a single dropdown on the giglist
+  routes listing every source with a real `reconcile*Statuses()` adapter —
+  driven by `sync-status-registry.ts`'s `SYNC_STATUS_SOURCES`, not
+  hardcoded JSX. Adding a new adapter needs one registry entry, no UI
+  changes.
+
+`src/app/gigs/page.tsx` calls `listGigs()` (no filter, so the full stored
+set) once per request and passes it straight to
 `src/app/dashboard-client.tsx`, a Client Component that owns all the
 interactive filtering:
 
-- **Tier filter** — single-select tabs (All / Green / Yellow / Red).
-- **Status filter** — multi-select checkboxes (New / Applied / Interview /
-  Archived / Ignored), all checked by default.
-- **Search** — free-text box matched against title + company,
-  case-insensitive substring.
-- All three combine as **AND**. The actual matching logic is a pure function,
-  `filterGigs()` in `src/app/dashboard-filter.ts`, kept separate from the
-  component specifically so it's unit-testable without a DOM/React Testing
-  Library dependency this repo doesn't otherwise need.
+- **Per-column filters** (TanStack Table, `giglist-filter-audit-and-fix`
+  story) — a second `<thead>` row beneath the label/sort row, one filter
+  control per column keyed off `meta: { filterKind }`: text (Title,
+  Company), select (Source), status-multi, profile-multi, tier, seen-window,
+  and number-min/number-max (Rate). All combine as AND; the matching logic
+  itself is a pure function, `filterGigs()` in `src/app/dashboard-filter.ts`,
+  kept separate from the component specifically so it's unit-testable
+  without a DOM/React Testing Library dependency this repo doesn't
+  otherwise need. Both header rows are `position: sticky` with matching
+  fixed heights (`h-9`/`top-9`, one shared Tailwind token) so the filter row
+  stays visible while scrolling instead of only the column-label row —
+  the original single-sticky-row design was a deliberate tradeoff that
+  turned out to make the filters themselves disappear on any list longer
+  than a screenful.
 - **Sort** — no client-side re-sort; `listGigs()`'s own default order
   (`first_seen DESC`) is already this view's required default, so the fetched
   array is rendered as-is.
@@ -696,33 +755,51 @@ action) for every Server Action in this app to follow, including
 
 ## The config editor (`src/app/config/`)
 
-The config-editing form — `config-editing-ui` story, `dashboard-config-ui`
-epic — covers the full `Config` shape (`src/lib/types.ts`): Profile
-(name/roles/skills/timezone/optional homeBase), Needs (all seven required
-fields), Sources (id/enabled/settings), optional RoleArea
-(coreTitles/keywords/redKeywords), and an optional cron `schedule` string.
+Covers the full `Config` shape (`src/lib/types.ts`): Profile, Groups (each
+with its own Needs/engagementProfiles/RoleArea/tierScoring/aiVerify),
+Sources (id/enabled/settings), Schedule, Automation (apply-profile,
+auto-fire, kill switch), and Appearance (theme). Originally one 3000+-line
+single-page form (`config-editing-ui` story, `dashboard-config-ui` epic);
+rebuilt into a **dashboard + per-section pages** information architecture
+(`config-dashboard-and-section-pages` story, `config-rebuild-and-match-
+quality` epic) — owner's own synthesis: "take the side bar, make it
+collapsible, maintain the top level view of the config to have a config
+dashboard like the nice card design and then the side view lets you skip to
+the fullpage section and the card design click in also takes you into the
+full page section."
 
-- **`src/app/config/page.tsx`** — a Server Component that pre-populates the
-  form by calling `readRawConfig()` (`src/lib/config/save.ts`), never
-  `loadConfig()` (`src/lib/config/load.ts`). This is load-bearing, not a
-  style choice: `loadConfig()` resolves `"env:VAR_NAME"` references to real
-  secret values for the pipeline runner's own use, and that resolved value
-  must never reach a page that could round-trip it back into `config.json`
-  on save. `readRawConfig()` is `saveConfig()`'s own ENOENT-tolerant, non-
-  resolving read, exported for exactly this purpose — a missing
+- **`src/app/config/layout.tsx`** — wraps every `/config/*` route. Calls
+  `loadConfigPageData()` (`config-data.ts`, `cache()`-wrapped so a layout +
+  its page sharing one request pay its cost — a live `portunus --version`
+  spawn plus a per-source `checkSessionReadiness()` loop — once, not
+  twice) and renders the collapsible `ConfigSidebar` alongside `children`.
+- **`src/app/config/page.tsx`** — the dashboard home: a card grid over
+  `CONFIG_SECTIONS` (`config-sections.ts`), one card per section
+  (Profile/Sources/Groups/Schedule/Automation/Appearance) each with a
+  `summary()`/`status()` pulled from the shared `status-strip` helpers.
+  The Automation card gets a hazard-stripe treatment when auto-fire is
+  armed with the kill switch off.
+- **`src/app/config/[section]/page.tsx`** — a dynamic route rendering the
+  same underlying `ConfigClient` form, scoped to one section via its new
+  `activeSection` prop; every other section's JSX is wrapped in an
+  `{activeSection === "…" && (…)}` conditional rather than duplicated.
+- **`src/app/config/config-client.tsx`** — unchanged as the single owner of
+  form state and the save action; only gained the `activeSection` prop and
+  its conditional section wrapping. `saveConfig()` (`src/lib/config/
+  save.ts`) does a **top-level shallow merge** against the existing raw
+  document, which is exactly what let each new section page submit just
+  its own top-level key with zero backend changes.
+- **Still reads via `readRawConfig()`, never `loadConfig()`.** This is
+  load-bearing, not a style choice: `loadConfig()` resolves
+  `"env:VAR_NAME"` references to real secret values for the pipeline
+  runner's own use, and that resolved value must never reach a page that
+  could round-trip it back into `config.json` on save. `readRawConfig()`
+  is `saveConfig()`'s own ENOENT-tolerant, non-resolving read — a missing
   `config.json` renders a blank first-run form, not an error page.
-- **`src/app/config/config-client.tsx`** — the Client Component owning all
-  form state. `SourceConfig.settings` (opaque `Record<string, unknown>`) is
-  edited as a key/value **pairs editor** (add-row: key text input, value
-  text input) — deliberately not a raw JSON textarea, which would
-  contradict this epic's own "no hand-editing JSON" bar (team review,
-  `ui-designer`, see `.pHive/epics/dashboard-config-ui/docs/design-discussion.md`).
-  An `"env:VAR_NAME"` value is shown and edited as a literal string end to
-  end — this component never reads `process.env`. RoleArea/schedule each
-  carry their own "configure this section" toggle so the form can represent
-  "never configured" (the key stays absent from the saved document) as
-  distinct from "configured but empty" — matching `RoleAreaConfig`'s
-  documented optional semantics.
+- `SourceConfig.settings` (opaque `Record<string, unknown>`) is still
+  edited as a key/value **pairs editor**, deliberately not a raw JSON
+  textarea. An `"env:VAR_NAME"` value is shown and edited as a literal
+  string end to end — this component never reads `process.env`.
 
 ### Role-area templates (`src/lib/config/role-templates.ts`, `role-templates` story)
 
