@@ -1,0 +1,10 @@
+name: config-detail-and-scan-hardening
+title: "Rich Config Dashboard cards, real profile/group restructuring, and a focused /config cold-start hang investigation"
+methodology: classic
+stories:
+  - id: config-dashboard-rich-cards
+    depends_on: []
+  - id: profile-group-restructure
+    depends_on: []
+  - id: config-cold-start-hang-investigation
+    depends_on: []

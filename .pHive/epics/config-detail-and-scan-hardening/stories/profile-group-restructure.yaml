@@ -1,0 +1,65 @@
+id: profile-group-restructure
+epic: config-detail-and-scan-hardening
+title: "Split the owner's real single group into Fractional/Hourly + Full-Time, enable AI-verify on both"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Owner already confirmed this exact restructuring via AskUserQuestion
+  earlier this session ("Yes, split + enable AI-verify") -- this is real,
+  decided work against the owner's live config, not an open design
+  question.
+
+  Current real state (confirmed via readRawConfig() this session): one
+  group, "default-search-1", bundling all three engagement profiles
+  (a-fractional-hourly, b-fulltime, c-fallback-hourly) together, with
+  aiVerify undefined (off). This is also the confirmed root cause of the
+  owner's earlier complaint that the "AI assistant on top to help sort"
+  wasn't running -- aiVerify has never actually been turned on.
+
+  Fix: a one-off, reviewed script using the app's own real
+  readRawConfig()/saveConfig() functions (matching this session's own
+  established safe-edit pattern for live config changes -- never
+  hand-edit the encrypted config.json directly) that:
+  1. Reads the current single group.
+  2. Writes two groups in its place:
+     - id "fractional-hourly", label "Fractional / Hourly", needs.engagementProfiles = [a-fractional-hourly, c-fallback-hourly], same freshStageOnly/remoteOnly as today.
+     - id "full-time", label "Full-Time", needs.engagementProfiles = [b-fulltime], same freshStageOnly/remoteOnly as today.
+     Both groups keep the EXACT SAME roleArea (25 coreTitles / 96
+     redKeywords) as the original group -- copy, don't regenerate.
+     Both groups get aiVerify: true.
+  3. Re-reads the config afterward and confirms: profile/sources
+     unchanged, exactly 2 groups with the correct id/label/
+     engagementProfiles/aiVerify, roleArea byte-identical to the original
+     on both.
+
+  This story operates on the owner's REAL ~/.local/share/gigradar/
+  config.json by design -- that is the whole point, and is NOT a
+  violation of this session's "never touch real user data" testing
+  discipline (which is about not using real data as a test FIXTURE, not
+  about declining genuine, owner-directed configuration changes).
+
+acceptance_criteria:
+  - "Exactly 2 groups exist afterward: fractional-hourly (profiles A+C) and full-time (profile B) -- verified by re-reading the real config, not assumed from the edit script's intent."
+  - "Both new groups carry the exact same roleArea (25 coreTitles, 96 redKeywords) as the original single group -- byte-for-byte, not regenerated."
+  - "Both new groups have aiVerify: true."
+  - "Every other top-level config key (profile, sources, schedule, applyProfile, autoFire, etc.) is byte-identical before and after -- saveConfig()'s top-level shallow merge means this should hold automatically, but verify it, don't assume it."
+  - "A real re-scan afterward (per the owner's own follow-up request) confirms both new groups produce sane, distinct per-group tiering on the same underlying gigs."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/config/save.ts
+      purpose: "readRawConfig()/saveConfig() -- the only sanctioned read/write path for the real config.json. saveConfig() does a top-level shallow merge, so writing just the new `groups` array leaves every other key untouched."
+    - path: src/lib/types.ts
+      purpose: "GroupConfig shape (id/label/needs/roleArea/aiVerify/tierScoring) -- the exact fields the two new group objects must carry."
+
+design_decisions:
+  - decision: "Copy the original group's roleArea verbatim to both new groups rather than writing separate criteria per group."
+    rationale: "The owner's own confirmed answer only specified the group split + aiVerify; no request for different keyword criteria per group. Splitting the criteria too would be an unconfirmed guess -- out of scope for this story."
+
+references:
+  - path: .pHive/epics/config-detail-and-scan-hardening/docs/design-discussion.md
+    relevant_excerpt: "§2, Story B -- the exact restructuring already confirmed with the owner, and the risk/verification approach."
