@@ -1,10 +1,59 @@
 id: config-dashboard-and-section-pages
 epic: config-rebuild-and-match-quality
 title: "Rebuild /config as a card-grid dashboard + collapsible sidebar + real per-section pages"
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Shipped. Faithful to the owner's own verbatim synthesis:
+  - /config is now the real Config Dashboard home (card grid, ported from
+    Concept C) — 6 cards (Profile/Sources/Groups & Needs/Schedule/
+    Automation/Appearance), each a real-data summary + status badge.
+  - A collapsible sidebar (Concept A, own new collapse affordance since
+    neither concept had one — localStorage-persisted, own key, same
+    pattern dashboard-overview-prefs.ts established) present on every
+    /config/* route via a shared layout.tsx.
+  - 6 real, separate pages (/config/profile, /config/sources,
+    /config/groups, /config/schedule, /config/automation,
+    /config/appearance) — both the sidebar link and the dashboard card
+    for a section land on the identical page. Google connection folded
+    into Sources; Needs + Role area folded into Groups (both are
+    per-selected-group panels, same as before); Apply profile folded
+    into Automation alongside Auto-fire.
+  - Automation's card gets a real hazard-stripe treatment (diagonal
+    warning gradient) when a rule is armed and the kill switch is off —
+    distinct from every other card.
+
+  Real architectural finding that de-risked this significantly:
+  saveConfig() already does a top-level SHALLOW MERGE
+  ({...currentRaw, ...edits}) — no backend change was needed at all. Kept
+  the existing 3007-line config-client.tsx's draft-state/validation/save
+  logic completely unchanged; only wrapped each of its 10 already-
+  cleanly-delimited <section> blocks in an `activeSection === "X"`
+  conditional (a new `activeSection` prop) so each route shows only its
+  own fields while the shared save button/banners stay global at the top/
+  bottom of the same form. Zero field lost, zero save-action rewrite.
+
+  loadConfigPageData() (config-data.ts) is React `cache()`-wrapped so the
+  new layout.tsx and each page.tsx sharing it costs one real data load
+  per request, not two.
+
+  Live-verified: all 7 routes (dashboard + 6 sections) respond 200, clean
+  HTML, correct per-page content isolation confirmed (profile page has
+  zero Auto-fire content, automation page has zero Sources heading).
+  Fixed the one real e2e regression this caused (config-roundtrip.spec.ts
+  navigated to the old single-page form) — all 3 e2e specs pass. Full
+  unit suite (1419) + typecheck clean.
+
+  Deliberately did NOT re-attempt parallelizing the per-source
+  checkSessionReadiness() loop in the extracted config-data.ts — that fix
+  was reverted once already this session after a real, still-unexplained
+  hang specific to the packaged Tauri sidecar. Left sequential, with a
+  comment explaining why, rather than risk repeating that incident mid-
+  refactor.
+
 
 description: |
   Owner's real, verbatim synthesis (this epic's design-discussion.md §1) of

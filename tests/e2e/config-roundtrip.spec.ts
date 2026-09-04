@@ -6,8 +6,12 @@ import { expect, test } from "@playwright/test";
 // actually persist/revalidate. Edits a real field, saves, reloads, and
 // asserts the CHANGE survived a real page reload -- not just that the
 // in-memory React state updated.
+//
+// config-dashboard-and-section-pages story: "/config" is now the
+// dashboard home (cards, no form fields) -- the Profile FORM itself moved
+// to "/config/profile".
 test("editing the profile name, saving, and reloading persists the change", async ({ page }) => {
-  await page.goto("/config");
+  await page.goto("/config/profile");
 
   const nameInput = page.getByLabel("Name", { exact: true });
   await expect(nameInput).toHaveValue("E2E Test User");
