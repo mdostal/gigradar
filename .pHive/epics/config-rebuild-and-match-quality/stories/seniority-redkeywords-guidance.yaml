@@ -1,10 +1,25 @@
 id: seniority-redkeywords-guidance
 epic: config-rebuild-and-match-quality
 title: "Add seniority-exclusion terms to the owner's real redKeywords config"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Shipped as a real config-data change, applied via the actual saveConfig()
+  path (never a hand-edit of the encrypted config.json). Added 6 terms to
+  the owner's real "Default Search 1" group's redKeywords: "entry level",
+  "associate", "junior", "software engineer i", "intern", "new grad" —
+  redKeywords count 90 -> 96. Verified by re-reading the config afterward
+  (readRawConfig()): all 6 present, coreTitles/keywords counts unchanged
+  (25/28), sources (10) and profile untouched — the shallow merge did not
+  disturb anything else. No core code changed, matching this story's own
+  acceptance criteria.
+
+  The owner has only ONE group configured today (no separate full-time vs.
+  fractional split yet) -- these terms apply globally until that split
+  exists.
 
 description: |
   Resolved mechanism (owner's own answer): seniority terms go into the
