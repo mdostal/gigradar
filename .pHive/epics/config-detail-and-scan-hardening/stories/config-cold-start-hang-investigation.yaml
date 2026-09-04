@@ -1,0 +1,77 @@
+id: config-cold-start-hang-investigation
+epic: config-detail-and-scan-hardening
+title: "Focused root-cause investigation: /config hangs on the first request after a fresh packaged-app launch"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Confirmed today, reproduced across a full clean reinstall + relaunch
+  cycle: the FIRST request to /config after a fresh packaged-app (Tauri
+  sidecar) launch hangs indefinitely (20s+, never returns). Every request
+  after that first one is fast (sub-20ms). During the hang, `sample`d the
+  sidecar's Node process: 0% CPU, main thread blocked in kevent (genuinely
+  idle waiting on I/O, not spinning), and ZERO child processes spawned --
+  so it is not a hung `portunus --version` child, it is blocked BEFORE or
+  without ever spawning one.
+
+  This is the same class of issue flagged once already this session
+  (src/app/config/config-data.ts's loadConfigPageData() carries its own
+  code comment documenting a reverted Promise.all() parallelization
+  attempt that caused a hang specific to the packaged Tauri sidecar, root
+  cause never understood, sequential loop restored as a mitigation) -- but
+  today's new evidence (cold-start-ONLY, not persistent; 0% CPU; zero
+  children) was not available during that earlier pass and meaningfully
+  narrows the hypothesis space. Zero children spawned during the hang is
+  the most useful new fact: it rules out isPortunusAvailable()'s
+  `portunus --version` spawn itself being slow (already separately ruled
+  out earlier this session via isolated timing: 86-139ms) and points
+  further upstream.
+
+  Real, focused investigation required -- NOT another guess-and-abandon
+  pass. Candidate angles to check, cheapest/most-informative first:
+  1. Does the FIRST request to ANY route (not specifically /config) hang
+     the same way after a fresh launch, or is it specific to /config?
+     Cheap to test (curl "/" first instead of "/config" on a fresh
+     launch) and highly informative -- if true, this redirects the whole
+     investigation to a Tauri-sidecar-cold-start issue, not a
+     /config-code issue, and this story's fix target changes accordingly.
+  2. If /config-specific: a one-time lazy-init cost the FIRST time
+     isPortunusAvailable() or checkSessionReadiness() runs in a fresh
+     process (Gatekeeper/quarantine check on first `exec` of a bundled
+     binary path; a portunus daemon/socket handshake that's one-time-
+     per-process rather than one-time-per-call).
+  3. If neither: a Next.js/Tauri-sidecar-specific cold-start cost
+     unrelated to this route's own code (build-manifest lazy compilation
+     of the /config route specifically, since it's a large page).
+
+  Acceptance is a conclusively identified root cause OR a real fix -- not
+  another inconclusive pass. If genuinely inconclusive after a real
+  attempt at the angles above, document precisely and specifically what
+  was ruled out and why (matching the rigor of this session's own prior
+  passes), rather than a vague "still unknown."
+
+acceptance_criteria:
+  - "Angle 1 (any-route-vs-/config-specific) is tested and its result reported, since it determines the rest of the investigation's direction."
+  - "Either: a conclusively identified root cause with supporting evidence, and a real fix verified to make the FIRST /config request after a fresh launch fast; OR a precise, specific account of what was tested and ruled out, distinct from the prior inconclusive pass's own findings (not a repeat of it)."
+  - "Verification is against a REAL packaged app launch (this bug does not reproduce in `npm run dev` mode, confirmed this session) -- curl-only against the packaged app's own port, no browser, no Playwright."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-data.ts
+      purpose: "loadConfigPageData() -- the real code path this hang was previously investigated against; its own comment documents the earlier reverted parallelization attempt and why it was reverted."
+    - path: src-tauri/src/lib.rs
+      purpose: "The Tauri sidecar spawn itself (app.shell().sidecar(\"node\"), .env() calls) -- candidate location for a cold-start-specific cost unrelated to /config's own route code."
+    - path: src/lib/auth/session-backend.ts
+      purpose: "isPortunusAvailable() -- the first real async call loadConfigPageData() makes; check for anything that could differ between a process's first and later invocations (module-level caching, lazy singleton init, etc.)."
+
+risks:
+  - severity: medium
+    description: "This exact bug already survived one full investigation this session without a root cause. Real risk of spending equivalent time again for the same inconclusive result."
+    mitigation: "Test angle 1 (any-route vs /config-specific) FIRST -- cheapest possible test, and its result redirects or narrows everything downstream. Don't re-run the earlier investigation's already-ruled-out checks (portunus timing, PATH ENOENT)."
+
+references:
+  - path: .pHive/epics/config-detail-and-scan-hardening/docs/design-discussion.md
+    relevant_excerpt: "§2, Story C -- the new evidence gathered today and the candidate angles, in priority order."

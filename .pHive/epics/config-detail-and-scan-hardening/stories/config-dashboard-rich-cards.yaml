@@ -1,0 +1,119 @@
+id: config-dashboard-rich-cards
+epic: config-detail-and-scan-hardening
+title: "Config Dashboard cards show real, rich per-card detail instead of one generic line"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+progress_note: |
+  ConfigSectionMeta.summary(data): string replaced with details(data):
+  {label,value}[] in config-sections.ts; page.tsx renders a <dl> of rows
+  per card instead of one <p>. New src/lib/schedule/describe-cron.ts (10
+  unit tests) humanizes the common cron shapes this app's schedule field
+  actually produces (single/multiple daily runs, weekday range/list),
+  falling back to the raw cron string for anything else -- never a wrong
+  guess. Sources card now reads the real per-source sessionReadiness map
+  (already loaded in ConfigPageData) for a genuine healthy/needs-login
+  breakdown instead of the old settings-presence-only heuristic. Groups
+  card shows each group's real rate range (minRate/highRate/rateUnit,
+  formatted per unit) plus its real aiVerify on/off state. Verified no
+  generic "Google connection" concept exists in the schema -- did not add
+  a 7th card for it, per the epic's own explicit scope decision.
+
+  Live-verified: full suite (108 files, 1435 passed, 3 skipped) + tsc
+  clean; curl-verified against an isolated dev server seeded with a
+  schema-valid fixture config covering every new data path (rate anchor,
+  home base, two groups with different rate units and aiVerify states,
+  a multi-hour weekday cron, a partially-armed autoFire with kill switch
+  on, mixed source session-readiness) -- every expected row confirmed
+  present in the real rendered HTML (a few false negatives in the first
+  grep pass were JSON/HTML-escaping artifacts in the query itself, not
+  real misses -- confirmed by re-grepping the escaped forms).
+
+description: |
+  Owner's own words, comparing a screenshot of the approved concept against
+  the real shipped page: "this is what i asked for -- not [this] -- wtf."
+  The shipped config-dashboard-and-section-pages story (PR #129) ported
+  "Concept C" (a dashboard-style control-room card grid) per
+  src/app/config/page.tsx's own header comment, but config-sections.ts's
+  real summary() functions only ever compute a single generic line per
+  card ("10 configured", "1 group", the raw cron string, "Off", "Icon &
+  theme") -- nowhere near the density of the approved concept (rate tiers,
+  health breakdowns, parsed schedule times, kill-switch state, all inline).
+
+  Fix: extend ConfigSectionMeta from summary(data): string to
+  details(data): {label, value}[] -- one row per real, computed fact, never
+  a fabricated number. Update page.tsx's card rendering to show the rows.
+
+  Per-section content (all from REAL config/session data, verified against
+  readRawConfig() output, never assumed from the schema):
+  - Profile: name, top 2 roles, applyProfile.rateAnchor (if set, as
+    "$X/hr"), profile.homeBase.city (if set), timezone.
+  - Sources: a real 3-way breakdown computed from ConfigPageData's
+    sessionReadiness map ("connected"/"no-login-needed" = healthy,
+    "needs-login" = needs attention) -- richer than the existing
+    computeSourceCounts(), which only distinguishes "has settings" from
+    "doesn't."
+  - Groups & Needs: one row per group -- label, its engagementProfiles'
+    real rate range formatted per rateUnit ("$150+/hr" for an hourly
+    profile with no highRate cap relevant to display, "$250k-$400k TC" for
+    a salaried one -- use minRate/highRate directly, never invented
+    numbers), and "AI-verify: on/off".
+  - Schedule: a new small human-readable cron formatter (new file,
+    src/lib/schedule/describe-cron.ts) covering the common shapes this
+    app's schedule field actually produces (single run "M H * * *",
+    multiple daily runs "M H1,H2,H3 * * *", and a weekday range "* * *
+    1-5") -- falls back to showing the raw cron string verbatim for
+    anything unrecognized, never a wrong guess.
+  - Automation: kill-switch state + "rules configured" / "rules armed"
+    counts (reuse the existing computation, don't duplicate it).
+  - Appearance: unchanged ("Icon & theme" is already accurate).
+
+  Do NOT add a 7th "Google connection" card -- verified there is no real,
+  generic, app-wide Google-connection concept in the current schema (OAuth
+  is scoped to specific sources, e.g. a gmail-digest source's own
+  settings). Inventing a card for a concept that isn't real repeats
+  exactly the mistake this story exists to fix.
+
+acceptance_criteria:
+  - "Every one of the 6 real config-dashboard cards shows multiple real, computed data rows, not a single generic line."
+  - "Every value shown traces to a real field in the owner's actual config/session-readiness data -- no hardcoded or fabricated numbers anywhere in the new rendering code."
+  - "The Schedule card shows a human-readable description for common cron shapes, with a graceful raw-string fallback for anything the formatter doesn't recognize -- verified against both cases."
+  - "Live-verified via curl against an isolated dev server: card content matches what a direct readRawConfig() dump of the same fixture config shows."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-sections.ts
+      purpose: "CONFIG_SECTIONS -- currently only summary()/status() per section; needs a new details() function per section."
+    - path: src/app/config/page.tsx
+      purpose: "Renders the card grid -- currently renders one <p> per card from summary(); needs to render a details() row list instead."
+    - path: src/app/config/config-data.ts
+      purpose: "ConfigPageData.sessionReadiness -- the real per-source Record<sourceId, SessionReadiness> ('no-login-needed'|'connected'|'needs-login') already loaded here, the real source for the Sources card's health breakdown."
+    - path: src/lib/types.ts
+      purpose: "ApplyProfileConfig.rateAnchor, Profile.homeBase, GroupConfig.needs.engagementProfiles (minRate/highRate/rateUnit), GroupConfig.aiVerify, Config.autoFire (killSwitch + rules) -- the real fields every new card row reads."
+
+code_examples:
+  - title: "SessionReadiness type this story's Sources-card breakdown is computed from"
+    file: src/lib/auth/session-readiness.ts
+    snippet: |
+      export type SessionReadiness = "no-login-needed" | "connected" | "needs-login";
+
+  - title: "EngagementProfile shape the Groups card's rate-range formatting reads"
+    file: src/lib/types.ts
+    snippet: |
+      export interface EngagementProfile {
+        id: string;
+        label: string;
+        types: EngagementType[];
+        minRate: number;
+        highRate: number;
+        maxHours?: number;
+        maxHoursAtHighRate?: number;
+        rateUnit: "hour" | "year";
+      }
+
+references:
+  - path: .pHive/epics/config-detail-and-scan-hardening/docs/design-discussion.md
+    relevant_excerpt: "§2, Story A -- the full per-card content spec and the explicit 'no Google connection card' decision."
