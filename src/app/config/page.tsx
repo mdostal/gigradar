@@ -65,8 +65,11 @@ export default async function ConfigDashboardPage() {
                 </span>
               </div>
               <dl className="flex flex-col gap-0.5">
-                {section.details(data).map((row) => (
-                  <div key={row.label} className="flex items-baseline justify-between gap-2 font-theme-mono text-xs">
+                {section.details(data).map((row, i) => (
+                  // grill pass (config-detail-and-scan-hardening epic): row.label alone
+                  // isn't a safe key -- e.g. two groups can share the same label (only
+                  // `id` is constrained unique on GroupConfig), so index is folded in.
+                  <div key={`${row.label}-${i}`} className="flex items-baseline justify-between gap-2 font-theme-mono text-xs">
                     <dt className="text-theme-text-dim">{row.label}</dt>
                     <dd className="truncate text-right text-theme-text-dim">{row.value}</dd>
                   </div>
