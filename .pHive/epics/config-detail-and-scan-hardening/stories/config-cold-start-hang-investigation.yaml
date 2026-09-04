@@ -1,10 +1,55 @@
 id: config-cold-start-hang-investigation
 epic: config-detail-and-scan-hardening
 title: "Focused root-cause investigation: /config hangs on the first request after a fresh packaged-app launch"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Angle 1 tested first (cheapest, most informative, per this story's own
+  priority order): a fully fresh app launch's FIRST-EVER request to "/"
+  (not /config) responded in 0.06s -- not a hang. This already argued
+  against a generic process-cold-start cost.
+
+  Testing /config itself hit a real, separate confound: an UNRELATED
+  Next.js dev server on this machine (a different project, "apps/web",
+  Turbopack, v16.3.2) was squatting on port 3000, so gigradar's own
+  sidecar was silently falling back to a random port every launch this
+  session -- confirmed via lsof (port 3000 owned by a process with no
+  relation to gigradar.app) and via the response body itself (turbopack
+  chunk paths from a different app entirely). Every curl test this
+  session that assumed "port 3000 = gigradar" without checking first was
+  at real risk of silently hitting the wrong server.
+
+  Once corrected to gigradar's REAL sidecar port (looked up per-launch
+  via lsof against the actual child pid, never assumed as 3000): ran 4
+  full clean quit -> relaunch -> first-ever-request-to-/config cycles.
+  ALL FOUR were fast (0.15s-0.20s) -- zero hangs reproduced.
+
+  CONCLUSION: this is not a persistent, reliably-reproducible defect in
+  gigradar's own code -- 0 of 4 clean repro attempts hung. The earlier
+  same-session "confirmed" hang (0% CPU, blocked in kevent, zero children
+  spawned) most likely was real at the time but caused by test-
+  environment contamination during an unusually heavy concurrent-
+  debugging window (a day-old orphaned sidecar process was discovered and
+  killed minutes earlier in that same investigation, and multiple
+  process-launch/kill cycles were happening in rapid succession) rather
+  than a deterministic bug that reproduces on an ordinary clean launch.
+  A secondary, unproven but consistent-with-all-symptoms theory: a
+  one-time macOS Gatekeeper/code-signing verification cost specific to
+  the very FIRST execution of a just-`xattr -cr`'d, freshly-extracted app
+  bundle (would explain cold-start-only, zero-CPU/kernel-level-blocked,
+  and zero-child-process-spawned-by-JS -- but this mechanism was not
+  independently isolated or proven, and is flagged as a theory, not a
+  certainty).
+
+  No code change made -- there is no reproducible defect to fix. The
+  practically important finding is the negative result itself: this is
+  not something the owner will keep hitting on ordinary use, and the
+  actual footgun found instead (the port-3000 collision with an unrelated
+  project) is a real, separate, machine-local issue outside gigradar's
+  own code, not something for gigradar itself to guard against.
 
 description: |
   Confirmed today, reproduced across a full clean reinstall + relaunch

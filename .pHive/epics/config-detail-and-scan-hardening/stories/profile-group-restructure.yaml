@@ -1,10 +1,33 @@
 id: profile-group-restructure
 epic: config-detail-and-scan-hardening
 title: "Split the owner's real single group into Fractional/Hourly + Full-Time, enable AI-verify on both"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Ran the exact reviewed script this story specifies against the real
+  live config.json via readRawConfig()/saveConfig() (never hand-edited).
+  Confirmed by re-read: 2 groups now exist -- "fractional-hourly" (label
+  "Fractional / Hourly", profiles a-fractional-hourly + c-fallback-hourly)
+  and "full-time" (label "Full-Time", profile b-fulltime) -- both with
+  roleArea byte-identical to the original single group (25 coreTitles, 96
+  redKeywords, verified via JSON.stringify equality, not just count) and
+  both aiVerify: true. Every other top-level config key confirmed
+  unchanged: profile.name, sources.length (10), schedule, applyProfile.
+  email, autoFire.killSwitch/rules.length -- saveConfig()'s top-level
+  shallow merge held exactly as expected.
+
+  Real re-scan run afterward (via the app's own runRadar()/loadConfig()/
+  registerAllSources(), the same mechanism sweepNowAction() uses --
+  resolved config never logged, per CLAUDE.md): 4 passed, 2 newly
+  inserted, 2 expected flag-don't-fail source errors (gofractional
+  verification challenge, ateam session expired -- neither related to
+  the group restructuring). Read-only gigs.db check on the newly-scanned
+  gigs confirms both new groups are live and producing real, distinct
+  per-group tiering (matchedGroupTiers shows both "fractional-hourly" and
+  "full-time" independently computed per gig).
 
 description: |
   Owner already confirmed this exact restructuring via AskUserQuestion
