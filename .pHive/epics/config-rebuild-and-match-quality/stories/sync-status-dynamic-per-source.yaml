@@ -1,10 +1,41 @@
 id: sync-status-dynamic-per-source
 epic: config-rebuild-and-match-quality
 title: "Generalize the hardcoded 2-source sync-status UI into a dynamic list that scales"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Built src/app/sync-status-registry.ts (SYNC_STATUS_SOURCES: readonly
+  {id,label,action}[]) mirroring origins.ts's own KNOWN_SOURCES id->label
+  pattern, referencing the two real reconcile*Statuses() Server Actions
+  (GoFractional, Wellfound — confirmed via code search these are still the
+  only 2 of ~13 sources with a real adapter). Kept it a plain module (NOT
+  "use server") since a "use server" file may only export async functions
+  — a data registry referencing already-exported action functions has to
+  live outside it.
+
+  Built src/app/sync-status-dropdown.tsx (new "use client" component):
+  a single "Sync statuses ▾" toggle button opening a dropdown that lists
+  every SYNC_STATUS_SOURCES entry, each with independent idle/syncing/
+  done/error state, reusing the exact same result-summary shape the old
+  SyncStatusButton established. Wired into both src/app/gigs/page.tsx and
+  src/app/[group]/gigs/page.tsx, replacing the two hardcoded
+  <SyncStatusButton> instances with one <SyncStatusDropdown
+  sources={SYNC_STATUS_SOURCES} />. Deleted the now-dead
+  sync-status-button.tsx (confirmed zero remaining JSX usage).
+
+  Adding a third real reconcile adapter now requires exactly one new
+  registry entry — zero UI changes, satisfying the story's own
+  acceptance criteria.
+
+  Verified: npx tsc --noEmit clean; npm test -- --run — 107 files, 1425
+  passed, 3 skipped, all green; live curl verification against an
+  isolated dev server (XDG_DATA_HOME=/tmp/gigradar-verify-data, port
+  3100) confirmed /gigs renders "Sync statuses", "GoFractional",
+  "Wellfound" with no error markers. No real browser opened, no
+  Playwright — curl-only per this session's standing constraint.
 
 description: |
   Confirmed via code read: src/app/gigs/page.tsx and
