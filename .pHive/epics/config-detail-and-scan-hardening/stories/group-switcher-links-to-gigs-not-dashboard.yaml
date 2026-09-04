@@ -1,0 +1,81 @@
+id: group-switcher-links-to-gigs-not-dashboard
+epic: config-detail-and-scan-hardening
+title: "Group-switcher pills always link to Dashboard routes, even while browsing gigs -- fix to link contextually"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+progress_note: |
+  Extracted groupPillHref(pathname, groupId) as a pure, exported function
+  in nav-header.tsx (matching dashboard-filter.ts's established
+  "pull the assertable contract out of the Client Component" pattern) --
+  routes to /gigs or /${groupId}/gigs while on the gigs route family
+  (matched via pathname === "/gigs" or /^\/[^/]+\/gigs$/), falls back to
+  / or /${groupId} everywhere else (Dashboard, Today, Metrics, etc. --
+  unchanged from before, since only Dashboard and All Gigs have real
+  per-group route equivalents today). Relabeled "Search:" -> "Groups:"
+  and "All groups" -> "All Groups" per the owner's own wording.
+
+  9 new unit tests (nav-header.test.ts) covering both route families,
+  cross-group navigation (viewing one group's gigs, switching to
+  another), and the no-per-group-equivalent fallback case. Full suite
+  (108 files, 1442 passed, 3 skipped) + tsc clean. Live-verified against
+  an isolated dev server seeded with 2 real groups: on /gigs, pills
+  correctly link to /gigs, /full-time/gigs, /fractional-hourly/gigs; on
+  /, pills correctly link to /, /full-time (Dashboard family, unchanged).
+
+description: |
+  Owner's own words, looking at the real 2-group split shipped by
+  profile-group-restructure: "you have all groups and then 2 groups the
+  all groups seems to be ALL GIGS -- so, separate those -- do one that is
+  just ALL, then Groups: All Groups | Fractional Hourly | Full Time.
+  That way we can create groups, sort by ALL IN ALL OF OUR GROUPS or
+  individual groups -- and then have ALL GIGS separate."
+
+  Root cause, confirmed by reading src/app/nav-header.tsx: the
+  group-switcher pill row (rendered under the main nav, only when 2+
+  groups exist) is hardcoded to link "All groups" -> "/" and each group
+  -> "/${g.id}" -- always the DASHBOARD routes, regardless of which page
+  the owner is actually on. While browsing /gigs (All Gigs), clicking
+  "All groups" takes you to the unscoped Dashboard, which superficially
+  looks similar enough to the unscoped giglist that it reads as "the same
+  thing" -- exactly the owner's complaint.
+
+  The top-level "All Gigs" nav link (/gigs, truly unscoped, every gig)
+  already exists and is already separate from the group pills -- no
+  change needed there, it already satisfies "have ALL GIGS separate."
+
+  Fix: make the group-pill row link CONTEXTUALLY between the two route
+  families that actually have a per-group equivalent today
+  (src/app/[group]/page.tsx for Dashboard, src/app/[group]/gigs/page.tsx
+  for the giglist -- confirmed via file listing, no other route has a
+  per-group version yet). While on /gigs or /[group]/gigs, the pills
+  link to /gigs and /${groupId}/gigs. On every other route (Dashboard,
+  Today, Metrics, etc.), pills link to / and /${groupId}, exactly as
+  today. Also relabel "Search:" -> "Groups:" and "All groups" -> "All
+  Groups" to match the owner's own requested wording.
+
+  Extract the link-building logic into a pure, exported function
+  (groupPillHref(pathname, groupId)) -- same "pull the assertable
+  contract out of the Client Component" convention this repo already
+  uses for dashboard-filter.ts, so this is unit-testable without a DOM
+  (this repo has no React Testing Library dependency).
+
+acceptance_criteria:
+  - "While on /gigs, the 'All Groups' pill links to /gigs (not /) and each group's pill links to /${groupId}/gigs (not /${groupId})."
+  - "While on / (Dashboard) or any other non-gigs route, pill behavior is unchanged from today (/ and /${groupId})."
+  - "groupPillHref() is a pure, exported, unit-tested function -- not inline JSX logic."
+  - "Labels read 'Groups:' and 'All Groups', matching the owner's own requested wording."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/nav-header.tsx
+      purpose: "The group-switcher pill row -- currently hardcodes Dashboard-route links regardless of current page."
+    - path: src/app/[group]/gigs/page.tsx
+      purpose: "Confirms the per-group giglist route this story's contextual pills should target while on /gigs."
+
+references:
+  - path: .pHive/epics/config-detail-and-scan-hardening/docs/design-discussion.md
+    relevant_excerpt: "This story was added after the epic's original 3 stories shipped, in direct response to the owner's live reaction to the profile-group-restructure story's real output."
