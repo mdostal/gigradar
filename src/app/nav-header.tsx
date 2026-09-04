@@ -21,6 +21,24 @@ import { usePathname } from "next/navigation";
 import type { IssuesBadgeInfo } from "./issues-badge";
 
 /** Exported (not just inlined in JSX) so it's directly assertable in tests without rendering. */
+/**
+ * config-detail-and-scan-hardening epic, group-switcher-links-to-gigs-not-
+ * dashboard story. Pure so it's unit-testable without a DOM (this repo's
+ * established convention — see dashboard-filter.ts). Owner's own words:
+ * "the all groups seems to be ALL GIGS" — root cause was these pills always
+ * pointing at the Dashboard route family regardless of the current page.
+ * Only two route families have a real per-group equivalent today (checked
+ * via file listing: src/app/[group]/page.tsx and
+ * src/app/[group]/gigs/page.tsx) — while on either gigs route, pills stay
+ * on the gigs family; everywhere else, they target Dashboard, unchanged
+ * from before this story.
+ */
+export function groupPillHref(pathname: string, groupId: string | null): string {
+  const onGigsRoute = pathname === "/gigs" || /^\/[^/]+\/gigs$/.test(pathname);
+  if (groupId === null) return onGigsRoute ? "/gigs" : "/";
+  return onGigsRoute ? `/${groupId}/gigs` : `/${groupId}`;
+}
+
 export const NAV_LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/gigs", label: "All Gigs" },
@@ -112,21 +130,21 @@ export function NavHeader({
       </nav>
       {groups.length > 1 && (
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-1.5 px-6 pb-2.5 text-xs">
-          <span className="text-brand-text-dim">Search:</span>
+          <span className="text-brand-text-dim">Groups:</span>
           <Link
-            href="/"
-            aria-current={pathname === "/" ? "page" : undefined}
+            href={groupPillHref(pathname, null)}
+            aria-current={pathname === groupPillHref(pathname, null) ? "page" : undefined}
             className={[
               "rounded-full px-2.5 py-1 font-medium transition-colors",
-              pathname === "/"
+              pathname === groupPillHref(pathname, null)
                 ? "bg-brand-accent/15 text-brand-accent ring-1 ring-inset ring-brand-accent/30"
                 : "text-brand-text-dim hover:bg-brand-bg-elevated hover:text-brand-text",
             ].join(" ")}
           >
-            All groups
+            All Groups
           </Link>
           {groups.map((g) => {
-            const href = `/${g.id}`;
+            const href = groupPillHref(pathname, g.id);
             const active = pathname === href;
             return (
               <Link

@@ -8,3 +8,5 @@ stories:
     depends_on: []
   - id: config-cold-start-hang-investigation
     depends_on: []
+  - id: group-switcher-links-to-gigs-not-dashboard
+    depends_on: []
