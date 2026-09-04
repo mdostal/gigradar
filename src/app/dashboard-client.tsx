@@ -1123,9 +1123,24 @@ export function DashboardClient({
         for a real bleed-through glitch (a scrolled-past row's text visible
         above the header): z-index alone did NOT reliably force a new
         stacking context for a sticky table cell in testing, isolation does.
-        Only the label/sort header row is sticky -- the filter row below it
-        scrolls away with the body, avoiding fragile two-row sticky offset
-        math for a modest UX tradeoff (set filters before scrolling).
+        giglist-filter-audit-and-fix story (config-rebuild-and-match-quality
+        epic): this used to say "only the label/sort header row is sticky
+        -- the filter row scrolls away, avoiding fragile two-row sticky
+        offset math (set filters before scrolling)." Real, confirmed bug
+        that decision caused, live-verified against the owner's own
+        complaint ("if the filters exist, i sure as fuck can't use or see
+        them"): the filter row is the SECOND <tr> in <thead> -- with only
+        the FIRST row sticky, scrolling even slightly (near-guaranteed on
+        a giglist with more than a screenful of rows) hides the filter
+        inputs entirely, leaving only column LABELS pinned. Fixed by
+        giving both rows the SAME fixed height (h-9/top-9 -- one shared
+        Tailwind token, not two independent magic numbers, so they can
+        never drift apart) and making the filter row sticky too, stacked
+        directly below the header row. The filter CELLS themselves are
+        NOT height-capped (only the row they stack under is) -- a
+        multi-line status-multi/profile-multi chip set still wraps and
+        grows the row naturally, sticky positioning doesn't require a
+        fixed-height row, only a correctly-offset `top`.
       */}
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-theme-surface-border shadow-sm">
         <table className="min-w-full divide-y divide-theme-surface-border text-sm">
@@ -1137,7 +1152,7 @@ export function DashboardClient({
                   return (
                     <th
                       key={header.id}
-                      className="sticky top-0 z-[1] isolate bg-theme-surface-raised px-3 py-2 text-left font-theme-heading text-[11px] font-semibold uppercase tracking-wide text-theme-text-dim"
+                      className="sticky top-0 z-[1] isolate h-9 bg-theme-surface-raised px-3 py-2 text-left font-theme-heading text-[11px] font-semibold uppercase tracking-wide text-theme-text-dim"
                     >
                       {header.column.getCanSort() ? (
                         <button
@@ -1161,7 +1176,7 @@ export function DashboardClient({
             ))}
             <tr>
               {table.getFlatHeaders().map((header) => (
-                <th key={`filter-${header.id}`} className="bg-theme-surface-raised px-3 pb-2">
+                <th key={`filter-${header.id}`} className="sticky top-9 z-[1] isolate bg-theme-surface-raised px-3 pb-2">
                   <ColumnFilterCell
                     filterKind={header.column.columnDef.meta?.filterKind ?? "none"}
                     selectOptions={header.column.columnDef.meta?.selectOptions}

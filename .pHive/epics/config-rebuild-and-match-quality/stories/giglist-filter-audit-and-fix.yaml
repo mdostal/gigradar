@@ -1,10 +1,42 @@
 id: giglist-filter-audit-and-fix
 epic: config-rebuild-and-match-quality
 title: "Audit and fix the giglist's filter UI — owner cannot find or use it"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Real finding: neither "genuinely broken" nor "wrong dimension" —
+  case 2, "present but undiscoverable," and the codebase's own comments
+  already documented WHY: the filter row is the second <tr> in <thead>;
+  only the FIRST (label/sort) row was ever made sticky, "avoiding
+  fragile two-row sticky offset math for a modest UX tradeoff (set
+  filters before scrolling)." That tradeoff is exactly what the owner
+  hit — scroll even slightly (near-guaranteed on a giglist with more
+  than a screenful of rows) and the filter inputs vanish entirely,
+  leaving only pinned column labels.
+
+  Fixed the "fragile offset math" the original comment was avoiding by
+  giving both rows the SAME fixed height via one shared Tailwind token
+  (h-9/top-9 = 2.25rem each) instead of two independent magic numbers
+  that could drift apart — the filter row is now sticky too, stacked
+  directly below the header row. Filter CELLS are not height-capped,
+  only the row's own base height; a wrapping multi-line status-multi/
+  profile-multi chip set still grows naturally.
+
+  The real filter SYSTEM itself (text/select/seen-window/number-min-max/
+  status-multi/profile-multi across Source/Title/Company/Tier/Profile
+  match/Status/Rate-min/Rate-max/Seen-within) was already comprehensive
+  and functionally correct — confirmed by full code read, not assumed.
+  No new filter dimension added this pass (e.g. filter-by-group) —
+  that's the new-tier-ranking-buckets story's own territory once its
+  mechanism is confirmed, deliberately not scope-crept into here.
+
+  Live-verified (isolated dev server, curl + HTML inspection): exactly
+  one header row with the new sticky/h-9 classes, exactly one filter
+  row with sticky/top-9, no errors. Full suite (1425) + typecheck clean.
+
 
 description: |
   Owner's own words: "if the filters exist, i sure as fuck can't use or
