@@ -1,0 +1,65 @@
+id: config-data-test-coverage
+epic: group-feature-hardening-and-coverage
+title: Real unit tests for config-data.ts (loadConfigPageData, blankConfig fallback path)
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  src/app/config/config-data.ts's loadConfigPageData() decides whether the
+  owner sees their real groups or the single-group blankConfig() placeholder
+  ("Default Search 1") -- the literal mechanism that would produce a "my
+  groups disappeared" symptom if config.json ever failed ConfigSchema
+  validation. Zero test coverage today.
+
+acceptance_criteria:
+  - "loadConfigPageData() returns the real parsed config (both real groups) when config.json is valid, with configExists=true and parsedSuccessfully=true"
+  - "loadConfigPageData() falls back to blankConfig() (single 'Default Search 1' group) when config.json fails ConfigSchema validation, with parsedSuccessfully=false and a subtitle explaining the validation failure"
+  - "loadConfigPageData() falls back to blankConfig() with configExists=false and a first-run subtitle when no config.json exists yet"
+  - "sourcesWithOpenIssues only includes source ids that actually have an open issue with a structured context.sourceId match"
+
+steps:
+  - id: implement
+    description: Write src/app/config/__tests__/config-data.test.ts using the exact isolated-XDG_DATA_HOME + saveConfig()/readRawConfig() pattern already established in src/app/__tests__/dashboard-data.test.ts -- never touch the real ~/.local/share/gigradar data dir.
+    agent: developer
+  - id: test
+    description: npm test && npm run typecheck must both pass.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI, merge.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-data.ts
+      purpose: The file under test.
+    - path: src/app/__tests__/dashboard-data.test.ts
+      purpose: Established isolated-tmpDir test pattern (GIGRADAR_DB_PATH + XDG_DATA_HOME + saveConfig()) to mirror exactly.
+  code_examples:
+    - title: Isolated tmpDir setup/teardown pattern to reuse verbatim
+      file: src/app/__tests__/dashboard-data.test.ts
+      snippet: |
+        beforeEach(() => {
+          tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-..."));
+          process.env.GIGRADAR_DB_PATH = path.join(tmpDir, "gigs.db");
+          process.env.XDG_DATA_HOME = tmpDir;
+        });
+        afterEach(() => {
+          closeDb();
+          delete process.env.GIGRADAR_DB_PATH;
+          delete process.env.XDG_DATA_HOME;
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+design_decisions:
+  - decision: Write a real invalid config.json directly (fs.writeFileSync into the isolated XDG_DATA_HOME path) to exercise the parsed.success===false branch, rather than mocking ConfigSchema.
+    rationale: Exercising the real Zod schema against a real malformed file is the only way to prove the fallback path actually protects against the "groups disappeared" symptom this epic was triggered by.
+
+risks:
+  - severity: low
+    description: loadConfigPageData() calls real isPortunusAvailable() (spawns `portunus --version`) and checkSessionReadiness() per source -- both real, unmocked calls.
+    mitigation: Use zero sources in test fixtures so checkSessionReadiness()'s loop is a no-op; isPortunusAvailable()'s real result doesn't affect the assertions this story cares about (groups/subtitle/configExists), so it's fine to leave unmocked, consistent with this repo's existing no-heavy-mocking convention.

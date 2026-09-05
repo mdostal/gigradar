@@ -1,0 +1,27 @@
+name: group-feature-hardening-and-coverage
+title: Group feature test-coverage audit + crash-resilience hardening
+description: >
+  Triggered by a live owner report ("we crashed... i don't see things for the
+  groups"). Investigation found the live server-rendered app and the owner's
+  real config.json both healthy right now, but surfaced two real, independent
+  gaps: zero test coverage on the config-sections/config-data code that
+  renders groups (the same file that shipped one real bug already this
+  session), and zero error boundaries anywhere in the app router tree. See
+  docs/design-discussion.md for the full investigation.
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: none
+
+stories:
+  - id: config-sections-test-coverage
+    title: Real unit tests for config-sections.ts (rate formatting, all 6 card details/status functions)
+    complexity: low
+    depends_on: []
+  - id: config-data-test-coverage
+    title: Real unit tests for config-data.ts (loadConfigPageData, blankConfig fallback path)
+    complexity: low
+    depends_on: []
+  - id: app-error-boundaries
+    title: Add root + route-segment error boundaries so a render exception degrades gracefully instead of a blank page
+    complexity: medium
+    depends_on: []

@@ -1,0 +1,56 @@
+id: config-sections-test-coverage
+epic: group-feature-hardening-and-coverage
+title: Real unit tests for config-sections.ts
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  src/app/config/config-sections.ts computes every Config Dashboard card's
+  content (formatRateRange, groupRateSummary, and all 6 CONFIG_SECTIONS'
+  details()/status() functions) and has zero test coverage despite already
+  shipping one real bug this session (duplicate React keys when two groups
+  share a label, caught in the PR #137 grill pass, not by any test).
+
+acceptance_criteria:
+  - "formatRateRange formats an hourly profile as \"$X+/hr\" or \"$X-Y/hr\""
+  - "formatRateRange formats a salaried profile as \"$Xk+ TC\" or \"$Xk-Yk TC\""
+  - "groupRateSummary joins multiple profiles with \" / \" and returns a fallback string for zero profiles"
+  - "the groups section's details() renders one row per group even when two groups share the same label (the exact case that caused the duplicate-key bug)"
+  - "the profile section's details() falls back to \"Not filled in yet\" when name is empty, and includes rate anchor/home base/timezone rows only when each is actually present"
+  - "the sources section's details() counts healthy (connected + no-login-needed) vs needs-login from sessionReadiness, and omits the needs-login row when it's 0"
+  - "the schedule section's details() prefers describeCron()'s human string and falls back to the raw cron string when describeCron() returns null, and shows a neutral message when no schedule is set"
+  - "the automation section's details() reports kill-switch state and \"N of M armed\", and status() is 'danger' only when a rule is enabled AND the kill switch is off"
+
+steps:
+  - id: implement
+    description: Write src/app/config/__tests__/config-sections.test.ts covering every acceptance criterion above, following the plain-data/no-DOM testing convention already established by describe-cron.test.ts and nav-header.test.ts (no React Testing Library in this repo).
+    agent: developer
+  - id: test
+    description: npm test && npm run typecheck must both pass.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI, merge (verify-then-merge, no ask, per this session's standing autonomous-execution authorization).
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-sections.ts
+      purpose: The file under test — CONFIG_SECTIONS, formatRateRange, groupRateSummary.
+    - path: src/app/config/config-data.ts
+      purpose: Defines ConfigPageData, the shape every details()/status() function consumes.
+    - path: src/lib/schedule/__tests__/describe-cron.test.ts
+      purpose: Establishes this repo's pure-function/no-DOM test convention to follow.
+
+design_decisions:
+  - decision: Test the exported CONFIG_SECTIONS array's details()/status() functions directly against hand-built ConfigPageData fixtures, not via rendering page.tsx.
+    rationale: This repo has no React Testing Library dependency; every existing test in src/app/__tests__/ asserts against pure exported functions/data, never rendered DOM.
+
+risks:
+  - severity: low
+    description: ConfigPageData fixtures could drift from the real Zod schema shape over time.
+    mitigation: Build fixtures from real EngagementProfile/GroupConfig/SessionReadiness types, not ad-hoc object literals with unchecked shapes.
