@@ -10,16 +10,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fraunces, IBM_Plex_Mono, Libre_Franklin } from "next/font/google";
 import type { GigStatus, OutcomeReason, StoredGig } from "@/lib/store";
-import type { MatchBand } from "@/lib/types";
+import type { MatchBand, RankBucketAssignment } from "@/lib/types";
 import type { PrepPacketContent } from "@/lib/apply/prep";
-import { generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "../actions";
+import { confirmRankBucketAction, generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "../actions";
 import { canGenerateDraft, draftButtonLabel } from "../dashboard-draft";
 import {
   BAND_LABEL,
   distinctSources,
   isWithinSeenWindow,
   passesBandFilter,
+  passesRankBucketFilter,
   resolveDisplayBand,
+  resolveDisplayRankBucket,
+  resolvePrimaryRankBucketGroupId,
   SEEN_WINDOW_OPTIONS,
   shortProfileLabel,
   type BandFilter,
@@ -78,6 +81,58 @@ function BandStamp({ band }: { band: MatchBand }) {
   return <span className={`${styles.stamp} ${cls}`}>{BAND_LABEL[band]}</span>;
 }
 
+// rank-buckets epic, rank-bucket-filter-and-confirm-everywhere story. The
+// FIRST real confirm/override control in this codebase (ai-verify's own
+// aiFlags is read-only today) -- a plain <select> is the lowest-risk,
+// dependency-light choice, matching this app's existing status-change
+// control (handleStatusChange, below) rather than a richer widget.
+// Renders nothing at all when this group has no rankBuckets configured
+// (bucketLabels.length === 0) -- same "opt-in feature, zero UI when
+// unused" convention aiVerify/matchQuality/rankBuckets settings already
+// establish.
+function RankBucketControl({
+  gigKey,
+  groupId,
+  assignment,
+  bucketLabels,
+}: {
+  gigKey: string;
+  /** resolvePrimaryRankBucketGroupId()'s own result for THIS gig on an unscoped view -- undefined means this gig has no rank-bucket data for any group, so there's nothing to confirm/override yet (the rule/AI pipeline hasn't run for it, or no group opted in). */
+  groupId: string | undefined;
+  assignment: RankBucketAssignment | undefined;
+  bucketLabels: string[];
+}) {
+  const [isPending, startTransition] = useTransition();
+  if (bucketLabels.length === 0 || !groupId) return null;
+
+  const isPendingConfirmation = assignment?.source === "ai" && !assignment.confirmed;
+
+  function handleChange(next: string) {
+    startTransition(async () => {
+      await confirmRankBucketAction(gigKey, groupId!, next === "" ? null : next);
+    });
+  }
+
+  return (
+    <span className={styles.profileChips} title={assignment?.reason} style={isPendingConfirmation ? { borderStyle: "dashed" } : undefined}>
+      <select
+        value={assignment?.bucket ?? ""}
+        disabled={isPending}
+        onChange={(e) => handleChange(e.target.value)}
+        aria-label="Rank bucket"
+        className={styles.tbSelect}
+      >
+        <option value="">Unassigned</option>
+        {bucketLabels.map((label) => (
+          <option key={label} value={label}>
+            {isPendingConfirmation && label === assignment?.bucket ? `🤖 ${label}?` : label}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
 function ProfileChips({ ids, profiles }: { ids: string[] | undefined; profiles: { id: string; label: string }[] }) {
   if (!ids || ids.length === 0) return null;
   return (
@@ -116,6 +171,7 @@ export function TodayClient({
   initialPrepByGigKey = {},
   engagementProfiles = [],
   hideOutOfBandDefault = true,
+  rankBucketLabels = [],
 }: {
   gigs: StoredGig[];
   draftedGigKeys?: ReadonlySet<string>;
@@ -123,6 +179,8 @@ export function TodayClient({
   engagementProfiles?: { id: string; label: string }[];
   /** rate-band-match-quality epic. The relevant group's own real `matchQuality.hideOutOfBandByDefault` setting (resolved server-side, page.tsx) -- the initial state of the "Hide out-of-band" toggle, never a hardcoded default here. */
   hideOutOfBandDefault?: boolean;
+  /** rank-buckets epic. The relevant group's own real, owner-named bucket labels (resolved server-side via dashboard-data.ts's extractRankBucketLabels()) -- drives both the filter chip row and the confirm/override control's option list. Empty means the feature isn't configured for this group at all -- zero new UI, same "not configured, no bolt-on" convention every other opt-in field here uses. */
+  rankBucketLabels?: string[];
 }) {
   const router = useRouter();
   const sources = useMemo(() => distinctSources(gigs), [gigs]);
@@ -130,6 +188,7 @@ export function TodayClient({
   const [tier, setTier] = useState<TierFilterValue>("all");
   const [band, setBand] = useState<BandFilter>("all");
   const [hideOutOfBand, setHideOutOfBand] = useState(hideOutOfBandDefault);
+  const [rankBucket, setRankBucket] = useState<string | "all">("all");
   const [status, setStatus] = useState<GigStatus | "all">("all");
   const [source, setSource] = useState<string | "all">("all");
   const [profile, setProfile] = useState<string>("all");
@@ -153,6 +212,7 @@ export function TodayClient({
   function matches(g: StoredGig): boolean {
     if (tier !== "all" && g.tier !== tier) return false;
     if (!passesBandFilter(resolveDisplayBand(g), band, hideOutOfBand)) return false;
+    if (!passesRankBucketFilter(resolveDisplayRankBucket(g), rankBucket)) return false;
     if (status !== "all" && g.status !== status) return false;
     if (source !== "all" && g.sourceId !== source) return false;
     if (profile !== "all" && !(g.matchedProfileIds ?? []).includes(profile)) return false;
@@ -165,7 +225,7 @@ export function TodayClient({
     return true;
   }
 
-  const visible = useMemo(() => gigs.filter(matches), [gigs, tier, band, hideOutOfBand, status, source, profile, seenWindow, search]);
+  const visible = useMemo(() => gigs.filter(matches), [gigs, tier, band, hideOutOfBand, rankBucket, status, source, profile, seenWindow, search]);
 
   // "Today's Picks" -- green + new, sorted most-recently-seen first, top 4.
   // Deliberately re-filters the FULL gigs array by the same `matches()`
@@ -178,7 +238,7 @@ export function TodayClient({
         .slice()
         .sort((a, b) => new Date(b.firstSeen).getTime() - new Date(a.firstSeen).getTime())
         .slice(0, 4),
-    [gigs, tier, band, hideOutOfBand, status, source, profile, seenWindow, search],
+    [gigs, tier, band, hideOutOfBand, rankBucket, status, source, profile, seenWindow, search],
   );
 
   const grouped = useMemo(() => {
@@ -199,6 +259,7 @@ export function TodayClient({
     // control here resets to ITS own default.
     setBand("all");
     setHideOutOfBand(hideOutOfBandDefault);
+    setRankBucket("all");
     setStatus("all");
     setSource("all");
     setProfile("all");
@@ -319,6 +380,26 @@ export function TodayClient({
             Hide out-of-band
           </button>
         </div>
+        {rankBucketLabels.length > 0 && (
+          <>
+            <div className={styles.toolbarSep} />
+            <div className={styles.chipGroup}>
+              <button type="button" onClick={() => setRankBucket("all")} className={`${styles.chip} ${rankBucket === "all" ? styles.chipActive : ""}`}>
+                All
+              </button>
+              {rankBucketLabels.map((label) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setRankBucket(label)}
+                  className={`${styles.chip} ${rankBucket === label ? styles.chipActive : ""}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
         <div className={styles.toolbarSep} />
         <select value={status} onChange={(e) => setStatus(e.target.value as GigStatus | "all")} className={styles.tbSelect} aria-label="Filter by status">
           <option value="all">Any status</option>
@@ -386,6 +467,12 @@ export function TodayClient({
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <TierStamp tier={gig.tier} />
                     <BandStamp band={resolveDisplayBand(gig)} />
+                    <RankBucketControl
+                      gigKey={gig.key}
+                      groupId={resolvePrimaryRankBucketGroupId(gig)}
+                      assignment={resolveDisplayRankBucket(gig)}
+                      bucketLabels={rankBucketLabels}
+                    />
                   </div>
                 </div>
                 <div className={styles.pickMeta}>
@@ -465,6 +552,12 @@ export function TodayClient({
                         <div className={styles.rowTitleLine}>
                           <TierStamp tier={gig.tier} />
                           <BandStamp band={resolveDisplayBand(gig)} />
+                          <RankBucketControl
+                            gigKey={gig.key}
+                            groupId={resolvePrimaryRankBucketGroupId(gig)}
+                            assignment={resolveDisplayRankBucket(gig)}
+                            bucketLabels={rankBucketLabels}
+                          />
                           <span className={styles.rowTitle}>{gig.title}</span>
                         </div>
                         <div>

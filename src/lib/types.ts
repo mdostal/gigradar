@@ -327,11 +327,13 @@ export interface RankBucketRule {
  * rule match needs no owner confirmation); `source: "ai"` results start
  * `confirmed: false` until the owner acts via the real confirm/override
  * control (rank-bucket-filter-and-confirm-everywhere story) — the AI's
- * suggestion never silently overwrites the rule-based result.
+ * suggestion never silently overwrites the rule-based result. `source:
+ * "manual"` is stamped ONLY by that confirm/override action itself —
+ * by definition the owner directly acting, always `confirmed: true`.
  */
 export interface RankBucketAssignment {
   bucket: string | null;
-  source: "rule" | "ai";
+  source: "rule" | "ai" | "manual";
   confirmed: boolean;
   reason?: string;
 }

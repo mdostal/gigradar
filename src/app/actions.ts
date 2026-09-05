@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getGig, getInterviewPrep, saveInterviewPrep, setStatus } from "@/lib/store";
+import { getGig, getInterviewPrep, saveInterviewPrep, setRankBucket, setStatus } from "@/lib/store";
 import type { GigStatus } from "@/lib/store";
 import { actionErr, actionOk, type ActionResult } from "@/lib/actions/result";
 import { runRadar, stageApplication } from "@/lib/apply/runner";
@@ -12,7 +12,7 @@ import { readRawConfig } from "@/lib/config/save";
 import { ConfigSchema } from "@/lib/config/schema";
 import { reconcileGoFractionalStatuses, type ReconciliationResult } from "@/lib/sources/gofractional-status";
 import { reconcileWellfoundStatuses } from "@/lib/sources/wellfound-status";
-import type { MatchResult } from "@/lib/types";
+import type { MatchResult, RankBucketAssignment } from "@/lib/types";
 
 /**
  * Server Action wrapping `setStatus()` — the status-change control on the
@@ -71,6 +71,30 @@ export async function updateGigStatusAction(
   revalidatePath("/");
   revalidatePath("/gigs");
   return actionOk({ key, status });
+}
+
+/**
+ * rank-buckets epic, rank-bucket-filter-and-confirm-everywhere story. The
+ * FIRST real confirm/override control in this codebase (ai-verify's own
+ * `aiFlags` is read-only today) — accepting an AI-suggested bucket, or
+ * manually reassigning a gig to any of that group's own configured
+ * buckets, both land here. Mirrors updateGigStatusAction()'s exact
+ * convention: a typed ActionResult, revalidatePath() after success.
+ * `source`/`confirmed` are always stamped `"manual"`/`true` here — this
+ * action is BY DEFINITION the owner acting, never a re-run of the AI or
+ * rule evaluator.
+ */
+export async function confirmRankBucketAction(key: string, groupId: string, bucket: string | null): Promise<ActionResult<{ key: string; groupId: string; assignment: RankBucketAssignment }>> {
+  const assignment: RankBucketAssignment = { bucket, source: "manual", confirmed: true };
+  try {
+    setRankBucket(key, groupId, assignment);
+  } catch (e) {
+    return actionErr(e);
+  }
+
+  revalidatePath("/");
+  revalidatePath("/gigs");
+  return actionOk({ key, groupId, assignment });
 }
 
 // ---------------------------------------------------------------------------

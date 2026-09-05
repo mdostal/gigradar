@@ -5,7 +5,7 @@ import { SyncStatusDropdown } from "../../sync-status-dropdown";
 import { SonarSweepHeader } from "../../sonar-sweep-header";
 import { sweepNowAction } from "../../actions";
 import { SYNC_STATUS_SOURCES } from "../../sync-status-registry";
-import { loadDashboardData, resolveGroupLabel, resolveHideOutOfBandDefault } from "../../dashboard-data";
+import { extractRankBucketLabels, loadDashboardData, resolveGroupLabel, resolveHideOutOfBandDefault } from "../../dashboard-data";
 
 // dashboard-drafts-data-integrity epic, relocate-giglist-to-all-gigs story.
 // Relocated verbatim from src/app/[group]/page.tsx — the per-group mirror
@@ -26,6 +26,8 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
   const now = Date.now();
   // rate-band-match-quality epic: THIS specific group's own real setting.
   const hideOutOfBandDefault = resolveHideOutOfBandDefault(rawConfig, groupId);
+  // rank-buckets epic: THIS specific group's own real bucket labels.
+  const rankBucketLabels = extractRankBucketLabels(rawConfig, groupId);
 
   return (
     <main className="mx-auto max-w-[88rem] p-6">
@@ -47,6 +49,7 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
         engagementProfiles={engagementProfiles}
         groupId={groupId}
         hideOutOfBandDefault={hideOutOfBandDefault}
+        rankBucketLabels={rankBucketLabels}
       />
     </main>
   );

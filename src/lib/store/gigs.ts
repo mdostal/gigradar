@@ -3,7 +3,7 @@
 // if a caller needs a new query shape, add a function here instead of
 // reaching for getDb() + prepare() elsewhere.
 import type { DatabaseSync } from "node:sqlite";
-import type { Gig } from "../types.js";
+import type { Gig, RankBucketAssignment } from "../types.js";
 import { getDb, withTransaction } from "./db.js";
 import type { GigFilter, GigStatus, OutcomeReason, ScanSummary, SourceScanBatch, StoredGig } from "./types.js";
 
@@ -458,4 +458,32 @@ export function setTier(key: string, tier: Gig["tier"], opts: DbOption = {}): vo
   if (Number(result.changes) === 0) {
     throw new Error(`gigradar store: setTier: no gig with key "${key}"`);
   }
+}
+
+/**
+ * rank-buckets epic, rank-bucket-filter-and-confirm-everywhere story. The
+ * real confirm/override write path -- the owner accepting an AI
+ * suggestion or manually reassigning a gig's bucket for ONE group. Reads
+ * the gig's current `matched_rank_buckets` map, replaces just that one
+ * group's entry, and writes the whole map back -- every OTHER group's own
+ * assignment is untouched. Deliberately does NOT also patch the flat
+ * `rank_bucket` column here: that field is a scan-time snapshot the
+ * runner re-derives on every scan, and `resolveDisplayRankBucket()`
+ * (dashboard-filter.ts) already reads `matchedRankBuckets` directly for
+ * the unscoped-view case, so there is no separate flat value that could
+ * go stale between a confirm and the next scan. Throws if the key
+ * doesn't exist, same convention as setStatus()/setTier().
+ */
+export function setRankBucket(key: string, groupId: string, assignment: RankBucketAssignment, opts: DbOption = {}): void {
+  const db = opts.db ?? getDb();
+  const row = db.prepare("SELECT matched_rank_buckets FROM gigs WHERE key = :key").get({ key }) as { matched_rank_buckets: string | null } | undefined;
+  if (!row) {
+    throw new Error(`gigradar store: setRankBucket: no gig with key "${key}"`);
+  }
+  const current: Record<string, RankBucketAssignment> = row.matched_rank_buckets !== null ? JSON.parse(row.matched_rank_buckets) : {};
+  current[groupId] = assignment;
+  db.prepare("UPDATE gigs SET matched_rank_buckets = :matched_rank_buckets WHERE key = :key").run({
+    matched_rank_buckets: JSON.stringify(current),
+    key,
+  });
 }
