@@ -1,0 +1,57 @@
+id: match-band-pipeline-and-storage
+epic: rate-band-match-quality
+title: Wire match bands through group-match.ts, apply/runner.ts, schema, and a real DB migration
+status: pending
+complexity: high
+methodology: classic
+depends_on: [match-band-core]
+
+description: |
+  Makes computeMatchBand() (match-band-core) a real, persisted signal on
+  every scanned gig -- mirrors exactly how matchedGroupTiers/groupScores
+  already flow from group-match.ts through apply/runner.ts into the
+  store. Gig.tier, gate(), and tier() remain byte-identical; this is
+  purely additive.
+
+acceptance_criteria:
+  - "GroupMatchResult (group-match.ts) gains groupBands: Record<string, MatchBand>, computed alongside groupTiers/groupScores for every evaluated group, using each group's own resolved tolerancePct (see match-quality-settings-page for where that setting lives -- default to a sane constant here if that story hasn't landed yet, documented as a TODO the next story resolves)"
+  - "Gig/StoredGig types gain matchedGroupBands: Record<string, MatchBand> and a flat matchBand: MatchBand anchored to the primary group (same convention as flat Gig.tier)"
+  - "store/gigs.ts's recordScan() UPSERT persists matched_group_bands (JSON) and match_band columns, with a real migration for existing databases (new nullable columns, no data loss, no rewrite of historical rows required)"
+  - "a real, isolated re-scan (same isolated-XDG_DATA_HOME pattern used all session) against fixture gigs produces the expected match_band value, verified by a direct sqlite read -- not just a unit test of the pure function in isolation"
+
+steps:
+  - id: research
+    description: Read store/gigs.ts's existing matched_group_tiers/matched_group_scores column handling end to end (schema, migration, recordScan() UPSERT, listGigs() hydration) -- this story's own migration must follow that exact established pattern, not invent a new one.
+    agent: researcher
+  - id: implement
+    description: Extend group-match.ts, apply/runner.ts, types.ts, schema.ts, and store/gigs.ts per the acceptance criteria.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: |
+      npm test && npm run typecheck must both pass. Add unit tests for the extended matchGroups()/runner.ts wiring. Then run a real isolated-XDG_DATA_HOME re-scan against a fixture config + fixture source gigs (in-band, near-band, and out-of-band examples) and read the resulting gigs.db directly (sqlite3 -readonly) to confirm matched_group_bands/match_band are correctly persisted -- same rigor as this session's profile-group-restructure story.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI, merge.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/matching/group-match.ts
+      purpose: matchGroups() -- add groupBands alongside groupTiers/groupScores, same per-group loop.
+    - path: src/lib/apply/runner.ts
+      purpose: "Lines ~159-216: where groupTiers/groupScores/matchedGroupIds already get destructured and stamped onto gigWithTier -- matchBand slots in identically."
+    - path: src/lib/store/gigs.ts
+      purpose: recordScan()'s UPSERT and the matched_group_tiers/matched_group_scores column precedent this story's migration must mirror exactly.
+
+design_decisions:
+  - decision: Default tolerancePct to a hardcoded constant (documented as provisional) if match-quality-settings-page hasn't shipped yet, rather than blocking this story on story ordering.
+    rationale: Keeps the vertical slices genuinely independent-but-sequenced -- this story's own working state (real persisted bands) doesn't need to wait for the settings UI to exist, just for a real number to compute with.
+
+risks:
+  - severity: high
+    description: A DB migration that isn't backward-compatible could break existing installs' gigs.db (including the owner's own real, live database).
+    mitigation: New columns only, nullable, no rewrite of existing rows required at migration time -- mirrors the exact additive pattern matched_group_tiers/matched_group_scores already established and that this codebase has shipped safely multiple times this session. Verify against a COPY of the owner's real schema shape (isolated fixture db), never the live ~/.local/share/gigradar/gigs.db directly.

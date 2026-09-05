@@ -1,0 +1,36 @@
+name: rate-band-match-quality
+title: Rate-aware match bands (in-band/near-band/out-of-band) + tunable Advanced settings
+description: >
+  Owner-directed deep-dive after live proof that "Strong fit" (green tier)
+  is purely keyword-based and completely independent of rate -- real
+  $50-60/hr and $86k-225k/yr listings were sitting in "Strong fit" despite
+  failing every group's rate gate. Adds a new, additive per-group
+  match-band signal (in-band/near-band/out-of-band), a real tunable
+  Advanced settings page, and a consistent band filter across every
+  giglist view (/today, /gigs, /[group]/gigs). See docs/design-discussion.md
+  for full investigation + owner sign-off.
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: none
+
+stories:
+  - id: match-band-core
+    title: Pure computeMatchBand() classifier + exhaustive unit tests
+    complexity: medium
+    depends_on: []
+  - id: match-band-pipeline-and-storage
+    title: Wire match bands through group-match.ts, apply/runner.ts, schema, and a real DB migration
+    complexity: high
+    depends_on: [match-band-core]
+  - id: match-quality-settings-page
+    title: New /config/match-quality Advanced settings page (per-group tolerance %, hide-out-of-band toggle)
+    complexity: medium
+    depends_on: [match-band-pipeline-and-storage]
+  - id: band-filter-everywhere
+    title: Band filter on TodayClient (/today) and DashboardClient (/gigs, /[group]/gigs), defaulting to hide out-of-band
+    complexity: high
+    depends_on: [match-quality-settings-page]
+  - id: auto-draft-respects-band
+    title: autoDraftOnScan/autoFire require matchBand === in-band in addition to tier === green
+    complexity: low
+    depends_on: [match-band-pipeline-and-storage]

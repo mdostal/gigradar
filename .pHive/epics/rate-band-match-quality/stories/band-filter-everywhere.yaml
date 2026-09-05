@@ -1,0 +1,54 @@
+id: band-filter-everywhere
+epic: rate-band-match-quality
+title: Band filter on TodayClient (/today) and DashboardClient (/gigs, /[group]/gigs), defaulting to hide out-of-band
+status: pending
+complexity: high
+methodology: classic
+depends_on: [match-quality-settings-page]
+
+description: |
+  The actual, literal fix for the owner's stated pain: "I cannot be
+  filtering through 100 fucking 140k/yr salaries in the TODO." Owner's
+  explicit scope answer: "All of them!" -- every real giglist surface,
+  not just /today.
+
+acceptance_criteria:
+  - "TodayClient gets a new Band chip row (In-band / Near-band / Out-of-band / All) mirroring its existing Tier chip row's exact visual/interaction pattern"
+  - "DashboardClient gets a new filterable Band column (or column-filter meta entry) using its existing per-column filter convention (see ColumnFilterCell's filterKind union) -- consistent with how status/tier/source/profile already filter there"
+  - "on first load (no saved preference yet), out-of-band gigs are hidden by default on every one of these surfaces, per each gig's relevant group's matchQuality.hideOutOfBandByDefault setting (default true) -- an explicit, visible control reveals them, never a silent, undiscoverable filter"
+  - "the band-classification/display logic (band label, stamp color, filter predicate) lives in dashboard-filter.ts as a single shared implementation both TodayClient and DashboardClient import -- never two divergent copies"
+  - "on an unscoped view (/gigs, /today -- no specific group in the URL), a gig's displayed band is the BEST band across any of its matchedGroupBands entries (documented as inheriting the known, already-flagged primary-group-anchoring limitation, not a new bug) -- on a scoped view (/[group]/gigs), that group's own specific band is used"
+  - "saved filter preferences (existing localStorage mechanism dashboard-client.tsx/today already use for sort/filter state) persist the band filter choice the same way"
+
+steps:
+  - id: implement
+    description: Add shared band-display/filter logic to dashboard-filter.ts, then wire it into TodayClient's chip row and DashboardClient's column-filter system per each component's own existing convention.
+    agent: developer
+  - id: test
+    description: npm test && npm run typecheck must both pass. Unit-test the new shared dashboard-filter.ts logic (best-band-across-groups selection, default-hide predicate) as pure functions, following this repo's no-RTL/plain-data testing convention.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: |
+      Commit, branch off dev, PR into dev, verify CI, merge. Also run the standard isolated-dev-server curl regression check across /today, /gigs, /[group]/gigs, /full-time/gigs, /fractional-hourly/gigs to confirm the new filter row renders without error and doesn't break existing 200s.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/dashboard-filter.ts
+      purpose: The existing shared filter-logic module (distinctSources, isWithinSeenWindow, etc.) both TodayClient and DashboardClient already import from -- the correct home for the new shared band logic, per this repo's established single-source-of-truth convention.
+    - path: src/app/today/today-client.tsx
+      purpose: TIER_CHIPS/TierStamp's exact pattern to mirror for the new Band chip row.
+    - path: src/app/dashboard-client.tsx
+      purpose: ColumnFilterCell/FilterKind's exact pattern to mirror for the new Band column filter.
+
+design_decisions:
+  - decision: Shared classification/predicate logic in dashboard-filter.ts; per-component UI (chips vs. column filter) stays distinct, matching each component's own established convention.
+    rationale: Owner's own complaint is about inconsistent BEHAVIOR/coverage (bands missing everywhere), not inconsistent visual chrome between two already-differently-designed components -- unifying the UI shape itself would be unrequested, riskier scope creep.
+
+risks:
+  - severity: medium
+    description: Defaulting to hide-out-of-band could hide a gig the owner actually wanted to see (e.g. one they already manually reviewed before this feature shipped).
+    mitigation: The hide is a FILTER, not a data deletion -- the gig remains fully intact in the store and one click away via the visible "show out-of-band" control, same reversibility every other filter in this app already has.
