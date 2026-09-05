@@ -33,12 +33,23 @@ export const ALL_BANDS: MatchBand[] = ["in-band", "near-band", "out-of-band"];
  * this gig was evaluated against (in-band > near-band > out-of-band) --
  * documented, known limitation inherited from the same primary-group-
  * anchoring gap the customizable-tier-scoring epic already flagged (see
- * this epic's own design-discussion.md), not a new bug. A gig scanned
- * before this epic shipped (no matchedGroupBands/matchBand at all) falls
- * back to "out-of-band" -- fail closed, never assume a stale gig is fine.
+ * this epic's own design-discussion.md), not a new bug.
+ *
+ * A gig scanned BEFORE this epic shipped (no matchedGroupBands/matchBand
+ * at all) falls back to "in-band" -- fail OPEN, not closed. This is a
+ * real, CI-caught regression this function's first version got backwards:
+ * failing closed here would hide EVERY pre-existing gig in EVERY real
+ * install's database by default (the fresh-install e2e fixture proved it
+ * live -- two seeded, pre-epic gigs vanished from /gigs entirely until a
+ * re-scan re-tagged them). Fail-CLOSED is still correct for automation
+ * (auto-draft-respects-band's own checkMatchBandInBand()) -- never fire on
+ * unclassified data -- but this function backs a DISPLAY FILTER, where
+ * hiding a legitimate historical gig by default is a worse outcome than
+ * occasionally showing one whose rate hasn't been re-checked yet.
  */
 export function resolveDisplayBand(gig: Pick<StoredGig, "matchBand" | "matchedGroupBands">, groupId?: string): MatchBand {
-  if (groupId) return gig.matchedGroupBands?.[groupId] ?? gig.matchBand ?? "out-of-band";
+  if (groupId) return gig.matchedGroupBands?.[groupId] ?? gig.matchBand ?? "in-band";
+  if (!gig.matchedGroupBands && !gig.matchBand) return "in-band";
   const bands = gig.matchedGroupBands ? Object.values(gig.matchedGroupBands) : gig.matchBand ? [gig.matchBand] : [];
   if (bands.includes("in-band")) return "in-band";
   if (bands.includes("near-band")) return "near-band";

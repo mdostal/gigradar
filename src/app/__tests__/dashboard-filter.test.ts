@@ -116,10 +116,10 @@ describe("resolveDisplayBand", () => {
     expect(resolveDisplayBand(oneInBand)).toBe("in-band");
   });
 
-  it("falls back to out-of-band (fail closed) for a gig scanned before this epic shipped, with no band data at all", () => {
+  it("falls back to in-band (fail OPEN, never hidden by default) for a gig scanned before this epic shipped, with no band data at all -- a real CI-caught regression: failing closed here hid every pre-existing gig in the e2e fixture's database until a re-scan", () => {
     const gig = makeGig({ key: "1" });
-    expect(resolveDisplayBand(gig)).toBe("out-of-band");
-    expect(resolveDisplayBand(gig, "any-group")).toBe("out-of-band");
+    expect(resolveDisplayBand(gig)).toBe("in-band");
+    expect(resolveDisplayBand(gig, "any-group")).toBe("in-band");
   });
 });
 
