@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { EngagementProfile, Gig } from "../../types.js";
 import { gate } from "../gate.js";
-import { computeMatchBand } from "../match-band.js";
+import {
+  computeMatchBand,
+  DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT,
+  DEFAULT_NEAR_BAND_TOLERANCE_PCT,
+  resolveHideOutOfBandByDefault,
+  resolveNearBandTolerancePct,
+} from "../match-band.js";
 
 // rate-band-match-quality epic, match-band-core story. Same makeGig()/
 // profile-fixture convention as gate.test.ts.
@@ -127,5 +133,22 @@ describe("computeMatchBand", () => {
     const result = computeMatchBand(gig, [FRACTIONAL_HOURLY_PROFILE], 15);
     expect(result.reasons.length).toBeGreaterThan(0);
     expect(typeof result.reasons[0]).toBe("string");
+  });
+});
+
+describe("resolveNearBandTolerancePct / resolveHideOutOfBandByDefault", () => {
+  it("falls back to the documented defaults when matchQuality is unset", () => {
+    expect(resolveNearBandTolerancePct({ matchQuality: undefined })).toBe(DEFAULT_NEAR_BAND_TOLERANCE_PCT);
+    expect(resolveHideOutOfBandByDefault({ matchQuality: undefined })).toBe(DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT);
+  });
+
+  it("returns the real, owner-set per-group value when present", () => {
+    expect(resolveNearBandTolerancePct({ matchQuality: { nearBandTolerancePct: 25 } })).toBe(25);
+    expect(resolveHideOutOfBandByDefault({ matchQuality: { hideOutOfBandByDefault: false } })).toBe(false);
+  });
+
+  it("falls back independently per field when only one of the two is set", () => {
+    expect(resolveNearBandTolerancePct({ matchQuality: { hideOutOfBandByDefault: false } })).toBe(DEFAULT_NEAR_BAND_TOLERANCE_PCT);
+    expect(resolveHideOutOfBandByDefault({ matchQuality: { nearBandTolerancePct: 5 } })).toBe(DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT);
   });
 });

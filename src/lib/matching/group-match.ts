@@ -21,7 +21,7 @@ import type { Gig, GroupConfig, MatchBand, Profile, Tier } from "../types.js";
 import { gate } from "./gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "./tiering.js";
 import { computeTier } from "./score-tiering.js";
-import { computeMatchBand, DEFAULT_NEAR_BAND_TOLERANCE_PCT } from "./match-band.js";
+import { computeMatchBand, resolveNearBandTolerancePct } from "./match-band.js";
 
 export interface GroupMatchResult {
   /** Every group whose gate this gig cleared — never a partial/fabricated list, empty when it cleared none. */
@@ -39,10 +39,10 @@ export interface GroupMatchResult {
   /**
    * rate-band-match-quality epic. Every evaluated group's OWN MatchBand
    * (match-band.ts's computeMatchBand()), independent of pass/fail — same
-   * per-group shape as groupTiers/groupScores above. TODO(match-quality-
-   * settings-page): tolerance is DEFAULT_NEAR_BAND_TOLERANCE_PCT for every
-   * group until that story wires a real per-group GroupConfig.matchQuality
-   * value through.
+   * per-group shape as groupTiers/groupScores above. Tolerance is each
+   * group's own real, owner-tunable `GroupConfig.matchQuality.
+   * nearBandTolerancePct` (match-band.ts's `resolveNearBandTolerancePct()`),
+   * falling back to the documented default when unset.
    */
   groupBands: Record<string, MatchBand>;
 }
@@ -81,7 +81,7 @@ export function matchGroups(
         ? tier(gig, group.roleArea ?? EMPTY_ROLE_AREA_CONFIG).tier
         : computeTier(gateResult.score, mode, scorePopulations[group.id] ?? []).tier;
 
-    groupBands[group.id] = computeMatchBand(gig, group.needs.engagementProfiles, DEFAULT_NEAR_BAND_TOLERANCE_PCT).band;
+    groupBands[group.id] = computeMatchBand(gig, group.needs.engagementProfiles, resolveNearBandTolerancePct(group)).band;
   }
   return { matchedGroupIds, groupTiers, groupScores, groupBands };
 }

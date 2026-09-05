@@ -15,6 +15,7 @@ import type { ConfigSection } from "./config-client";
 import type { ConfigPageData } from "./config-data";
 import { computeProfileComplete, computeSourceCounts } from "@/lib/status/status-strip";
 import { describeCron } from "@/lib/schedule/describe-cron";
+import { resolveHideOutOfBandByDefault, resolveNearBandTolerancePct } from "@/lib/matching/match-band";
 import type { EngagementProfile } from "@/lib/types";
 
 export interface ConfigDetailRow {
@@ -96,6 +97,20 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       }));
     },
     status: (data) => (data.initial.groups.every((g) => g.needs.engagementProfiles.length > 0) ? "ok" : "warn"),
+  },
+  {
+    id: "match-quality",
+    label: "Match Quality",
+    href: "/config/match-quality",
+    details: (data) => {
+      if (data.initial.groups.length === 0) return [{ label: "Match Quality", value: "None configured" }];
+      return data.initial.groups.map((g) => ({
+        label: g.label,
+        value: `${resolveNearBandTolerancePct(g)}% tolerance · hide out-of-band ${resolveHideOutOfBandByDefault(g) ? "on" : "off"}`,
+      }));
+    },
+    // "neutral" (nothing to flag) when every group is still on the documented defaults; "ok" once the owner has actually tuned at least one group -- same "distinguishable from an untouched default" signal Automation's own status() already gives kill-switch/rules.
+    status: (data) => (data.initial.groups.some((g) => g.matchQuality) ? "ok" : "neutral"),
   },
   {
     id: "schedule",

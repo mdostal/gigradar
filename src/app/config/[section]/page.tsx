@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { loadConfigPageData } from "../config-data";
 import { CONFIG_SECTIONS } from "../config-sections";
 import { ConfigClient, type ConfigSection } from "../config-client";
+import { MatchQualityClient } from "../match-quality-client";
 
 // config-dashboard-and-section-pages story: one real, dedicated page per
 // config section (/config/profile, /config/sources, /config/groups,
@@ -27,13 +28,20 @@ export default async function ConfigSectionPage({ params }: { params: Promise<{ 
   return (
     <main className="mx-auto max-w-4xl p-6">
       <h1 className="font-theme-heading text-2xl font-bold tracking-tight text-theme-text">{label}</h1>
-      <ConfigClient
-        initial={data.initial}
-        portunusAvailable={data.portunusAvailable}
-        sessionReadiness={data.sessionReadiness}
-        sourcesWithOpenIssues={data.sourcesWithOpenIssues}
-        activeSection={activeSection}
-      />
+      {activeSection === "match-quality" ? (
+        // rate-band-match-quality epic: a small, standalone component,
+        // deliberately NOT routed through ConfigClient (already 3000+
+        // lines) -- see match-quality-client.tsx's own header comment.
+        <MatchQualityClient initialGroups={data.initial.groups} />
+      ) : (
+        <ConfigClient
+          initial={data.initial}
+          portunusAvailable={data.portunusAvailable}
+          sessionReadiness={data.sessionReadiness}
+          sourcesWithOpenIssues={data.sourcesWithOpenIssues}
+          activeSection={activeSection}
+        />
+      )}
     </main>
   );
 }

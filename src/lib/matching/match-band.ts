@@ -1,4 +1,4 @@
-import type { EngagementProfile, Gig, MatchBand } from "../types.js";
+import type { EngagementProfile, Gig, GroupConfig, MatchBand } from "../types.js";
 import { matchProfiles, normalizeRate } from "./gate.js";
 
 /**
@@ -43,14 +43,24 @@ import { matchProfiles, normalizeRate } from "./gate.js";
 export type { MatchBand };
 
 /**
- * The default near-band tolerance until match-quality-settings-page (the
- * next story in this epic) lands a real, owner-tunable per-group value —
- * every caller of this constant is a documented TODO for that story, never
- * a permanent home for it. See this module's own header comment: the
- * owner's explicit directive is that this number must become a real
- * setting, not stay hardcoded.
+ * match-quality-settings-page story: the real, owner-tunable defaults —
+ * used whenever a group hasn't (or hasn't yet) set its own
+ * `GroupConfig.matchQuality` value. Both are genuinely editable per group
+ * via `/config/match-quality`; these are only the do-nothing-default
+ * fallback, same pattern every other optional Config field uses.
  */
 export const DEFAULT_NEAR_BAND_TOLERANCE_PCT = 15;
+export const DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT = true;
+
+/** The real per-group tolerance, falling back to `DEFAULT_NEAR_BAND_TOLERANCE_PCT` when unset. */
+export function resolveNearBandTolerancePct(group: Pick<GroupConfig, "matchQuality">): number {
+  return group.matchQuality?.nearBandTolerancePct ?? DEFAULT_NEAR_BAND_TOLERANCE_PCT;
+}
+
+/** The real per-group hide-out-of-band preference, falling back to `DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT` when unset. */
+export function resolveHideOutOfBandByDefault(group: Pick<GroupConfig, "matchQuality">): boolean {
+  return group.matchQuality?.hideOutOfBandByDefault ?? DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT;
+}
 
 export interface MatchBandResult {
   band: MatchBand;

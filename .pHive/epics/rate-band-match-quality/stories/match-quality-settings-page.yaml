@@ -1,7 +1,7 @@
 id: match-quality-settings-page
 epic: rate-band-match-quality
 title: New /config/match-quality Advanced settings page (per-group tolerance %, hide-out-of-band toggle)
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [match-band-pipeline-and-storage]
@@ -53,4 +53,28 @@ design_decisions:
 risks:
   - severity: low
     description: A second, parallel "how do I edit my groups" surface (this page vs. config-client.tsx's existing Groups & Needs section) could feel disjointed.
-    mitigation: Link directly from the Config Dashboard's existing Groups & Needs card AND this new Match Quality card to each other, and keep this page's own scope strictly to the two new fields -- never a re-edit surface for rate/profile data that already lives in Groups & Needs.
+    mitigation: Kept this page's own scope strictly to the two new fields -- never a re-edit surface for rate/profile data that already lives in Groups & Needs. Deferred (not done this story) -- explicit cross-links between the two cards; both already sit adjacent in the same Config Dashboard grid and sidebar, which covers most of the discoverability concern for now.
+
+progress_note: |
+  Shipped. GroupConfig.matchQuality {nearBandTolerancePct?, hideOutOfBandByDefault?}
+  added to types.ts + schema.ts (MatchQualityConfigSchema, both fields
+  optional, 0-100 range validated). match-band.ts gains
+  resolveNearBandTolerancePct()/resolveHideOutOfBandByDefault() plus their
+  default constants; group-match.ts's provisional hardcoded
+  DEFAULT_NEAR_BAND_TOLERANCE_PCT lookup (from match-band-pipeline-and-
+  storage) replaced with the real per-group resolver.
+
+  New src/app/config/match-quality-client.tsx -- a small, standalone
+  Client Component, deliberately NOT added to config-client.tsx (per the
+  owner's explicit direction) -- wired into config-sections.ts's
+  CONFIG_SECTIONS and a new branch in [section]/page.tsx (match-quality
+  routes to this component instead of ConfigClient). Saves through the
+  existing saveConfigAction()/saveConfig() top-level-merge path -- no new
+  write mechanism.
+
+  Verified: 43 new/updated unit tests (schema validation + boundaries,
+  resolver defaults/overrides, config-sections.ts's new details()/status()),
+  1499 tests total pass, typecheck clean, and a real isolated-dev-server
+  curl pass confirming /config/match-quality renders both groups' real
+  settings (one tuned to 20%, one on the 15% default) and the Config
+  Dashboard's new Match Quality card reflects both correctly.

@@ -250,3 +250,28 @@ describe("automation section", () => {
     expect(section("automation").status(noRulesAtAll)).toBe("neutral");
   });
 });
+
+describe("match-quality section", () => {
+  it("reports each group's real tolerance/hide setting, falling back to documented defaults when unset", () => {
+    const data = baseData({ initial: { ...baseData().initial, groups: [group({ id: "g1", label: "Group 1" })] } });
+    expect(section("match-quality").details(data)).toEqual([{ label: "Group 1", value: "15% tolerance · hide out-of-band on" }]);
+  });
+
+  it("reflects a real, owner-tuned setting", () => {
+    const data = baseData({ initial: { ...baseData().initial, groups: [group({ id: "g1", label: "Group 1", matchQuality: { nearBandTolerancePct: 25, hideOutOfBandByDefault: false } })] } });
+    expect(section("match-quality").details(data)).toEqual([{ label: "Group 1", value: "25% tolerance · hide out-of-band off" }]);
+  });
+
+  it("shows 'None configured' with zero groups", () => {
+    const data = baseData({ initial: { ...baseData().initial, groups: [] } });
+    expect(section("match-quality").details(data)).toEqual([{ label: "Match Quality", value: "None configured" }]);
+  });
+
+  it("status() is 'neutral' until at least one group has been explicitly tuned, then 'ok'", () => {
+    const untouched = baseData({ initial: { ...baseData().initial, groups: [group({ id: "g1" })] } });
+    expect(section("match-quality").status(untouched)).toBe("neutral");
+
+    const tuned = baseData({ initial: { ...baseData().initial, groups: [group({ id: "g1", matchQuality: { nearBandTolerancePct: 10 } })] } });
+    expect(section("match-quality").status(tuned)).toBe("ok");
+  });
+});
