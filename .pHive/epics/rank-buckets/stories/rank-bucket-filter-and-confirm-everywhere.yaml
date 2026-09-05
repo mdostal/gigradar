@@ -1,0 +1,60 @@
+id: rank-bucket-filter-and-confirm-everywhere
+epic: rank-buckets
+title: Rank Bucket as a new filterable dimension on every giglist view + the first real confirm/override control
+status: pending
+complexity: high
+methodology: classic
+depends_on: [rank-bucket-ai-overlay, rank-bucket-settings-page]
+
+description: |
+  Closes the "mixed filter mechanism" gap -- confirmed by real code
+  reading (this epic's own design-discussion.md) that multi-dimension
+  AND-filtering already works mechanically on both DashboardClient and
+  TodayClient; Rank Bucket just doesn't exist as a filterable dimension
+  yet. Adding it via the exact same shared-logic-plus-per-component-UI
+  pattern band-filter-everywhere already established makes it participate
+  in that existing combination automatically -- no new filter-combination
+  engine needed. Also builds the first REAL confirm/override control in
+  this codebase (ai-verify's own aiFlags is read-only today).
+
+acceptance_criteria:
+  - "a new Rank Bucket filterable dimension on TodayClient (chip row, per-group's own bucket labels -- 'All' plus each configured bucket) and DashboardClient (a band-multi-style column filter), following each component's own established convention exactly like Band did"
+  - "a gig's rank bucket is visibly shown (a chip/badge, distinct from Tier and Band) wherever gigs are listed, using the RULE-based bucket by default; an AI SUGGESTION (source:'ai', confirmed:false) is visually distinct (e.g. dashed/pending styling, mirroring the Rank Buckets Proposal's own mockup) until the owner acts on it"
+  - "a real confirm/override control: accept the AI's suggestion in one click, OR manually reassign a gig to any of that group's configured buckets -- a real Server Action (mirroring updateGigStatusAction's convention exactly), persisting confirmed:true and the new bucket/source"
+  - "setting a Rank Bucket filter combines correctly (AND semantics) with every pre-existing filter (Tier, Band, Status, Source, etc.) with zero new combination logic -- verified with a real multi-filter test, not assumed"
+  - "an unscoped view (/gigs, /today) shows the PRIMARY group's own rank bucket (or 'unassigned' when that group has no rankBuckets configured), same primary-group-anchoring convention every other flat field in this codebase already uses, with the same known, documented, not-newly-introduced limitation as tier/matchBand"
+
+steps:
+  - id: implement
+    description: Add shared rank-bucket display/filter logic (mirroring dashboard-filter.ts's resolveDisplayBand()/passesBandFilter() pattern), a new confirmRankBucketAction() Server Action, and wire both into TodayClient/DashboardClient per each component's own convention.
+    agent: developer
+  - id: test
+    description: |
+      npm test && npm run typecheck must both pass. Unit-test the new shared filter/display logic as pure functions. Add a real multi-filter combination test (Rank Bucket + Tier + Band set simultaneously) proving the existing AND-combination genuinely extends to the new dimension. Then run the standard isolated-dev-server curl regression check across every giglist route.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI (including the e2e suite), merge.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/dashboard-filter.ts
+      purpose: resolveDisplayBand()/passesBandFilter()/ALL_BANDS -- the exact pattern this story's rank-bucket equivalent mirrors.
+    - path: src/app/actions.ts
+      purpose: updateGigStatusAction()'s Server Action convention -- the pattern the new confirmRankBucketAction() must follow.
+    - path: src/app/today/today-client.tsx
+      purpose: The Band chip row + BandStamp precedent (band-filter-everywhere, tonight) to mirror for Rank Bucket.
+    - path: src/app/dashboard-client.tsx
+      purpose: The Band column + band-multi filterKind precedent to mirror for Rank Bucket.
+
+design_decisions:
+  - decision: Build the real multi-filter combination test explicitly, rather than assuming TanStack/the hand-rolled matches() function "just works" for a 4th+ dimension.
+    rationale: The epic's own design-discussion.md staked its whole "no new combination engine needed" claim on this being true -- verifying it with a real test closes the loop on that claim rather than leaving it asserted-but-unchecked, the exact kind of gap the owner is pushing back on tonight.
+
+risks:
+  - severity: medium
+    description: A confirm/override control that writes state on every click without the same care updateGigStatusAction() takes (revalidatePath, ActionResult error handling) could silently fail or show stale data.
+    mitigation: Mirror updateGigStatusAction()'s full convention exactly (ActionResult<T>, revalidatePath after success) rather than a simplified one-off action.

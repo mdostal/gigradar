@@ -1,7 +1,7 @@
 id: new-tier-ranking-buckets
 epic: config-rebuild-and-match-quality
 title: "Design and build a NEW, per-group ranked-bucket concept ('tier 1'/'tier 2'), separate from tierScoring"
-status: pending
+status: superseded
 complexity: high
 methodology: classic
 depends_on: [config-dashboard-and-section-pages]
@@ -54,3 +54,21 @@ design_decisions:
 references:
   - path: .pHive/epics/config-rebuild-and-match-quality/docs/design-discussion.md
     relevant_excerpt: "§7 — owner's confirmation this is a new concept, and the explicit instruction not to guess the mechanism."
+
+progress_note: |
+  SUPERSEDED, not abandoned. This story sat blocked-on-owner-confirmation
+  for multiple sessions -- correctly deferred at the time (its own
+  acceptance criteria required real confirmation before building), but
+  never re-surfaced in later "epic complete" status reports, which
+  created a false impression of a fully empty backlog. Owner called this
+  out directly (2026-09-05): "why was the other one not done then? i've
+  said repeatedly to loop until backlog was empty."
+
+  Resolved same session: re-presented the real "Rank Buckets Proposal"
+  artifact, got a real, concrete answer via AskUserQuestion (mechanism:
+  rule-based base + AI-suggested overlay, "this should be both"; bucket
+  shape: owner-named ordered labels per group), and decomposed it into a
+  new, properly-scoped epic: .pHive/epics/rank-buckets/. That epic is the
+  live tracker for this work going forward -- this story stays here,
+  closed, for history/audit trail only.
+

@@ -1,0 +1,34 @@
+name: rank-buckets
+title: Per-group Rank Buckets -- rule-based base + AI-suggested overlay, owner-named ordered labels
+description: >
+  Supersedes config-rebuild-and-match-quality's long-blocked
+  new-tier-ranking-buckets story. Owner-confirmed mechanism: simple
+  structured rules (rate threshold + keywords) assign a gig to an
+  owner-named, ordered bucket per group; an opt-in AI overlay can suggest
+  a different bucket with a reason, which the owner confirms or overrides
+  via a real UI control (the first one in this codebase -- ai-verify's own
+  aiFlags is read-only today). Also closes the "mixed filter mechanism"
+  gap by adding Rank Bucket as a new filterable dimension on every giglist
+  view, participating in the already-working multi-filter AND-combination.
+  See docs/design-discussion.md for the full investigation.
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: none
+
+stories:
+  - id: rank-bucket-core
+    title: GroupConfig.rankBuckets/StoredGig.rankBucket types + pure assignRankBucket() rule evaluator
+    complexity: medium
+    depends_on: []
+  - id: rank-bucket-ai-overlay
+    title: Opt-in AI-suggested bucket overlay, wired into apply/runner.ts, persisted via a real DB migration
+    complexity: high
+    depends_on: [rank-bucket-core]
+  - id: rank-bucket-settings-page
+    title: Real settings surface for per-group ordered bucket labels/rules/AI-overlay toggle
+    complexity: medium
+    depends_on: [rank-bucket-core]
+  - id: rank-bucket-filter-and-confirm-everywhere
+    title: Rank Bucket as a new filterable dimension on every giglist view + the first real confirm/override control
+    complexity: high
+    depends_on: [rank-bucket-ai-overlay, rank-bucket-settings-page]
