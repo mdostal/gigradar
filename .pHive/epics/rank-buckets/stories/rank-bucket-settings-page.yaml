@@ -1,7 +1,7 @@
 id: rank-bucket-settings-page
 epic: rank-buckets
 title: Real settings surface for per-group ordered bucket labels/rules/AI-overlay toggle
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [rank-bucket-core]
@@ -54,3 +54,18 @@ risks:
   - severity: low
     description: A rich reorderable-list UI (drag-and-drop) adds real implementation complexity/dependency surface for a personal, single-user settings page.
     mitigation: A simple up/down-arrow reorder control (no drag-and-drop library) is sufficient and lower-risk -- matches this codebase's existing preference for plain, dependency-light UI controls over rich interaction libraries.
+
+progress_note: |
+  Shipped. New src/app/config/rank-bucket-client.tsx (mirroring match-
+  quality-client.tsx's own small-standalone-component pattern exactly) --
+  per group: add/remove/reorder (real, persisted list-order via up/down
+  buttons) buckets, each with a name, plain-English description, min/max
+  rate, comma-separated keywords, plus a per-group AI-overlay toggle.
+  Wired into config-sections.ts's CONFIG_SECTIONS and a new branch in
+  [section]/page.tsx. Saves through the existing saveConfigAction() path.
+
+  Verified: 5 new config-sections.ts tests, 1551 tests total pass,
+  typecheck clean, and a real isolated-dev-server curl pass confirming
+  /config/rank-buckets renders real bucket data (including the
+  description field) and the Config Dashboard's new Rank Buckets card
+  correctly distinguishes a tuned group from an untouched one.
