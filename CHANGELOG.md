@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-09-05
+
+### Added
+
+- A new rate-aware match signal — In-band / Near-band / Out-of-band —
+  computed alongside (never replacing) the existing GREEN/YELLOW/RED
+  tier. Tier answers "is this the right kind of role" (keyword-only);
+  band answers "is the rate actually in range." Triggered by a real,
+  live incident: a $50-60/hr consulting gig and several $86k-225k/yr
+  salaried roles were tiering GREEN ("Strong fit") despite failing
+  every configured group's rate floor entirely.
+- A new `/config/match-quality` settings page — per-group near-band
+  tolerance percentage and a hide-out-of-band-by-default toggle, both
+  real, tunable settings (never hardcoded).
+- A new Band filter on every giglist view (`/today`, `/gigs`,
+  `/[group]/gigs`), defaulting to hiding out-of-band gigs per each
+  group's own setting — the direct fix for "I cannot be filtering
+  through 100 $140k/yr salaries."
+- `autoDraftOnScan`/auto-fire now also require a gig to be in-band, not
+  just green-tier, before drafting or firing automatically.
+
 ## [0.34.0] - 2026-09-04
 
 ### Changed
