@@ -282,3 +282,40 @@ describe("match-quality section", () => {
     expect(section("match-quality").status(noOpSave)).toBe("neutral");
   });
 });
+
+describe("rank-buckets section", () => {
+  it("shows 'No buckets configured' for a group with no rankBuckets", () => {
+    const data = baseData({ initial: { ...baseData().initial, groups: [group({ id: "g1", label: "Group 1" })] } });
+    expect(section("rank-buckets").details(data)).toEqual([{ label: "Group 1", value: "No buckets configured" }]);
+  });
+
+  it("lists each configured bucket's label in order, and the AI overlay flag when on", () => {
+    const data = baseData({
+      initial: {
+        ...baseData().initial,
+        groups: [group({ id: "g1", label: "Group 1", rankBuckets: [{ label: "Tier 1" }, { label: "Tier 2" }], rankBucketAiOverlay: true })],
+      },
+    });
+    expect(section("rank-buckets").details(data)).toEqual([{ label: "Group 1", value: "Tier 1, Tier 2 · AI overlay on" }]);
+  });
+
+  it("omits the AI overlay flag when it's off", () => {
+    const data = baseData({
+      initial: { ...baseData().initial, groups: [group({ id: "g1", label: "Group 1", rankBuckets: [{ label: "Tier 1" }] })] },
+    });
+    expect(section("rank-buckets").details(data)).toEqual([{ label: "Group 1", value: "Tier 1" }]);
+  });
+
+  it("shows 'None configured' with zero groups", () => {
+    const data = baseData({ initial: { ...baseData().initial, groups: [] } });
+    expect(section("rank-buckets").details(data)).toEqual([{ label: "Rank Buckets", value: "None configured" }]);
+  });
+
+  it("status() is 'neutral' until at least one group has real buckets configured, then 'ok'", () => {
+    const untouched = baseData({ initial: { ...baseData().initial, groups: [group({ id: "g1" })] } });
+    expect(section("rank-buckets").status(untouched)).toBe("neutral");
+
+    const configured = baseData({ initial: { ...baseData().initial, groups: [group({ id: "g1", rankBuckets: [{ label: "Tier 1" }] })] } });
+    expect(section("rank-buckets").status(configured)).toBe("ok");
+  });
+});

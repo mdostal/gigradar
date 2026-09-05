@@ -1457,8 +1457,8 @@ function AutoFireRulesEditor({
  * `updateGigStatusAction` established (src/app/actions.ts).
  */
 /** config-dashboard-and-section-pages story: each real /config/<section> route mounts this SAME component with a different activeSection, so only that one section's <section> block (already individually wrapped below) renders — the field logic/validation/draft state itself is unchanged, this only changes what's visible per route. */
-/** "match-quality" (rate-band-match-quality epic) is a real CONFIG_SECTIONS entry but is NEVER routed through THIS component — see [section]/page.tsx's own branch and match-quality-client.tsx's header comment for why: the owner's explicit direction was a small, standalone settings surface, not another addition to this file. */
-export type ConfigSection = "profile" | "sources" | "groups" | "schedule" | "automation" | "appearance" | "match-quality";
+/** "match-quality" and "rank-buckets" are real CONFIG_SECTIONS entries but are NEVER routed through THIS component — see [section]/page.tsx's own branch and match-quality-client.tsx/rank-bucket-client.tsx's own header comments for why: the owner's explicit direction was small, standalone settings surfaces, not more additions to this file. */
+export type ConfigSection = "profile" | "sources" | "groups" | "schedule" | "automation" | "appearance" | "match-quality" | "rank-buckets";
 
 export function ConfigClient({
   initial,

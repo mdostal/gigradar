@@ -3,6 +3,7 @@ import { loadConfigPageData } from "../config-data";
 import { CONFIG_SECTIONS } from "../config-sections";
 import { ConfigClient, type ConfigSection } from "../config-client";
 import { MatchQualityClient } from "../match-quality-client";
+import { RankBucketClient } from "../rank-bucket-client";
 
 // config-dashboard-and-section-pages story: one real, dedicated page per
 // config section (/config/profile, /config/sources, /config/groups,
@@ -33,6 +34,10 @@ export default async function ConfigSectionPage({ params }: { params: Promise<{ 
         // deliberately NOT routed through ConfigClient (already 3000+
         // lines) -- see match-quality-client.tsx's own header comment.
         <MatchQualityClient initialGroups={data.initial.groups} />
+      ) : activeSection === "rank-buckets" ? (
+        // rank-buckets epic: same small-standalone-component pattern --
+        // see rank-bucket-client.tsx's own header comment.
+        <RankBucketClient initialGroups={data.initial.groups} />
       ) : (
         <ConfigClient
           initial={data.initial}

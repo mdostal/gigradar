@@ -130,6 +130,23 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         : "neutral",
   },
   {
+    id: "rank-buckets",
+    label: "Rank Buckets",
+    href: "/config/rank-buckets",
+    details: (data) => {
+      if (data.initial.groups.length === 0) return [{ label: "Rank Buckets", value: "None configured" }];
+      return data.initial.groups.map((g) => {
+        const buckets = g.rankBuckets ?? [];
+        if (buckets.length === 0) return { label: g.label, value: "No buckets configured" };
+        return {
+          label: g.label,
+          value: `${buckets.map((b) => b.label).join(", ")}${g.rankBucketAiOverlay ? " · AI overlay on" : ""}`,
+        };
+      });
+    },
+    status: (data) => (data.initial.groups.some((g) => (g.rankBuckets ?? []).length > 0) ? "ok" : "neutral"),
+  },
+  {
     id: "schedule",
     label: "Schedule",
     href: "/config/schedule",
