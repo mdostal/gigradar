@@ -83,6 +83,20 @@ export const TierScoringModeSchema = z.discriminatedUnion("kind", [
 ]);
 
 /**
+ * Mirrors `GroupConfig.matchQuality` in src/lib/types.ts
+ * (rate-band-match-quality epic). Both fields optional — omitted means
+ * the documented defaults (15% tolerance, hide out-of-band on), same
+ * "omission is a meaningful, valid do-nothing default" pattern every
+ * other optional Config field already uses. Owner's own explicit
+ * directive: every one of these numbers must be a real, editable
+ * setting, never hardcoded — this schema is where that promise is kept.
+ */
+export const MatchQualityConfigSchema = z.object({
+  nearBandTolerancePct: z.number().min(0).max(100).optional(),
+  hideOutOfBandByDefault: z.boolean().optional(),
+});
+
+/**
  * Mirrors `GroupConfig` in src/lib/types.ts (multi-group-architecture
  * epic). `roleArea` stays `.optional()`, same do-nothing-default pattern
  * as the old top-level `Config.roleArea` it replaces.
@@ -94,6 +108,7 @@ export const GroupConfigSchema = z.object({
   roleArea: RoleAreaConfigSchema.optional(),
   aiVerify: z.boolean().optional(),
   tierScoring: TierScoringModeSchema.optional(),
+  matchQuality: MatchQualityConfigSchema.optional(),
 });
 
 /**

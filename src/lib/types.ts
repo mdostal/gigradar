@@ -259,6 +259,24 @@ export interface GroupConfig {
    * `TierScoringMode`'s own doc comment above for the full contract.
    */
   tierScoring?: TierScoringMode;
+  /**
+   * rate-band-match-quality epic. Owner's own explicit directive after a
+   * live incident (real $50-60/hr and $86k-225k/yr listings tiering
+   * GREEN despite failing every rate floor): "make EVERY FUCKING VARIABLE
+   * TOGGLEABLE IN SETTINGS in an advanced piece." Omitted means the
+   * documented defaults (15% near-band tolerance, hide-out-of-band ON) —
+   * same "omission is a meaningful, valid do-nothing default" pattern
+   * every other optional field on this interface already uses. See
+   * matching/match-band.ts's own header comment for what these values
+   * feed into.
+   */
+  matchQuality?: MatchQualityConfig;
+}
+
+/** See `GroupConfig.matchQuality`'s own doc comment for the full contract. */
+export interface MatchQualityConfig {
+  nearBandTolerancePct?: number;
+  hideOutOfBandByDefault?: boolean;
 }
 
 /** Full user configuration. Lives in the user's own storage, never in the repo. */
