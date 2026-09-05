@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-09-05
+
+### Fixed
+
+- `isPortunusAvailable()`'s `portunus --version` check had no timeout, and
+  its result is cached for the life of the process — a real, live-
+  reproduced hang during v0.35.0's own release verification meant a stuck
+  `portunus` process could permanently freeze every future `/config`
+  render until a full relaunch. Now bounded to 5 seconds; a hung or
+  pathologically slow check resolves to "unavailable," same as if
+  `portunus` weren't installed at all.
+
 ## [0.35.0] - 2026-09-05
 
 ### Added
