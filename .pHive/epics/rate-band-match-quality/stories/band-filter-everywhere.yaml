@@ -1,7 +1,7 @@
 id: band-filter-everywhere
 epic: rate-band-match-quality
 title: Band filter on TodayClient (/today) and DashboardClient (/gigs, /[group]/gigs), defaulting to hide out-of-band
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [match-quality-settings-page]
@@ -52,3 +52,40 @@ risks:
   - severity: medium
     description: Defaulting to hide-out-of-band could hide a gig the owner actually wanted to see (e.g. one they already manually reviewed before this feature shipped).
     mitigation: The hide is a FILTER, not a data deletion -- the gig remains fully intact in the store and one click away via the visible "show out-of-band" control, same reversibility every other filter in this app already has.
+
+progress_note: |
+  Shipped. Shared logic in dashboard-filter.ts: resolveDisplayBand() (best
+  band across all matched groups on unscoped views, that group's specific
+  band on /[group]/gigs), passesBandFilter(), BAND_LABEL, ALL_BANDS.
+
+  TodayClient (/today): a new Band chip row (All/In-band/Near-band/
+  Out-of-band) mirroring the existing Tier chip row exactly, plus a
+  separate "Hide out-of-band" toggle chip seeded from the real
+  hideOutOfBandDefault prop (resolved server-side via
+  dashboard-data.ts's new resolveHideOutOfBandDefault()). A BandStamp
+  badge (reusing the existing yellow/red tier-badge classes) shows on
+  each Today's Picks card and giglist row, but only for near-band/
+  out-of-band -- no badge for in-band, matching this app's existing
+  "no clutter for the unsurprising default" convention.
+
+  DashboardClient (/gigs, /[group]/gigs): a new "Band" column using a
+  band-multi filterKind mirroring status-multi's existing Set<T>
+  checkbox-filter convention exactly, seeded the same way via a new
+  groupId/hideOutOfBandDefault prop pair. Persisted filter preferences
+  (dashboard-prefs.ts) needed zero changes -- its Set-serialization is
+  already fully generic across any column.
+
+  Verified: 24 new/updated unit tests (dashboard-filter.ts's core logic,
+  dashboard-data.ts's resolveHideOutOfBandDefault), 1509 tests total pass,
+  typecheck clean, and a real isolated-dev-server curl pass across /,
+  /gigs, /today, /fractional-hourly/gigs seeding real in-band/near-band/
+  out-of-band fixture gigs and confirming the Band chip/column controls
+  render correctly on every surface.
+
+  Honest limitation: curl can prove the filter CONTROLS and full gig
+  data are present (React needs the complete array client-side to let a
+  viewer toggle the filter), but the actual default-hide BEHAVIOR is a
+  client-side JS state, not something curl-only verification can observe
+  directly -- same class of limitation already documented for the
+  app-error-boundaries story earlier this session. That behavior is
+  covered instead by passesBandFilter()'s own exhaustive unit tests.

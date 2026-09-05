@@ -9,6 +9,7 @@ import { listDrafts, listGigs, listInterviewPrep } from "@/lib/store";
 import type { StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { computeLastScanIso, computeStatusStrip, type StatusStripView } from "@/lib/status/status-strip";
+import { DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT } from "@/lib/matching/match-band";
 
 export interface DashboardData {
   gigs: StoredGig[];
@@ -69,6 +70,28 @@ export function resolveGroupLabel(rawConfig: Record<string, unknown>, groupId: s
   if (typeof group !== "object" || group === null) return undefined;
   const label = (group as Record<string, unknown>).label;
   return typeof label === "string" ? label : undefined;
+}
+
+/**
+ * rate-band-match-quality epic, band-filter-everywhere story. The real,
+ * owner-tunable `GroupConfig.matchQuality.hideOutOfBandByDefault` for the
+ * relevant group, tolerantly extracted from the RAW (unresolved) config
+ * document the same way `extractEngagementProfileSummaries()`/
+ * `resolveGroupLabel()` above already do — a missing/malformed field
+ * falls back to `DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT` (matching.match-band.ts's
+ * own default) rather than throwing. `groupId` omitted reads the FIRST/
+ * primary group, same single-group convention `extractEngagementProfileSummaries()`
+ * already uses for the unscoped `/gigs`/`/today` routes.
+ */
+export function resolveHideOutOfBandDefault(rawConfig: Record<string, unknown>, groupId?: string): boolean {
+  const groups = rawConfig.groups;
+  if (!Array.isArray(groups)) return DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT;
+  const group = groupId ? groups.find((g) => typeof g === "object" && g !== null && (g as Record<string, unknown>).id === groupId) : groups[0];
+  if (typeof group !== "object" || group === null) return DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT;
+  const matchQuality = (group as Record<string, unknown>).matchQuality;
+  if (typeof matchQuality !== "object" || matchQuality === null) return DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT;
+  const hide = (matchQuality as Record<string, unknown>).hideOutOfBandByDefault;
+  return typeof hide === "boolean" ? hide : DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT;
 }
 
 /**

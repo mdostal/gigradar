@@ -1,9 +1,10 @@
+import { readRawConfig } from "@/lib/config/save";
 import { DashboardClient } from "../dashboard-client";
 import { SyncStatusDropdown } from "../sync-status-dropdown";
 import { SonarSweepHeader } from "../sonar-sweep-header";
 import { sweepNowAction } from "../actions";
 import { SYNC_STATUS_SOURCES } from "../sync-status-registry";
-import { loadDashboardData } from "../dashboard-data";
+import { loadDashboardData, resolveHideOutOfBandDefault } from "../dashboard-data";
 
 // gigradar is a single-user, 127.0.0.1-bound local app with no CDN/edge cache
 // in front of it — static optimization here has no benefit and one real cost:
@@ -35,6 +36,9 @@ export default function AllGigsPage() {
   // render would produce a hydration-mismatch, the exact bug metrics/
   // page.tsx already hit and documented once).
   const now = Date.now();
+  // rate-band-match-quality epic: the primary group's own real setting,
+  // same anchoring convention every other unscoped-route default uses.
+  const hideOutOfBandDefault = resolveHideOutOfBandDefault(readRawConfig());
 
   return (
     <main className="mx-auto max-w-[88rem] p-6">
@@ -49,7 +53,13 @@ export default function AllGigsPage() {
       <div className="mt-3 flex flex-wrap items-center gap-2 font-theme-mono text-xs uppercase tracking-wide text-theme-text-dim">
         <SyncStatusDropdown sources={SYNC_STATUS_SOURCES} />
       </div>
-      <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} initialPrepByGigKey={prepByGigKey} engagementProfiles={engagementProfiles} />
+      <DashboardClient
+        gigs={gigs}
+        draftedGigKeys={draftedGigKeys}
+        initialPrepByGigKey={prepByGigKey}
+        engagementProfiles={engagementProfiles}
+        hideOutOfBandDefault={hideOutOfBandDefault}
+      />
     </main>
   );
 }
