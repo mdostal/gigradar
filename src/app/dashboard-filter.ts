@@ -6,7 +6,7 @@
 // enough to live inline as column filterFns in dashboard-client.tsx; only
 // the ones with real logic worth isolating live here.
 import type { StoredGig } from "@/lib/store";
-import type { MatchBand, Tier } from "@/lib/types";
+import type { MatchBand, RankBucketAssignment, Tier } from "@/lib/types";
 
 export type TierFilter = Tier | "all";
 
@@ -122,4 +122,61 @@ export function isWithinSeenWindow(firstSeenIso: string, window: SeenWindow, now
   const seenMs = new Date(firstSeenIso).getTime();
   if (Number.isNaN(seenMs)) return false;
   return nowMs - seenMs <= SEEN_WINDOW_MS[window];
+}
+
+// rank-buckets epic, rank-bucket-filter-and-confirm-everywhere story.
+// Same shared-logic-plus-per-component-UI pattern as resolveDisplayBand()/
+// passesBandFilter() above -- the underlying multi-filter AND-combination
+// (confirmed by band-filter-everywhere's own design-discussion.md) needs
+// zero new engine work; Rank Bucket just needed to exist as a dimension.
+
+/**
+ * The bucket assignment to DISPLAY/FILTER a gig by. On a scoped view
+ * (`groupId` given, e.g. `/[group]/gigs`), that group's own specific
+ * assignment. On an unscoped view (`/gigs`, `/today` -- no groupId), the
+ * FIRST group (in `matchedRankBuckets`' own key order, which mirrors
+ * scan-time primary-group-first processing order) that has one --
+ * deliberately reads `matchedRankBuckets` fresh rather than trusting the
+ * separately-stored flat `rankBucket` field, so a confirm/override action
+ * (which only ever updates `matchedRankBuckets`, see store/gigs.ts's
+ * setRankBucket() header comment) is reflected immediately without
+ * needing to also keep a second field in sync. `undefined` means this gig
+ * has no rank-bucket data at all for the relevant scope -- a valid,
+ * common state (the feature is opt-in per group), never an error.
+ */
+export function resolveDisplayRankBucket(gig: Pick<StoredGig, "matchedRankBuckets">, groupId?: string): RankBucketAssignment | undefined {
+  if (groupId) return gig.matchedRankBuckets?.[groupId];
+  const buckets = gig.matchedRankBuckets;
+  if (!buckets) return undefined;
+  const firstKey = Object.keys(buckets)[0];
+  return firstKey !== undefined ? buckets[firstKey] : undefined;
+}
+
+/**
+ * `filter` is either "all" (no rank-bucket filtering) or one specific
+ * bucket label (only that group's own configured labels are ever offered
+ * as options, assembled by the caller from real config -- see
+ * dashboard-data.ts's extractRankBucketLabels()). A gig with no
+ * assignment at all (`resolveDisplayRankBucket()` returns undefined)
+ * only matches "all" -- it can never match a specific bucket filter,
+ * same as an ungraded row never matching a specific-grade filter
+ * elsewhere in this app.
+ */
+export function passesRankBucketFilter(assignment: RankBucketAssignment | undefined, filter: string | "all"): boolean {
+  if (filter === "all") return true;
+  return assignment?.bucket === filter;
+}
+
+/**
+ * Which group's rank bucket the confirm/override control (Server Action
+ * confirmRankBucketAction()) should write to on an UNSCOPED view -- the
+ * same "first group in matchedRankBuckets' own key order" this file's
+ * resolveDisplayRankBucket() already uses for DISPLAY, reused here so a
+ * confirm/override write always targets the exact group whose assignment
+ * is currently shown, never a mismatched one. On a scoped view
+ * (`/[group]/gigs`), the caller already knows the group id directly and
+ * has no need for this function.
+ */
+export function resolvePrimaryRankBucketGroupId(gig: Pick<StoredGig, "matchedRankBuckets">): string | undefined {
+  return Object.keys(gig.matchedRankBuckets ?? {})[0];
 }

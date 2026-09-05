@@ -4,7 +4,7 @@ import { SyncStatusDropdown } from "../sync-status-dropdown";
 import { SonarSweepHeader } from "../sonar-sweep-header";
 import { sweepNowAction } from "../actions";
 import { SYNC_STATUS_SOURCES } from "../sync-status-registry";
-import { loadDashboardData, resolveHideOutOfBandDefault } from "../dashboard-data";
+import { extractRankBucketLabels, loadDashboardData, resolveHideOutOfBandDefault } from "../dashboard-data";
 
 // gigradar is a single-user, 127.0.0.1-bound local app with no CDN/edge cache
 // in front of it — static optimization here has no benefit and one real cost:
@@ -36,9 +36,12 @@ export default function AllGigsPage() {
   // render would produce a hydration-mismatch, the exact bug metrics/
   // page.tsx already hit and documented once).
   const now = Date.now();
+  const rawConfig = readRawConfig();
   // rate-band-match-quality epic: the primary group's own real setting,
   // same anchoring convention every other unscoped-route default uses.
-  const hideOutOfBandDefault = resolveHideOutOfBandDefault(readRawConfig());
+  const hideOutOfBandDefault = resolveHideOutOfBandDefault(rawConfig);
+  // rank-buckets epic: the primary group's own real bucket labels -- [] when not configured, same convention.
+  const rankBucketLabels = extractRankBucketLabels(rawConfig);
 
   return (
     <main className="mx-auto max-w-[88rem] p-6">
@@ -59,6 +62,7 @@ export default function AllGigsPage() {
         initialPrepByGigKey={prepByGigKey}
         engagementProfiles={engagementProfiles}
         hideOutOfBandDefault={hideOutOfBandDefault}
+        rankBucketLabels={rankBucketLabels}
       />
     </main>
   );

@@ -1,7 +1,7 @@
 id: rank-bucket-filter-and-confirm-everywhere
 epic: rank-buckets
 title: Rank Bucket as a new filterable dimension on every giglist view + the first real confirm/override control
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [rank-bucket-ai-overlay, rank-bucket-settings-page]
@@ -58,3 +58,42 @@ risks:
   - severity: medium
     description: A confirm/override control that writes state on every click without the same care updateGigStatusAction() takes (revalidatePath, ActionResult error handling) could silently fail or show stale data.
     mitigation: Mirror updateGigStatusAction()'s full convention exactly (ActionResult<T>, revalidatePath after success) rather than a simplified one-off action.
+
+progress_note: |
+  Shipped, closing out the rank-buckets epic (all 4 stories complete).
+
+  Shared logic in dashboard-filter.ts: resolveDisplayRankBucket() (scoped:
+  that group's own assignment; unscoped: the FIRST group in
+  matchedRankBuckets' own key order -- deliberately reads that map fresh
+  rather than trusting the separately-stored flat rankBucket field, so a
+  confirm/override write is reflected immediately with no second field to
+  keep in sync), passesRankBucketFilter(), resolvePrimaryRankBucketGroupId().
+
+  New store/gigs.ts setRankBucket() + actions.ts confirmRankBucketAction()
+  -- the first real confirm/override control in this codebase, mirroring
+  updateGigStatusAction()'s exact convention (ActionResult, revalidatePath).
+  Stamps source:"manual", confirmed:true -- a new third RankBucketAssignment
+  source alongside "rule"/"ai".
+
+  TodayClient: a new Band-style chip row (only rendered when the group has
+  real bucket labels configured) + a RankBucketControl <select> on every
+  Today's Picks card and giglist row, showing a dashed/🤖 marker while an
+  AI suggestion awaits confirmation. DashboardClient: a new Rank Bucket
+  column (reuses the EXISTING "select" filterKind, since
+  passesRankBucketFilter()'s own contract is already "one specific label
+  or all" -- no new filterKind needed) with the same confirm/override
+  control inline in the cell. New extractRankBucketLabels() in
+  dashboard-data.ts drives both option lists from real config, never a
+  hardcoded enum (bucket labels are entirely owner-named).
+
+  The epic's own core claim -- multi-dimension AND-filtering already works
+  mechanically, Rank Bucket just needed to exist as a dimension -- is
+  verified, not just asserted: a real test combines Tier + Band + Rank
+  Bucket filters together and proves the result.
+
+  Verified: 31 new/updated unit tests (dashboard-filter.ts's new functions,
+  extractRankBucketLabels), 1564 tests total pass, typecheck clean, and a
+  real isolated-dev-server curl pass with seeded fixture gigs (a
+  rule-confirmed Tier 1 gig and an unconfirmed AI-suggested one) confirming
+  both /gigs and /today render the real bucket badges, including the
+  pending-confirmation marker, correctly.

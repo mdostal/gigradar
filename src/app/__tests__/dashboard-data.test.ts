@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, recordScan } from "@/lib/store";
 import { saveConfig } from "@/lib/config/save";
-import { extractEngagementProfileSummaries, loadDashboardData, resolveGroupLabel, resolveHideOutOfBandDefault } from "../dashboard-data";
+import { extractEngagementProfileSummaries, extractRankBucketLabels, loadDashboardData, resolveGroupLabel, resolveHideOutOfBandDefault } from "../dashboard-data";
 
 // Same isolation pattern as actions.test.ts: a fresh temp-file DB per test
 // (GIGRADAR_DB_PATH) plus an isolated XDG_DATA_HOME for config.json, so this
@@ -153,5 +153,24 @@ describe("loadDashboardData", () => {
     const data = loadDashboardData("g2");
 
     expect(data.engagementProfiles).toEqual([{ id: "p2", label: "Full-time" }]);
+  });
+});
+
+describe("extractRankBucketLabels", () => {
+  it("reads the SPECIFIC group's own bucket labels, in configured order, when groupId is given", () => {
+    const raw = { groups: [{ id: "g1", rankBuckets: [{ label: "Tier 1" }, { label: "Tier 2" }] }, { id: "g2", rankBuckets: [{ label: "Premium" }] }] };
+    expect(extractRankBucketLabels(raw, "g2")).toEqual(["Premium"]);
+  });
+
+  it("reads the FIRST/primary group when groupId is omitted", () => {
+    const raw = { groups: [{ id: "g1", rankBuckets: [{ label: "Tier 1" }, { label: "Tier 2" }] }, { id: "g2", rankBuckets: [{ label: "Premium" }] }] };
+    expect(extractRankBucketLabels(raw)).toEqual(["Tier 1", "Tier 2"]);
+  });
+
+  it("returns [] for missing/malformed shapes, never throwing -- the common case (rankBuckets not configured at all)", () => {
+    expect(extractRankBucketLabels({})).toEqual([]);
+    expect(extractRankBucketLabels({ groups: [{ id: "g1" }] }, "g1")).toEqual([]);
+    expect(extractRankBucketLabels({ groups: "not an array" })).toEqual([]);
+    expect(extractRankBucketLabels({ groups: [{ id: "g1", rankBuckets: [{ notLabel: "x" }] }] }, "g1")).toEqual([]);
   });
 });

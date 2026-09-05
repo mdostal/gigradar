@@ -15,10 +15,21 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { GigStatus, OutcomeReason, StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
-import { bulkMarkAppliedElsewhereAction, generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
+import { bulkMarkAppliedElsewhereAction, confirmRankBucketAction, generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
 import { DASHBOARD_PREFS_STORAGE_KEY, deserializeDashboardPrefs, serializeDashboardPrefs } from "./dashboard-prefs";
-import { ALL_BANDS, BAND_LABEL, distinctSources, isWithinSeenWindow, resolveDisplayBand, SEEN_WINDOW_OPTIONS, shortProfileLabel, type SeenWindow } from "./dashboard-filter";
+import {
+  ALL_BANDS,
+  BAND_LABEL,
+  distinctSources,
+  isWithinSeenWindow,
+  resolveDisplayBand,
+  resolveDisplayRankBucket,
+  resolvePrimaryRankBucketGroupId,
+  SEEN_WINDOW_OPTIONS,
+  shortProfileLabel,
+  type SeenWindow,
+} from "./dashboard-filter";
 import type { MatchBand } from "@/lib/types";
 import { compareByField, type SortField } from "./dashboard-sort";
 import { GigDetailPanel } from "./gig-detail-panel";
@@ -398,6 +409,7 @@ export function DashboardClient({
   engagementProfiles = [],
   groupId,
   hideOutOfBandDefault = true,
+  rankBucketLabels = [],
 }: {
   gigs: StoredGig[];
   draftedGigKeys?: ReadonlySet<string>;
@@ -409,6 +421,8 @@ export function DashboardClient({
   groupId?: string;
   /** rate-band-match-quality epic. The relevant group's own real `matchQuality.hideOutOfBandByDefault` setting (resolved server-side, page.tsx) -- seeds the Band column's initial filter, never a hardcoded default here. */
   hideOutOfBandDefault?: boolean;
+  /** rank-buckets epic. The relevant group's own real, owner-named bucket labels (resolved server-side via dashboard-data.ts's extractRankBucketLabels()) -- the Rank Bucket column only renders at all when this is non-empty. */
+  rankBucketLabels?: string[];
 }) {
   const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -948,6 +962,52 @@ export function DashboardClient({
       },
       meta: { filterKind: "band-multi" },
     },
+    ...(rankBucketLabels.length > 0
+      ? [
+          {
+            id: "rankBucket",
+            header: "Rank Bucket",
+            // rank-buckets epic. A THIRD, orthogonal signal -- tier (role
+            // type), band (rate range), and this (the owner's own
+            // priority ranking within a group's matches). Only rendered
+            // as a real column at all when this view's relevant group
+            // has rankBuckets configured -- zero new UI for an install
+            // that hasn't opted in, same convention every other opt-in
+            // field in this app already follows. Reuses the existing
+            // "select" filterKind (a single-value dropdown) rather than
+            // inventing a new one -- passesRankBucketFilter()'s own
+            // contract is already "one specific label or all."
+            accessorFn: (g: StoredGig) => resolveDisplayRankBucket(g, groupId)?.bucket ?? "",
+            cell: ({ row }: { row: { original: StoredGig } }) => {
+              const gig = row.original;
+              const assignment = resolveDisplayRankBucket(gig, groupId);
+              const targetGroupId = groupId ?? resolvePrimaryRankBucketGroupId(gig);
+              const isPendingConfirmation = assignment?.source === "ai" && !assignment.confirmed;
+              if (!targetGroupId) return <span className="text-theme-text-dim">—</span>;
+              return (
+                <select
+                  value={assignment?.bucket ?? ""}
+                  title={assignment?.reason}
+                  onChange={(e) => {
+                    void confirmRankBucketAction(gig.key, targetGroupId, e.target.value === "" ? null : e.target.value);
+                  }}
+                  className={`rounded-md border px-1.5 py-0.5 text-xs ${isPendingConfirmation ? "border-dashed border-theme-accent" : "border-theme-surface-border"}`}
+                >
+                  <option value="">Unassigned</option>
+                  {rankBucketLabels.map((label) => (
+                    <option key={label} value={label}>
+                      {isPendingConfirmation && label === assignment?.bucket ? `🤖 ${label}?` : label}
+                    </option>
+                  ))}
+                </select>
+              );
+            },
+            filterFn: (row: { original: StoredGig }, _id: string, value: unknown) =>
+              !value || value === "all" || resolveDisplayRankBucket(row.original, groupId)?.bucket === value,
+            meta: { filterKind: "select" as const, selectOptions: rankBucketLabels },
+          },
+        ]
+      : []),
     {
       id: "profile",
       header: "Profile",

@@ -55,6 +55,32 @@ export function extractEngagementProfileSummaries(rawConfig: Record<string, unkn
 }
 
 /**
+ * rank-buckets epic. The relevant group's own configured bucket LABELS,
+ * tolerantly extracted from the RAW config document the same way
+ * extractEngagementProfileSummaries() above already does — a missing/
+ * malformed `rankBuckets` array (not configured at all, the common case)
+ * yields `[]`, never throws. `groupId` omitted reads the FIRST/primary
+ * group, same unscoped-route convention every other extractor here uses.
+ * Drives the Rank Bucket filter's option list — never a hardcoded enum,
+ * since bucket labels are entirely owner-named.
+ */
+export function extractRankBucketLabels(rawConfig: Record<string, unknown>, groupId?: string): string[] {
+  const groups = rawConfig.groups;
+  if (!Array.isArray(groups)) return [];
+  const group = groupId ? groups.find((g) => typeof g === "object" && g !== null && (g as Record<string, unknown>).id === groupId) : groups[0];
+  if (typeof group !== "object" || group === null) return [];
+  const rankBuckets = (group as Record<string, unknown>).rankBuckets;
+  if (!Array.isArray(rankBuckets)) return [];
+  const result: string[] = [];
+  for (const b of rankBuckets) {
+    if (typeof b !== "object" || b === null) continue;
+    const label = (b as Record<string, unknown>).label;
+    if (typeof label === "string") result.push(label);
+  }
+  return result;
+}
+
+/**
  * Resolves `groupId` (a `/[group]/` route param) against
  * `config.groups[].id` — never a slug re-derived from `label` (which the
  * owner can freely rename; see `GroupConfig.id`'s own doc comment in
