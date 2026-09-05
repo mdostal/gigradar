@@ -1,0 +1,56 @@
+id: app-error-boundaries
+epic: group-feature-hardening-and-coverage
+title: Add root + route-segment error boundaries
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  `find src/app -iname "error.tsx" -o -iname "global-error.tsx"` returns
+  nothing -- zero error boundaries anywhere in this Next.js App Router app.
+  An uncaught render exception in any component today produces a blank/
+  unstyled crash instead of a recoverable UI, which is exactly what a
+  "crashed, don't see the groups" symptom would look like in the packaged
+  Tauri webview. This is the one class of failure this session's curl-only
+  verification (no real browser, no Playwright) structurally cannot rule
+  out, so the fix is to close the gap rather than chase an unreproduced
+  symptom further.
+
+acceptance_criteria:
+  - "a root src/app/global-error.tsx exists, is a Client Component receiving {error, reset}, and renders its own <html>/<body> per Next.js's documented requirement (it replaces the root layout when the root itself throws)"
+  - "src/app/config/error.tsx exists (Client Component, {error, reset}) so a throw anywhere under /config shows a recoverable screen instead of taking down the whole app"
+  - "src/app/gigs/error.tsx and src/app/[group]/error.tsx exist for the same reason, scoped to the giglist/dashboard routes this epic's investigation centered on"
+  - "every error.tsx includes a visible 'Try again' control wired to reset()"
+  - "adding these files does not change any existing route's normal (non-error) HTTP response -- verified via the same curl smoke test used for every prior story this session"
+
+steps:
+  - id: implement
+    description: Add global-error.tsx and the 3 route-segment error.tsx files, following Next.js's documented error.tsx contract exactly (Client Component, default export function receiving {error, reset}: {error: Error & {digest?: string}; reset: () => void}).
+    agent: developer
+  - id: test
+    description: |
+      npm test && npm run typecheck must both pass. Since this repo has no React Testing Library/jsdom, add a small smoke test per boundary component using react-dom/server's renderToStaticMarkup (works in plain Node, no DOM needed) asserting each renders without throwing and contains the 'Try again' text. Then re-run the standard isolated-dev-server curl regression check (rm -rf .next, seed fixture config, npm run dev on a scratch port, curl every key route, confirm unchanged 200s) to prove these additions don't affect normal rendering.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI, merge.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/layout.tsx
+      purpose: The root layout global-error.tsx replaces when the root itself throws -- read this first so global-error.tsx's own <html>/<body>/providers mirror it closely enough that the fallback doesn't look jarringly different.
+    - path: src/app/config/page.tsx
+      purpose: One of the real render paths (details() calls) that could plausibly throw on an unexpected config shape -- the concrete motivating case for /config/error.tsx.
+
+design_decisions:
+  - decision: Scope route-segment error.tsx to /config, /gigs, and /[group] rather than every single route.
+    rationale: These are the three routes this epic's own investigation centered on (Config Dashboard cards, the group-switcher/giglist). The root global-error.tsx already provides a safety net for every other route; adding segment-level boundaries everywhere is not needed to close the gap this epic exists to close.
+
+risks:
+  - severity: low
+    description: A fallback UI that looks nothing like the rest of the app (wrong theme tokens, no nav) would itself feel like a second bug.
+    mitigation: Reuse the app's real theme tokens/classes (same ones config/page.tsx uses) rather than inline unstyled markup.
