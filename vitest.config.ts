@@ -14,6 +14,17 @@ export default defineConfig({
       "@": path.resolve(dirname, "src"),
     },
   },
+  // app-error-boundaries story (group-feature-hardening-and-coverage
+  // epic): the first vitest file to import a real .tsx component and
+  // render it (via react-dom/server, no jsdom needed) rather than only
+  // testing plain exported functions -- esbuild's default classic JSX
+  // transform expects a `React` global in scope, which none of this
+  // repo's .tsx files provide (Next's own SWC pipeline normally handles
+  // that). Scoped to vitest's own esbuild pass only; Next's production
+  // build is untouched.
+  esbuild: {
+    jsx: "automatic",
+  },
   test: {
     // Global safety net -- see vitest.setup.ts's own header comment: no
     // test should ever be able to write to the owner's real gigradar

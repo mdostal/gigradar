@@ -1,7 +1,7 @@
 id: config-sections-test-coverage
 epic: group-feature-hardening-and-coverage
 title: Real unit tests for config-sections.ts
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
@@ -54,3 +54,11 @@ risks:
   - severity: low
     description: ConfigPageData fixtures could drift from the real Zod schema shape over time.
     mitigation: Build fixtures from real EngagementProfile/GroupConfig/SessionReadiness types, not ad-hoc object literals with unchecked shapes.
+
+progress_note: |
+  Shipped as PR #138 (merged to dev). 17 tests covering formatRateRange
+  (hourly + salaried, flat + ranged), groupRateSummary (multi-profile join,
+  zero-profile fallback), and all 6 CONFIG_SECTIONS' details()/status()
+  functions -- including the exact two-groups-same-label case that produced
+  the real duplicate-React-key bug fixed in PR #137. npm test (1459 passed
+  at merge time) and npm run typecheck both clean.
