@@ -71,12 +71,17 @@ function emptyResult(): RunRadarResult {
   return { results: [], passed: [], errors: [], newlyInsertedKeys: [] };
 }
 
-function makeGig(externalId: string, sourceId = "braintrust"): Gig {
-  return { sourceId, externalId, title: `Gig ${externalId}`, url: `https://example.test/${sourceId}/${externalId}` };
+// rate-band-match-quality epic: matchBand defaults to "in-band" so every
+// existing tier-focused test below (which isolates tier's own effect on
+// eligibility) keeps testing exactly that, unaffected by the additive
+// matchBand check -- see makeMatchResult()'s own matchBand parameter for
+// the tests that specifically need a different value.
+function makeGig(externalId: string, sourceId = "braintrust", matchBand: Gig["matchBand"] = "in-band"): Gig {
+  return { sourceId, externalId, title: `Gig ${externalId}`, url: `https://example.test/${sourceId}/${externalId}`, matchBand };
 }
 
-function makeMatchResult(externalId: string, tier: Tier, sourceId = "braintrust"): MatchResult {
-  return { gig: makeGig(externalId, sourceId), pass: true, reasons: [], score: 1, tier, matchedProfiles: [] };
+function makeMatchResult(externalId: string, tier: Tier, sourceId = "braintrust", matchBand: Gig["matchBand"] = "in-band"): MatchResult {
+  return { gig: makeGig(externalId, sourceId, matchBand), pass: true, reasons: [], score: 1, tier, matchBand, matchedProfiles: [] };
 }
 
 let activeHandles: SchedulerHandle[] = [];
@@ -520,6 +525,30 @@ describe("startScheduler: auto-draft-on-scan (Config.autoDraftOnScan)", () => {
 
     expect(stageApplicationFn).toHaveBeenCalledTimes(1);
     expect((stageApplicationFn.mock.calls[0]?.[0] as MatchResult).gig.externalId).toBe("green-gig");
+  });
+
+  it("rate-band-match-quality epic: a green-tier match that's near-band, out-of-band, or has no matchBand at all (pre-epic) is never passed to stageApplication() -- only genuinely in-band matches are", async () => {
+    setEnvVar("ANTHROPIC_API_KEY", "fake-api-key");
+    // "undefined" as a default-parameter argument falls through to the
+    // parameter's OWN default ("in-band") -- constructed directly here,
+    // not via makeMatchResult(), to genuinely produce zero matchBand data
+    // (a pre-epic gig).
+    const noBandGig: Gig = { sourceId: "braintrust", externalId: "no-band-gig", title: "Gig no-band-gig", url: "https://example.test/braintrust/no-band-gig" };
+    const passed: MatchResult[] = [
+      makeMatchResult("near-band-gig", "green", "braintrust", "near-band"),
+      makeMatchResult("out-of-band-gig", "green", "braintrust", "out-of-band"),
+      { gig: noBandGig, pass: true, reasons: [], score: 1, tier: "green", matchedProfiles: [] },
+      makeMatchResult("in-band-gig", "green", "braintrust", "in-band"),
+    ];
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({ results: passed, passed, errors: [], newlyInsertedKeys: [] }));
+    const stageApplicationFn = fakeStageApplicationFn();
+    const config = autoDraftConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, stageApplicationFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    expect(stageApplicationFn).toHaveBeenCalledTimes(1);
+    expect((stageApplicationFn.mock.calls[0]?.[0] as MatchResult).gig.externalId).toBe("in-band-gig");
   });
 
   it("one eligible gig's stageApplication() call fails (mocked): the OTHER eligible gigs in that same cycle still get drafted", async () => {
