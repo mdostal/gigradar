@@ -33,10 +33,12 @@ function createFakeChildProcess() {
     stdin: PassThrough;
     stdout: PassThrough;
     stderr: PassThrough;
+    kill: (signal?: string) => boolean;
   };
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
+  child.kill = vi.fn(() => true);
   return child;
 }
 
@@ -90,6 +92,24 @@ describe("isPortunusAvailable", () => {
     queueMicrotask(() => child.emit("exit", 1));
 
     expect(await pending).toBe(false);
+  });
+
+  it("resolves false and kills the child when it hangs past PORTUNUS_AVAILABILITY_TIMEOUT_MS -- real, live-reproduced incident (2026-09-05, v0.35.0 release verification): a genuinely hung 'portunus --version' otherwise wedged every future /config render forever, since the result is cached per-process", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = createFakeChildProcess();
+      spawnMock.mockReturnValue(child);
+      vi.resetModules();
+      const { isPortunusAvailable, PORTUNUS_AVAILABILITY_TIMEOUT_MS } = await import("../session-backend.js");
+
+      const pending = isPortunusAvailable();
+      await vi.advanceTimersByTimeAsync(PORTUNUS_AVAILABILITY_TIMEOUT_MS);
+
+      expect(await pending).toBe(false);
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("caches the result -- a second call does not spawn a second process", async () => {

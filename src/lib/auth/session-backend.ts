@@ -50,17 +50,46 @@ export type SessionBackend = "local" | "portunus";
 let cachedAvailability: Promise<boolean> | undefined;
 
 /**
+ * How long a `portunus --version` check is allowed to run before it's
+ * treated as unavailable. Real, live-reproduced incident (2026-09-05,
+ * v0.35.0 release verification): the packaged app's own `portunus
+ * --version` spawn hung indefinitely (confirmed via `sample` -- 0% CPU,
+ * blocked in `kevent`, no children) even though the same binary run
+ * directly from a terminal returned instantly. Because the result below
+ * is cached forever per-process, one hang like this permanently wedged
+ * every future `/config` render for the rest of that process's life --
+ * a real, user-facing "the app is frozen" symptom with no way to recover
+ * short of a full relaunch. Exported so tests can pass a shorter value.
+ */
+export const PORTUNUS_AVAILABILITY_TIMEOUT_MS = 5000;
+
+/**
  * A real, live `portunus --version` child-process check — never assumed.
  * Cached per-process (subsequent calls reuse the first check's result)
  * since this may be called on every `/config` render; a process restart
  * (or a fresh Next.js dev HMR re-evaluation of this module) re-checks.
+ * Bounded by `PORTUNUS_AVAILABILITY_TIMEOUT_MS` -- a hung or pathologically
+ * slow `portunus` binary resolves to "unavailable" (the same safe,
+ * documented outcome as ENOENT) rather than hanging this check, and
+ * every render that awaits it, forever.
  */
 export function isPortunusAvailable(): Promise<boolean> {
   if (!cachedAvailability) {
     cachedAvailability = new Promise<boolean>((resolve) => {
       const child = spawn("portunus", ["--version"], { stdio: "ignore" });
-      child.on("error", () => resolve(false)); // e.g. ENOENT -- not installed
-      child.on("exit", (code) => resolve(code === 0));
+      let settled = false;
+      const settle = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        settle(false);
+      }, PORTUNUS_AVAILABILITY_TIMEOUT_MS);
+      child.on("error", () => settle(false)); // e.g. ENOENT -- not installed
+      child.on("exit", (code) => settle(code === 0));
     });
   }
   return cachedAvailability;
