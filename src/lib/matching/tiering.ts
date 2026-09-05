@@ -80,7 +80,12 @@ function isWholeWordMatch(haystack: string, needle: string): boolean {
   return new RegExp(`\\b${escapeRegExp(trimmed)}\\b`, "i").test(haystack);
 }
 
-/** First needle (in list order) that whole-word-matches `haystack`, or undefined. */
-function firstWholeWordMatch(haystack: string, needles: string[]): string | undefined {
+/**
+ * Exported (rank-buckets epic, rank-bucket-core story) so
+ * matching/rank-bucket.ts's keyword-rule matching reuses this EXACT
+ * whole-word/case-insensitive semantics rather than risking a second,
+ * subtly-divergent implementation in the same codebase.
+ */
+export function firstWholeWordMatch(haystack: string, needles: string[]): string | undefined {
   return needles.find((n) => isWholeWordMatch(haystack, n));
 }

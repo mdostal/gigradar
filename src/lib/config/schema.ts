@@ -97,6 +97,21 @@ export const MatchQualityConfigSchema = z.object({
 });
 
 /**
+ * Mirrors `RankBucketRule` in src/lib/types.ts (rank-buckets epic). All
+ * criteria fields optional — a rule with none of them set matches
+ * nothing (see matching/rank-bucket.ts's own header comment), never
+ * silently rejected here at the schema level, since "not yet configured"
+ * is a valid, real state while the owner is still building out a bucket.
+ */
+export const RankBucketRuleSchema = z.object({
+  label: z.string().min(1),
+  description: z.string().optional(),
+  minRate: z.number().min(0).optional(),
+  maxRate: z.number().min(0).optional(),
+  keywords: z.array(z.string()).optional(),
+});
+
+/**
  * Mirrors `GroupConfig` in src/lib/types.ts (multi-group-architecture
  * epic). `roleArea` stays `.optional()`, same do-nothing-default pattern
  * as the old top-level `Config.roleArea` it replaces.
@@ -109,6 +124,8 @@ export const GroupConfigSchema = z.object({
   aiVerify: z.boolean().optional(),
   tierScoring: TierScoringModeSchema.optional(),
   matchQuality: MatchQualityConfigSchema.optional(),
+  rankBuckets: z.array(RankBucketRuleSchema).optional(),
+  rankBucketAiOverlay: z.boolean().optional(),
 });
 
 /**

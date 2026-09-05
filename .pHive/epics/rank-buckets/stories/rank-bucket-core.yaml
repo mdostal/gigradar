@@ -1,7 +1,7 @@
 id: rank-bucket-core
 epic: rank-buckets
 title: GroupConfig.rankBuckets/StoredGig.rankBucket types + pure assignRankBucket() rule evaluator
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
@@ -54,3 +54,20 @@ risks:
   - severity: low
     description: A keyword-matching implementation that subtly diverges from tiering.ts's own whole-word/case-insensitive semantics would produce two different, disagreeing keyword-match behaviors in the same codebase.
     mitigation: Reuse tiering.ts's exported whole-word-match helper directly (export it if not already exported) rather than reimplementing the regex.
+
+progress_note: |
+  Shipped. RankBucketRule/RankBucketAssignment/GroupConfig.rankBuckets/
+  rankBucketAiOverlay/Gig.rankBucket/matchedRankBuckets added to types.ts.
+  RankBucketRuleSchema + GroupConfigSchema wiring added to schema.ts.
+  New matching/rank-bucket.ts's assignRankBucket() -- first-match-wins in
+  declared order, AND-within-a-rule semantics, reuses tiering.ts's newly-
+  exported firstWholeWordMatch() rather than a second keyword-match
+  implementation.
+
+  18 new unit tests (11 for assignRankBucket() covering every acceptance
+  criterion including the boundary/ordering/AND-semantics cases, 7 for
+  schema validation). 1533 tests total pass, typecheck clean.
+
+  No wiring/AI/UI yet -- deliberately scoped to the pure evaluator only,
+  per this story's own acceptance criteria. rank-bucket-ai-overlay is the
+  next story.

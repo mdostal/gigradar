@@ -271,12 +271,69 @@ export interface GroupConfig {
    * feed into.
    */
   matchQuality?: MatchQualityConfig;
+  /**
+   * rank-buckets epic. Supersedes the long-blocked new-tier-ranking-
+   * buckets story. Owner's own explicit directive: "we were supposed to
+   * have simple rules set anyways, maintain that, then add in the AI
+   * suggested on top -- this should be both." An ORDERED list — a gig is
+   * assigned to the FIRST bucket (in this list's own order) whose rule it
+   * satisfies, same "first match wins, in declared order" precedence
+   * tiering.ts's tier() already uses. Omitted means no rank-bucket UI or
+   * behavior at all for this group — same do-nothing-default convention
+   * every other optional Config field uses. Bucket labels are entirely
+   * owner-named per group (confirmed) — two groups' bucket lists never
+   * need to match or mean the same thing.
+   */
+  rankBuckets?: RankBucketRule[];
+  /**
+   * rank-buckets epic. Opt-in AI-suggested overlay on top of the
+   * rule-based assignment above — same opt-in-per-group convention as
+   * `aiVerify`. Omitted/false means zero LLM calls for this group's
+   * rank-bucket assignment, byte-identical to before this field existed.
+   */
+  rankBucketAiOverlay?: boolean;
 }
 
 /** See `GroupConfig.matchQuality`'s own doc comment for the full contract. */
 export interface MatchQualityConfig {
   nearBandTolerancePct?: number;
   hideOutOfBandByDefault?: boolean;
+}
+
+/**
+ * rank-buckets epic. One owner-named bucket's simple, structured rule —
+ * reuses the same two criteria primitives `EngagementProfile` (rate) and
+ * `RoleAreaConfig` (keywords) already use elsewhere in this codebase,
+ * deliberately not a new rule language. All criteria fields are
+ * optional, but a rule with NONE of them set matches nothing (never a
+ * silent catch-all) — see `matching/rank-bucket.ts`'s own header comment
+ * for the full evaluation contract. When more than one criterion is set
+ * on the same rule, ALL of them must match (AND within one rule), same
+ * "every configured check must pass" convention `gate.ts` already uses.
+ */
+export interface RankBucketRule {
+  label: string;
+  /** Optional plain-English description, read by the AI overlay (rank-bucket-ai-overlay story) when it's on — never evaluated by the deterministic rule matcher itself. */
+  description?: string;
+  minRate?: number;
+  maxRate?: number;
+  keywords?: string[];
+}
+
+/**
+ * rank-buckets epic. One group's rank-bucket verdict for one gig — mirrors
+ * `Gig.aiFlags`'s own per-group `Record<groupId, ...>` shape. `source:
+ * "rule"` results are `confirmed: true` automatically (a deterministic
+ * rule match needs no owner confirmation); `source: "ai"` results start
+ * `confirmed: false` until the owner acts via the real confirm/override
+ * control (rank-bucket-filter-and-confirm-everywhere story) — the AI's
+ * suggestion never silently overwrites the rule-based result.
+ */
+export interface RankBucketAssignment {
+  bucket: string | null;
+  source: "rule" | "ai";
+  confirmed: boolean;
+  reason?: string;
 }
 
 /** Full user configuration. Lives in the user's own storage, never in the repo. */
@@ -535,6 +592,16 @@ export interface Gig {
   matchBand?: MatchBand;
   /** Every in-scope group's OWN `MatchBand` (`Record<groupId, MatchBand>`), independent of pass/fail — mirrors `matchedGroupTiers`'s own per-group shape exactly. */
   matchedGroupBands?: Record<string, MatchBand>;
+  /**
+   * rank-buckets epic. The PRIMARY group's own `RankBucketAssignment` —
+   * same backward-compat anchoring convention as flat `tier`/`matchBand`
+   * above. `undefined` means either the primary group has no
+   * `rankBuckets` configured, or this gig predates the epic — callers
+   * treat both identically (no bucket UI/filter state), never a guess.
+   */
+  rankBucket?: RankBucketAssignment;
+  /** Every in-scope group's OWN `RankBucketAssignment` (`Record<groupId, RankBucketAssignment>`) — mirrors `matchedGroupBands`'s own per-group shape exactly. */
+  matchedRankBuckets?: Record<string, RankBucketAssignment>;
 }
 
 /**
