@@ -116,6 +116,10 @@ function openConnection(dbPath: string, busyTimeoutMs: number): DatabaseSyncType
   // for what these represent.
   ensureColumn(db, "gigs", "matched_group_bands", "TEXT");
   ensureColumn(db, "gigs", "match_band", "TEXT");
+  // rank-buckets epic, rank-bucket-ai-overlay story: same additive,
+  // nullable-column pattern as matched_group_bands/match_band above.
+  ensureColumn(db, "gigs", "matched_rank_buckets", "TEXT");
+  ensureColumn(db, "gigs", "rank_bucket", "TEXT");
   ensureDraftsSubmittingStatus(db);
   return db;
 }

@@ -1,7 +1,7 @@
 id: rank-bucket-ai-overlay
 epic: rank-buckets
 title: Opt-in AI-suggested bucket overlay, wired into apply/runner.ts, persisted via a real DB migration
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [rank-bucket-core]
@@ -60,3 +60,36 @@ risks:
   - severity: medium
     description: An unbounded per-gig LLM call for every group with the overlay on could be slow/costly at scan scale.
     mitigation: Only call the AI overlay for gigs assignRankBucket() actually placed in SOME bucket (or per the owner's later decision, gigs already tiered green) -- never for every gig unconditionally. Confirm the exact gating during implementation research against how ai-verify.ts itself scopes its own calls (only groups the gig already heuristically matched).
+
+progress_note: |
+  Shipped. New matching/rank-bucket-ai-overlay.ts (suggestRankBucket() +
+  applyRankBucketAiOverlay()), mirroring ai-verify.ts's own structured-
+  output/harness/graceful-degradation pattern exactly. Wired into
+  apply/runner.ts right after the rule-based assignRankBucket() call, per
+  in-scope group. New matched_rank_buckets/rank_bucket DB columns via the
+  established ensureColumn() migration pattern.
+
+  Real, deliberate deviation from this story's OWN originally-written risk
+  mitigation, flagged honestly rather than silently: the AI overlay is
+  called for EVERY gig in a rankBucketAiOverlay-on group, including ones
+  the rule-based evaluator assigned bucket=null -- NOT gated to
+  "already-in-some-bucket" gigs as originally proposed. This is
+  intentional, not an oversight: the whole point of a null rule result is
+  "the simple rule didn't catch it," and the AI overlay's own value
+  includes catching exactly that case (see this story's own test "AI can
+  suggest a real bucket where the rule found none"). The real, unresolved
+  cost concern the original mitigation was reaching for still stands --
+  unlike ai-verify.ts (which only runs on gigs that ALREADY heuristically
+  matched a group), this overlay has no equivalent volume-limiting gate.
+  Left open rather than guessed at; a real per-gig cost/volume gate (e.g.
+  tier=green only) is a legitimate follow-up if scan-time LLM cost becomes
+  a real problem in practice.
+
+  Verified: 8 new unit tests (rank-bucket-ai-overlay.test.ts, full mock
+  coverage of every branch: off, no-credential, agrees-with-rule, differs-
+  from-rule, null-rule-AI-finds-one, throws-and-falls-back) + 5 new real
+  runner-wiring integration tests (runner-rank-bucket.test.ts, mirroring
+  runner-ai-verify.test.ts's own "mock the LLM module, test the wiring"
+  convention, including a real re-scan/upsert case). 1546 tests total
+  pass, typecheck clean, isolated dev-server curl regression pass (no UI
+  wired to this yet, so this only confirms nothing broke).
