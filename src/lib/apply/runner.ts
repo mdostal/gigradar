@@ -1,4 +1,4 @@
-import type { Config, DraftContent, Gig, MatchResult } from "../types.js";
+import type { Config, DraftContent, Gig, MatchResult, RankBucketAssignment } from "../types.js";
 import { resolveLlmCredential, type LlmCredential } from "../config/env-store.js";
 import { getSource } from "../sources/source.js";
 import { VerificationChallengeError } from "../sources/verification-challenge.js";
@@ -10,6 +10,8 @@ import { EMPTY_ROLE_AREA_CONFIG, tier } from "../matching/tiering.js";
 import { matchGroups } from "../matching/group-match.js";
 import { computeTier } from "../matching/score-tiering.js";
 import { applyAiVerification } from "../matching/ai-verify.js";
+import { assignRankBucket } from "../matching/rank-bucket.js";
+import { applyRankBucketAiOverlay } from "../matching/rank-bucket-ai-overlay.js";
 import { gigKey, listGroupScores, recordScan, saveDraft } from "../store/index.js";
 import type { DbOption, RecordScanOptions, SourceScanBatch } from "../store/index.js";
 import { loadConfig } from "../config/load.js";
@@ -209,6 +211,22 @@ export async function runRadar(
       // configured means nothing can be in-band, mirroring gateResult's
       // own fail-closed default in that same no-primary-group case above.
       const flatMatchBand = primaryGroup ? groupBands[primaryGroup.id]! : "out-of-band";
+      // rank-buckets epic: only groups that actually have rankBuckets
+      // configured get an entry -- same sparse-entry convention aiFlags
+      // already uses (a group with nothing to check has no entry at all,
+      // never a fabricated "unassigned" placeholder). Runs the rule-based
+      // evaluator (rank-bucket.ts) then the opt-in AI overlay
+      // (rank-bucket-ai-overlay.ts) for each, per group.
+      const matchedRankBuckets: Record<string, RankBucketAssignment> = {};
+      for (const group of scopedGroups) {
+        if (!group.rankBuckets || group.rankBuckets.length === 0) continue;
+        const ruleResult = assignRankBucket(g, group.rankBuckets);
+        matchedRankBuckets[group.id] = await applyRankBucketAiOverlay(g, group, ruleResult, runOpts.credential);
+      }
+      // Same primary-group-anchoring convention as flatTier/flatMatchBand
+      // above -- undefined (not a fabricated default) when the primary
+      // group has no rankBuckets configured at all.
+      const flatRankBucket = primaryGroup ? matchedRankBuckets[primaryGroup.id] : undefined;
       // Stamp tier + matchedProfileIds/matchedGroupIds/matchedGroupTiers
       // onto the persisted gig (not the original `g`, so a caller's own
       // Gig object is never mutated) — this is the object that both the
@@ -225,6 +243,8 @@ export async function runRadar(
         matchBand: flatMatchBand,
         matchedGroupBands: groupBands,
         ...(Object.keys(aiFlags).length > 0 ? { aiFlags } : {}),
+        ...(Object.keys(matchedRankBuckets).length > 0 ? { matchedRankBuckets } : {}),
+        ...(flatRankBucket ? { rankBucket: flatRankBucket } : {}),
       };
 
       deduped.push(gigWithTier);
