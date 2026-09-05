@@ -1,0 +1,73 @@
+id: rank-bucket-core
+epic: rank-buckets
+title: GroupConfig.rankBuckets/StoredGig.rankBucket types + pure assignRankBucket() rule evaluator
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  The deterministic, no-LLM-required base layer. Mirrors tiering.ts's
+  own "first match wins, in declared order" precedence and doc-comment
+  style exactly -- a gig is assigned to the FIRST bucket (in owner-defined
+  order) whose simple rule it satisfies. Reuses the same two criteria
+  primitives (a rate threshold, a keyword list) EngagementProfile/
+  RoleAreaConfig already use elsewhere in this codebase -- not a new
+  rule language.
+
+acceptance_criteria:
+  - "RankBucketRule type: { label: string; description?: string; minRate?: number; maxRate?: number; keywords?: string[] } -- every field optional except label; an empty rule (no minRate/maxRate/keywords) matches nothing (never a silent catch-all)"
+  - "GroupConfig.rankBuckets?: RankBucketRule[] -- an ORDERED list, omitted means no rank-bucket UI/behavior at all for that group (same do-nothing-default convention every other optional Config field uses)"
+  - "assignRankBucket(gig, rules) returns { bucket: string; reasons: string[] } for the first rule whose rate/keyword criteria the gig satisfies, in list order"
+  - "returns { bucket: null, reasons: [...] } when no rule matches, or when rankBuckets is empty/unset -- never guesses a bucket, never assigns the first rule as a fallback"
+  - "a rule with BOTH minRate/maxRate AND keywords requires ALL configured criteria on that rule to match (AND within one rule), matching this codebase's existing 'every configured check must pass' convention (see gate.ts's own multi-check AND semantics)"
+  - "keyword matching is whole-word, case-insensitive, matched against title+description -- same convention tiering.ts's own keyword matching already uses (reused, not reimplemented divergently)"
+
+steps:
+  - id: implement
+    description: Add RankBucketRule/GroupConfig.rankBuckets/StoredGig.rankBucket to types.ts, MatchQualityConfigSchema-sibling Zod schema, and a new src/lib/matching/rank-bucket.ts with assignRankBucket().
+    agent: developer
+  - id: test
+    description: npm test && npm run typecheck must both pass. Exhaustive unit tests covering every acceptance criterion, first-match-wins ordering, AND-within-a-rule semantics, and the no-match/no-rules-configured cases.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI, merge.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/matching/tiering.ts
+      purpose: The "first match wins, in declared order, whole-word keyword matching" precedent this module mirrors exactly.
+    - path: src/lib/matching/match-band.ts
+      purpose: This session's most recent sibling additive-signal module -- same file structure/doc-comment convention to follow.
+    - path: src/lib/types.ts
+      purpose: EngagementProfile (rate fields)/RoleAreaConfig (keyword fields) -- the two existing primitives this story's RankBucketRule reuses rather than inventing new ones.
+
+design_decisions:
+  - decision: A rule with zero criteria matches nothing, rather than being treated as a wildcard/catch-all.
+    rationale: An owner who leaves a bucket's rule blank (still typing it in, or genuinely undecided) should never have every gig silently land in that bucket -- "no match" (null) is the honest, safe default, same posture as this codebase's "never guess" discipline elsewhere.
+
+risks:
+  - severity: low
+    description: A keyword-matching implementation that subtly diverges from tiering.ts's own whole-word/case-insensitive semantics would produce two different, disagreeing keyword-match behaviors in the same codebase.
+    mitigation: Reuse tiering.ts's exported whole-word-match helper directly (export it if not already exported) rather than reimplementing the regex.
+
+progress_note: |
+  Shipped. RankBucketRule/RankBucketAssignment/GroupConfig.rankBuckets/
+  rankBucketAiOverlay/Gig.rankBucket/matchedRankBuckets added to types.ts.
+  RankBucketRuleSchema + GroupConfigSchema wiring added to schema.ts.
+  New matching/rank-bucket.ts's assignRankBucket() -- first-match-wins in
+  declared order, AND-within-a-rule semantics, reuses tiering.ts's newly-
+  exported firstWholeWordMatch() rather than a second keyword-match
+  implementation.
+
+  18 new unit tests (11 for assignRankBucket() covering every acceptance
+  criterion including the boundary/ordering/AND-semantics cases, 7 for
+  schema validation). 1533 tests total pass, typecheck clean.
+
+  No wiring/AI/UI yet -- deliberately scoped to the pure evaluator only,
+  per this story's own acceptance criteria. rank-bucket-ai-overlay is the
+  next story.

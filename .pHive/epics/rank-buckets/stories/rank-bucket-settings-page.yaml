@@ -1,0 +1,56 @@
+id: rank-bucket-settings-page
+epic: rank-buckets
+title: Real settings surface for per-group ordered bucket labels/rules/AI-overlay toggle
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [rank-bucket-core]
+
+description: |
+  Owner-confirmed bucket shape: owner-NAMED, ORDERED labels per group
+  (not a fixed Tier 1/2/3 everywhere) -- two groups' bucket lists never
+  need to match or mean the same thing. Needs a real UI to define,
+  reorder, and edit these plus each bucket's simple rule criteria and
+  optional plain-English description, and to toggle the AI overlay
+  (rank-bucket-ai-overlay story) per group.
+
+acceptance_criteria:
+  - "the owner can add/remove/reorder buckets per group, each with a name, optional rate-threshold rule, optional keyword-list rule, and optional plain-English description (read by the AI overlay when it's on)"
+  - "a toggle for GroupConfig.rankBucketAiOverlay, off by default"
+  - "saves through the existing saveConfigAction()/saveConfig() top-level-merge path -- no new write mechanism"
+  - "a new Config Dashboard card (config-sections.ts) shows each group's real bucket count/names, following the same ConfigDetailRow convention every other section already uses"
+  - "reorder is a REAL persisted change to list order (order determines rule precedence per rank-bucket-core's own first-match-wins contract) -- not just a visual reorder that doesn't survive a save"
+
+steps:
+  - id: research
+    description: Decide during implementation whether this extends the existing /config/groups section or is its own small standalone page (mirroring match-quality-client.tsx's own precedent and the owner's standing direction against adding more to the 3000-line config-client.tsx mega-form) -- read match-quality-client.tsx first as the most recent, most relevant precedent.
+    agent: researcher
+  - id: implement
+    description: Build the settings UI (reorderable list, per-bucket rule inputs, AI-overlay toggle) and wire it into config-sections.ts.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: npm test && npm run typecheck must both pass. Unit-test the schema validation/defaults and the new config-sections.ts details()/status() functions, following the match-quality-settings-page story's own established test pattern from tonight.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI, merge, plus the standard isolated-dev-server curl regression check.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/match-quality-client.tsx
+      purpose: This session's most recent, most directly relevant precedent for a small standalone settings client component outside config-client.tsx.
+    - path: src/app/config/config-sections.ts
+      purpose: CONFIG_SECTIONS convention this new section must follow exactly.
+
+design_decisions:
+  - decision: Reorder must be a real, persisted list-order change, not a cosmetic drag animation.
+    rationale: rank-bucket-core's own contract is "first match wins, in declared order" -- if reorder doesn't actually change stored order, the settings UI would visually lie about what the rule evaluator actually does.
+
+risks:
+  - severity: low
+    description: A rich reorderable-list UI (drag-and-drop) adds real implementation complexity/dependency surface for a personal, single-user settings page.
+    mitigation: A simple up/down-arrow reorder control (no drag-and-drop library) is sufficient and lower-risk -- matches this codebase's existing preference for plain, dependency-light UI controls over rich interaction libraries.

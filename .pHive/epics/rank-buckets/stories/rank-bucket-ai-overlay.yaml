@@ -1,0 +1,62 @@
+id: rank-bucket-ai-overlay
+epic: rank-buckets
+title: Opt-in AI-suggested bucket overlay, wired into apply/runner.ts, persisted via a real DB migration
+status: pending
+complexity: high
+methodology: classic
+depends_on: [rank-bucket-core]
+
+description: |
+  The "add AI suggested on top" half of the owner's explicit "this should
+  be both" directive. Mirrors ai-verify.ts's own opt-in/graceful-
+  degradation pattern exactly: an LLM call runs ONLY for groups that opt
+  in (GroupConfig.rankBucketAiOverlay: boolean, same convention as
+  aiVerify), reviews the rule-based assignment from rank-bucket-core
+  against the group's own plain-English bucket descriptions, and may
+  suggest a DIFFERENT bucket with a reason. The rule-based assignment is
+  NEVER silently replaced -- the suggestion sits alongside it, unconfirmed,
+  until the owner acts (rank-bucket-filter-and-confirm-everywhere's own
+  UI).
+
+acceptance_criteria:
+  - "GroupConfig.rankBucketAiOverlay?: boolean -- omitted/false means zero LLM calls for this group's rank-bucket assignment, byte-identical behavior to before this story existed"
+  - "StoredGig.rankBucket?: Record<groupId, { bucket: string | null; source: 'rule' | 'ai'; confirmed: boolean; reason?: string }> -- persisted via a new matched_rank_buckets DB column, same ensureColumn() additive-migration pattern as matched_group_tiers/matched_group_scores/matched_group_bands"
+  - "when rankBucketAiOverlay is on and a resolved LLM credential exists this cycle, the AI call runs AFTER assignRankBucket()'s rule-based result, receives that result plus every bucket's plain-English description, and may return a different bucket + reason -- stored with source:'ai', confirmed:false"
+  - "when rankBucketAiOverlay is off, or on with no LLM credential resolved this cycle, the rule-based result is stored as-is with source:'rule', confirmed:true (no confirmation needed for a deterministic rule match) -- same silent-skip-not-fail posture as every other optional LLM call site in this codebase (autoDraftOnScan, aiVerify)"
+  - "a real, isolated re-scan (same rigor as this session's match-band-pipeline-and-storage story) verifies the persisted matched_rank_buckets shape via a direct DB read, for both the AI-on and AI-off cases"
+
+steps:
+  - id: research
+    description: Read matching/ai-verify.ts end to end (call site, prompt shape, graceful-degradation checks, aiFlags persistence) -- this story's own AI call must follow that exact established pattern, not invent a new one.
+    agent: researcher
+  - id: implement
+    description: Add rankBucketAiOverlay to GroupConfig/schema, the new matching/rank-bucket-ai-overlay.ts (or extend rank-bucket.ts) LLM call, wire into apply/runner.ts alongside the existing rank-bucket-core call, and the matched_rank_buckets DB column/migration.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: npm test && npm run typecheck must both pass. Unit-test the overlay logic with a mocked LLM credential/response (same mocking convention ai-verify.test.ts already uses), plus a real isolated re-scan integration test reading back the persisted column via a real (test) sqlite database.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI (including the e2e suite), merge.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/matching/ai-verify.ts
+      purpose: The exact opt-in/graceful-degradation/prompt-shape pattern this story's AI overlay must mirror.
+    - path: src/lib/apply/runner.ts
+      purpose: Where the rank-bucket-core call and this story's AI overlay call both need to slot in, alongside the existing group-match/ai-verify calls in the same per-gig loop.
+    - path: src/lib/store/db.ts
+      purpose: ensureColumn() migration precedent (matched_group_bands/match_band from tonight's rate-band-match-quality epic) to mirror exactly for matched_rank_buckets.
+
+design_decisions:
+  - decision: The AI overlay's suggestion is stored ALONGSIDE the rule-based result, never overwriting it -- confirmed:false until the owner acts.
+    rationale: Directly matches the owner's own "this should be both" framing -- rules are the reliable, always-available base; AI is a suggestion layer, never a silent authority.
+
+risks:
+  - severity: medium
+    description: An unbounded per-gig LLM call for every group with the overlay on could be slow/costly at scan scale.
+    mitigation: Only call the AI overlay for gigs assignRankBucket() actually placed in SOME bucket (or per the owner's later decision, gigs already tiered green) -- never for every gig unconditionally. Confirm the exact gating during implementation research against how ai-verify.ts itself scopes its own calls (only groups the gig already heuristically matched).
