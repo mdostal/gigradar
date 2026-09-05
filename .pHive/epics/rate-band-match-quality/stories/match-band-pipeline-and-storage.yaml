@@ -1,7 +1,7 @@
 id: match-band-pipeline-and-storage
 epic: rate-band-match-quality
 title: Wire match bands through group-match.ts, apply/runner.ts, schema, and a real DB migration
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: [match-band-core]
@@ -55,3 +55,33 @@ risks:
   - severity: high
     description: A DB migration that isn't backward-compatible could break existing installs' gigs.db (including the owner's own real, live database).
     mitigation: New columns only, nullable, no rewrite of existing rows required at migration time -- mirrors the exact additive pattern matched_group_tiers/matched_group_scores already established and that this codebase has shipped safely multiple times this session. Verify against a COPY of the owner's real schema shape (isolated fixture db), never the live ~/.local/share/gigradar/gigs.db directly.
+
+progress_note: |
+  Shipped. GroupMatchResult.groupBands (group-match.ts), Gig.matchBand/
+  matchedGroupBands (types.ts, MatchBand type moved to types.ts alongside
+  Tier for the same core-domain-type convention), matched_group_bands/
+  match_band DB columns (ensureColumn() migration, mirroring matched_group_
+  tiers/matched_group_scores exactly), and apply/runner.ts's flat matchBand
+  anchored to the primary group (same convention as flatTier/flatScore,
+  falling back to "out-of-band" with no primary group).
+
+  gate.ts's matchProfiles()/normalizeRate() exported (were private) so
+  match-band.ts reuses the exact same rate-comparison logic rather than
+  risking silent drift -- this closed the story's own flagged high-severity
+  risk directly.
+
+  Real, isolated re-scan verification (not just pure-function unit tests):
+  a new "runRadar: rate-band-match-quality" describe block in
+  runner.test.ts runs the ACTUAL runner -> group-match -> recordScan/store
+  pipeline against fixture in-band/near-band/out-of-band gigs (including
+  the real $50-60/hr example that triggered this epic) and reads back via
+  getGig() against a real (test) sqlite database -- including a re-scan/
+  upsert case, not just initial insert. 1486 tests total pass, typecheck
+  clean, isolated dev-server curl regression pass across /, /gigs, /config,
+  /fractional-hourly/gigs, /full-time/gigs, /today unchanged.
+
+  Provisional: DEFAULT_NEAR_BAND_TOLERANCE_PCT (15%) is hardcoded in
+  match-band.ts until match-quality-settings-page (next story) wires a
+  real per-group GroupConfig.matchQuality.nearBandTolerancePct value
+  through -- documented as a TODO at every call site per this story's own
+  design decision.

@@ -92,6 +92,25 @@ describe("matchGroups", () => {
     expect(typeof result.groupScores.a).toBe("number");
     expect(typeof result.groupScores.b).toBe("number");
   });
+
+  it("returns groupBands for every evaluated group -- in-band for a passing group, out-of-band for an impossible one", () => {
+    const passing = makeGroup({ id: "a", needs: PASSING_NEEDS });
+    const failing = makeGroup({ id: "b", needs: IMPOSSIBLE_NEEDS });
+
+    const result = matchGroups(makeGig(), [passing, failing], EMPTY_PROFILE);
+
+    expect(result.groupBands).toEqual({ a: "in-band", b: "out-of-band" });
+  });
+
+  it("returns near-band when the rate is close to but under a group's floor", () => {
+    const nearFloorProfile: EngagementProfile = { id: "p", label: "Fractional", types: ["contract"], minRate: 150, highRate: 285, maxHours: 20, maxHoursAtHighRate: 40, rateUnit: "hour" };
+    const group = makeGroup({ id: "a", needs: { engagementProfiles: [nearFloorProfile], freshStageOnly: false, remoteOnly: false } });
+    const gig = makeGig({ rate: { min: 130, unit: "hour" } }); // ~13.3% under $150 floor, within default 15% tolerance
+
+    const result = matchGroups(gig, [group], EMPTY_PROFILE);
+
+    expect(result.groupBands.a).toBe("near-band");
+  });
 });
 
 describe("matchGroups: customizable-tier-scoring", () => {

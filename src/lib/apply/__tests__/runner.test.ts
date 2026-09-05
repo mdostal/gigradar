@@ -449,3 +449,79 @@ describe("runRadar: customizable-tier-scoring", () => {
     expect(low1?.tier).not.toBe("green"); // still the lowest (or tied-lowest) of the population
   });
 });
+
+describe("runRadar: rate-band-match-quality", () => {
+  // rate-band-match-quality epic, match-band-pipeline-and-storage story.
+  // A real, isolated scan through the ACTUAL runner -> group-match ->
+  // recordScan/store pipeline -- not just match-band.ts's own pure-function
+  // unit tests -- verified via a real getGig() read against a real (test)
+  // sqlite database, same rigor as this file's own matchedGroupTiers/
+  // matchedGroupScores integration tests above. $150/hr floor mirrors the
+  // owner's real fractional-hourly group; 15% is the current
+  // DEFAULT_NEAR_BAND_TOLERANCE_PCT this story's own provisional constant
+  // uses until match-quality-settings-page wires a real per-group value.
+  const FRACTIONAL_HOURLY_PROFILE: EngagementProfile = {
+    id: "fractional-hourly",
+    label: "Fractional/Hourly",
+    types: ["contract", "fractional"],
+    minRate: 150,
+    highRate: 285,
+    maxHours: 20,
+    maxHoursAtHighRate: 40,
+    rateUnit: "hour",
+  };
+
+  function makeBandConfig(): Config {
+    return {
+      profile: { name: "Test User", roles: [], skills: [], timezone: "UTC" },
+      groups: [
+        {
+          id: "fractional-hourly",
+          label: "Fractional / Hourly",
+          needs: { engagementProfiles: [FRACTIONAL_HOURLY_PROFILE], freshStageOnly: false, remoteOnly: false },
+        },
+      ],
+      sources: [{ id: "braintrust", enabled: true }],
+    };
+  }
+
+  it("persists match_band/matched_group_bands correctly across a real scan for in-band, near-band, and out-of-band gigs", async () => {
+    nextGigs = [
+      { sourceId: "braintrust", externalId: "in-band-1", title: "Fractional CTO", url: "https://example.test/in-band-1", rate: { min: 200, unit: "hour" } },
+      { sourceId: "braintrust", externalId: "near-band-1", title: "Fractional CTO", url: "https://example.test/near-band-1", rate: { min: 130, unit: "hour" } },
+      // The real live example that triggered this epic: $50-60/hr against a $150 floor.
+      { sourceId: "braintrust", externalId: "out-of-band-1", title: "AI Engineering Consultant - Part time", url: "https://example.test/out-of-band-1", rate: { min: 50, max: 60, unit: "hour" } },
+    ];
+
+    await runRadar(makeBandConfig(), { db });
+
+    const inBand = getGig("braintrust:in-band-1", { db });
+    expect(inBand?.matchBand).toBe("in-band");
+    expect(inBand?.matchedGroupBands).toEqual({ "fractional-hourly": "in-band" });
+
+    const nearBand = getGig("braintrust:near-band-1", { db });
+    expect(nearBand?.matchBand).toBe("near-band");
+    expect(nearBand?.matchedGroupBands).toEqual({ "fractional-hourly": "near-band" });
+
+    const outOfBand = getGig("braintrust:out-of-band-1", { db });
+    expect(outOfBand?.matchBand).toBe("out-of-band");
+    expect(outOfBand?.matchedGroupBands).toEqual({ "fractional-hourly": "out-of-band" });
+  });
+
+  it("survives a re-scan (upsert path, not just the initial insert)", async () => {
+    nextGigs = [{ sourceId: "braintrust", externalId: "1", title: "AI Engineering Consultant - Part time", url: "https://example.test/1", rate: { min: 50, unit: "hour" } }];
+    await runRadar(makeBandConfig(), { db });
+    expect(getGig("braintrust:1", { db })?.matchBand).toBe("out-of-band");
+
+    // Re-scan the same gig at a real rate this time.
+    nextGigs = [{ sourceId: "braintrust", externalId: "1", title: "AI Engineering Consultant - Part time", url: "https://example.test/1", rate: { min: 200, unit: "hour" } }];
+    await runRadar(makeBandConfig(), { db });
+    expect(getGig("braintrust:1", { db })?.matchBand).toBe("in-band");
+  });
+
+  it("is in-band for a gig with no published rate (matchProfiles()'s existing lenient pass)", async () => {
+    nextGigs = [makeGig("1", "Fractional CTO")];
+    await runRadar(makeBandConfig(), { db });
+    expect(getGig("braintrust:1", { db })?.matchBand).toBe("in-band");
+  });
+});

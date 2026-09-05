@@ -17,10 +17,11 @@
 // keeps this function 100% pure (no I/O) even for "percentile" mode — see
 // score-tiering.ts's own header comment for why the population is fetched
 // by the caller (apply/runner.ts), never here.
-import type { Gig, GroupConfig, Profile, Tier } from "../types.js";
+import type { Gig, GroupConfig, MatchBand, Profile, Tier } from "../types.js";
 import { gate } from "./gate.js";
 import { EMPTY_ROLE_AREA_CONFIG, tier } from "./tiering.js";
 import { computeTier } from "./score-tiering.js";
+import { computeMatchBand, DEFAULT_NEAR_BAND_TOLERANCE_PCT } from "./match-band.js";
 
 export interface GroupMatchResult {
   /** Every group whose gate this gig cleared — never a partial/fabricated list, empty when it cleared none. */
@@ -35,6 +36,15 @@ export interface GroupMatchResult {
   groupTiers: Record<string, Tier>;
   /** Every evaluated group's OWN score (gate()'s MatchResult.score), independent of pass/fail — customizable-tier-scoring epic. */
   groupScores: Record<string, number>;
+  /**
+   * rate-band-match-quality epic. Every evaluated group's OWN MatchBand
+   * (match-band.ts's computeMatchBand()), independent of pass/fail — same
+   * per-group shape as groupTiers/groupScores above. TODO(match-quality-
+   * settings-page): tolerance is DEFAULT_NEAR_BAND_TOLERANCE_PCT for every
+   * group until that story wires a real per-group GroupConfig.matchQuality
+   * value through.
+   */
+  groupBands: Record<string, MatchBand>;
 }
 
 /**
@@ -59,6 +69,7 @@ export function matchGroups(
   const matchedGroupIds: string[] = [];
   const groupTiers: Record<string, Tier> = {};
   const groupScores: Record<string, number> = {};
+  const groupBands: Record<string, MatchBand> = {};
   for (const group of groups) {
     const gateResult = gate(gig, group.needs, profile);
     if (gateResult.pass) matchedGroupIds.push(group.id);
@@ -69,6 +80,8 @@ export function matchGroups(
       mode.kind === "keyword"
         ? tier(gig, group.roleArea ?? EMPTY_ROLE_AREA_CONFIG).tier
         : computeTier(gateResult.score, mode, scorePopulations[group.id] ?? []).tier;
+
+    groupBands[group.id] = computeMatchBand(gig, group.needs.engagementProfiles, DEFAULT_NEAR_BAND_TOLERANCE_PCT).band;
   }
-  return { matchedGroupIds, groupTiers, groupScores };
+  return { matchedGroupIds, groupTiers, groupScores, groupBands };
 }

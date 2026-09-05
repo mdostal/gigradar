@@ -1,4 +1,4 @@
-import type { EngagementProfile, Gig } from "../types.js";
+import type { EngagementProfile, Gig, MatchBand } from "../types.js";
 import { matchProfiles, normalizeRate } from "./gate.js";
 
 /**
@@ -35,8 +35,22 @@ import { matchProfiles, normalizeRate } from "./gate.js";
  * treats an unpublished rate as an automatic pass ("confirm on the
  * call") for every applicable profile, so `matched.length > 0` and this
  * function never reaches its near/out-of-band branches for that case.
+ *
+ * `MatchBand` itself lives in types.ts (mirrors `Tier`'s own location) —
+ * re-exported here so existing callers of this module don't need a second
+ * import.
  */
-export type MatchBand = "in-band" | "near-band" | "out-of-band";
+export type { MatchBand };
+
+/**
+ * The default near-band tolerance until match-quality-settings-page (the
+ * next story in this epic) lands a real, owner-tunable per-group value —
+ * every caller of this constant is a documented TODO for that story, never
+ * a permanent home for it. See this module's own header comment: the
+ * owner's explicit directive is that this number must become a real
+ * setting, not stay hardcoded.
+ */
+export const DEFAULT_NEAR_BAND_TOLERANCE_PCT = 15;
 
 export interface MatchBandResult {
   band: MatchBand;

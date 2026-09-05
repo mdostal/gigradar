@@ -110,6 +110,12 @@ function openConnection(dbPath: string, busyTimeoutMs: number): DatabaseSyncType
   ensureColumn(db, "gigs", "ai_flags", "TEXT");
   ensureColumn(db, "gigs", "match_score", "REAL");
   ensureColumn(db, "gigs", "matched_group_scores", "TEXT");
+  // rate-band-match-quality epic, match-band-pipeline-and-storage story:
+  // new, additive columns mirroring matched_group_tiers/tier's own
+  // established shape exactly -- see match-band.ts's own header comment
+  // for what these represent.
+  ensureColumn(db, "gigs", "matched_group_bands", "TEXT");
+  ensureColumn(db, "gigs", "match_band", "TEXT");
   ensureDraftsSubmittingStatus(db);
   return db;
 }
