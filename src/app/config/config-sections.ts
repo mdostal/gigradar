@@ -15,7 +15,12 @@ import type { ConfigSection } from "./config-client";
 import type { ConfigPageData } from "./config-data";
 import { computeProfileComplete, computeSourceCounts } from "@/lib/status/status-strip";
 import { describeCron } from "@/lib/schedule/describe-cron";
-import { resolveHideOutOfBandByDefault, resolveNearBandTolerancePct } from "@/lib/matching/match-band";
+import {
+  DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT,
+  DEFAULT_NEAR_BAND_TOLERANCE_PCT,
+  resolveHideOutOfBandByDefault,
+  resolveNearBandTolerancePct,
+} from "@/lib/matching/match-band";
 import type { EngagementProfile } from "@/lib/types";
 
 export interface ConfigDetailRow {
@@ -109,8 +114,20 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
         value: `${resolveNearBandTolerancePct(g)}% tolerance · hide out-of-band ${resolveHideOutOfBandByDefault(g) ? "on" : "off"}`,
       }));
     },
-    // "neutral" (nothing to flag) when every group is still on the documented defaults; "ok" once the owner has actually tuned at least one group -- same "distinguishable from an untouched default" signal Automation's own status() already gives kill-switch/rules.
-    status: (data) => (data.initial.groups.some((g) => g.matchQuality) ? "ok" : "neutral"),
+    // "neutral" (nothing to flag) when every group's RESOLVED values still
+    // match the documented defaults; "ok" once at least one group's real
+    // value actually differs. Compares resolved values, not
+    // `matchQuality`'s mere presence (grill-pass fix) -- match-quality-
+    // client.tsx's Save always writes a full object for every group, so a
+    // no-op Save (defaults, re-saved unchanged) must never flip this to
+    // "ok" -- same "distinguishable from an untouched default" signal
+    // Automation's own status() already gives kill-switch/rules.
+    status: (data) =>
+      data.initial.groups.some(
+        (g) => resolveNearBandTolerancePct(g) !== DEFAULT_NEAR_BAND_TOLERANCE_PCT || resolveHideOutOfBandByDefault(g) !== DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT,
+      )
+        ? "ok"
+        : "neutral",
   },
   {
     id: "schedule",

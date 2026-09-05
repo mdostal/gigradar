@@ -100,9 +100,9 @@ describe("resolveDisplayBand", () => {
     expect(resolveDisplayBand(gig, "b")).toBe("out-of-band");
   });
 
-  it("falls back to the flat matchBand on a scoped view when that specific group has no entry", () => {
+  it("never falls back to the flat matchBand on a scoped view when that specific group has no entry -- that's an unrelated group's own verdict, not this one's (grill-pass fix)", () => {
     const gig = makeGig({ key: "1", matchBand: "near-band", matchedGroupBands: { other: "in-band" } });
-    expect(resolveDisplayBand(gig, "not-in-map")).toBe("near-band");
+    expect(resolveDisplayBand(gig, "not-in-map")).toBe("in-band");
   });
 
   it("on an unscoped view, returns the BEST band across every evaluated group (in-band > near-band > out-of-band)", () => {
