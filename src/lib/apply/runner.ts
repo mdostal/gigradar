@@ -156,7 +156,7 @@ export async function runRadar(
       const gateResult = primaryGroup
         ? gate(g, primaryGroup.needs, config.profile)
         : { gig: g, pass: false, reasons: ["no group in scope for this source"], score: 0, matchedProfiles: [] };
-      const { matchedGroupIds: heuristicMatchedGroupIds, groupTiers, groupScores } = matchGroups(g, scopedGroups, config.profile, scorePopulations);
+      const { matchedGroupIds: heuristicMatchedGroupIds, groupTiers, groupScores, groupBands } = matchGroups(g, scopedGroups, config.profile, scorePopulations);
       // ai-match-verification epic: a second, LLM-driven check, spent only
       // on groups the heuristic ALREADY matched and that opted in via
       // GroupConfig.aiVerify — see matching/ai-verify.ts's header comment.
@@ -203,6 +203,12 @@ export async function runRadar(
         ? [...primaryTierResult.reasons, `⚠ AI verification: ${primaryAiFlag!.reason} (downgraded green → yellow)`]
         : primaryTierResult.reasons;
       const flatScore = primaryGroup ? groupScores[primaryGroup.id]! : gateResult.score;
+      // rate-band-match-quality epic: same primary-group-anchoring
+      // convention as flatTier/flatScore above -- "out-of-band" (not
+      // undefined) when there's no primary group at all, since nothing
+      // configured means nothing can be in-band, mirroring gateResult's
+      // own fail-closed default in that same no-primary-group case above.
+      const flatMatchBand = primaryGroup ? groupBands[primaryGroup.id]! : "out-of-band";
       // Stamp tier + matchedProfileIds/matchedGroupIds/matchedGroupTiers
       // onto the persisted gig (not the original `g`, so a caller's own
       // Gig object is never mutated) — this is the object that both the
@@ -216,6 +222,8 @@ export async function runRadar(
         matchedGroupTiers: groupTiers,
         matchScore: flatScore,
         matchedGroupScores: groupScores,
+        matchBand: flatMatchBand,
+        matchedGroupBands: groupBands,
         ...(Object.keys(aiFlags).length > 0 ? { aiFlags } : {}),
       };
 
@@ -231,6 +239,7 @@ export async function runRadar(
         pass: matchedGroupIds.length > 0,
         gig: gigWithTier,
         tier: flatTier,
+        matchBand: flatMatchBand,
         reasons: [...gateResult.reasons, ...flatReasons],
       });
     }

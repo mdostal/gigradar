@@ -79,6 +79,13 @@ export interface Needs {
 export type Tier = "green" | "yellow" | "red";
 
 /**
+ * rate-band-match-quality epic — see matching/match-band.ts's
+ * `computeMatchBand()` for the full contract. Orthogonal to `Tier` above:
+ * `Tier` is a keyword/role-type signal, this is a rate-distance signal.
+ */
+export type MatchBand = "in-band" | "near-band" | "out-of-band";
+
+/**
  * User-supplied keyword sets for the role-area GREEN/YELLOW/RED classifier
  * (see matching/tiering.ts). The core ships with zero keywords in it — every
  * string here is something the user configures for themselves. Hardcoding
@@ -499,6 +506,17 @@ export interface Gig {
   matchScore?: number;
   /** Every in-scope group's OWN score (`Record<groupId, number>`), independent of pass/fail — mirrors `matchedGroupTiers`'s own "recorded regardless of gate outcome" convention. Feeds `TierScoringMode`'s "score-threshold"/"percentile" computation. */
   matchedGroupScores?: Record<string, number>;
+  /**
+   * rate-band-match-quality epic. The PRIMARY group's own `MatchBand`
+   * (matching/match-band.ts's `computeMatchBand()`) — same backward-compat
+   * anchoring convention as flat `tier`/`matchScore` above. Orthogonal to
+   * `tier`: `tier` answers "right kind of role" (keyword-only), this
+   * answers "is the rate actually in range." Both independent of gate()
+   * pass/fail, same as `tier` already is.
+   */
+  matchBand?: MatchBand;
+  /** Every in-scope group's OWN `MatchBand` (`Record<groupId, MatchBand>`), independent of pass/fail — mirrors `matchedGroupTiers`'s own per-group shape exactly. */
+  matchedGroupBands?: Record<string, MatchBand>;
 }
 
 /**
@@ -561,6 +579,8 @@ export interface MatchResult {
    * `gig.tier` — see that field's doc for why.
    */
   tier?: Tier;
+  /** rate-band-match-quality epic — same mirrored-onto-gig convention as `tier` above; see `Gig.matchBand`'s own doc comment. */
+  matchBand?: MatchBand;
   /**
    * Every `EngagementProfile.id` this gig cleared (rate + hours), NOT just
    * the first one tried — a gig can legitimately satisfy several profiles
