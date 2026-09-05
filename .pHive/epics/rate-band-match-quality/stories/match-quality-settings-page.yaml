@@ -1,0 +1,56 @@
+id: match-quality-settings-page
+epic: rate-band-match-quality
+title: New /config/match-quality Advanced settings page (per-group tolerance %, hide-out-of-band toggle)
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [match-band-pipeline-and-storage]
+
+description: |
+  Owner's explicit directive: "make EVERY FUCKING VARIABLE TOGGLEABLE IN
+  SETTINGS in an advanced piece." A new, dedicated, small settings page --
+  NOT another field added to the existing 3028-line config-client.tsx
+  mega-form -- per group: rate near-band tolerance % and a
+  hide-out-of-band-by-default toggle. This becomes THE one real place
+  every match-band knob lives, so match-band-pipeline-and-storage's
+  provisional hardcoded default gets replaced by a real, owner-tunable
+  value.
+
+acceptance_criteria:
+  - "GroupConfig gains an optional matchQuality field: { nearBandTolerancePct?: number; hideOutOfBandByDefault?: boolean } -- omitted means sane defaults (15, true), same 'omission is a meaningful, valid do-nothing default' pattern every other optional Config field in this codebase already uses"
+  - "a new /config/match-quality page (added to CONFIG_SECTIONS in config-sections.ts, its own Config Dashboard card with real details() showing each group's current tolerance/hide setting) lets the owner edit both fields per group"
+  - "saving through this page uses saveConfig()'s existing top-level-merge write path -- no new write mechanism invented"
+  - "match-band-pipeline-and-storage's provisional hardcoded tolerance constant is replaced with a real per-group read of GroupConfig.matchQuality.nearBandTolerancePct (falling back to the 15% default when unset)"
+  - "the Config Dashboard's Match Quality card status() is 'neutral' when defaults are in effect, distinguishable from a group that's been explicitly tuned (same status-badge convention every other section already uses)"
+
+steps:
+  - id: implement
+    description: Add GroupConfig.matchQuality to types.ts + schema.ts, a new config-client.tsx section (or a small dedicated new client component if the mega-form is a poor fit -- owner's own stated preference is AWAY from that file, prefer a small standalone page component), and wire config-sections.ts's new "match-quality" section.
+    agent: developer
+  - id: test
+    description: npm test && npm run typecheck must both pass. Unit-test the schema defaults/validation and config-sections.ts's new details()/status() functions, following config-sections-test-coverage's own established fixture pattern from this session's prior epic.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI, merge.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-sections.ts
+      purpose: CONFIG_SECTIONS array + ConfigDetailRow convention this new section must follow exactly (see this session's config-detail-and-scan-hardening epic for the established pattern).
+    - path: src/lib/config/schema.ts
+      purpose: Where GroupConfigSchema lives -- matchQuality needs a real Zod shape with sane defaults, following tierScoring's own optional-field precedent.
+    - path: src/app/config/config-client.tsx
+      purpose: The 3028-line mega-form the owner explicitly wants this NOT added to -- read enough of it to understand the save-path wiring (updateSelectedGroup-equivalent pattern) without copying its scale.
+
+design_decisions:
+  - decision: A new, small, standalone settings surface rather than another tab/section inside config-client.tsx.
+    rationale: Owner's own words after tonight's frustration ("we aren't doing this right... shitty one-offs") plus the design-discussion's own scope boundary against redesigning that 3028-line file in this epic. A small, focused page is lower-risk and directly serves "make this simple to setup and tweak."
+
+risks:
+  - severity: low
+    description: A second, parallel "how do I edit my groups" surface (this page vs. config-client.tsx's existing Groups & Needs section) could feel disjointed.
+    mitigation: Link directly from the Config Dashboard's existing Groups & Needs card AND this new Match Quality card to each other, and keep this page's own scope strictly to the two new fields -- never a re-edit surface for rate/profile data that already lives in Groups & Needs.

@@ -1,0 +1,51 @@
+id: auto-draft-respects-band
+epic: rate-band-match-quality
+title: autoDraftOnScan/autoFire require matchBand === in-band in addition to tier === green
+status: pending
+complexity: low
+methodology: classic
+depends_on: [match-band-pipeline-and-storage]
+
+description: |
+  Closes the same rate-blindness loophole for the AUTOMATED pipeline, not
+  just the manual views -- directly answers the owner's reference to the
+  old dostal@hive tool's "agent and LLM to score and rate and sort and
+  then write drafts or publish them automatically." Without this, a
+  green-tier-but-out-of-band gig (e.g. the real $50-60/hr braintrust
+  listing found tonight) could still get auto-drafted or, worse,
+  auto-fired.
+
+acceptance_criteria:
+  - "scheduler/index.ts's auto-draft eligibility filter (currently 'r.tier === \"green\"') additionally requires r.gig.matchBand === \"in-band\""
+  - "apply/autofire.ts's checkTierIsGreen() gains a sibling checkMatchBandInBand() check, included in AutoFireRuleConfig's evaluation alongside the existing tier check -- never REPLACING checkTierIsGreen(), both must pass"
+  - "a gig that is tier=green but matchBand=near-band or out-of-band is neither auto-drafted nor auto-fired, but remains fully visible/manually-actionable everywhere else (this story changes automation eligibility only, never gig visibility)"
+
+steps:
+  - id: implement
+    description: Add the matchBand check to scheduler/index.ts's two eligibility filters and a new checkMatchBandInBand() to autofire.ts, wired into the same evaluation path as the existing tier check.
+    agent: developer
+  - id: test
+    description: npm test && npm run typecheck must both pass. Extend the existing scheduler/autofire test suites with cases proving a green+out-of-band gig is correctly excluded, and a green+in-band gig is unaffected (no regression on today's real behavior for genuinely in-band matches).
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI, merge.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/scheduler/index.ts
+      purpose: "Lines ~295 and ~353: the two 'r.tier === \"green\"' eligibility filters this story extends."
+    - path: src/lib/apply/autofire.ts
+      purpose: checkTierIsGreen() and the 4-check evaluation pattern this story's new checkMatchBandInBand() joins.
+
+design_decisions:
+  - decision: Additive AND-check, never a replacement of the existing tier check.
+    rationale: tier answers "right kind of role," matchBand answers "right rate" -- both must be true for real automation to be safe; this mirrors the design-discussion's own "two orthogonal signals" framing.
+
+risks:
+  - severity: low
+    description: A gig scanned before match-band-pipeline-and-storage shipped has no matchBand value at all (undefined, not "out-of-band").
+    mitigation: Treat an undefined/missing matchBand as NOT in-band (fail closed, never fail open on automation eligibility) -- consistent with this codebase's existing autoFire kill-switch-first, fail-safe posture.

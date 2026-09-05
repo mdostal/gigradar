@@ -86,7 +86,14 @@ export function effectiveEngagementType(gig: Gig): EngagementType | undefined {
   return undefined;
 }
 
-interface ProfileMatch {
+/**
+ * Exported (rate-band-match-quality epic, match-band-core story) so
+ * matching/match-band.ts can reuse the EXACT same rate/hours comparison
+ * this function already does, rather than reimplementing it and risking
+ * silent drift between what gate() actually enforces and what the
+ * in-band/near-band/out-of-band classifier reports.
+ */
+export interface ProfileMatch {
   profile: EngagementProfile;
   rate: number | null;
 }
@@ -99,7 +106,7 @@ interface ProfileMatch {
  * (rate + hours), plus one human-readable reason line per applicable
  * profile tried (pass or fail) for the caller to fold into MatchResult.reasons.
  */
-function matchProfiles(
+export function matchProfiles(
   gig: Gig,
   profiles: EngagementProfile[],
 ): { matched: ProfileMatch[]; applicable: EngagementProfile[]; profileReasons: string[] } {
@@ -148,7 +155,8 @@ function matchProfiles(
 }
 
 /** Convert whatever rate a source gives into `targetUnit` ("hour" or "year"), or null if it can't be compared cleanly. Never cross-converts hour<->year (too speculative — see this project's standing "never fabricate" posture). */
-function normalizeRate(gig: Gig, targetUnit: "hour" | "year"): number | null {
+/** Exported for match-band.ts's reuse — see matchProfiles()'s own export doc comment above. */
+export function normalizeRate(gig: Gig, targetUnit: "hour" | "year"): number | null {
   const r = gig.rate;
   if (!r) return null;
   const val = r.min ?? r.max;

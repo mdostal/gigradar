@@ -1,0 +1,56 @@
+id: match-band-core
+epic: rate-band-match-quality
+title: Pure computeMatchBand() classifier + exhaustive unit tests
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  New, additive per-group signal answering "is the rate actually in
+  range," orthogonal to tiering.ts's existing keyword-only tier(). Neither
+  gate.ts nor tiering.ts is modified by this story -- this is a genuinely
+  new, standalone, pure module. See docs/design-discussion.md for the full
+  in-band/near-band/out-of-band definition and the owner's sign-off on
+  scope.
+
+acceptance_criteria:
+  - "computeMatchBand(gig, engagementProfiles, tolerancePct) returns 'in-band' when the gig clears at least one applicable profile's real gate (reuse matchProfiles()'s own applicable/matched logic from gate.ts, imported not reimplemented)"
+  - "returns 'near-band' when the gig fails EVERY applicable profile on rate alone, and its best applicable profile's rate is within tolerancePct of that profile's minRate (e.g. 15% tolerance, $150 floor -> $127.50+/hr is near-band)"
+  - "returns 'out-of-band' when the gig fails by more than tolerancePct on rate, OR fails for any non-rate reason (no applicable profile at all, engagement type mismatch, hours over cap)"
+  - "a gig with no published rate (gate.ts's matchProfiles() already treats this as an automatic pass, 'confirm on the call') is 'in-band', never near/out-of-band purely for missing rate data"
+  - "every result includes a human-readable reason string, matching gate.ts/tiering.ts's existing convention"
+  - "tolerancePct is a required parameter, never a hardcoded constant in this module -- the owner's explicit 'make every variable toggleable' directive"
+
+steps:
+  - id: implement
+    description: |
+      Add src/lib/matching/match-band.ts. Reuse gate.ts's exported matchProfiles()-equivalent logic (export matchProfiles() from gate.ts if not already exported, or replicate its applicable/rate-comparison logic in a shared helper -- do NOT diverge the rate-comparison math between gate.ts and this file, that would be a real, silent correctness bug waiting to happen).
+    agent: developer
+  - id: test
+    description: npm test && npm run typecheck must both pass. Cover every acceptance criterion, plus edge cases (zero engagementProfiles configured, a profile with no rate unit match, exactly-at-tolerance-boundary rates).
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev, verify CI, merge.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/matching/gate.ts
+      purpose: matchProfiles()/normalizeRate() -- the exact rate-comparison logic this story must reuse, never reimplement divergently.
+    - path: src/lib/matching/tiering.ts
+      purpose: The sibling pure-classifier module (TierResult shape, doc-comment style) this new file should mirror for consistency.
+    - path: src/lib/matching/score-tiering.ts
+      purpose: The most recent prior art for "a second classifier alongside tier(), selected by the caller" -- same architectural pattern this story extends.
+
+design_decisions:
+  - decision: computeMatchBand() takes tolerancePct as a parameter, never reads Config/GroupConfig itself.
+    rationale: Keeps this module exactly as pure/unit-testable as gate.ts and tiering.ts (this repo's established discipline) -- match-quality-settings-page (a later story) owns where the real per-group tolerance value comes from.
+
+risks:
+  - severity: medium
+    description: Reimplementing rate comparison instead of reusing gate.ts's own matchProfiles()/normalizeRate() could silently drift (e.g. a rounding difference) from what the real gate actually enforces, producing a band that disagrees with matchedGroupIds.
+    mitigation: Export and directly reuse gate.ts's internal rate-comparison helpers rather than rewriting them; add a test asserting a gig that gate() passes is never classified out-of-band by this module for the same profile set.
