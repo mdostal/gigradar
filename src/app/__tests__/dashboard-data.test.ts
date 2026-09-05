@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, recordScan } from "@/lib/store";
 import { saveConfig } from "@/lib/config/save";
-import { extractEngagementProfileSummaries, loadDashboardData, resolveGroupLabel } from "../dashboard-data";
+import { extractEngagementProfileSummaries, loadDashboardData, resolveGroupLabel, resolveHideOutOfBandDefault } from "../dashboard-data";
 
 // Same isolation pattern as actions.test.ts: a fresh temp-file DB per test
 // (GIGRADAR_DB_PATH) plus an isolated XDG_DATA_HOME for config.json, so this
@@ -87,6 +87,26 @@ describe("resolveGroupLabel", () => {
     const raw = { groups: [{ id: "g1", label: "Group 1" }] };
     expect(resolveGroupLabel(raw, "does-not-exist")).toBeUndefined();
     expect(resolveGroupLabel({}, "g1")).toBeUndefined();
+  });
+});
+
+describe("resolveHideOutOfBandDefault", () => {
+  it("reads the SPECIFIC group's own real setting when groupId is given", () => {
+    const raw = { groups: [{ id: "g1", matchQuality: { hideOutOfBandByDefault: false } }, { id: "g2", matchQuality: { hideOutOfBandByDefault: true } }] };
+    expect(resolveHideOutOfBandDefault(raw, "g1")).toBe(false);
+    expect(resolveHideOutOfBandDefault(raw, "g2")).toBe(true);
+  });
+
+  it("reads the FIRST/primary group when groupId is omitted (the unscoped /gigs, /today routes)", () => {
+    const raw = { groups: [{ id: "g1", matchQuality: { hideOutOfBandByDefault: false } }, { id: "g2", matchQuality: { hideOutOfBandByDefault: true } }] };
+    expect(resolveHideOutOfBandDefault(raw)).toBe(false);
+  });
+
+  it("falls back to the documented default (true) for missing/malformed shapes, never throwing", () => {
+    expect(resolveHideOutOfBandDefault({}, "g1")).toBe(true);
+    expect(resolveHideOutOfBandDefault({ groups: [{ id: "g1" }] }, "g1")).toBe(true);
+    expect(resolveHideOutOfBandDefault({ groups: [{ id: "g1", matchQuality: {} }] }, "g1")).toBe(true);
+    expect(resolveHideOutOfBandDefault({ groups: "not an array" }, "g1")).toBe(true);
   });
 });
 

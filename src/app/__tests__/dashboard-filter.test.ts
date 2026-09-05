@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredGig } from "@/lib/store";
-import { distinctSources, isWithinSeenWindow, shortProfileLabel } from "../dashboard-filter";
+import { distinctSources, isWithinSeenWindow, passesBandFilter, resolveDisplayBand, shortProfileLabel } from "../dashboard-filter";
 
 function makeGig(overrides: Partial<StoredGig> & { key: string }): StoredGig {
   return {
@@ -90,5 +90,53 @@ describe("shortProfileLabel", () => {
 
   it("trims surrounding whitespace before extracting", () => {
     expect(shortProfileLabel("  A — Fractional  ")).toBe("A");
+  });
+});
+
+describe("resolveDisplayBand", () => {
+  it("returns the specific group's own band on a scoped view", () => {
+    const gig = makeGig({ key: "1", matchedGroupBands: { a: "in-band", b: "out-of-band" } });
+    expect(resolveDisplayBand(gig, "a")).toBe("in-band");
+    expect(resolveDisplayBand(gig, "b")).toBe("out-of-band");
+  });
+
+  it("falls back to the flat matchBand on a scoped view when that specific group has no entry", () => {
+    const gig = makeGig({ key: "1", matchBand: "near-band", matchedGroupBands: { other: "in-band" } });
+    expect(resolveDisplayBand(gig, "not-in-map")).toBe("near-band");
+  });
+
+  it("on an unscoped view, returns the BEST band across every evaluated group (in-band > near-band > out-of-band)", () => {
+    const allOutOfBand = makeGig({ key: "1", matchedGroupBands: { a: "out-of-band", b: "out-of-band" } });
+    expect(resolveDisplayBand(allOutOfBand)).toBe("out-of-band");
+
+    const oneNearBand = makeGig({ key: "2", matchedGroupBands: { a: "out-of-band", b: "near-band" } });
+    expect(resolveDisplayBand(oneNearBand)).toBe("near-band");
+
+    const oneInBand = makeGig({ key: "3", matchedGroupBands: { a: "near-band", b: "in-band", c: "out-of-band" } });
+    expect(resolveDisplayBand(oneInBand)).toBe("in-band");
+  });
+
+  it("falls back to out-of-band (fail closed) for a gig scanned before this epic shipped, with no band data at all", () => {
+    const gig = makeGig({ key: "1" });
+    expect(resolveDisplayBand(gig)).toBe("out-of-band");
+    expect(resolveDisplayBand(gig, "any-group")).toBe("out-of-band");
+  });
+});
+
+describe("passesBandFilter", () => {
+  it("drilling down to one band (filter !== 'all') always matches exactly that band, bypassing hideOutOfBand entirely", () => {
+    expect(passesBandFilter("out-of-band", "out-of-band", true)).toBe(true);
+    expect(passesBandFilter("in-band", "out-of-band", true)).toBe(false);
+    expect(passesBandFilter("in-band", "in-band", true)).toBe(true);
+  });
+
+  it("filter 'all' with hideOutOfBand true excludes out-of-band but shows everything else", () => {
+    expect(passesBandFilter("out-of-band", "all", true)).toBe(false);
+    expect(passesBandFilter("in-band", "all", true)).toBe(true);
+    expect(passesBandFilter("near-band", "all", true)).toBe(true);
+  });
+
+  it("filter 'all' with hideOutOfBand false shows everything, including out-of-band", () => {
+    expect(passesBandFilter("out-of-band", "all", false)).toBe(true);
   });
 });

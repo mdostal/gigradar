@@ -6,9 +6,57 @@
 // enough to live inline as column filterFns in dashboard-client.tsx; only
 // the ones with real logic worth isolating live here.
 import type { StoredGig } from "@/lib/store";
-import type { Tier } from "@/lib/types";
+import type { MatchBand, Tier } from "@/lib/types";
 
 export type TierFilter = Tier | "all";
+
+// rate-band-match-quality epic, band-filter-everywhere story. Shared
+// between TodayClient (chip row) and DashboardClient (column filter) --
+// owner's own explicit scope answer, "All of them!" -- so the underlying
+// classification/predicate logic lives here ONCE rather than as two
+// divergent copies, even though each component keeps its own established
+// filter UI convention (chips vs. column filter).
+export type BandFilter = MatchBand | "all";
+
+export const BAND_LABEL: Record<MatchBand, string> = {
+  "in-band": "In-band",
+  "near-band": "Near-band",
+  "out-of-band": "Out-of-band",
+};
+
+export const ALL_BANDS: MatchBand[] = ["in-band", "near-band", "out-of-band"];
+
+/**
+ * The band to DISPLAY/FILTER a gig by. On a scoped view (`groupId` given,
+ * e.g. `/[group]/gigs`), that group's own specific band. On an unscoped
+ * view (`/gigs`, `/today` -- no groupId), the BEST band across every group
+ * this gig was evaluated against (in-band > near-band > out-of-band) --
+ * documented, known limitation inherited from the same primary-group-
+ * anchoring gap the customizable-tier-scoring epic already flagged (see
+ * this epic's own design-discussion.md), not a new bug. A gig scanned
+ * before this epic shipped (no matchedGroupBands/matchBand at all) falls
+ * back to "out-of-band" -- fail closed, never assume a stale gig is fine.
+ */
+export function resolveDisplayBand(gig: Pick<StoredGig, "matchBand" | "matchedGroupBands">, groupId?: string): MatchBand {
+  if (groupId) return gig.matchedGroupBands?.[groupId] ?? gig.matchBand ?? "out-of-band";
+  const bands = gig.matchedGroupBands ? Object.values(gig.matchedGroupBands) : gig.matchBand ? [gig.matchBand] : [];
+  if (bands.includes("in-band")) return "in-band";
+  if (bands.includes("near-band")) return "near-band";
+  return "out-of-band";
+}
+
+/**
+ * `filter !== "all"` drills down to exactly one band, bypassing
+ * `hideOutOfBand` entirely -- explicitly asking to see "Out-of-band" must
+ * always show it, never a dead end. `filter === "all"` is the default
+ * landing view, where `hideOutOfBand` (the group's own
+ * `matchQuality.hideOutOfBandByDefault` setting, surfaced as a visible,
+ * always-reversible toggle) decides whether out-of-band gigs are hidden.
+ */
+export function passesBandFilter(band: MatchBand, filter: BandFilter, hideOutOfBand: boolean): boolean {
+  if (filter !== "all") return band === filter;
+  return !(hideOutOfBand && band === "out-of-band");
+}
 
 /** The distinct sourceIds actually present in `gigs`, alphabetically sorted -- drives the Source column filter's option list (never a hardcoded/registered-sources list, so it never offers a source with zero gigs). */
 export function distinctSources(gigs: readonly StoredGig[]): string[] {

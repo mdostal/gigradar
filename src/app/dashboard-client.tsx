@@ -18,7 +18,8 @@ import type { PrepPacketContent } from "@/lib/apply/prep";
 import { bulkMarkAppliedElsewhereAction, generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
 import { DASHBOARD_PREFS_STORAGE_KEY, deserializeDashboardPrefs, serializeDashboardPrefs } from "./dashboard-prefs";
-import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, shortProfileLabel, type SeenWindow } from "./dashboard-filter";
+import { ALL_BANDS, BAND_LABEL, distinctSources, isWithinSeenWindow, resolveDisplayBand, SEEN_WINDOW_OPTIONS, shortProfileLabel, type SeenWindow } from "./dashboard-filter";
+import type { MatchBand } from "@/lib/types";
 import { compareByField, type SortField } from "./dashboard-sort";
 import { GigDetailPanel } from "./gig-detail-panel";
 import { ContextualChatTrigger } from "./contextual-chat/contextual-chat-trigger";
@@ -108,6 +109,13 @@ export const TIER_BADGE_STYLE: Record<string, { color: string; background: strin
 };
 export const TIER_BADGE_FALLBACK_STYLE = { color: "var(--text-secondary, #64748b)", background: "var(--surface-bg-raised, #f1f5f9)" };
 
+/** rate-band-match-quality epic. Reuses the same theme-invariant tier color tokens semantically -- in-band/near-band/out-of-band map to green/yellow/red the same way this app's tier badges already do, no new color vocabulary introduced. */
+export const BAND_BADGE_STYLE: Record<MatchBand, { color: string; background: string }> = {
+  "in-band": TIER_BADGE_STYLE.green!,
+  "near-band": TIER_BADGE_STYLE.yellow!,
+  "out-of-band": TIER_BADGE_STYLE.red!,
+};
+
 /**
  * gigradar-command-center epic, Signal Deck: the radial signal-meter's arc
  * fill -- how "fresh" a gig still reads, not just its tier color. 0 (just
@@ -178,7 +186,7 @@ const filterInputClass =
  * (module-augmented below), so the header-row renderer stays generic
  * instead of a giant switch keyed on column id.
  */
-type FilterKind = "text" | "select" | "status-multi" | "profile-multi" | "number-min" | "number-max" | "seen-window" | "none";
+type FilterKind = "text" | "select" | "status-multi" | "profile-multi" | "band-multi" | "number-min" | "number-max" | "seen-window" | "none";
 
 declare module "@tanstack/react-table" {
   interface ColumnMeta<TData, TValue> {
@@ -298,6 +306,36 @@ function ColumnFilterCell({
     );
   }
 
+  if (filterKind === "band-multi") {
+    const checked = (value as ReadonlySet<MatchBand>) ?? new Set(ALL_BANDS);
+    return (
+      <div className="flex flex-wrap gap-1">
+        {ALL_BANDS.map((b) => {
+          const active = checked.has(b);
+          return (
+            <button
+              key={b}
+              type="button"
+              aria-pressed={active}
+              onClick={() => {
+                const next = new Set(checked);
+                if (next.has(b)) next.delete(b);
+                else next.add(b);
+                onChange(next);
+              }}
+              className={[
+                "rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors",
+                active ? "bg-theme-accent text-theme-accent-ink" : "bg-theme-surface-raised text-theme-text-dim hover:bg-theme-surface-border",
+              ].join(" ")}
+            >
+              {BAND_LABEL[b]}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   if (filterKind === "profile-multi") {
     const options = [...(profiles ?? []), { id: NO_PROFILE_MATCH, label: "None" }];
     const checked = (value as ReadonlySet<string>) ?? new Set(options.map((o) => o.id));
@@ -358,6 +396,8 @@ export function DashboardClient({
   draftedGigKeys = new Set(),
   initialPrepByGigKey = {},
   engagementProfiles = [],
+  groupId,
+  hideOutOfBandDefault = true,
 }: {
   gigs: StoredGig[];
   draftedGigKeys?: ReadonlySet<string>;
@@ -365,6 +405,10 @@ export function DashboardClient({
   initialPrepByGigKey?: Readonly<Record<string, PrepPacketContent>>;
   /** dashboard-profile-grouping story — this install's configured Needs.engagementProfiles, {id,label} only (see page.tsx's extractEngagementProfileSummaries()). Empty for a first-run install with no Needs configured yet -- the Profile column/filter then just shows the "None" bucket for everything, never crashes. */
   engagementProfiles?: { id: string; label: string }[];
+  /** rate-band-match-quality epic. The `/[group]/gigs` route's own group id -- resolveDisplayBand() uses this to show that SPECIFIC group's band rather than the best-across-all-groups fallback `/gigs` (unscoped) needs. Omitted on `/gigs`. */
+  groupId?: string;
+  /** rate-band-match-quality epic. The relevant group's own real `matchQuality.hideOutOfBandByDefault` setting (resolved server-side, page.tsx) -- seeds the Band column's initial filter, never a hardcoded default here. */
+  hideOutOfBandDefault?: boolean;
 }) {
   const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -373,9 +417,15 @@ export function DashboardClient({
   // on," not the old all-statuses-mixed-together default. Any real prior
   // visit overrides this via the persisted-prefs useEffect below, same as
   // before this change.
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([
-    { id: "status", value: new Set<GigStatus>(["new"]) },
-  ]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(() => {
+    const filters: ColumnFiltersState = [{ id: "status", value: new Set<GigStatus>(["new"]) }];
+    // rate-band-match-quality epic: real, owner-tunable per-group default
+    // (matchQuality.hideOutOfBandByDefault) -- never a hardcoded true here.
+    if (hideOutOfBandDefault) {
+      filters.push({ id: "band", value: new Set<MatchBand>(["in-band", "near-band"]) });
+    }
+    return filters;
+  });
 
   // product-review-followups epic: read any previously-saved sort/filter
   // preference ONCE on mount and apply it -- deliberately not read
@@ -853,6 +903,36 @@ export function DashboardClient({
       sortingFn: sortingFnFor("tier"),
       filterFn: (row, _id, value) => !value || row.original.tier === value,
       meta: { filterKind: "select", selectOptions: ["green", "yellow", "red"] },
+    },
+    {
+      id: "band",
+      header: "Band",
+      // rate-band-match-quality epic. Orthogonal to Tier above -- tier
+      // answers "right kind of role" (keyword-only, no rate awareness),
+      // this answers "is the rate actually in range." The real, concrete
+      // fix for the owner's own live complaint: real $50-60/hr and
+      // $86k-225k/yr listings were tiering green ("Strong fit") despite
+      // failing every group's rate floor entirely.
+      accessorFn: (g) => resolveDisplayBand(g, groupId),
+      cell: ({ row }) => {
+        const band = resolveDisplayBand(row.original, groupId);
+        return (
+          <span
+            className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-current/30"
+            style={BAND_BADGE_STYLE[band]}
+          >
+            {BAND_LABEL[band]}
+          </span>
+        );
+      },
+      // No custom sortingFn -- "band" is a derived (group-scoped) value, not
+      // a real StoredGig field compareByField() knows about; TanStack's
+      // default sort over accessorFn's return value is correct as-is.
+      filterFn: (row, _id, value) => {
+        const checked = value as ReadonlySet<MatchBand> | undefined;
+        return !checked || checked.has(resolveDisplayBand(row.original, groupId));
+      },
+      meta: { filterKind: "band-multi" },
     },
     {
       id: "profile",

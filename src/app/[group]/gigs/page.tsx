@@ -5,7 +5,7 @@ import { SyncStatusDropdown } from "../../sync-status-dropdown";
 import { SonarSweepHeader } from "../../sonar-sweep-header";
 import { sweepNowAction } from "../../actions";
 import { SYNC_STATUS_SOURCES } from "../../sync-status-registry";
-import { loadDashboardData, resolveGroupLabel } from "../../dashboard-data";
+import { loadDashboardData, resolveGroupLabel, resolveHideOutOfBandDefault } from "../../dashboard-data";
 
 // dashboard-drafts-data-integrity epic, relocate-giglist-to-all-gigs story.
 // Relocated verbatim from src/app/[group]/page.tsx — the per-group mirror
@@ -24,6 +24,8 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
 
   const { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey } = loadDashboardData(groupId);
   const now = Date.now();
+  // rate-band-match-quality epic: THIS specific group's own real setting.
+  const hideOutOfBandDefault = resolveHideOutOfBandDefault(rawConfig, groupId);
 
   return (
     <main className="mx-auto max-w-[88rem] p-6">
@@ -38,7 +40,14 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
       <div className="mt-3 flex flex-wrap items-center gap-2 font-theme-mono text-xs uppercase tracking-wide text-theme-text-dim">
         <SyncStatusDropdown sources={SYNC_STATUS_SOURCES} />
       </div>
-      <DashboardClient gigs={gigs} draftedGigKeys={draftedGigKeys} initialPrepByGigKey={prepByGigKey} engagementProfiles={engagementProfiles} />
+      <DashboardClient
+        gigs={gigs}
+        draftedGigKeys={draftedGigKeys}
+        initialPrepByGigKey={prepByGigKey}
+        engagementProfiles={engagementProfiles}
+        groupId={groupId}
+        hideOutOfBandDefault={hideOutOfBandDefault}
+      />
     </main>
   );
 }

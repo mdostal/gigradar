@@ -10,10 +10,21 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fraunces, IBM_Plex_Mono, Libre_Franklin } from "next/font/google";
 import type { GigStatus, OutcomeReason, StoredGig } from "@/lib/store";
+import type { MatchBand } from "@/lib/types";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "../actions";
 import { canGenerateDraft, draftButtonLabel } from "../dashboard-draft";
-import { distinctSources, isWithinSeenWindow, SEEN_WINDOW_OPTIONS, shortProfileLabel, type SeenWindow } from "../dashboard-filter";
+import {
+  BAND_LABEL,
+  distinctSources,
+  isWithinSeenWindow,
+  passesBandFilter,
+  resolveDisplayBand,
+  SEEN_WINDOW_OPTIONS,
+  shortProfileLabel,
+  type BandFilter,
+  type SeenWindow,
+} from "../dashboard-filter";
 import { ALL_STATUSES, formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL } from "../dashboard-client";
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
 import styles from "./today.module.css";
@@ -40,6 +51,31 @@ function tierWord(tier: string | undefined): string {
 function TierStamp({ tier }: { tier: StoredGig["tier"] }) {
   if (!tier) return null;
   return <span className={`${styles.stamp} ${TIER_STAMP_CLASS[tier] ?? ""}`}>{tierWord(tier)}</span>;
+}
+
+// rate-band-match-quality epic, band-filter-everywhere story. Orthogonal
+// to TierStamp above -- tier answers "right kind of role," this answers
+// "is the rate actually in range." No badge for "in-band" -- it's the
+// unsurprising default, same "don't clutter for the normal case"
+// precedent the sources-needing-login row (config-sections.ts) already
+// established.
+const BAND_CHIPS: { value: BandFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "in-band", label: BAND_LABEL["in-band"] },
+  { value: "near-band", label: BAND_LABEL["near-band"] },
+  { value: "out-of-band", label: BAND_LABEL["out-of-band"] },
+];
+
+const BAND_STAMP_CLASS: Record<MatchBand, string | undefined> = {
+  "in-band": undefined,
+  "near-band": styles.stampYellow,
+  "out-of-band": styles.stampRed,
+};
+
+function BandStamp({ band }: { band: MatchBand }) {
+  const cls = BAND_STAMP_CLASS[band];
+  if (!cls) return null;
+  return <span className={`${styles.stamp} ${cls}`}>{BAND_LABEL[band]}</span>;
 }
 
 function ProfileChips({ ids, profiles }: { ids: string[] | undefined; profiles: { id: string; label: string }[] }) {
@@ -79,16 +115,21 @@ export function TodayClient({
   draftedGigKeys = new Set(),
   initialPrepByGigKey = {},
   engagementProfiles = [],
+  hideOutOfBandDefault = true,
 }: {
   gigs: StoredGig[];
   draftedGigKeys?: ReadonlySet<string>;
   initialPrepByGigKey?: Readonly<Record<string, PrepPacketContent>>;
   engagementProfiles?: { id: string; label: string }[];
+  /** rate-band-match-quality epic. The relevant group's own real `matchQuality.hideOutOfBandByDefault` setting (resolved server-side, page.tsx) -- the initial state of the "Hide out-of-band" toggle, never a hardcoded default here. */
+  hideOutOfBandDefault?: boolean;
 }) {
   const router = useRouter();
   const sources = useMemo(() => distinctSources(gigs), [gigs]);
 
   const [tier, setTier] = useState<TierFilterValue>("all");
+  const [band, setBand] = useState<BandFilter>("all");
+  const [hideOutOfBand, setHideOutOfBand] = useState(hideOutOfBandDefault);
   const [status, setStatus] = useState<GigStatus | "all">("all");
   const [source, setSource] = useState<string | "all">("all");
   const [profile, setProfile] = useState<string>("all");
@@ -111,6 +152,7 @@ export function TodayClient({
 
   function matches(g: StoredGig): boolean {
     if (tier !== "all" && g.tier !== tier) return false;
+    if (!passesBandFilter(resolveDisplayBand(g), band, hideOutOfBand)) return false;
     if (status !== "all" && g.status !== status) return false;
     if (source !== "all" && g.sourceId !== source) return false;
     if (profile !== "all" && !(g.matchedProfileIds ?? []).includes(profile)) return false;
@@ -123,7 +165,7 @@ export function TodayClient({
     return true;
   }
 
-  const visible = useMemo(() => gigs.filter(matches), [gigs, tier, status, source, profile, seenWindow, search]);
+  const visible = useMemo(() => gigs.filter(matches), [gigs, tier, band, hideOutOfBand, status, source, profile, seenWindow, search]);
 
   // "Today's Picks" -- green + new, sorted most-recently-seen first, top 4.
   // Deliberately re-filters the FULL gigs array by the same `matches()`
@@ -136,7 +178,7 @@ export function TodayClient({
         .slice()
         .sort((a, b) => new Date(b.firstSeen).getTime() - new Date(a.firstSeen).getTime())
         .slice(0, 4),
-    [gigs, tier, status, source, profile, seenWindow, search],
+    [gigs, tier, band, hideOutOfBand, status, source, profile, seenWindow, search],
   );
 
   const grouped = useMemo(() => {
@@ -247,6 +289,28 @@ export function TodayClient({
           ))}
         </div>
         <div className={styles.toolbarSep} />
+        <div className={styles.chipGroup}>
+          {BAND_CHIPS.map((b) => (
+            <button
+              key={b.value}
+              type="button"
+              onClick={() => setBand(b.value)}
+              className={`${styles.chip} ${band === b.value ? styles.chipActive : ""}`}
+            >
+              {b.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setHideOutOfBand((v) => !v)}
+            aria-pressed={hideOutOfBand}
+            title="Out-of-band gigs cleared no configured group's rate/hours threshold at all"
+            className={`${styles.chip} ${hideOutOfBand ? styles.chipActive : ""}`}
+          >
+            Hide out-of-band
+          </button>
+        </div>
+        <div className={styles.toolbarSep} />
         <select value={status} onChange={(e) => setStatus(e.target.value as GigStatus | "all")} className={styles.tbSelect} aria-label="Filter by status">
           <option value="all">Any status</option>
           {ALL_STATUSES.map((s) => (
@@ -310,7 +374,10 @@ export function TodayClient({
                     <div className={styles.pickTitle}>{gig.title}</div>
                     <CompanyLine company={gig.company} cls={styles.pickCompany} />
                   </div>
-                  <TierStamp tier={gig.tier} />
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <TierStamp tier={gig.tier} />
+                    <BandStamp band={resolveDisplayBand(gig)} />
+                  </div>
                 </div>
                 <div className={styles.pickMeta}>
                   <span className={styles.sourceTag}>{gig.sourceId}</span>
@@ -388,6 +455,7 @@ export function TodayClient({
                       <div className={styles.rowListing}>
                         <div className={styles.rowTitleLine}>
                           <TierStamp tier={gig.tier} />
+                          <BandStamp band={resolveDisplayBand(gig)} />
                           <span className={styles.rowTitle}>{gig.title}</span>
                         </div>
                         <div>
