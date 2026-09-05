@@ -1,7 +1,7 @@
 id: app-error-boundaries
 epic: group-feature-hardening-and-coverage
 title: Add root + route-segment error boundaries
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
@@ -54,3 +54,34 @@ risks:
   - severity: low
     description: A fallback UI that looks nothing like the rest of the app (wrong theme tokens, no nav) would itself feel like a second bug.
     mitigation: Reuse the app's real theme tokens/classes (same ones config/page.tsx uses) rather than inline unstyled markup.
+
+progress_note: |
+  Shipped. global-error.tsx (root, plain inline-styled markup since it
+  replaces the layout that would normally provide theme tokens) plus
+  route-segment error.tsx for /config, /gigs, and /[group] (all sharing a
+  new route-error-fallback.tsx that DOES use the app's real theme classes,
+  since these render inside the normal layout). All four wired to
+  reset() via a visible "Try again" button, exactly per Next.js's
+  documented error.tsx contract.
+
+  Real, unplanned addition: writing a genuine render-time smoke test for
+  these (this repo has no React Testing Library/jsdom) required adding
+  `esbuild: { jsx: "automatic" }` to vitest.config.ts and a new
+  `@types/react-dom` devDependency -- this is the first vitest file in the
+  repo to import and render a real .tsx component rather than only testing
+  plain exported functions. Scoped to vitest's own esbuild pass only; the
+  Next.js production build (SWC) is untouched.
+
+  Verified: npm test (1463 passed), npm run typecheck (clean), and a full
+  isolated-dev-server curl regression pass (/, /gigs, /config, /g1, /g1/gigs,
+  /g2, /g2/gigs, /today, /drafts all still 200) confirming these additions
+  don't change any existing route's normal rendering.
+
+  Honest limitation: the activation path itself (an actual thrown
+  exception being caught and rendering the fallback) is not curl-testable
+  black-box without adding a debug-only crash trigger to production code,
+  which would be inappropriate to ship. The smoke test proves each
+  component renders correctly in isolation; Next.js's own App Router
+  convention (verified against its documented contract, not guessed) is
+  what wires the catching behavior. This mirrors the honest posture taken
+  by the epic's own cold-start-hang investigation earlier this session.

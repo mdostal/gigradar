@@ -1,7 +1,7 @@
 id: config-data-test-coverage
 epic: group-feature-hardening-and-coverage
 title: Real unit tests for config-data.ts (loadConfigPageData, blankConfig fallback path)
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
@@ -63,3 +63,13 @@ risks:
   - severity: low
     description: loadConfigPageData() calls real isPortunusAvailable() (spawns `portunus --version`) and checkSessionReadiness() per source -- both real, unmocked calls.
     mitigation: Use zero sources in test fixtures so checkSessionReadiness()'s loop is a no-op; isPortunusAvailable()'s real result doesn't affect the assertions this story cares about (groups/subtitle/configExists), so it's fine to leave unmocked, consistent with this repo's existing no-heavy-mocking convention.
+
+progress_note: |
+  Shipped as PR #139 (merged to dev). 5 tests covering blankConfig()'s
+  shape, the real-config happy path, the ConfigSchema-validation-failure
+  fallback (a real invalid config.json written to the isolated data dir --
+  the literal mechanism that would produce a "groups disappeared"
+  symptom), the no-config-yet first-run path, and sourcesWithOpenIssues'
+  structured context.sourceId matching (including a resolved issue that
+  must NOT appear). npm test (1447 passed at merge time) and npm run
+  typecheck both clean.
