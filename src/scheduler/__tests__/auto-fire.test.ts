@@ -65,8 +65,11 @@ const GOOD_CONTENT: DraftContent = {
   answers: {},
 };
 
-function makeGig(sourceId: string, externalId: string, tier: Gig["tier"]): Gig {
-  return { sourceId, externalId, tier, title: `Gig ${externalId}`, url: `https://example.test/${sourceId}/${externalId}` };
+// rate-band-match-quality epic: matchBand defaults to "in-band" so every
+// existing tier-focused test in this file keeps testing exactly that,
+// unaffected by the additive matchBand check.
+function makeGig(sourceId: string, externalId: string, tier: Gig["tier"], matchBand: Gig["matchBand"] = "in-band"): Gig {
+  return { sourceId, externalId, tier, matchBand, title: `Gig ${externalId}`, url: `https://example.test/${sourceId}/${externalId}` };
 }
 
 function seedGraduatingHistory(sourceId: string, count: number): void {
@@ -102,7 +105,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 }
 
 function matchResultFor(gig: Gig): MatchResult {
-  return { gig, pass: true, score: 1, reasons: [], tier: "green", matchedProfiles: [] };
+  return { gig, pass: true, score: 1, reasons: [], tier: "green", matchBand: gig.matchBand ?? "in-band", matchedProfiles: [] };
 }
 
 describe("runAutoDraft: graduated-auto-fire-trust wiring", () => {

@@ -9,7 +9,7 @@
 // isolation is deliberate (src/lib/submit/adapter.ts's SubmitAdapter
 // registry, kept fully independent). evaluateAutoFire() only ever calls
 // `adapter.submit(...)` through the registry's opaque interface.
-import type { AutoFireDecision, AutoFireRuleConfig, Config, DraftContent, Tier } from "../types.js";
+import type { AutoFireDecision, AutoFireRuleConfig, Config, DraftContent, MatchBand, Tier } from "../types.js";
 import { getDb, getDraft, getGig, recordAutoFireDecision } from "../store/index.js";
 import type { DbOption } from "../store/index.js";
 import { getSubmitAdapter } from "../submit/adapter.js";
@@ -60,6 +60,24 @@ export function isGraduated(sourceId: string, tier: Tier, config: Config, opts: 
 /** Check 1: never fire on anything but green -- stricter than drafting's own tier==="red" guardrail, deliberately: auto-fire is a real-world action. */
 export function checkTierIsGreen(tier: Tier | undefined): boolean {
   return tier === "green";
+}
+
+/**
+ * rate-band-match-quality epic, auto-draft-respects-band story. Sibling
+ * check to checkTierIsGreen() above -- tier answers "right kind of role"
+ * (keyword-only, no rate awareness), this answers "is the rate actually
+ * in range" (matching/match-band.ts's computeMatchBand()). Additive: both
+ * must pass, this never replaces the tier check. `undefined` (a gig
+ * scanned before this epic shipped, or never re-scanned since) is NOT
+ * in-band -- fail CLOSED, the deliberate opposite of dashboard-filter.ts's
+ * resolveDisplayBand() (which fails OPEN for the same undefined case,
+ * since that backs a display filter where hiding a legitimate historical
+ * gig by default is the worse outcome). Automation firing a real
+ * submission on stale/unclassified rate data is the worse outcome here --
+ * different risk profile, deliberately different default.
+ */
+export function checkMatchBandInBand(matchBand: MatchBand | undefined): boolean {
+  return matchBand === "in-band";
 }
 
 const REFUSAL_MARKERS = [/^i cannot/i, /^i can't/i, /^i'm sorry, but i (cannot|can't)/i, /^as an ai/i];
@@ -179,6 +197,7 @@ export function evaluateAutoFire(gigKey: string, config: Config, opts: DbOption 
   const draft = getDraft(gigKey, { db: opts.db });
   const failedChecks: string[] = [];
   if (!checkTierIsGreen(tier)) failedChecks.push(`tier check failed: tier is "${tier ?? "unset"}", not "green"`);
+  if (!checkMatchBandInBand(gig.matchBand)) failedChecks.push(`match-band check failed: matchBand is "${gig.matchBand ?? "unset"}", not "in-band"`);
   if (!draft) {
     failedChecks.push("no draft exists for this gig");
   } else if (!checkDraftContentSanity(draft.content)) {

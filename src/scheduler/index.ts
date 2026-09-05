@@ -291,8 +291,15 @@ export async function runAutoDraft(
   }
   const applyProfile = config.applyProfile;
 
+  // rate-band-match-quality epic: additive match-band check alongside
+  // tier -- tier is a keyword-only, rate-blind signal (matching/tiering.ts);
+  // an unset matchBand (a gig scanned before this epic shipped) fails
+  // closed here, the deliberate opposite of dashboard-filter.ts's own
+  // resolveDisplayBand() fallback (see that file's header comment) --
+  // automation firing on stale/unclassified rate data is the worse
+  // outcome, display hiding a legitimate historical gig is not.
   const eligible = passed
-    .filter((r) => r.tier === "green" && getDraftFn(gigKey(r.gig.sourceId, r.gig.externalId)) === undefined)
+    .filter((r) => r.tier === "green" && r.gig.matchBand === "in-band" && getDraftFn(gigKey(r.gig.sourceId, r.gig.externalId)) === undefined)
     .slice(0, AUTO_DRAFT_CAP);
 
   let draftedCount = 0;

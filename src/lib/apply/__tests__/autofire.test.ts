@@ -15,6 +15,7 @@ import {
   checkDailyCapNotExceeded,
   checkDraftContentSanity,
   checkGigIsFresh,
+  checkMatchBandInBand,
   checkTierIsGreen,
   dailyFireCount,
   evaluateAutoFire,
@@ -148,6 +149,13 @@ describe("the 4 default checks (design-discussion.md §3.4)", () => {
     expect(checkTierIsGreen(undefined)).toBe(false);
   });
 
+  it("checkMatchBandInBand -- fails CLOSED on undefined, the deliberate opposite of the display-filter's resolveDisplayBand()", () => {
+    expect(checkMatchBandInBand("in-band")).toBe(true);
+    expect(checkMatchBandInBand("near-band")).toBe(false);
+    expect(checkMatchBandInBand("out-of-band")).toBe(false);
+    expect(checkMatchBandInBand(undefined)).toBe(false);
+  });
+
   it("checkDraftContentSanity rejects empty/too-short/refusal-shaped content", () => {
     expect(checkDraftContentSanity({ coverText: "", answers: {} })).toBe(false);
     expect(checkDraftContentSanity({ coverText: "too short", answers: {} })).toBe(false);
@@ -207,7 +215,12 @@ describe("evaluateAutoFire — the full decision tree, every stop point independ
   registerSubmitAdapter({ id: ADAPTER_ID, submit: async () => ({ ok: true, confirmation: "n/a" }) });
 
   function seedReadyGig(sourceId: string, externalId: string): string {
-    recordScan([{ sourceId, gigs: [makeGig({ sourceId, externalId, tier: "green" })] }], { db, now: "2026-01-01T00:00:00.000Z" });
+    // rate-band-match-quality epic: matchBand: "in-band" alongside tier --
+    // checkMatchBandInBand() fails closed on undefined, so every "step 5:
+    // X check fails"/"step 6: all pass" test below (which isolates ONE
+    // specific failure at a time) needs this gig to genuinely be in-band,
+    // same as it's genuinely tier: "green".
+    recordScan([{ sourceId, gigs: [makeGig({ sourceId, externalId, tier: "green", matchBand: "in-band" })] }], { db, now: "2026-01-01T00:00:00.000Z" });
     return `${sourceId}:${externalId}`;
   }
 
@@ -287,6 +300,46 @@ describe("evaluateAutoFire — the full decision tree, every stop point independ
     const decision = evaluateAutoFire(gigKey, config, { db, now: "2026-01-02T00:00:00.000Z" });
     expect(decision.fired).toBe(false);
     expect(decision.reasons.some((r) => r.includes("tier check failed"))).toBe(true);
+  });
+
+  it("step 5: match-band check fails for a green-tier gig that's out-of-band (the real, live-confirmed trigger for this epic)", () => {
+    seedApprovedDraft(ADAPTER_ID, "mb-a", "green");
+    seedApprovedDraft(ADAPTER_ID, "mb-b", "green");
+    seedApprovedDraft(ADAPTER_ID, "mb-c", "green");
+    recordScan([{ sourceId: ADAPTER_ID, gigs: [makeGig({ sourceId: ADAPTER_ID, externalId: "mb-1", tier: "green", matchBand: "out-of-band" })] }], {
+      db,
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    const gigKey = `${ADAPTER_ID}:mb-1`;
+    saveDraft(gigKey, GOOD_CONTENT, { db, now: "2026-01-01T00:00:00.000Z" });
+    const config: Config = {
+      autoFire: { rules: [{ sourceId: ADAPTER_ID, tier: "green", enabled: true, minApprovals: 3, dailyCap: 3 }] },
+    } as Config;
+
+    const decision = evaluateAutoFire(gigKey, config, { db, now: "2026-01-02T00:00:00.000Z" });
+    expect(decision.fired).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("match-band check failed"))).toBe(true);
+  });
+
+  it("step 5: match-band check fails CLOSED for a green-tier gig scanned before this epic shipped (no matchBand at all)", () => {
+    seedApprovedDraft(ADAPTER_ID, "nb-a", "green");
+    seedApprovedDraft(ADAPTER_ID, "nb-b", "green");
+    seedApprovedDraft(ADAPTER_ID, "nb-c", "green");
+    // No matchBand field at all -- makeGig()'s default shape, mirroring a
+    // pre-epic gig exactly.
+    recordScan([{ sourceId: ADAPTER_ID, gigs: [makeGig({ sourceId: ADAPTER_ID, externalId: "nb-1", tier: "green" })] }], {
+      db,
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    const gigKey = `${ADAPTER_ID}:nb-1`;
+    saveDraft(gigKey, GOOD_CONTENT, { db, now: "2026-01-01T00:00:00.000Z" });
+    const config: Config = {
+      autoFire: { rules: [{ sourceId: ADAPTER_ID, tier: "green", enabled: true, minApprovals: 3, dailyCap: 3 }] },
+    } as Config;
+
+    const decision = evaluateAutoFire(gigKey, config, { db, now: "2026-01-02T00:00:00.000Z" });
+    expect(decision.fired).toBe(false);
+    expect(decision.reasons.some((r) => r.includes("match-band check failed"))).toBe(true);
   });
 
   it("step 5: no draft exists for the gig", () => {

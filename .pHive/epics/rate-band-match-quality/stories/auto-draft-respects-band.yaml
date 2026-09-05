@@ -1,7 +1,7 @@
 id: auto-draft-respects-band
 epic: rate-band-match-quality
 title: autoDraftOnScan/autoFire require matchBand === in-band in addition to tier === green
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: [match-band-pipeline-and-storage]
@@ -49,3 +49,39 @@ risks:
   - severity: low
     description: A gig scanned before match-band-pipeline-and-storage shipped has no matchBand value at all (undefined, not "out-of-band").
     mitigation: Treat an undefined/missing matchBand as NOT in-band (fail closed, never fail open on automation eligibility) -- consistent with this codebase's existing autoFire kill-switch-first, fail-safe posture.
+
+progress_note: |
+  Shipped. checkMatchBandInBand() added to autofire.ts (sibling to
+  checkTierIsGreen(), same style), wired as an additive check in
+  evaluateAutoFire()'s step 5. scheduler/index.ts's runAutoDraft()
+  eligibility filter extended with `&& r.gig.matchBand === "in-band"`.
+  Deliberately the OPPOSITE default from band-filter-everywhere's own
+  resolveDisplayBand() fix (fails CLOSED here on undefined, fails OPEN
+  there) -- documented explicitly at both call sites: automation firing on
+  stale/unclassified rate data is unsafe, a display filter hiding a
+  legitimate historical gig by default is not. notifyOnGreenMatch (a
+  desktop notification, not automation) was deliberately left untouched --
+  genuinely out of this story's scope, flagged here rather than silently
+  expanded into.
+
+  Real fixture fallout caught and fixed: every existing scheduler/autofire
+  test that hand-constructs a "ready to fire" gig (seedReadyGig() in
+  autofire.test.ts, makeMatchResult()/makeGig() in index.test.ts and
+  auto-fire.test.ts) predated matchBand entirely -- all needed a default
+  matchBand: "in-band" added so their OWN isolated-failure tests kept
+  testing exactly what they were designed to test, rather than universally
+  failing on the new check. Caught via a genuine test run, not guessed.
+
+  Verified: 3 new tests (checkMatchBandInBand unit test, an evaluateAutoFire
+  integration test for a real out-of-band gig, one for a gig with zero
+  band data at all proving fail-closed) plus a new runAutoDraft-level test
+  covering near-band/out-of-band/no-band/in-band together. 1513 tests
+  total pass, typecheck clean, isolated dev-server curl pass across 8
+  key routes.
+
+epic_status: |
+  All 5 stories in rate-band-match-quality now complete:
+  match-band-core (#141), match-band-pipeline-and-storage (#142),
+  match-quality-settings-page (#143), band-filter-everywhere (#144,
+  including a real fail-open/fail-closed regression caught and fixed by
+  CI mid-epic), auto-draft-respects-band (this story). Epic done.
