@@ -1,7 +1,7 @@
 id: match-band-core
 epic: rate-band-match-quality
 title: Pure computeMatchBand() classifier + exhaustive unit tests
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
@@ -54,3 +54,12 @@ risks:
   - severity: medium
     description: Reimplementing rate comparison instead of reusing gate.ts's own matchProfiles()/normalizeRate() could silently drift (e.g. a rounding difference) from what the real gate actually enforces, producing a band that disagrees with matchedGroupIds.
     mitigation: Export and directly reuse gate.ts's internal rate-comparison helpers rather than rewriting them; add a test asserting a gig that gate() passes is never classified out-of-band by this module for the same profile set.
+
+progress_note: |
+  Shipped as PR #141 (merged to dev, then main). 13 unit tests covering
+  every acceptance criterion including the tolerance-boundary cases and
+  the "never disagrees with a passing gate()" mitigation test. Status was
+  never flipped from "pending" at merge time (a real bookkeeping miss,
+  caught and fixed later while answering the owner's own "are we solid"
+  status check) -- the code itself has been live and correct since PR #141
+  merged; only this file's own status field was stale.
