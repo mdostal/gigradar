@@ -48,7 +48,13 @@ export const ALL_BANDS: MatchBand[] = ["in-band", "near-band", "out-of-band"];
  * occasionally showing one whose rate hasn't been re-checked yet.
  */
 export function resolveDisplayBand(gig: Pick<StoredGig, "matchBand" | "matchedGroupBands">, groupId?: string): MatchBand {
-  if (groupId) return gig.matchedGroupBands?.[groupId] ?? gig.matchBand ?? "in-band";
+  // Grill-pass fix: a scoped lookup with no entry for THIS group must
+  // never fall back to the flat matchBand -- that's the PRIMARY group's
+  // own verdict (e.g. against a $200/hr floor), which would display as
+  // if it were this specific group's (e.g. $50/hr floor) band. Falls back
+  // straight to "in-band" (fail open, matching the "no data at all" case
+  // right below) instead of a mislabeled, unrelated group's real value.
+  if (groupId) return gig.matchedGroupBands?.[groupId] ?? "in-band";
   if (!gig.matchedGroupBands && !gig.matchBand) return "in-band";
   const bands = gig.matchedGroupBands ? Object.values(gig.matchedGroupBands) : gig.matchBand ? [gig.matchBand] : [];
   if (bands.includes("in-band")) return "in-band";

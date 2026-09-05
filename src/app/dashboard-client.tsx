@@ -442,7 +442,21 @@ export function DashboardClient({
       const prefs = deserializeDashboardPrefs(raw);
       if (!prefs) return;
       setSorting(prefs.sorting);
-      setColumnFilters(prefs.columnFilters);
+      // rate-band-match-quality epic, grill-pass fix: a real prior save
+      // predates the "band" column filter entirely -- restoring it
+      // wholesale would silently drop the new hide-out-of-band-by-default
+      // behavior for every returning user (including, live-confirmed,
+      // the owner's own dogfooding browser), defeating the entire point
+      // of this epic for anyone who'd already customized dashboard
+      // filters before tonight. Inject the default band filter only when
+      // the restored prefs don't already have their OWN explicit choice
+      // for it -- never override a real, deliberate user selection.
+      const hasExplicitBandFilter = prefs.columnFilters.some((f) => f.id === "band");
+      const restoredFilters =
+        !hasExplicitBandFilter && hideOutOfBandDefault
+          ? [...prefs.columnFilters, { id: "band", value: new Set<MatchBand>(["in-band", "near-band"]) }]
+          : prefs.columnFilters;
+      setColumnFilters(restoredFilters);
     } catch {
       // localStorage unavailable (private browsing, etc.) -- stay on defaults.
     }

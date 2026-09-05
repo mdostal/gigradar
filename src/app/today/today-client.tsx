@@ -190,6 +190,15 @@ export function TodayClient({
 
   function resetFilters() {
     setTier("all");
+    // rate-band-match-quality epic, grill-pass fix: this function was
+    // never updated when the Band chip row/hide toggle were added in the
+    // same story -- Reset/Clear filters left them untouched, so the list
+    // could still look filtered (or newly full of out-of-band noise)
+    // right after a "reset." hideOutOfBand goes back to its real resolved
+    // default (the prop), not a hardcoded value, same as every other
+    // control here resets to ITS own default.
+    setBand("all");
+    setHideOutOfBand(hideOutOfBandDefault);
     setStatus("all");
     setSource("all");
     setProfile("all");

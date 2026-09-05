@@ -274,4 +274,11 @@ describe("match-quality section", () => {
     const tuned = baseData({ initial: { ...baseData().initial, groups: [group({ id: "g1", matchQuality: { nearBandTolerancePct: 10 } })] } });
     expect(section("match-quality").status(tuned)).toBe("ok");
   });
+
+  it("status() stays 'neutral' after a no-op Save that writes the exact default values back (grill-pass fix -- compares RESOLVED values, not matchQuality's mere presence)", () => {
+    const noOpSave = baseData({
+      initial: { ...baseData().initial, groups: [group({ id: "g1", matchQuality: { nearBandTolerancePct: 15, hideOutOfBandByDefault: true } })] },
+    });
+    expect(section("match-quality").status(noOpSave)).toBe("neutral");
+  });
 });
