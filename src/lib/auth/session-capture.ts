@@ -398,39 +398,51 @@ export async function finishCapture(captureId: string, sessionBackend: SessionBa
 
   try {
     const rawStorageState = (await entry.context.storageState()) as StorageState;
-
-    // entry.allowedOrigins (resolved once, at startCapture() time — see
-    // that function's own doc comment) takes priority when present; falls
-    // back to the static registry otherwise, today's unchanged behavior.
-    const allowedOrigins = entry.allowedOrigins ?? SOURCE_ORIGINS[entry.sourceId];
-    if (!allowedOrigins || allowedOrigins.length === 0) {
-      throw new Error(
-        `${MODULE_PREFIX}: no origin allowlist registered for source "${entry.sourceId}" (see src/lib/sources/origins.ts).`,
-      );
-    }
-
-    // SOURCE_ORIGINS' values are `readonly string[]` (see origins.ts) —
-    // spread into a plain mutable array to match filterStorageStateToAllowlist()'s
-    // signature; the values themselves are unchanged.
-    const filtered = filterStorageStateToAllowlist(rawStorageState, [...allowedOrigins]);
-
-    if (filtered.cookies.length === 0) {
-      throw new Error(
-        `${MODULE_PREFIX}: capture produced no usable session for "${entry.sourceId}" — login may not have completed.`,
-      );
-    }
-
-    if (sessionBackend === "portunus") {
-      await writeSessionViaPortunus(entry.sourceId, PORTUNUS_SESSION_ACCOUNT, filtered, PORTUNUS_SESSION_TTL_SECONDS);
-      return { backend: "portunus", site: entry.sourceId, account: PORTUNUS_SESSION_ACCOUNT };
-    }
-
-    const destPath = sessionStatePathFor(entry.sourceId);
-    writeStorageStateAtomically(destPath, filtered);
-    return { backend: "local", path: destPath };
+    return await persistCapturedSession(entry.sourceId, rawStorageState, sessionBackend, entry.allowedOrigins);
   } finally {
     await safeCloseBrowser(entry.browser, entry.realChrome);
   }
+}
+
+/**
+ * true-embedded-browser epic, embedded-capture-login-flow story. Extracted
+ * from finishCapture() above (which now just reads the live Playwright
+ * context's storageState and delegates here) so the embedded-webview
+ * capture path — which has NO Playwright browser/context at all, just a
+ * raw storageState read back from a native WKWebView cookie store on the
+ * client — can share the exact same allowlist-filtering/zero-cookie-sanity-
+ * check/backend-dispatch/persistence logic, rather than a second, divergent
+ * copy. `allowedOrigins` omitted falls back to `SOURCE_ORIGINS[sourceId]`,
+ * identical to finishCapture()'s own pre-extraction behavior.
+ */
+export async function persistCapturedSession(
+  sourceId: string,
+  rawStorageState: StorageState,
+  sessionBackend: SessionBackend,
+  allowedOrigins?: string[],
+): Promise<FinishCaptureResult> {
+  const resolvedOrigins = allowedOrigins ?? SOURCE_ORIGINS[sourceId];
+  if (!resolvedOrigins || resolvedOrigins.length === 0) {
+    throw new Error(`${MODULE_PREFIX}: no origin allowlist registered for source "${sourceId}" (see src/lib/sources/origins.ts).`);
+  }
+
+  // SOURCE_ORIGINS' values are `readonly string[]` (see origins.ts) —
+  // spread into a plain mutable array to match filterStorageStateToAllowlist()'s
+  // signature; the values themselves are unchanged.
+  const filtered = filterStorageStateToAllowlist(rawStorageState, [...resolvedOrigins]);
+
+  if (filtered.cookies.length === 0) {
+    throw new Error(`${MODULE_PREFIX}: capture produced no usable session for "${sourceId}" — login may not have completed.`);
+  }
+
+  if (sessionBackend === "portunus") {
+    await writeSessionViaPortunus(sourceId, PORTUNUS_SESSION_ACCOUNT, filtered, PORTUNUS_SESSION_TTL_SECONDS);
+    return { backend: "portunus", site: sourceId, account: PORTUNUS_SESSION_ACCOUNT };
+  }
+
+  const destPath = sessionStatePathFor(sourceId);
+  writeStorageStateAtomically(destPath, filtered);
+  return { backend: "local", path: destPath };
 }
 
 /**

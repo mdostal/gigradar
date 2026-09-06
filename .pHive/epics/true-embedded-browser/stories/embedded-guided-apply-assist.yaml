@@ -37,6 +37,12 @@ progress_note: |
   owner's own explicit direction before any implementation -- deliberately
   NOT built this session. See the overnight-status artifact from this
   session for the live version of this decision.
+
+  UPDATE 2026-09-06: re-presented as a concrete, standalone decision
+  artifact (with a real recommendation: move manual mode to the embedded
+  pane) rather than buried in a general status report --
+  https://claude.ai/code/artifact/0c1c3ec2-b43a-4020-b649-9fa152ec3a8b.
+  Still deliberately NOT built pending the owner's own reply.
 complexity: medium
 methodology: classic
 depends_on: [embedded-webview-child-mechanism]

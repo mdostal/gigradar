@@ -109,6 +109,16 @@ progress_note: |
   app is confirmed idle), not a technical blocker -- the load-bearing
   compile-verification is already real and done.
 
+  UPDATE 2026-09-06: attempted the isolated dev run (XDG_DATA_HOME +
+  devUrl/port override, confirmed no collision with the real running
+  app) -- it compiled and launched cleanly. The remaining "screenshot
+  proving it renders" step was abandoned mid-attempt after it twice
+  captured unrelated windows/other live sessions on the owner's real
+  desktop instead of just the test window -- see this project's own
+  memory `feedback_never_screenshot_the_real_desktop.md`. Both images
+  deleted immediately, unused. This acceptance criterion needs the
+  owner's own eyes at the machine, not automated screenshotting.
+
 references:
   - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
     relevant_excerpt: "§2 research findings, §3 resolved architecture."

@@ -5,6 +5,7 @@ import { actionErr, actionOk } from "@/lib/actions/result";
 import { approvedCount } from "@/lib/apply/autofire";
 import { checkCaptureReadiness, type CaptureReadiness } from "@/lib/auth/capture-guidance";
 import { cancelCapture, finishCapture, getCapturePage, startCapture } from "@/lib/auth/session-capture";
+import { finishEmbeddedCapture, type RawEmbeddedStorageState } from "@/lib/auth/embedded-capture";
 import { sessionBackendFrom } from "@/lib/auth/session-backend";
 import { buildAuthorizationUrl, deleteTokenSet, loadTokenSet, storeTokenSet } from "@/lib/auth/oauth2";
 import { resolveOAuthClientCredentials } from "@/lib/auth/oauth-credentials";
@@ -247,6 +248,75 @@ export async function finishCaptureAction(
   let result: Awaited<ReturnType<typeof finishCapture>>;
   try {
     result = await finishCapture(captureId, sessionBackend);
+  } catch (e) {
+    return actionErr(e);
+  }
+
+  if (result.backend === "portunus") {
+    return actionOk({ backend: "portunus" });
+  }
+
+  const sources = withSessionStatePath(raw.sources, sourceId, result.path);
+
+  const saveResult = saveConfig({ sources });
+  if (!saveResult.ok) return actionErr(new Error(saveResult.error));
+
+  revalidatePath("/config");
+  return actionOk({ backend: "local", path: result.path });
+}
+
+/**
+ * true-embedded-browser epic, embedded-capture-login-flow story. The
+ * packaged-Tauri-app equivalent of `startCaptureAction()` above -- but
+ * unlike that action, this one never spawns a browser (Playwright/real
+ * Chrome). It just resolves `sourceId`'s login URL, the SAME way
+ * `startCaptureAction()` already does, so the client can call
+ * `showEmbeddedWebview(loginUrl, bounds)` directly (a client-side Tauri
+ * IPC call, not a Server Action) -- the embedded webview itself is
+ * entirely client/native-owned. No `allowedOrigins` returned here: the
+ * FINISH step below re-resolves them fresh from the current config at
+ * finish time, same as `finishCaptureAction()`'s own `sourceId`-driven
+ * resolution, rather than trusting a value round-tripped through the
+ * client in between.
+ */
+export async function resolveEmbeddedCaptureLoginUrlAction(sourceId: string): Promise<ActionResult<{ loginUrl: string }>> {
+  const raw = readRawConfig();
+  const cfg = rawSourceConfigFor(raw.sources, sourceId);
+  const loginUrl = resolveLoginUrl(sourceId, cfg);
+  if (!loginUrl) {
+    return actionErr(
+      new Error(`gigradar config: no login URL registered for source "${sourceId}" (see src/lib/sources/origins.ts, or set settings.loginUrl).`),
+    );
+  }
+  return actionOk({ loginUrl });
+}
+
+/**
+ * true-embedded-browser epic, embedded-capture-login-flow story. The
+ * packaged-Tauri-app equivalent of `finishCaptureAction()` above. The
+ * client has already read the raw session back out of the embedded
+ * webview itself (via `readEmbeddedWebviewSession()`, a client-side Tauri
+ * IPC call -- there is no server-held browser/captureId for this path at
+ * all) and passes it here as a plain argument. Shares
+ * `finishCaptureAction()`'s exact config-writing tail (local backend:
+ * fold `sessionStatePath` into settings + `saveConfig()` +
+ * `revalidatePath`; portunus backend: nothing to persist into
+ * config.json) via the same `withSessionStatePath()`/`rawSessionBackendFor()`
+ * helpers -- only the capture-completion mechanism (embedded-webview
+ * read-back vs. a live Playwright context) differs.
+ */
+export async function finishEmbeddedCaptureAction(
+  sourceId: string,
+  rawSession: RawEmbeddedStorageState,
+): Promise<ActionResult<{ backend: "local"; path: string } | { backend: "portunus" }>> {
+  const raw = readRawConfig();
+  const cfg = rawSourceConfigFor(raw.sources, sourceId);
+  const sessionBackend = rawSessionBackendFor(raw.sources, sourceId);
+  const allowedOrigins = resolveAllowedOrigins(sourceId, cfg);
+
+  let result: Awaited<ReturnType<typeof finishEmbeddedCapture>>;
+  try {
+    result = await finishEmbeddedCapture(sourceId, rawSession, sessionBackend, allowedOrigins);
   } catch (e) {
     return actionErr(e);
   }
