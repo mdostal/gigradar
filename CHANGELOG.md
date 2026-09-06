@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-09-06
+
+### Added
+
+- Guided and full-auto profile-assist sessions now run directly inside
+  the embedded pane in the packaged app, instead of always opening a
+  separate, positioned OS-level Chrome window — the same AI-driven
+  fill-in-the-form flow you already had, without a second window ever
+  appearing.
+- A second automation backend — Vision mode — is available for
+  guided/full-auto as an explicit, owner-selected alternative: instead
+  of reading the page's structure, it looks at a screenshot and clicks
+  where it needs to, the same way a person would. It's slower and moves
+  your real mouse cursor while it works, so it's opt-in, with a clear
+  warning shown before you turn it on. The default mode is unaffected
+  and never moves your cursor.
+- "Refresh suggestions" (AI-suggested copy for profile fields) is now
+  available in the embedded pane's Manual mode too, not just the
+  separate-window flow.
+
 ## [0.39.0] - 2026-09-06
 
 ### Added
