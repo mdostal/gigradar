@@ -7,7 +7,6 @@ import {
   passesRankBucketFilter,
   resolveDisplayBand,
   resolveDisplayRankBucket,
-  resolvePrimaryRankBucketGroupId,
   shortProfileLabel,
 } from "../dashboard-filter";
 
@@ -162,14 +161,14 @@ describe("resolveDisplayRankBucket", () => {
     expect(resolveDisplayRankBucket(gig, "not-in-map")).toBeUndefined();
   });
 
-  it("on an unscoped view, returns the FIRST group's assignment (matchedRankBuckets' own key order)", () => {
+  it("with no groupId (e.g. no configured group at all), returns undefined -- never guesses from matchedRankBuckets' own key order", () => {
     const gig = makeGig({ key: "1", matchedRankBuckets: { a: { bucket: "Tier 1", source: "rule", confirmed: true }, b: { bucket: "Tier 2", source: "rule", confirmed: true } } });
-    expect(resolveDisplayRankBucket(gig)).toEqual({ bucket: "Tier 1", source: "rule", confirmed: true });
+    expect(resolveDisplayRankBucket(gig, undefined)).toBeUndefined();
   });
 
   it("returns undefined for a gig with no rank-bucket data at all -- a valid, common state (the feature is opt-in), never an error", () => {
     const gig = makeGig({ key: "1" });
-    expect(resolveDisplayRankBucket(gig)).toBeUndefined();
+    expect(resolveDisplayRankBucket(gig, undefined)).toBeUndefined();
     expect(resolveDisplayRankBucket(gig, "any-group")).toBeUndefined();
   });
 });
@@ -191,21 +190,10 @@ describe("passesRankBucketFilter", () => {
 
   it("combines correctly with tier/band filters (real multi-filter AND-combination, not assumed)", () => {
     const gig = makeGig({ key: "1", tier: "green", matchBand: "in-band", matchedRankBuckets: { a: { bucket: "Tier 1", source: "rule", confirmed: true } } });
-    const passesAll = gig.tier === "green" && resolveDisplayBand(gig) === "in-band" && passesRankBucketFilter(resolveDisplayRankBucket(gig), "Tier 1");
+    const passesAll = gig.tier === "green" && resolveDisplayBand(gig) === "in-band" && passesRankBucketFilter(resolveDisplayRankBucket(gig, "a"), "Tier 1");
     expect(passesAll).toBe(true);
 
-    const failsOnBucket = gig.tier === "green" && resolveDisplayBand(gig) === "in-band" && passesRankBucketFilter(resolveDisplayRankBucket(gig), "Tier 2");
+    const failsOnBucket = gig.tier === "green" && resolveDisplayBand(gig) === "in-band" && passesRankBucketFilter(resolveDisplayRankBucket(gig, "a"), "Tier 2");
     expect(failsOnBucket).toBe(false);
-  });
-});
-
-describe("resolvePrimaryRankBucketGroupId", () => {
-  it("returns the FIRST group id in matchedRankBuckets' own key order", () => {
-    const gig = makeGig({ key: "1", matchedRankBuckets: { a: { bucket: "Tier 1", source: "rule", confirmed: true }, b: { bucket: "Tier 2", source: "rule", confirmed: true } } });
-    expect(resolvePrimaryRankBucketGroupId(gig)).toBe("a");
-  });
-
-  it("returns undefined for a gig with no rank-bucket data at all", () => {
-    expect(resolvePrimaryRankBucketGroupId(makeGig({ key: "1" }))).toBeUndefined();
   });
 });

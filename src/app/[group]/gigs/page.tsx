@@ -50,6 +50,7 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
         groupId={groupId}
         hideOutOfBandDefault={hideOutOfBandDefault}
         rankBucketLabels={rankBucketLabels}
+        rankBucketGroupId={groupId}
       />
     </main>
   );

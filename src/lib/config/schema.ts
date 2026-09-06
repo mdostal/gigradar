@@ -104,7 +104,13 @@ export const MatchQualityConfigSchema = z.object({
  * is a valid, real state while the owner is still building out a bucket.
  */
 export const RankBucketRuleSchema = z.object({
-  label: z.string().min(1),
+  // Grill-pass fix: "all" is the reserved sentinel dashboard-client.tsx's
+  // shared "select" filterKind uses to mean "no filter" -- a bucket
+  // literally named "all" (bucket labels are explicitly free-text/
+  // owner-named) would be indistinguishable from clearing the filter and
+  // could never actually be selected. Case-insensitive since the same
+  // collision applies regardless of casing.
+  label: z.string().min(1).refine((v) => v.trim().toLowerCase() !== "all", { message: '"all" is reserved and can\'t be used as a bucket name' }),
   description: z.string().optional(),
   minRate: z.number().min(0).optional(),
   maxRate: z.number().min(0).optional(),
@@ -124,7 +130,17 @@ export const GroupConfigSchema = z.object({
   aiVerify: z.boolean().optional(),
   tierScoring: TierScoringModeSchema.optional(),
   matchQuality: MatchQualityConfigSchema.optional(),
-  rankBuckets: z.array(RankBucketRuleSchema).optional(),
+  // Grill-pass fix: bucket labels are used as both a React list key and a
+  // <select> option value on the giglist -- two identically-labeled
+  // buckets in the same group produce a duplicate-key warning and an
+  // ambiguous, unrecoverable selection (the UI can't tell which of the
+  // two the owner meant).
+  rankBuckets: z
+    .array(RankBucketRuleSchema)
+    .optional()
+    .refine((rules) => !rules || new Set(rules.map((r) => r.label)).size === rules.length, {
+      message: "Bucket names must be unique within a group",
+    }),
   rankBucketAiOverlay: z.boolean().optional(),
 });
 

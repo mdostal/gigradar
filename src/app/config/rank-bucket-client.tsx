@@ -100,17 +100,33 @@ export function RankBucketClient({ initialGroups }: { initialGroups: GroupConfig
     setSaveError(null);
 
     for (const g of groups) {
+      const seenLabels = new Set<string>();
       for (const b of g.buckets) {
         if (b.label.trim().length === 0) {
           setSaveError(`Every bucket needs a name (group "${g.label}" has an unnamed bucket).`);
           return;
         }
-        if (b.minRate.trim() !== "" && !Number.isFinite(Number(b.minRate))) {
-          setSaveError(`"${b.label}" (group "${g.label}") has a non-numeric minimum rate.`);
+        // Grill-pass fix: mirror RankBucketRuleSchema's own uniqueness
+        // refine() here too, so the owner gets an immediate, in-place
+        // error instead of a generic save failure from the server round-trip.
+        if (seenLabels.has(b.label.trim().toLowerCase())) {
+          setSaveError(`Bucket name "${b.label}" is used more than once in group "${g.label}" — names must be unique.`);
           return;
         }
-        if (b.maxRate.trim() !== "" && !Number.isFinite(Number(b.maxRate))) {
-          setSaveError(`"${b.label}" (group "${g.label}") has a non-numeric maximum rate.`);
+        seenLabels.add(b.label.trim().toLowerCase());
+        if (b.label.trim().toLowerCase() === "all") {
+          setSaveError(`"All" is reserved and can't be used as a bucket name (group "${g.label}").`);
+          return;
+        }
+        // Grill-pass fix: Number.isFinite("−5") is true, so a bare
+        // finite-check let negative rates through even though the schema's
+        // own RankBucketRuleSchema requires .min(0) -- match it here.
+        if (b.minRate.trim() !== "" && (!Number.isFinite(Number(b.minRate)) || Number(b.minRate) < 0)) {
+          setSaveError(`"${b.label}" (group "${g.label}") has an invalid minimum rate.`);
+          return;
+        }
+        if (b.maxRate.trim() !== "" && (!Number.isFinite(Number(b.maxRate)) || Number(b.maxRate) < 0)) {
+          setSaveError(`"${b.label}" (group "${g.label}") has an invalid maximum rate.`);
           return;
         }
       }

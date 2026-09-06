@@ -22,7 +22,6 @@ import {
   passesRankBucketFilter,
   resolveDisplayBand,
   resolveDisplayRankBucket,
-  resolvePrimaryRankBucketGroupId,
   SEEN_WINDOW_OPTIONS,
   shortProfileLabel,
   type BandFilter,
@@ -97,7 +96,7 @@ function RankBucketControl({
   bucketLabels,
 }: {
   gigKey: string;
-  /** resolvePrimaryRankBucketGroupId()'s own result for THIS gig on an unscoped view -- undefined means this gig has no rank-bucket data for any group, so there's nothing to confirm/override yet (the rule/AI pipeline hasn't run for it, or no group opted in). */
+  /** The real, config-order primary group's id (resolveDisplayRankBucket()'s own `groupId`, resolved server-side and threaded down from TodayClient's `rankBucketGroupId` prop) -- undefined means no group is configured at all, so there's nothing to confirm/override yet. */
   groupId: string | undefined;
   assignment: RankBucketAssignment | undefined;
   bucketLabels: string[];
@@ -172,6 +171,7 @@ export function TodayClient({
   engagementProfiles = [],
   hideOutOfBandDefault = true,
   rankBucketLabels = [],
+  rankBucketGroupId,
 }: {
   gigs: StoredGig[];
   draftedGigKeys?: ReadonlySet<string>;
@@ -181,6 +181,8 @@ export function TodayClient({
   hideOutOfBandDefault?: boolean;
   /** rank-buckets epic. The relevant group's own real, owner-named bucket labels (resolved server-side via dashboard-data.ts's extractRankBucketLabels()) -- drives both the filter chip row and the confirm/override control's option list. Empty means the feature isn't configured for this group at all -- zero new UI, same "not configured, no bolt-on" convention every other opt-in field here uses. */
   rankBucketLabels?: string[];
+  /** rank-buckets epic, grill-pass fix. The config-order PRIMARY group's real id (resolved server-side via dashboard-data.ts's resolvePrimaryGroupId()) -- /today is always an unscoped view, so this is the one group whose rank-bucket assignment is shown/written here. Replaces the old per-gig resolvePrimaryRankBucketGroupId() heuristic. */
+  rankBucketGroupId?: string;
 }) {
   const router = useRouter();
   const sources = useMemo(() => distinctSources(gigs), [gigs]);
@@ -212,7 +214,7 @@ export function TodayClient({
   function matches(g: StoredGig): boolean {
     if (tier !== "all" && g.tier !== tier) return false;
     if (!passesBandFilter(resolveDisplayBand(g), band, hideOutOfBand)) return false;
-    if (!passesRankBucketFilter(resolveDisplayRankBucket(g), rankBucket)) return false;
+    if (!passesRankBucketFilter(resolveDisplayRankBucket(g, rankBucketGroupId), rankBucket)) return false;
     if (status !== "all" && g.status !== status) return false;
     if (source !== "all" && g.sourceId !== source) return false;
     if (profile !== "all" && !(g.matchedProfileIds ?? []).includes(profile)) return false;
@@ -469,8 +471,8 @@ export function TodayClient({
                     <BandStamp band={resolveDisplayBand(gig)} />
                     <RankBucketControl
                       gigKey={gig.key}
-                      groupId={resolvePrimaryRankBucketGroupId(gig)}
-                      assignment={resolveDisplayRankBucket(gig)}
+                      groupId={rankBucketGroupId}
+                      assignment={resolveDisplayRankBucket(gig, rankBucketGroupId)}
                       bucketLabels={rankBucketLabels}
                     />
                   </div>
@@ -554,8 +556,8 @@ export function TodayClient({
                           <BandStamp band={resolveDisplayBand(gig)} />
                           <RankBucketControl
                             gigKey={gig.key}
-                            groupId={resolvePrimaryRankBucketGroupId(gig)}
-                            assignment={resolveDisplayRankBucket(gig)}
+                            groupId={rankBucketGroupId}
+                            assignment={resolveDisplayRankBucket(gig, rankBucketGroupId)}
                             bucketLabels={rankBucketLabels}
                           />
                           <span className={styles.rowTitle}>{gig.title}</span>
