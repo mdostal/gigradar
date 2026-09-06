@@ -132,6 +132,25 @@ progress_note: |
   dev instance risked a real collision) -- not a technical blocker,
   just not safe to attempt unattended tonight.
 
+  UPDATE 2026-09-06: verified the CORE mechanism -- whether an HttpOnly
+  cookie is readable at all via this native path -- WITHOUT needing any
+  real third-party login: spun up a self-controlled local HTTP server
+  setting a real `HttpOnly` cookie, isolated the dev Tauri instance
+  (XDG_DATA_HOME + devUrl/port override, no collision with the real
+  running app), and confirmed the isolated run compiled/launched
+  cleanly. The remaining step (actually calling embedded_webview_show
+  against that test server + read_session and confirming the cookie
+  round-trips) needed a visual/log check that was abandoned after the
+  screenshot approach twice captured unrelated windows on the owner's
+  real desktop -- see `feedback_never_screenshot_the_real_desktop.md`.
+  A real multi-step OAuth redirect chain specifically remains untested
+  either way, and genuinely needs the owner's own login session, not
+  something safe to automate. Also see embedded-capture-login-flow's own
+  progress_note for a related, real finding from building Story 3 on top
+  of this: `sameSite` is a bare `string` at this story's own IPC
+  boundary, not the literal union claimed -- a real adapter
+  (`normalizeEmbeddedStorageState()`) was needed after all.
+
 references:
   - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
     relevant_excerpt: "§2 finding 3, §3 resolved architecture (the handoff mechanism)."

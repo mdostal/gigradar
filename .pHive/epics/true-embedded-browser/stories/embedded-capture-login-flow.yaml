@@ -1,7 +1,67 @@
 id: embedded-capture-login-flow
 epic: true-embedded-browser
 title: "Capture Login runs through the embedded webview instead of a separate OS-level real-Chrome window"
-status: pending
+status: in_progress
+progress_note: |
+  BUILT 2026-09-06. Real, working code, cargo/tsc-clean and unit-tested,
+  live GUI+login verification still pending (see below).
+
+  Architecture note NOT anticipated by this story's original scope: Story
+  1/2's Tauri commands (`embedded_webview_show/hide/navigate/close`,
+  `embedded_webview_read_session`) are only invokable CLIENT-side
+  (`invoke()` requires the Tauri webview's own JS context) -- there is no
+  server-held browser/context for this path at all, unlike
+  session-capture.ts's real-chrome flow where Playwright itself runs
+  server-side. This means the raw session (including real HttpOnly
+  cookie values) is read back in the BROWSER and must cross a Server
+  Action boundary once to reach the existing encrypted-persistence/
+  Portunus code (which is server-only: fs, vault.ts, Portunus MCP). This
+  is a real, new data-flow this epic's design-discussion.md didn't
+  explicitly call out -- documented here rather than silently accepted.
+  It's the same-origin, same-machine, 127.0.0.1-only Server Action
+  mechanism every other mutation in this app already uses (never
+  persisted en route, never logged), so treated as an accepted, no-op
+  extension of the existing trust boundary rather than a new risk class.
+
+  Real bug caught while building this: `EmbeddedStorageState`'s
+  `sameSite` field (embedded-webview.ts) is typed as a bare `string`
+  (WKHTTPCookieStore's native sameSitePolicy has no TS literal-union
+  equivalent at the Rust/IPC boundary), NOT byte-compatible with
+  `StorageStateCookie.sameSite: "Strict"|"Lax"|"None"` as
+  embedded-webview-cookie-extraction-macos's own acceptance criteria
+  claimed ("no adapter/conversion layer needed downstream"). That claim
+  was wrong -- corrected via a real, tested `normalizeEmbeddedStorageState()`
+  adapter (`src/lib/auth/embedded-capture.ts`) that throws a specific,
+  actionable error naming the exact offending cookie/value rather than
+  guessing a default.
+
+  Implementation: `persistCapturedSession()` extracted out of
+  session-capture.ts's `finishCapture()` (zero behavior change, existing
+  tests still pass unmodified) so the embedded path reuses the EXACT same
+  allowlist-filtering/zero-cookie-sanity-check/backend-dispatch/encrypted-
+  persistence logic, never a second copy. New
+  `resolveEmbeddedCaptureLoginUrlAction()`/`finishEmbeddedCaptureAction()`
+  Server Actions (config/actions.ts) mirror `startCaptureAction()`/
+  `finishCaptureAction()`'s exact config-writing tail. New
+  `EmbeddedCaptureControl` component (config-client.tsx) -- NOT a
+  modification of the existing `CaptureLoginControl` (kept byte-identical
+  for electron/browser mode, per this story's own design decision) --
+  renders the embedded pane inline, coordinated via one shared
+  `activeEmbeddedCaptureKey` so only ONE row can own the single, app-wide
+  embedded webview at a time (a real constraint from Story 1's own
+  design). Wired into BOTH call sites (per-source rows + the shared
+  Google connection row), gated on `isTauri()`.
+
+  STILL GENUINELY UNVERIFIED, same reason as Stories 1/2's own live-
+  verification gaps: whether this actually renders/works end-to-end
+  against a real login (GoFractional or Google SSO) in the packaged app.
+  Deliberately not attempted via automated screenshotting this session --
+  see [[feedback_never_screenshot_the_real_desktop]] memory: an attempt
+  to visually verify Story 1/2 via `screencapture` twice captured
+  unrelated windows on the owner's real, busy desktop instead of just the
+  test window. This needs the owner's own screen time (running the
+  packaged/dev app themselves and doing a real login), not something safe
+  for me to attempt unattended.
 complexity: medium
 methodology: classic
 depends_on: [embedded-webview-cookie-extraction-macos]

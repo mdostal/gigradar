@@ -9,7 +9,7 @@
 // the real UI on top of the same mechanism (src/lib/tauri/embedded-webview.ts)
 // and this page can be deleted once they land, unless it turns out useful
 // to keep as a standing debug tool (owner's own call, not assumed here).
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { closeEmbeddedWebview, hideEmbeddedWebview, readEmbeddedWebviewSession, showEmbeddedWebview } from "@/lib/tauri/embedded-webview";
 import { isTauri } from "@/lib/is-tauri";
 
@@ -17,13 +17,14 @@ export default function EmbeddedWebviewSpikePage() {
   const paneRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<string>("idle");
   const [url, setUrl] = useState("https://example.com");
+  const [autoRan, setAutoRan] = useState(false);
 
-  async function handleShow() {
+  async function handleShow(targetUrl?: string) {
     if (!paneRef.current) return;
     setStatus("showing…");
     try {
       const rect = paneRef.current.getBoundingClientRect();
-      await showEmbeddedWebview(url, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      await showEmbeddedWebview(targetUrl ?? url, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
       setStatus("shown");
     } catch (e) {
       setStatus(`error: ${e instanceof Error ? e.message : String(e)}`);
@@ -47,6 +48,34 @@ export default function EmbeddedWebviewSpikePage() {
       setStatus(`error: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+
+  // Grill-time verification aid: query-param auto-trigger, so a real
+  // live-verification pass (screenshot proof for THIS story's own
+  // acceptance criterion) can be driven headlessly against a real
+  // running dev instance, without needing to click anything -- no
+  // browser/Playwright automation touches this NATIVE window at any
+  // point, only the URL it was opened with. `?autoshow=<url>` shows that
+  // url in the pane on mount; `?autoread=1` additionally reads the
+  // session ~1.5s later (enough time for a same-origin cookie-setting
+  // page to have set its cookie before the read). Harmless no-op with no
+  // query params -- same "temporary spike page" scope this file already
+  // documents at its own top.
+  useEffect(() => {
+    if (autoRan) return;
+    const params = new URLSearchParams(window.location.search);
+    const autoUrl = params.get("autoshow");
+    if (!autoUrl) return;
+    setAutoRan(true);
+    setUrl(autoUrl);
+    void (async () => {
+      await handleShow(autoUrl);
+      if (params.get("autoread") === "1") {
+        await new Promise((r) => setTimeout(r, 1500));
+        await handleReadSession();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRan]);
 
   const [sessionResult, setSessionResult] = useState<string>("");
   async function handleReadSession() {
@@ -83,7 +112,7 @@ export default function EmbeddedWebviewSpikePage() {
           onChange={(e) => setUrl(e.target.value)}
           className="w-96 rounded-md border border-theme-surface-border bg-theme-surface px-2 py-1.5 text-sm text-theme-text"
         />
-        <button type="button" onClick={handleShow} className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised">
+        <button type="button" onClick={() => handleShow()} className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised">
           Show
         </button>
         <button type="button" onClick={handleHide} className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised">

@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState, useTransition } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { APP_ICONS, DEFAULT_APP_ICON_ID } from "@/lib/app-icons";
 import type { SessionReadiness } from "@/lib/auth/session-readiness";
 import { ROLE_TEMPLATES } from "@/lib/config/role-templates";
@@ -12,6 +12,8 @@ import { KNOWN_SOURCES, SOURCES_OFFERING_GOOGLE_SSO, SOURCE_ORIGINS } from "@/li
 import { SOURCE_PRESETS, sourceConfigFromPreset } from "@/lib/sources/source-presets";
 import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
+import { isTauri } from "@/lib/is-tauri";
+import { closeEmbeddedWebview, readEmbeddedWebviewSession, showEmbeddedWebview } from "@/lib/tauri/embedded-webview";
 import {
   assignGmailConnectionAction,
   cancelCaptureAction,
@@ -21,11 +23,13 @@ import {
   disconnectGmailAction,
   extractProfileFromResumeAction,
   finishCaptureAction,
+  finishEmbeddedCaptureAction,
   finishGoogleCaptureAction,
   getAutoFireApprovedCountAction,
   getGoogleConnectionStatusAction,
   listConnectedGmailSourcesAction,
   removeResumeAction,
+  resolveEmbeddedCaptureLoginUrlAction,
   saveConfigAction,
   setLlmApiKeyAction,
   startCaptureAction,
@@ -836,6 +840,162 @@ function CaptureLoginControl({
   );
 }
 
+/**
+ * true-embedded-browser epic, embedded-capture-login-flow story. The
+ * packaged-Tauri-app equivalent of `CaptureLoginControl` above: same idle
+ * "Capture login" button and success/error copy, but the waiting state
+ * renders a real in-app embedded pane (embedded-webview-child-mechanism
+ * story) instead of a "browser window opened" message, and "I'm done"
+ * reads the session back out of that SAME webview natively
+ * (embedded-webview-cookie-extraction-macos story) rather than ending a
+ * server-held Playwright capture — there is no captureId/server-side
+ * lifecycle for this path at all; the "browser" is entirely client/native
+ * -owned until the raw session crosses over in `finishEmbeddedCaptureAction()`.
+ *
+ * The embedded webview is a SINGLE, long-lived, app-wide native surface
+ * (see embedded-webview-child-mechanism's own design_decisions) — only one
+ * row can actively be using it at a time. `isActive`/`anyActive`/
+ * `onActivate`/`onRelease` coordinate that across every instance of this
+ * component (per-source rows + the shared Google connection row) via one
+ * shared key the parent holds, the same "rows have no identity beyond
+ * position" convention this file already uses elsewhere for `captureState`.
+ */
+type EmbeddedCaptureState =
+  | { status: "idle" }
+  | { status: "resolving" }
+  | { status: "waiting"; loginUrl: string }
+  | { status: "finishing" }
+  | { status: "cancelling" }
+  | { status: "success"; path: string }
+  | { status: "success-portunus" }
+  | { status: "error"; message: string };
+
+function EmbeddedCaptureControl({
+  sourceId,
+  isActive,
+  anyActive,
+  onActivate,
+  onRelease,
+  onCaptured,
+}: {
+  sourceId: string;
+  isActive: boolean;
+  anyActive: boolean;
+  onActivate: () => void;
+  onRelease: () => void;
+  onCaptured: (result: { backend: "local"; path: string } | { backend: "portunus" }) => void;
+}) {
+  const [state, setState] = useState<EmbeddedCaptureState>({ status: "idle" });
+  const paneRef = useRef<HTMLDivElement>(null);
+
+  // If this row loses "active" ownership for any reason other than its own
+  // finish/cancel handlers below (e.g. a stale render after a fast
+  // route/tab change), never leave a "waiting"/"resolving"/"finishing"/
+  // "cancelling" state rendered for a pane that no longer actually backs a
+  // real showing webview.
+  useEffect(() => {
+    if (!isActive) {
+      setState((prev) => (prev.status === "success" || prev.status === "success-portunus" || prev.status === "error" ? prev : { status: "idle" }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive]);
+
+  useEffect(() => {
+    if (state.status !== "waiting" || !paneRef.current) return;
+    const rect = paneRef.current.getBoundingClientRect();
+    void showEmbeddedWebview(state.loginUrl, { x: rect.x, y: rect.y, width: rect.width, height: rect.height }).catch((e) => {
+      setState({ status: "error", message: e instanceof Error ? e.message : String(e) });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status === "waiting" ? state.loginUrl : null]);
+
+  async function handleStart() {
+    onActivate();
+    setState({ status: "resolving" });
+    const result = await resolveEmbeddedCaptureLoginUrlAction(sourceId);
+    if (!result.ok) {
+      setState({ status: "error", message: result.error });
+      onRelease();
+      return;
+    }
+    setState({ status: "waiting", loginUrl: result.data.loginUrl });
+  }
+
+  async function handleFinish() {
+    setState((prev) => (prev.status === "waiting" ? { status: "finishing" } : prev));
+    try {
+      const rawSession = await readEmbeddedWebviewSession();
+      const result = await finishEmbeddedCaptureAction(sourceId, rawSession);
+      await closeEmbeddedWebview().catch(() => {});
+      onRelease();
+      if (!result.ok) {
+        setState({ status: "error", message: result.error });
+        return;
+      }
+      setState(result.data.backend === "portunus" ? { status: "success-portunus" } : { status: "success", path: result.data.path });
+      onCaptured(result.data);
+    } catch (e) {
+      await closeEmbeddedWebview().catch(() => {});
+      onRelease();
+      setState({ status: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  async function handleCancel() {
+    setState((prev) => (prev.status === "waiting" ? { status: "cancelling" } : prev));
+    await closeEmbeddedWebview().catch(() => {});
+    onRelease();
+    setState({ status: "idle" });
+  }
+
+  if (isActive && state.status !== "idle" && state.status !== "success" && state.status !== "success-portunus" && state.status !== "error") {
+    const busy = state.status !== "waiting";
+    return (
+      <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <p>Log in to {sourceId} below, then click &ldquo;I&rsquo;m done&rdquo;.</p>
+        <div ref={paneRef} className="mt-2 h-[480px] w-full rounded-md border border-dashed border-amber-400 bg-white" />
+        <div className="mt-2 flex gap-2">
+          <button type="button" onClick={handleFinish} disabled={busy} className={captureButtonClass}>
+            {state.status === "finishing" ? "Finishing…" : "I'm done"}
+          </button>
+          <button type="button" onClick={handleCancel} disabled={busy} className={captureButtonClass}>
+            {state.status === "cancelling" ? "Cancelling…" : "Cancel"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={handleStart}
+        disabled={anyActive}
+        title={anyActive ? "Finish or cancel the other in-progress capture first" : undefined}
+        className={captureButtonClass}
+      >
+        Capture login
+      </button>
+      {state.status === "success" && (
+        <p role="status" className="mt-1 text-xs text-green-700">
+          Captured — saved to {state.path} and written to this source&rsquo;s settings.
+        </p>
+      )}
+      {state.status === "success-portunus" && (
+        <p role="status" className="mt-1 text-xs text-green-700">
+          Captured — stored in Portunus for {sourceId}.
+        </p>
+      )}
+      {state.status === "error" && (
+        <p role="alert" className="mt-1 text-xs text-red-700">
+          {state.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Resume/link ingestion (`resume-link-ui` story) — the "Anthropic API key"
 // field (writes to .env immediately, its own independent action) and the
@@ -1600,6 +1760,31 @@ export function ConfigClient({
     setCaptureState((prev) => ({ ...prev, [i]: next }));
   }
 
+  // true-embedded-browser epic, embedded-capture-login-flow story. Which
+  // EmbeddedCaptureControl instance (per-source rows keyed `row-<i>`, or
+  // the shared Google connection row keyed "google") currently owns the
+  // single, app-wide embedded webview -- see that component's own header
+  // comment for why only one can be active at a time.
+  const [activeEmbeddedCaptureKey, setActiveEmbeddedCaptureKey] = useState<string | null>(null);
+
+  function handleEmbeddedCaptured(i: number, sourceId: string, result: { backend: "local"; path: string } | { backend: "portunus" }) {
+    if (result.backend !== "local") return;
+    // Same "fold the captured path into this row's draft settings too" fix
+    // handleFinishCapture() already applies -- otherwise a later "Save
+    // config" click would silently overwrite it with the in-memory draft's
+    // stale value. `sourceId` is accepted for parity with the real-chrome
+    // path's own signature even though it's unused here (the row index is
+    // sufficient to locate the draft entry) -- keeps both handlers'
+    // call shape symmetric for anyone reading them side by side.
+    void sourceId;
+    setDraft((prev) => ({
+      ...prev,
+      sources: prev.sources.map((s, idx) =>
+        idx === i ? { ...s, settings: upsertSettingPair(s.settings, "sessionStatePath", result.path) } : s,
+      ),
+    }));
+  }
+
   async function handleStartCapture(i: number, sourceId: string) {
     setRowCapture(i, { status: "starting" });
     const result = await startCaptureAction(sourceId);
@@ -2353,17 +2538,28 @@ export function ConfigClient({
             Connected — re-capture below if it stops working for a source.
           </p>
         )}
-        <CaptureLoginControl
-          sourceId="google"
-          state={googleCaptureState}
-          onStart={handleStartGoogleCapture}
-          onFinish={() => {
-            if (googleCaptureState.status === "waiting") void handleFinishGoogleCapture(googleCaptureState.captureId);
-          }}
-          onCancel={() => {
-            if (googleCaptureState.status === "waiting") void handleCancelGoogleCapture(googleCaptureState.captureId);
-          }}
-        />
+        {isTauri() ? (
+          <EmbeddedCaptureControl
+            sourceId="google"
+            isActive={activeEmbeddedCaptureKey === "google"}
+            anyActive={activeEmbeddedCaptureKey !== null}
+            onActivate={() => setActiveEmbeddedCaptureKey("google")}
+            onRelease={() => setActiveEmbeddedCaptureKey(null)}
+            onCaptured={() => setGoogleConnected(true)}
+          />
+        ) : (
+          <CaptureLoginControl
+            sourceId="google"
+            state={googleCaptureState}
+            onStart={handleStartGoogleCapture}
+            onFinish={() => {
+              if (googleCaptureState.status === "waiting") void handleFinishGoogleCapture(googleCaptureState.captureId);
+            }}
+            onCancel={() => {
+              if (googleCaptureState.status === "waiting") void handleCancelGoogleCapture(googleCaptureState.captureId);
+            }}
+          />
+        )}
       </section>
       )}
 
@@ -2611,26 +2807,36 @@ export function ConfigClient({
                   }}
                 />
               )}
-              {showsCaptureLogin(source) && (
-                <CaptureLoginControl
-                  sourceId={source.id}
-                  state={captureState[i] ?? { status: "idle" }}
-                  onStart={() => handleStartCapture(i, source.id)}
-                  onFinish={() => {
-                    const rowState = captureState[i];
-                    if (rowState?.status === "waiting") handleFinishCapture(i, rowState.captureId, rowState.sourceId);
-                  }}
-                  onCancel={() => {
-                    const rowState = captureState[i];
-                    if (rowState?.status === "waiting") handleCancelCapture(i, rowState.captureId, rowState.sourceId);
-                  }}
-                  readiness={readinessState[i] ?? { status: "idle" }}
-                  onCheckReadiness={() => {
-                    const rowState = captureState[i];
-                    if (rowState?.status === "waiting") handleCheckReadiness(i, rowState.captureId, rowState.sourceId);
-                  }}
-                />
-              )}
+              {showsCaptureLogin(source) &&
+                (isTauri() ? (
+                  <EmbeddedCaptureControl
+                    sourceId={source.id}
+                    isActive={activeEmbeddedCaptureKey === `row-${i}`}
+                    anyActive={activeEmbeddedCaptureKey !== null}
+                    onActivate={() => setActiveEmbeddedCaptureKey(`row-${i}`)}
+                    onRelease={() => setActiveEmbeddedCaptureKey(null)}
+                    onCaptured={(result) => handleEmbeddedCaptured(i, source.id, result)}
+                  />
+                ) : (
+                  <CaptureLoginControl
+                    sourceId={source.id}
+                    state={captureState[i] ?? { status: "idle" }}
+                    onStart={() => handleStartCapture(i, source.id)}
+                    onFinish={() => {
+                      const rowState = captureState[i];
+                      if (rowState?.status === "waiting") handleFinishCapture(i, rowState.captureId, rowState.sourceId);
+                    }}
+                    onCancel={() => {
+                      const rowState = captureState[i];
+                      if (rowState?.status === "waiting") handleCancelCapture(i, rowState.captureId, rowState.sourceId);
+                    }}
+                    readiness={readinessState[i] ?? { status: "idle" }}
+                    onCheckReadiness={() => {
+                      const rowState = captureState[i];
+                      if (rowState?.status === "waiting") handleCheckReadiness(i, rowState.captureId, rowState.sourceId);
+                    }}
+                  />
+                ))}
               {SOURCES_OFFERING_GOOGLE_SSO.includes(source.id) && googleConnected === true && (
                 <p className="mt-1 text-xs text-theme-text-dim">Will reuse your saved Google connection above.</p>
               )}
