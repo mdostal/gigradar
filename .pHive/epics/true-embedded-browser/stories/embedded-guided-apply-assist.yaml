@@ -1,9 +1,69 @@
 id: embedded-guided-apply-assist
 epic: true-embedded-browser
 title: "Manual-mode profile-assist sessions use the embedded webview instead of a positioned OS-level window"
-status: pending
+status: in_progress
 
 progress_note: |
+  UPDATE 2026-09-06, continued: manual mode itself is BUILT and
+  live-verified. New `EmbeddedManualAssist` component
+  (profile-assist-client.tsx) -- self-contained, gated on `isTauri()`,
+  never touches the existing real-chrome manual-mode UI (electron/
+  browser mode unchanged). New `resolveEmbeddedAssistSessionAction()`
+  (profile-assist/actions.ts) resolves the real profileUrl + origin-
+  scoped storageState via assist-session.ts's newly-extracted
+  `resolveAssistSessionContext()` (zero behavior change to the existing
+  real-chrome path, which now calls the same function) WITHOUT ever
+  spawning a browser.
+
+  REAL, LIVE-VERIFIED CORRECTION to this story's own original plan:
+  Tauri's `Webview::set_cookie()` (a real, documented, cross-platform
+  API this story's own risk section hoped might exist) compiles clean
+  and returns `Ok(())` with no error, but a live test against a real
+  embedded pane + a real self-controlled test server proved it does NOT
+  actually work on this app's macOS/WKWebView setup -- the cookie never
+  reaches the webview's subsequent requests. The story's own accepted
+  fallback (`document.cookie` injection via embedded-automation-bridge's
+  already-proven `embedded_webview_eval()`) DOES work, live-verified
+  end to end (a real HttpOnly-free cookie round-tripped to the test
+  server, confirmed by the server echoing it back). Session-seeding is
+  built on that mechanism now; the native `set_cookie()` attempt was
+  fully reverted (no dead code, no unused Cargo dependency left behind).
+
+  REAL, ACCEPTED LIMITATION (inherited, not new -- session-capture.ts
+  documents the same one elsewhere): `document.cookie` cannot set
+  HttpOnly cookies at all, a browser security restriction. A source
+  whose real session cookie is HttpOnly-only will still show its real
+  login page in the embedded pane even with a "captured" session on
+  disk -- `setEmbeddedWebviewCookies()` warns (via `console.warn`,
+  visible in the embedded webview's own dev tools) rather than failing
+  silently.
+
+  `npm test` (1586 passed, 12 for embedded-webview.ts + 3 new for
+  assist-session.ts's extracted `resolveAssistSessionContext()`),
+  `npm run typecheck`, `cargo check`/`cargo clippy` all clean.
+
+  STILL NOT DONE (real, remaining scope, not silently dropped):
+  (1) the settings TOGGLE for guided/full-auto's automation backend --
+  deferred until at least one more backend is actually wireable (right
+  now guided/full-auto still only have the original real-chrome path;
+  a toggle with one real option isn't yet meaningful) -- will land
+  alongside whichever of embedded-automation-bridge/
+  embedded-vision-automation-mode gets wired into
+  clickSessionAtAction()/typeIntoSessionAction() first.
+  (2) "Refresh suggestions" (profile-assist's field-suggestion feature)
+  has NO embedded-pane equivalent yet -- it reads the current page via a
+  live Playwright `Page`, which the embedded pane doesn't have; omitted
+  from `EmbeddedManualAssist` entirely rather than silently broken.
+  Real, separate future scope (would need its own `embedded_webview_eval()`-based
+  DOM-reading mechanism, mirroring embedded-automation-bridge's own find
+  logic).
+  (3) a live, real-account end-to-end test (a real source, a real saved
+  session, confirming the profile page shows already-authenticated)
+  needs the owner's own screen time -- same category of gap as Stories
+  1-3's own live-verification notes, not something safe to automate
+  with real credentials.
+
+ORIGINAL 2026-09-06 progress_note (superseded above, kept for history):
   RESCOPED 2026-09-06 -- this story's original "REAL, DISQUALIFYING
   FINDING" (2026-09-03) that guided/full-auto could never follow manual
   mode into the embedded pane is RETRACTED. See design-discussion.md §6

@@ -16,7 +16,23 @@ vi.mock("@/lib/is-tauri", () => ({ isTauri: () => true }));
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
-const { findEmbeddedElementByText, clickEmbeddedElementByText, typeIntoEmbeddedElementByText } = await import("../embedded-webview.js");
+const { findEmbeddedElementByText, clickEmbeddedElementByText, typeIntoEmbeddedElementByText, setEmbeddedWebviewCookies } = await import(
+  "../embedded-webview.js"
+);
+
+function baseCookie(overrides: Partial<Parameters<typeof setEmbeddedWebviewCookies>[0][number]> = {}) {
+  return {
+    name: "session",
+    value: "real-secret-value",
+    domain: "example.com",
+    path: "/",
+    expires: -1,
+    httpOnly: false,
+    secure: true,
+    sameSite: "Lax",
+    ...overrides,
+  };
+}
 
 function mockEvalResult(result: unknown) {
   invokeMock.mockResolvedValueOnce(JSON.stringify({ ok: true, result }));
@@ -78,5 +94,67 @@ describe("embedded-webview.ts find/click/type helpers", () => {
   it("throws a specific error when the raw eval result isn't valid JSON at all", async () => {
     invokeMock.mockResolvedValueOnce("not json");
     await expect(findEmbeddedElementByText("x")).rejects.toThrow(/non-JSON result/);
+  });
+});
+
+// GRILL-TIME CORRECTION: setEmbeddedWebviewCookies() originally called a
+// native embedded_webview_set_cookies Tauri command -- live-verified this
+// session to compile and return Ok(()) but NOT actually work (the cookie
+// never reached subsequent requests). Switched to document.cookie
+// injection via the SAME already-proven embedded_webview_eval() path,
+// live-verified working end to end against a real self-controlled test
+// server. These tests cover the script-generation logic the live POC
+// doesn't re-exercise on every run: safe escaping, HttpOnly skipping, and
+// the cookie-string attribute assembly.
+describe("setEmbeddedWebviewCookies", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("calls embedded_webview_eval with a script that assigns document.cookie for each non-HttpOnly cookie", async () => {
+    mockEvalResult({ set: 1 });
+    await setEmbeddedWebviewCookies([baseCookie()]);
+    const [command, args] = invokeMock.mock.calls[0]!;
+    expect(command).toBe("embedded_webview_eval");
+    const js = (args as { js: string }).js;
+    expect(js).toContain("document.cookie");
+    expect(js).toContain(JSON.stringify("session=real-secret-value; path=/; secure; samesite=lax"));
+  });
+
+  it("skips HttpOnly cookies entirely -- document.cookie cannot set them -- and warns, without calling eval() at all if that's the only cookie", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await setEmbeddedWebviewCookies([baseCookie({ httpOnly: true })]);
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("skipped 1 HttpOnly cookie"));
+    warnSpy.mockRestore();
+  });
+
+  it("sets the settable cookies and warns about the skipped HttpOnly ones when both are present", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockEvalResult({ set: 1 });
+    await setEmbeddedWebviewCookies([baseCookie({ name: "a" }), baseCookie({ name: "b", httpOnly: true })]);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    const [, args] = invokeMock.mock.calls[0]!;
+    const js = (args as { js: string }).js;
+    expect(js).toContain('"a=real-secret-value');
+    expect(js).not.toContain('"b=real-secret-value');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("skipped 1 HttpOnly cookie"));
+    warnSpy.mockRestore();
+  });
+
+  it("safely embeds a cookie value containing a double quote via JSON.stringify", async () => {
+    mockEvalResult({ set: 1 });
+    await setEmbeddedWebviewCookies([baseCookie({ value: 'weird"value' })]);
+    const [, args] = invokeMock.mock.calls[0]!;
+    const js = (args as { js: string }).js;
+    expect(js).toContain(JSON.stringify('session=weird"value; path=/; secure; samesite=lax'));
+  });
+
+  it("includes an expires attribute only for a real expiry, never for a session cookie (-1)", async () => {
+    mockEvalResult({ set: 1 });
+    await setEmbeddedWebviewCookies([baseCookie({ expires: 1893456000 })]);
+    const [, args] = invokeMock.mock.calls[0]!;
+    const js = (args as { js: string }).js;
+    expect(js).toContain("expires=");
   });
 });

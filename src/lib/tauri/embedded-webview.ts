@@ -79,6 +79,71 @@ export async function readEmbeddedWebviewSession(): Promise<EmbeddedStorageState
   return invokeTauri<EmbeddedStorageState>("embedded_webview_read_session");
 }
 
+/**
+ * embedded-guided-apply-assist story. Seeds the embedded webview with an
+ * already-authenticated session's cookies -- e.g. profile-assist's
+ * manual mode, which already has a valid storageState loaded from disk/
+ * Portunus BEFORE it ever shows the pane, and only needs to SHOW that
+ * session, never extract a new one afterward (the mirror image of
+ * `readEmbeddedWebviewSession()` above).
+ *
+ * GRILL-TIME CORRECTION: this originally called Tauri's own
+ * `Webview::set_cookie()` (a real, documented, cross-platform API) --
+ * live-verified this session, against a real embedded pane and a real
+ * self-controlled test server, that it does NOT actually work on this
+ * app's macOS/WKWebView setup: it returns `Ok(())` with no error, but
+ * the cookie never gets sent with the webview's subsequent requests.
+ * The SAME live test confirmed the fallback this story's own risk
+ * register already anticipated DOES work: injecting `document.cookie`
+ * via the already-proven `embedded_webview_eval()` bridge. Switched to
+ * that unconditionally rather than keeping a native code path that
+ * silently doesn't work.
+ *
+ * REAL, ACCEPTED LIMITATION (not new -- session-capture.ts documents
+ * the same one elsewhere): `document.cookie` cannot set HttpOnly
+ * cookies at all (a browser security restriction, not a gigradar gap).
+ * HttpOnly cookies in `cookies` are silently skipped here -- for a
+ * source whose real auth session is HttpOnly-only, manual mode's
+ * embedded pane may still show that source's own real login page,
+ * exactly as if no session had been seeded (a `console.warn` names each
+ * skipped cookie so this isn't silent to anyone debugging with the
+ * embedded webview's own dev tools open).
+ *
+ * Call this AFTER `showEmbeddedWebview()` has navigated to the target
+ * origin at least once -- `document.cookie` sets a cookie for the
+ * CURRENTLY LOADED page's own origin, not an arbitrary domain.
+ */
+export async function setEmbeddedWebviewCookies(cookies: EmbeddedStorageStateCookie[]): Promise<void> {
+  const settable = cookies.filter((c) => !c.httpOnly);
+  const skipped = cookies.length - settable.length;
+  if (skipped > 0) {
+    // eslint-disable-next-line no-console -- deliberate, named warning for a real, accepted limitation -- see this function's own doc comment.
+    console.warn(`gigradar embedded-webview: skipped ${skipped} HttpOnly cookie(s) -- document.cookie injection cannot set them.`);
+  }
+  if (settable.length === 0) return;
+
+  const statements = settable
+    .map((c) => {
+      const parts = [`${c.name}=${c.value}`, `path=${c.path || "/"}`];
+      if (c.secure) parts.push("secure");
+      if (c.sameSite) parts.push(`samesite=${c.sameSite.toLowerCase()}`);
+      if (c.expires >= 0) parts.push(`expires=${new Date(c.expires * 1000).toUTCString()}`);
+      return JSON.stringify(parts.join("; "));
+    })
+    .join(", ");
+
+  const js = `(function() {
+    try {
+      var cookieStrings = [${statements}];
+      for (var i = 0; i < cookieStrings.length; i++) { document.cookie = cookieStrings[i]; }
+      return {ok: true, result: {set: cookieStrings.length}};
+    } catch (e) {
+      return {ok: false, error: String((e && e.message) || e)};
+    }
+  })()`;
+  await evalInEmbeddedWebview<{ set: number }>(js);
+}
+
 // ---------------------------------------------------------------------------
 // true-embedded-browser epic, embedded-automation-bridge story. The DEFAULT
 // automation backend for guided/full-auto profile-assist against the

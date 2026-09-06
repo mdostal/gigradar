@@ -316,6 +316,47 @@ describe("registry gaps throw before launching a browser", () => {
   });
 });
 
+// true-embedded-browser epic, embedded-guided-apply-assist story.
+// resolveAssistSessionContext() was extracted out of startAssistSession()
+// (zero behavior change to the tests above) so the embedded-pane manual-
+// mode path can share the exact same origin/profileUrl/storageState
+// resolution WITHOUT ever spawning a browser -- these tests exercise it
+// directly, confirming it never touches spawnRealChrome()/attachToRealChrome().
+describe("resolveAssistSessionContext (embedded-pane path -- never spawns a browser)", () => {
+  it("resolves the real profileUrl and origin-scoped storageState for a registered source", async () => {
+    const { resolveAssistSessionContext } = await import("../assist-session.js");
+    const storageStatePath = writeStorageStateFixture();
+
+    const result = await resolveAssistSessionContext("gofractional", storageStatePath, "local", { id: "gofractional", enabled: true });
+
+    expect(result.profileUrl).toEqual(expect.stringContaining("http"));
+    expect(Array.isArray(result.scopedStorageState.cookies)).toBe(true);
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+    expect(attachToRealChromeMock).not.toHaveBeenCalled();
+  });
+
+  it("throws the same actionable errors as startAssistSession() for registry gaps, without spawning a browser", async () => {
+    const { resolveAssistSessionContext } = await import("../assist-session.js");
+    const storageStatePath = writeStorageStateFixture();
+
+    await expect(resolveAssistSessionContext("not-a-real-source", storageStatePath, "local")).rejects.toThrow(
+      /no origin allowlist registered/,
+    );
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+  });
+
+  it("supports the portunus session backend, same as startAssistSession()", async () => {
+    const { resolveAssistSessionContext } = await import("../assist-session.js");
+    readSessionViaPortunusMock.mockResolvedValueOnce(JSON.parse(FIXTURE_RAW));
+
+    const result = await resolveAssistSessionContext("gofractional", undefined, "portunus", { id: "gofractional", enabled: true });
+
+    expect(readSessionViaPortunusMock).toHaveBeenCalledTimes(1);
+    expect(Array.isArray(result.scopedStorageState.cookies)).toBe(true);
+    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("config-driven fallback for custom sources (settings.allowedOrigins/settings.profileUrl)", () => {
   const CUSTOM_SOURCE_ID = "catalant";
 

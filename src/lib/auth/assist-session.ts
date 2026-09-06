@@ -131,21 +131,22 @@ export interface AssistSessionInfo {
  * no registry entry) pass the real SourceConfig so its settings.allowedOrigins/
  * settings.profileUrl config-driven fallback is used instead.
  */
-export async function startAssistSession(
+/**
+ * embedded-guided-apply-assist story. Resolves everything
+ * startAssistSession() needs BEFORE it ever spawns a browser: the origin
+ * allowlist, the profile-edit URL, and the origin-scoped storageState --
+ * extracted so the embedded-pane path (which needs the SAME resolution
+ * but never spawns Playwright/real-chrome at all) can share it rather
+ * than duplicating this logic a second time. Throws the exact same,
+ * specific errors startAssistSession() already threw for each failure
+ * case -- zero behavior change for the existing real-chrome path.
+ */
+export async function resolveAssistSessionContext(
   sourceId: string,
-  mode: AssistMode,
   storageStatePathSetting?: string,
   sessionBackend: SessionBackend = "local",
   cfg: SourceConfig = { id: sourceId, enabled: true },
-): Promise<AssistSessionInfo> {
-  for (const entry of sessions.values()) {
-    if (entry.sourceId === sourceId) {
-      throw new Error(
-        `${MODULE_PREFIX}: an assist session is already active for source "${sourceId}". Finish or end it before starting another.`,
-      );
-    }
-  }
-
+): Promise<{ profileUrl: string; scopedStorageState: StorageState }> {
   const allowedOrigins = resolveAllowedOrigins(sourceId, cfg);
   if (!allowedOrigins || allowedOrigins.length === 0) {
     throw new Error(
@@ -172,6 +173,26 @@ export async function startAssistSession(
     rawStorageState = readStorageStateFile(resolvedPath);
   }
   const scopedStorageState = filterStorageStateToAllowlist(rawStorageState, [...allowedOrigins]);
+
+  return { profileUrl, scopedStorageState };
+}
+
+export async function startAssistSession(
+  sourceId: string,
+  mode: AssistMode,
+  storageStatePathSetting?: string,
+  sessionBackend: SessionBackend = "local",
+  cfg: SourceConfig = { id: sourceId, enabled: true },
+): Promise<AssistSessionInfo> {
+  for (const entry of sessions.values()) {
+    if (entry.sourceId === sourceId) {
+      throw new Error(
+        `${MODULE_PREFIX}: an assist session is already active for source "${sourceId}". Finish or end it before starting another.`,
+      );
+    }
+  }
+
+  const { profileUrl, scopedStorageState } = await resolveAssistSessionContext(sourceId, storageStatePathSetting, sessionBackend, cfg);
 
   const realChrome = await spawnRealChrome();
 
