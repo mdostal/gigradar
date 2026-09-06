@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-09-06
+
+### Added
+
+- Capture Login now runs through the in-app embedded webview (from the
+  true-embedded-browser epic's foundational stories) in the packaged
+  Tauri app, instead of spawning a separate, positioned OS-level Chrome
+  window — no browser window flashes onto the desktop for this flow
+  anymore. Electron/browser mode keeps today's real-Chrome flow entirely
+  unchanged.
+
+### Fixed
+
+- A real, previously-uncaught type mismatch between the embedded
+  webview's native cookie read-back and the app's existing session
+  storage format (`sameSite` was a bare string, not the expected
+  Strict/Lax/None value) — now validated and normalized, with a specific
+  error on anything unrecognized rather than a silent guess.
+
 ## [0.36.0] - 2026-09-05
 
 ### Added
