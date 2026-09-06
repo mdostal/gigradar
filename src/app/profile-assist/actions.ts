@@ -11,10 +11,12 @@
 // request path never populates process.env from .env itself.
 import type { Page } from "playwright";
 import { actionErr, actionOk } from "@/lib/actions/result";
+import type { StorageState } from "@/lib/auth/browser-session";
 import {
   endAssistSession,
   getAssistSessionInfo,
   getAssistSessionPage,
+  resolveAssistSessionContext,
   startAssistSession,
   type AssistMode,
 } from "@/lib/auth/assist-session";
@@ -82,6 +84,46 @@ export async function startAssistSessionAction(
   try {
     const { sessionId } = await startAssistSession(sourceId, mode, sessionStatePathSetting, sessionBackend, cfg);
     return actionOk({ sessionId });
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * true-embedded-browser epic, embedded-guided-apply-assist story. The
+ * packaged-Tauri-app, MANUAL-mode equivalent of `startAssistSessionAction()`
+ * above -- but never spawns a browser (Playwright/real Chrome) at all.
+ * Resolves the exact same profileUrl + origin-scoped storageState via
+ * assist-session.ts's shared `resolveAssistSessionContext()` (zero
+ * behavior change to the existing real-chrome path, which still calls it
+ * internally) and hands both back to the client, which shows the
+ * embedded pane itself (a client-side Tauri IPC call) and seeds it via
+ * `setEmbeddedWebviewCookies()` -- there is no server-held browser/
+ * session for this path, unlike the real-chrome flow's `sessionId`.
+ *
+ * Manual mode only: guided/full-auto still use the real-chrome flow
+ * above until embedded-automation-bridge's find/click/type backend is
+ * wired into their own `clickSessionAtAction()`/`typeIntoSessionAction()`
+ * call sites (a separate, later change) -- see this story's own
+ * design_decisions for why guided/full-auto are deliberately out of
+ * scope here.
+ */
+export async function resolveEmbeddedAssistSessionAction(
+  sourceId: string,
+): Promise<ActionResult<{ profileUrl: string; storageState: StorageState }>> {
+  const cfg = { id: sourceId, enabled: true, settings: rawSourceSettingsFor(sourceId) ?? {} };
+  const sessionBackend = sessionBackendFrom(cfg);
+
+  const sessionStatePathSetting = sessionBackend === "local" ? rawSessionStatePathFor(sourceId) : undefined;
+  if (sessionBackend === "local" && !sessionStatePathSetting) {
+    return actionErr(
+      new Error(`gigradar profile-assist: source "${sourceId}" is missing settings.sessionStatePath — capture a login for it first.`),
+    );
+  }
+
+  try {
+    const { profileUrl, scopedStorageState } = await resolveAssistSessionContext(sourceId, sessionStatePathSetting, sessionBackend, cfg);
+    return actionOk({ profileUrl, storageState: scopedStorageState });
   } catch (e) {
     return actionErr(e);
   }

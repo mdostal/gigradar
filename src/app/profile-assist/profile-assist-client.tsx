@@ -15,12 +15,15 @@ import {
   endAssistSessionAction,
   getSessionScreenshotAction,
   resolveApprovalAction,
+  resolveEmbeddedAssistSessionAction,
   startAssistSessionAction,
   suggestProfileFieldsAction,
   typeIntoSessionAction,
 } from "./actions";
 import type { FieldSuggestion } from "@/lib/apply/profile-suggest";
 import type { LoopEvent } from "@/lib/apply/profile-assist-loop";
+import { isTauri } from "@/lib/is-tauri";
+import { closeEmbeddedWebview, setEmbeddedWebviewCookies, showEmbeddedWebview } from "@/lib/tauri/embedded-webview";
 
 type Tab = "manual" | "guided" | "full-auto";
 
@@ -115,6 +118,123 @@ function TranscriptLine({ item }: { item: TranscriptItem }) {
     return <p className="text-sm font-medium text-green-700">Done — {event.summary}</p>;
   }
   return <p className="text-sm font-medium text-amber-700">Reached the turn limit for this session.</p>;
+}
+
+/**
+ * true-embedded-browser epic, embedded-guided-apply-assist story. The
+ * packaged-Tauri-app equivalent of manual mode's "a real browser window
+ * is open on your desktop" flow -- shows the already-authenticated
+ * profile page INSIDE the embedded pane instead of spawning a
+ * positioned OS-level Chrome window. A self-contained sibling to
+ * `ProfileAssistClient`'s existing manual-mode UI (not a modification of
+ * it) -- electron/browser mode keeps that flow entirely unchanged, per
+ * this story's own design decision.
+ *
+ * NO "Refresh suggestions" control here (a real, deliberate gap, not an
+ * oversight): `suggestProfileFieldsAction()` reads the CURRENT page via
+ * a live Playwright `Page`, which the embedded pane has no equivalent
+ * of -- porting field-suggestion to read the embedded pane's own DOM via
+ * `embedded_webview_eval()` is real, separate, future scope.
+ */
+type EmbeddedManualState =
+  | { status: "idle" }
+  | { status: "starting" }
+  | { status: "active" }
+  | { status: "ending" }
+  | { status: "error"; message: string };
+
+function EmbeddedManualAssist({ sourceId, sources, onSourceIdChange }: { sourceId: string; sources: { id: string; label: string }[]; onSourceIdChange: (id: string) => void }) {
+  const [state, setState] = useState<EmbeddedManualState>({ status: "idle" });
+  const paneRef = useRef<HTMLDivElement>(null);
+
+  async function handleStart() {
+    setState({ status: "starting" });
+    const result = await resolveEmbeddedAssistSessionAction(sourceId);
+    if (!result.ok) {
+      setState({ status: "error", message: result.error });
+      return;
+    }
+    if (!paneRef.current) {
+      setState({ status: "error", message: "gigradar profile-assist: embedded pane not mounted." });
+      return;
+    }
+    try {
+      const rect = paneRef.current.getBoundingClientRect();
+      await showEmbeddedWebview(result.data.profileUrl, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      if (result.data.storageState.cookies.length > 0) {
+        await setEmbeddedWebviewCookies(result.data.storageState.cookies);
+        // Cookies are set against the webview's cookie store by domain,
+        // not the currently-loaded page -- re-navigate so the profile
+        // page's own first real request actually carries them (matches
+        // the same "seed before the real request" ordering
+        // session-capture.ts's own Google-SSO seeding already relies on).
+        await showEmbeddedWebview(result.data.profileUrl, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      }
+      setState({ status: "active" });
+    } catch (e) {
+      setState({ status: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  async function handleDone() {
+    setState({ status: "ending" });
+    await closeEmbeddedWebview().catch(() => {});
+    setState({ status: "idle" });
+  }
+
+  if (state.status === "idle" || state.status === "starting" || state.status === "error") {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Source
+            <select
+              value={sourceId}
+              onChange={(e) => onSourceIdChange(e.target.value)}
+              disabled={state.status === "starting"}
+              className="rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900"
+            >
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => void handleStart()}
+            disabled={state.status === "starting" || !sourceId}
+            className="rounded-md border border-brand-accent bg-brand-accent px-4 py-1.5 text-sm font-medium text-brand-bg transition-colors hover:bg-brand-accent/90 disabled:opacity-50"
+          >
+            {state.status === "starting" ? "Opening…" : "Start"}
+          </button>
+          {state.status === "error" && (
+            <p role="alert" className="w-full text-xs text-red-600">
+              {state.message}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-slate-600">Sign in / navigate below if needed.</p>
+        <button
+          type="button"
+          onClick={() => void handleDone()}
+          disabled={state.status === "ending"}
+          className="whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          {state.status === "ending" ? "Closing…" : "Done"}
+        </button>
+      </div>
+      <div ref={paneRef} className="mt-3 h-[600px] w-full rounded-md border border-dashed border-slate-300 bg-slate-50" />
+    </div>
+  );
 }
 
 export function ProfileAssistClient({ sources }: { sources: { id: string; label: string }[] }) {
@@ -411,55 +531,58 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
         ))}
       </div>
 
-      {tab === "manual" && (
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          {session.status === "idle" || session.status === "starting" || session.status === "error" ? (
-            startForm
-          ) : (
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-slate-600">
-                  A real browser window is open on your desktop — sign in / navigate if needed, then use the
-                  suggestions below or refresh them any time.
-                </p>
-                {doneButton}
-              </div>
-
-              <div>
-                <button
-                  type="button"
-                  onClick={handleRefreshSuggestions}
-                  disabled={suggest.status === "loading" || session.status !== "active"}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
-                  {suggest.status === "loading" ? "Thinking…" : "Refresh suggestions"}
-                </button>
-
-                {suggest.status === "error" && (
-                  <p role="alert" className="mt-2 text-xs text-red-600">
-                    {suggest.message}
+      {tab === "manual" &&
+        (isTauri() ? (
+          <EmbeddedManualAssist sourceId={sourceId} sources={sources} onSourceIdChange={setSourceId} />
+        ) : (
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            {session.status === "idle" || session.status === "starting" || session.status === "error" ? (
+              startForm
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm text-slate-600">
+                    A real browser window is open on your desktop — sign in / navigate if needed, then use the
+                    suggestions below or refresh them any time.
                   </p>
-                )}
+                  {doneButton}
+                </div>
 
-                {suggest.status === "success" && (
-                  <div className="mt-3 flex flex-col gap-2">
-                    {suggest.suggestions.length === 0 ? (
-                      <p className="text-sm text-slate-400">No fields detected to suggest copy for.</p>
-                    ) : (
-                      suggest.suggestions.map((s, i) => (
-                        <div key={i} className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-xs font-semibold text-slate-500">{s.fieldLabel}</p>
-                          <p className="mt-1 text-sm text-slate-800">{s.suggestedValue}</p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
+                <div>
+                  <button
+                    type="button"
+                    onClick={handleRefreshSuggestions}
+                    disabled={suggest.status === "loading" || session.status !== "active"}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {suggest.status === "loading" ? "Thinking…" : "Refresh suggestions"}
+                  </button>
+
+                  {suggest.status === "error" && (
+                    <p role="alert" className="mt-2 text-xs text-red-600">
+                      {suggest.message}
+                    </p>
+                  )}
+
+                  {suggest.status === "success" && (
+                    <div className="mt-3 flex flex-col gap-2">
+                      {suggest.suggestions.length === 0 ? (
+                        <p className="text-sm text-slate-400">No fields detected to suggest copy for.</p>
+                      ) : (
+                        suggest.suggestions.map((s, i) => (
+                          <div key={i} className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                            <p className="text-xs font-semibold text-slate-500">{s.fieldLabel}</p>
+                            <p className="mt-1 text-sm text-slate-800">{s.suggestedValue}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        ))}
 
       {(tab === "guided" || tab === "full-auto") && (
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
