@@ -25,7 +25,6 @@
 // LLM-consumable page state, reused here rather than a bespoke DOM-walk.
 import { NoOutputGeneratedError, Output, generateText } from "ai";
 import { z } from "zod";
-import type { Page } from "playwright";
 import type { ApplyProfileConfig, Profile } from "../types.js";
 import { createAiSdkModel, generateHarnessObject } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
@@ -65,11 +64,20 @@ function buildPageSnapshotBlock(snapshot: string): string {
 }
 
 /**
- * Reads `page`'s current AI-mode aria snapshot and asks Claude to suggest
- * copy for its fillable fields, grounded strictly in `profile`/
- * `applyProfile` — the same fabrication guardrail draft.ts's own
- * instruction block enforces ("never invent... experience... not
- * explicitly present"). Read-only: never clicks/fills/navigates the page.
+ * Asks Claude to suggest copy for `snapshot`'s fillable fields, grounded
+ * strictly in `profile`/`applyProfile` — the same fabrication guardrail
+ * draft.ts's own instruction block enforces ("never invent...
+ * experience... not explicitly present"). Read-only: never clicks/
+ * fills/navigates anything itself.
+ *
+ * `snapshot` is an AI-mode ARIA accessibility snapshot
+ * (`page.locator("body").ariaSnapshot({mode:"ai"})`'s own output shape)
+ * — taking it is the CALLER's responsibility (real-chrome:
+ * `suggestProfileFieldsAction()`'s own `page.locator(...)` call;
+ * embedded pane: `snapshotEmbeddedWebview()`, a client-side Tauri IPC
+ * call) — this function itself has no page/driver dependency at all,
+ * which is exactly what lets embedded-guided-apply-assist's own
+ * `suggestEmbeddedProfileFieldsAction()` reuse it unmodified.
  *
  * `credential` is used to construct the Anthropic client HERE, inside this
  * function call, and nowhere else — see this file's header comment.
@@ -80,12 +88,11 @@ function buildPageSnapshotBlock(snapshot: string): string {
  * as if that were a genuine "no fields detected" result.
  */
 export async function suggestProfileFields(
-  page: Page,
+  snapshot: string,
   profile: Profile,
   applyProfile: ApplyProfileConfig,
   credential: LlmCredential,
 ): Promise<FieldSuggestion[]> {
-  const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
 
   const prompt = [
     "Suggest copy for the fillable fields on this profile-edit page, grounded STRICTLY in the real applicant " +

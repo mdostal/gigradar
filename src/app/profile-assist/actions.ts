@@ -187,7 +187,38 @@ export async function suggestProfileFieldsAction(sessionId: string): Promise<Act
 
   try {
     const page = getAssistSessionPage(sessionId);
-    const suggestions = await suggestProfileFields(page, profileData.profile, profileData.applyProfile, credential);
+    const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
+    const suggestions = await suggestProfileFields(snapshot, profileData.profile, profileData.applyProfile, credential);
+    return actionOk(suggestions);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * embedded-guided-apply-assist story. The embedded-pane equivalent of
+ * suggestProfileFieldsAction() above -- there is no server-held
+ * Playwright `Page` for this path (same constraint the guided/full-auto
+ * loop's own `driver: null` branch documents), so the CLIENT takes the
+ * snapshot itself (`snapshotEmbeddedWebview()`, a client-side
+ * `embedded_webview_eval()` call) and hands it here. Reuses
+ * `suggestProfileFields()` completely unmodified -- that function has no
+ * page/driver dependency at all since its own refactor, which is exactly
+ * what makes this a thin wrapper rather than a second implementation.
+ */
+export async function suggestEmbeddedProfileFieldsAction(snapshot: string): Promise<ActionResult<FieldSuggestion[]>> {
+  const credential = resolveLlmCredential();
+  if (!credential) {
+    return actionErr(new Error(MISSING_API_KEY_ERROR));
+  }
+
+  const profileData = readProfileAndApplyProfile();
+  if ("error" in profileData) {
+    return actionErr(new Error(profileData.error));
+  }
+
+  try {
+    const suggestions = await suggestProfileFields(snapshot, profileData.profile, profileData.applyProfile, credential);
     return actionOk(suggestions);
   } catch (e) {
     return actionErr(e);
