@@ -18,8 +18,8 @@ use tauri_plugin_shell::ShellExt;
 
 mod embedded_webview;
 use embedded_webview::{
-    embedded_webview_close, embedded_webview_hide, embedded_webview_navigate,
-    embedded_webview_show, EmbeddedWebviewHandle,
+    embedded_webview_close, embedded_webview_eval, embedded_webview_hide,
+    embedded_webview_navigate, embedded_webview_show, EmbeddedWebviewHandle,
 };
 
 // true-embedded-browser epic, embedded-webview-cookie-extraction-macos
@@ -159,6 +159,7 @@ pub fn run() {
             embedded_webview_hide,
             embedded_webview_navigate,
             embedded_webview_close,
+            embedded_webview_eval,
             embedded_webview_read_session,
         ])
         .setup(|app| {

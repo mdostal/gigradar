@@ -5,9 +5,24 @@
   "windows": [
     "main"
   ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*"
+    ]
+  },
   "permissions": [
     "core:default",
     "core:window:allow-create",
+    "allow-get-update-channel",
+    "allow-get-update-status",
+    "allow-install-update",
+    "allow-snooze-update",
+    "allow-embedded-webview-show",
+    "allow-embedded-webview-hide",
+    "allow-embedded-webview-navigate",
+    "allow-embedded-webview-close",
+    "allow-embedded-webview-eval",
+    "allow-embedded-webview-read-session",
     {
       "identifier": "shell:allow-execute",
       "allow": [

@@ -10,7 +10,15 @@
 // and this page can be deleted once they land, unless it turns out useful
 // to keep as a standing debug tool (owner's own call, not assumed here).
 import { useEffect, useRef, useState } from "react";
-import { closeEmbeddedWebview, hideEmbeddedWebview, readEmbeddedWebviewSession, showEmbeddedWebview } from "@/lib/tauri/embedded-webview";
+import {
+  clickEmbeddedElementByText,
+  closeEmbeddedWebview,
+  findEmbeddedElementByText,
+  hideEmbeddedWebview,
+  readEmbeddedWebviewSession,
+  showEmbeddedWebview,
+  typeIntoEmbeddedElementByText,
+} from "@/lib/tauri/embedded-webview";
 import { isTauri } from "@/lib/is-tauri";
 
 export default function EmbeddedWebviewSpikePage() {
@@ -66,16 +74,42 @@ export default function EmbeddedWebviewSpikePage() {
     const autoUrl = params.get("autoshow");
     if (!autoUrl) return;
     setAutoRan(true);
-    setUrl(autoUrl);
     void (async () => {
+      setUrl(autoUrl);
       await handleShow(autoUrl);
       if (params.get("autoread") === "1") {
         await new Promise((r) => setTimeout(r, 1500));
         await handleReadSession();
       }
+      if (params.get("autotest") === "evalbridge") {
+        await new Promise((r) => setTimeout(r, 1000));
+        await handleEvalBridgeTest();
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRan]);
+
+  // embedded-automation-bridge story: a manual, one-shot smoke test of
+  // find/click/type against whatever's CURRENTLY shown in the pane --
+  // exercises the exact same evalInEmbeddedWebview() path
+  // clickSessionAtAction()/typeIntoSessionAction()'s embedded-pane
+  // backend will use, without needing to build the full profile-assist
+  // wiring first.
+  const [evalBridgeResult, setEvalBridgeResult] = useState<string>("");
+  async function handleEvalBridgeTest() {
+    setEvalBridgeResult("running…");
+    try {
+      const find1 = await findEmbeddedElementByText("Test Button");
+      const typeResult = await typeIntoEmbeddedElementByText("Test Input", "hello from eval bridge");
+      const clickResult = await clickEmbeddedElementByText("Test Button");
+      const find2 = await findEmbeddedElementByText("nonexistent-element-xyz");
+      setEvalBridgeResult(
+        `find("Test Button")=${JSON.stringify(find1)} | type=${JSON.stringify(typeResult)} | click=${JSON.stringify(clickResult)} | find(missing)=${JSON.stringify(find2)}`,
+      );
+    } catch (e) {
+      setEvalBridgeResult(`error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   const [sessionResult, setSessionResult] = useState<string>("");
   async function handleReadSession() {
@@ -124,8 +158,12 @@ export default function EmbeddedWebviewSpikePage() {
         <button type="button" onClick={handleReadSession} className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised">
           Read session (macOS only)
         </button>
+        <button type="button" onClick={() => void handleEvalBridgeTest()} className="rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised">
+          Run eval-bridge test
+        </button>
       </div>
       {sessionResult && <p className="mt-2 font-theme-mono text-xs text-theme-text-dim">{sessionResult}</p>}
+      {evalBridgeResult && <p id="eval-bridge-result" className="mt-2 font-theme-mono text-xs text-theme-text-dim">{evalBridgeResult}</p>}
 
       <div
         ref={paneRef}

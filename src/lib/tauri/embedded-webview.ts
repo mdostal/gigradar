@@ -78,3 +78,163 @@ export interface EmbeddedStorageState {
 export async function readEmbeddedWebviewSession(): Promise<EmbeddedStorageState> {
   return invokeTauri<EmbeddedStorageState>("embedded_webview_read_session");
 }
+
+// ---------------------------------------------------------------------------
+// true-embedded-browser epic, embedded-automation-bridge story. The DEFAULT
+// automation backend for guided/full-auto profile-assist against the
+// embedded pane -- dispatches synthetic DOM events entirely inside the
+// page's own JS/event model via embedded_webview_eval(), NEVER touching
+// the real OS cursor/HID input stream at all (unlike
+// embedded-vision-automation-mode's OS-level CGEvent approach, live-
+// verified this session to visibly hijack the owner's real mouse cursor).
+// Real prior art this mirrors: danielraffel/tauri-webdriver injects a JS
+// bridge into a Tauri/WKWebView app for exactly this class of operation,
+// with no CDP dependency at all.
+//
+// Every injected script below is a single IIFE expression (never a
+// multi-statement script relying on eval()'s own implicit-last-value
+// semantics) that ALWAYS catches its own exceptions and resolves to a
+// plain `{ok, result}` / `{ok: false, error}` object itself -- per
+// eval_with_callback()'s own doc comment ("exception is ignored... on
+// Windows"), this bridge never relies on Tauri's own exception
+// passthrough, cross-platform.
+// ---------------------------------------------------------------------------
+
+async function evalInEmbeddedWebview<T>(js: string): Promise<T> {
+  const raw = await invokeTauri<string>("embedded_webview_eval", { js });
+  let parsed: { ok: boolean; result?: T; error?: string };
+  try {
+    parsed = JSON.parse(raw) as { ok: boolean; result?: T; error?: string };
+  } catch {
+    throw new Error(`gigradar embedded-webview eval: non-JSON result from the embedded pane: ${raw}`);
+  }
+  if (!parsed.ok) throw new Error(`gigradar embedded-webview eval: ${parsed.error ?? "unknown error"}`);
+  return parsed.result as T;
+}
+
+/**
+ * Finds the SMALLEST (most specific, by on-screen area) visible element
+ * whose aria-label/placeholder/title/visible-text/value contains `text`
+ * (case-insensitive substring) -- "smallest wins" avoids matching a huge
+ * container `<div>` that merely happens to contain the target text
+ * somewhere among many descendants. Returns `{found: false}` (never
+ * throws) when nothing matches -- a real, common, non-error outcome
+ * (the page hasn't loaded that content yet, or the label doesn't match).
+ */
+export interface EmbeddedElementMatch {
+  found: boolean;
+  rect?: { x: number; y: number; width: number; height: number };
+  tag?: string;
+}
+
+function findElementScript(text: string): string {
+  const needle = JSON.stringify(text);
+  return `(function() {
+    try {
+      var wanted = (${needle} || "").trim().toLowerCase();
+      var nodes = document.querySelectorAll("body *");
+      var best = null, bestArea = Infinity, bestRect = null;
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        var rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        var label = (el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("title") || el.innerText || el.value || "").trim().toLowerCase();
+        if (label.indexOf(wanted) === -1) continue;
+        var area = rect.width * rect.height;
+        if (area < bestArea) { bestArea = area; best = el; bestRect = rect; }
+      }
+      if (!best) return {ok: true, result: {found: false}};
+      return {ok: true, result: {found: true, tag: best.tagName, rect: {x: bestRect.x, y: bestRect.y, width: bestRect.width, height: bestRect.height}}};
+    } catch (e) {
+      return {ok: false, error: String((e && e.message) || e)};
+    }
+  })()`;
+}
+
+export async function findEmbeddedElementByText(text: string): Promise<EmbeddedElementMatch> {
+  return evalInEmbeddedWebview<EmbeddedElementMatch>(findElementScript(text));
+}
+
+/**
+ * Clicks the same element findEmbeddedElementByText() would find, via a
+ * plain `el.click()` -- native semantics for `<a>`/`<button>`/form
+ * controls, and broadly compatible with React/other frameworks' own
+ * synthetic-event delegation (which listens at the document root for
+ * REAL DOM events, `.click()` included) without needing to hand-construct
+ * a MouseEvent sequence.
+ */
+export async function clickEmbeddedElementByText(text: string): Promise<{ clicked: boolean }> {
+  const needle = JSON.stringify(text);
+  const js = `(function() {
+    try {
+      var wanted = (${needle} || "").trim().toLowerCase();
+      var nodes = document.querySelectorAll("body *");
+      var best = null, bestArea = Infinity;
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        var rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        var label = (el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("title") || el.innerText || el.value || "").trim().toLowerCase();
+        if (label.indexOf(wanted) === -1) continue;
+        var area = rect.width * rect.height;
+        if (area < bestArea) { bestArea = area; best = el; }
+      }
+      if (!best) return {ok: true, result: {clicked: false}};
+      best.click();
+      return {ok: true, result: {clicked: true}};
+    } catch (e) {
+      return {ok: false, error: String((e && e.message) || e)};
+    }
+  })()`;
+  return evalInEmbeddedWebview<{ clicked: boolean }>(js);
+}
+
+/**
+ * Types `value` into the same element findEmbeddedElementByText() would
+ * find. REAL GOTCHA handled here: a third-party page built with React (or
+ * similar) overrides `HTMLInputElement.prototype.value`'s own setter to
+ * track controlled-input state -- setting `el.value = x` directly is
+ * therefore invisible to React's own onChange handler (the framework
+ * never sees a real "input" event fire through its own tracked setter).
+ * Fixed by calling the NATIVE prototype's value setter explicitly (via
+ * `Object.getOwnPropertyDescriptor` on the prototype, bypassing whatever
+ * the page's own framework has overridden on the instance) before
+ * dispatching real `input`/`change` events -- the same technique
+ * real-world browser-automation tooling uses for this exact problem.
+ */
+export async function typeIntoEmbeddedElementByText(text: string, value: string): Promise<{ typed: boolean }> {
+  const needle = JSON.stringify(text);
+  const val = JSON.stringify(value);
+  const js = `(function() {
+    try {
+      var wanted = (${needle} || "").trim().toLowerCase();
+      var nodes = document.querySelectorAll("input, textarea");
+      var best = null, bestArea = Infinity;
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        var rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        var label = (el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("title") || el.name || "").trim().toLowerCase();
+        if (label.indexOf(wanted) === -1) continue;
+        var area = rect.width * rect.height;
+        if (area < bestArea) { bestArea = area; best = el; }
+      }
+      if (!best) return {ok: true, result: {typed: false}};
+      var proto = best.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      var setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+      setter.call(best, ${val});
+      best.dispatchEvent(new Event("input", {bubbles: true}));
+      best.dispatchEvent(new Event("change", {bubbles: true}));
+      return {ok: true, result: {typed: true}};
+    } catch (e) {
+      return {ok: false, error: String((e && e.message) || e)};
+    }
+  })()`;
+  return evalInEmbeddedWebview<{ typed: boolean }>(js);
+}

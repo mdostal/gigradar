@@ -146,6 +146,58 @@ pub fn embedded_webview_navigate(
     }
 }
 
+/// true-embedded-browser epic, embedded-automation-bridge story. Runs
+/// arbitrary JS against the embedded webview and returns its result --
+/// the real mechanism `src/lib/tauri/embedded-webview.ts`'s frontend
+/// find/click/type helpers are built on. Cross-platform Tauri API (no
+/// macOS-specific FFI needed at all, unlike embedded_webview_cookies.rs's
+/// native cookie read) -- confirmed via the vendored crate source
+/// (`~/.cargo/registry/.../tauri-2.11.5/src/webview/mod.rs`'s own
+/// `eval_with_callback()`), not assumed from docs.
+///
+/// ASYNC, using the SAME oneshot-channel + `Arc<Mutex<Option<Sender>>>`
+/// bridging pattern embedded_webview_cookies.rs's `dispatch_cookie_read()`
+/// already established, for the SAME reason: `eval_with_callback()`'s own
+/// callback type is `impl Fn(String) + Send + 'static` (an ObjC-block-
+/// style "may be invoked more than once" contract, even though this
+/// specific API only ever calls it once in practice) -- a plain
+/// `oneshot::Sender::send()` consumes `self`, so only `FnOnce`; wrapping
+/// it in `Arc<Mutex<Option<_>>>` lets one `Fn` closure send at most once
+/// via `.take()`, matching the cookie-read command's own documented
+/// reasoning exactly.
+///
+/// Per `eval_with_callback()`'s own doc comment, a thrown JS exception is
+/// silently swallowed on Windows rather than surfaced -- the frontend
+/// bridge (`evalInEmbeddedWebview()`) works around this by having every
+/// injected script wrap its own body in try/catch and always resolve to
+/// a `{ok, result}` or `{ok: false, error}` JSON string itself, never
+/// relying on eval_with_callback() to report a JS-level throw.
+#[tauri::command]
+pub async fn embedded_webview_eval(
+    handle: tauri::State<'_, EmbeddedWebviewHandle>,
+    js: String,
+) -> Result<String, String> {
+    let webview = handle.webview_handle().ok_or_else(|| {
+        "gigradar embedded-webview: not yet created -- call embedded_webview_show() first".to_string()
+    })?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+    let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+
+    webview
+        .eval_with_callback(js, move |result: String| {
+            if let Ok(mut guard) = tx.lock() {
+                if let Some(sender) = guard.take() {
+                    let _ = sender.send(result);
+                }
+            }
+        })
+        .map_err(|e| format!("gigradar embedded-webview: eval failed: {e}"))?;
+
+    rx.await
+        .map_err(|_| "gigradar embedded-webview: eval channel closed before a result arrived".to_string())
+}
+
 /// Destroys the embedded webview entirely (not just hides it) -- for a
 /// real "I'm done with this session, tear it down" moment (e.g. cancelling
 /// a Capture Login), as distinct from `hide()`'s "keep it around, just out

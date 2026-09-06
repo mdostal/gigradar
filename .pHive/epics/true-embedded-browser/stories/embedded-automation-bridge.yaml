@@ -1,7 +1,73 @@
 id: embedded-automation-bridge
 epic: true-embedded-browser
 title: "DOM/eval-bridge automation backend -- guided/full-auto drive the embedded pane via webview.eval(), no CDP or OS-level input needed"
-status: pending
+status: complete
+
+progress_note: |
+  BUILT AND LIVE-VERIFIED 2026-09-06, end to end, against a real running
+  isolated Tauri instance (never the real production app -- port/
+  XDG_DATA_HOME isolated throughout, confirmed no collision).
+
+  `embedded_webview_eval(js) -> Promise<String>` (embedded_webview.rs)
+  uses Tauri's own `Webview::eval_with_callback()` (confirmed via the
+  vendored crate source, not assumed) -- cross-platform, no native FFI
+  needed at all (unlike Story 2's cookie extraction). Same
+  oneshot-channel + `Arc<Mutex<Option<Sender>>>` bridging pattern Story
+  2 already established, for the identical reason (the callback is `Fn`,
+  not `FnOnce`).
+
+  Frontend bridge (`embedded-webview.ts`) adds
+  `findEmbeddedElementByText()`/`clickEmbeddedElementByText()`/
+  `typeIntoEmbeddedElementByText()` -- each generates a real IIFE script,
+  JSON.stringify()-escapes all owner/LLM-supplied text before embedding
+  it (unit-tested against quote/backslash injection), searches for the
+  SMALLEST visible element whose aria-label/placeholder/title/innerText/
+  value contains the target text, and for typing, uses the
+  native-prototype-value-setter trick to work correctly even against a
+  React-controlled third-party page's own `<input>`.
+
+  REAL, SEVERE, PRE-EXISTING BUG FOUND AND FIXED while live-verifying
+  this: EVERY custom Tauri command in this app (`embedded_webview_show`
+  included -- not just the new `eval` command) was hitting "not allowed.
+  Plugin not found" when invoked from the frontend, in EVERY build,
+  always -- confirmed by testing `get_update_status` (a long-shipped,
+  totally unrelated command) and getting the exact same error. Root
+  cause: `src-tauri/build.rs` called bare `tauri_build::build()` with no
+  `AppManifest`, so Tauri's ACL system never generated ANY permission for
+  this app's own commands -- registering a command in
+  `generate_handler!` alone does NOT imply "allowed." Fixed by declaring
+  every custom command via `AppManifest::commands()` (auto-generates a
+  real `allow-<kebab-case>` permission per command) and referencing each
+  one in `capabilities/default.json`. A SECOND, related gap surfaced
+  once that was fixed: the capability's default `windows: ["main"]`
+  scope only covers Tauri's own bundled "local" origin, but this app's
+  main window loads a REAL HTTP URL from its own bundled Node sidecar
+  (`http://127.0.0.1:<port>`) -- needed an explicit
+  `"remote": {"urls": ["http://127.0.0.1:*"]}` entry too. Without this
+  session's live end-to-end verification (rather than trusting
+  `cargo check`, which does NOT catch ACL/capability misconfiguration),
+  this bug -- and therefore this entire epic's actual functionality --
+  would have shipped silently broken.
+
+  Live-verified against a real HTML test page (a self-controlled local
+  HTTP server, not a real third-party site) inside the real embedded
+  pane: `find` located a real button by its accessible label, `type` set
+  a real `<input>`'s value AND fired a real `input` event the page's own
+  JS listener observed (confirmed via a SEPARATE signal --
+  `document.title` changed), `click` fired the button's real click
+  handler (confirmed via the page's own DOM text changing to "CLICKED").
+  Zero OS-level cursor movement at any point -- confirmed by design
+  (the mechanism never calls CGEvent/HID at all) and consistent with
+  every other observation this session.
+
+  `npm test` (1578 passed, 7 new for this story), `npm run typecheck`,
+  `cargo check`/`cargo clippy` all clean.
+
+  NOT YET DONE (separate follow-on, not this story's scope): wiring
+  guided/full-auto profile-assist's own `clickSessionAtAction()`/
+  `typeIntoSessionAction()` call sites to route through this backend,
+  and the settings toggle UI (embedded-guided-apply-assist's own scope).
+  This story delivers the backend mechanism itself, live-proven working.
 complexity: high
 methodology: classic
 depends_on: [embedded-webview-child-mechanism]
