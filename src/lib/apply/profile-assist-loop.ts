@@ -129,6 +129,27 @@ interface AwaitingHumanAnswer {
   question: string;
 }
 
+/**
+ * true-embedded-browser epic, embedded-automation-bridge wiring. A `read`/
+ * `click`/`fill` tool call whose fulfillment this module CANNOT perform
+ * itself, because there's no server-held Playwright `Page` for the
+ * embedded-pane path — only the CLIENT can call embedded_webview_eval()
+ * (Tauri IPC only works from the browser/frontend JS context, never a
+ * Server Action). `advanceLoopTurn()` stores the id here and returns a
+ * `need_snapshot`/`need_execution` event instead of trying to fulfill it
+ * inline; `provideSnapshot()`/`provideActionOutcome()` complete it once
+ * the client has done the actual work and reports back. `undefined` for
+ * every real-chrome turn (driver present) -- this field only exists for
+ * the embedded path's own split read/decide-then-act protocol.
+ */
+interface PendingClientFulfillment {
+  toolUseId: string;
+  kind: "read" | "click" | "fill";
+  ref?: string;
+  value?: string;
+  reason?: string;
+}
+
 interface LoopEntry {
   history: Anthropic.MessageParam[];
   /** Refs present in the MOST RECENT read() result only — not a running union across the whole session, since a stale ref from three reads ago may no longer point at anything real. */
@@ -136,6 +157,34 @@ interface LoopEntry {
   turnCount: number;
   pendingApproval?: PendingApproval;
   awaitingHumanAnswer?: AwaitingHumanAnswer;
+  pendingClientFulfillment?: PendingClientFulfillment;
+}
+
+/**
+ * true-embedded-browser epic, embedded-automation-bridge wiring. The
+ * minimal surface `advanceLoopTurn()`/`resolveApproval()` actually touch
+ * on a Playwright `Page` -- extracted so the SAME loop logic (LLM call,
+ * tool-use parsing, ref validation, prompt-injection framing, history
+ * management) drives BOTH the existing real-chrome path (a
+ * `playwrightAssistPageDriver()` wrapping a real `Page`, below -- zero
+ * behavior change) and the embedded pane (which has no server-held Page
+ * at all; see `PendingClientFulfillment`'s own doc comment for why that
+ * path passes `driver: null` instead and gets `need_snapshot`/
+ * `need_execution` events back).
+ */
+export interface AssistPageDriver {
+  snapshot(): Promise<string>;
+  click(ref: string): Promise<string>;
+  fill(ref: string, value: string): Promise<string>;
+}
+
+/** The real-chrome implementation of AssistPageDriver -- byte-identical to this module's own pre-refactor inline Page calls. */
+export function playwrightAssistPageDriver(page: Page): AssistPageDriver {
+  return {
+    snapshot: () => page.locator("body").ariaSnapshot({ mode: "ai" }),
+    click: (ref) => executeClickOrFill(page, "click", ref),
+    fill: (ref, value) => executeClickOrFill(page, "fill", ref, value),
+  };
 }
 
 // globalThis-pinned — see this file's header comment.
@@ -148,7 +197,15 @@ export type LoopEvent =
   | { type: "invalid_ref"; tool: "click" | "fill"; ref: string }
   | { type: "ask_human"; question: string }
   | { type: "done"; summary: string }
-  | { type: "turn_limit_reached" };
+  | { type: "turn_limit_reached" }
+  // true-embedded-browser epic, embedded-automation-bridge wiring. Returned
+  // by advanceLoopTurn(sessionId, null, ...) (the embedded-pane path, no
+  // server-held Page) instead of fulfilling read()/a full-auto click/fill
+  // inline -- see PendingClientFulfillment's own doc comment. The client
+  // does the real work (embedded_webview_eval()-based snapshot/click/fill)
+  // then calls provideSnapshot()/provideActionOutcome() to complete the turn.
+  | { type: "need_snapshot" }
+  | { type: "need_execution"; tool: "click" | "fill"; ref: string; value?: string; reason: string };
 
 /** Removes any loop state for `sessionId` — called when the underlying assist session ends, so a new session for the same id (or a reused sessionId, which never happens, but defensively) never inherits stale history. */
 export function clearLoop(sessionId: string): void {
@@ -241,9 +298,20 @@ async function executeClickOrFill(page: Page, tool: "click" | "fill", ref: strin
  * the two modes: the loop, tool schema, and every mitigation are
  * otherwise byte-identical.
  */
+/**
+ * `driver`: the real-chrome path passes `playwrightAssistPageDriver(page)`
+ * and behaves byte-identically to this function's own pre-refactor
+ * version. The embedded-pane path passes `null` -- there is no
+ * server-held Page for it to act on (embedded_webview_eval() is a
+ * client-only Tauri IPC call) -- and gets a `need_snapshot`/
+ * `need_execution` event back instead of read()/a full-auto click/fill
+ * being fulfilled inline; see PendingClientFulfillment's own doc comment
+ * and provideSnapshot()/provideActionOutcome() below for how the client
+ * completes that turn.
+ */
 export async function advanceLoopTurn(
   sessionId: string,
-  page: Page,
+  driver: AssistPageDriver | null,
   mode: "guided" | "full-auto",
   profile: Profile,
   applyProfile: ApplyProfileConfig,
@@ -256,6 +324,9 @@ export async function advanceLoopTurn(
   }
   if (entry.awaitingHumanAnswer) {
     throw new Error(`${MODULE_PREFIX}: the loop is waiting on a human answer — provide one before advancing.`);
+  }
+  if (entry.pendingClientFulfillment) {
+    throw new Error(`${MODULE_PREFIX}: a prior read()/execution is still awaiting the client's own fulfillment — provide it before advancing.`);
   }
   if (entry.turnCount >= MAX_TURNS) {
     return { type: "turn_limit_reached" };
@@ -281,7 +352,11 @@ export async function advanceLoopTurn(
   const input = toolUse.input as Record<string, unknown>;
 
   if (toolUse.name === READ_TOOL) {
-    const snapshot = await page.locator("body").ariaSnapshot({ mode: "ai" });
+    if (!driver) {
+      entry.pendingClientFulfillment = { toolUseId: toolUse.id, kind: "read" };
+      return { type: "need_snapshot" };
+    }
+    const snapshot = await driver.snapshot();
     entry.lastSnapshotRefs = extractRefs(snapshot);
     entry.history.push(buildPageSnapshotToolResult(toolUse.id, snapshot));
     return { type: "read", snapshot };
@@ -318,7 +393,12 @@ export async function advanceLoopTurn(
       return { type: tool, ref, value, reason, pending: true, executed: false };
     }
 
-    const outcome = await executeClickOrFill(page, tool, ref, value);
+    if (!driver) {
+      entry.pendingClientFulfillment = { toolUseId: toolUse.id, kind: tool, ref, value, reason };
+      return { type: "need_execution", tool, ref, value, reason };
+    }
+
+    const outcome = tool === "click" ? await driver.click(ref) : await driver.fill(ref, value ?? "");
     entry.history.push({
       role: "user",
       content: [{ type: "tool_result", tool_use_id: toolUse.id, content: [{ type: "text", text: outcome }] }],
@@ -341,23 +421,88 @@ export async function advanceLoopTurn(
 }
 
 /**
+ * true-embedded-browser epic, embedded-automation-bridge wiring. Completes
+ * a turn `advanceLoopTurn()` returned `{type: "need_snapshot"}` for --
+ * the client has already fetched a fresh embedded-pane snapshot (via
+ * `embedded_webview_eval()`-based reading, never a server-held Page) and
+ * hands it back here. Does exactly what `advanceLoopTurn()`'s own
+ * driver-present `read()` branch does inline: updates `lastSnapshotRefs`,
+ * pushes the SAME prompt-injection-framed tool_result
+ * (`buildPageSnapshotToolResult()`, reused unmodified -- the framing
+ * applies identically regardless of which mechanism produced the
+ * snapshot), and returns the matching `{type: "read", snapshot}` event.
+ */
+export function provideSnapshot(sessionId: string, snapshot: string): LoopEvent {
+  const entry = loops.get(sessionId);
+  if (!entry?.pendingClientFulfillment || entry.pendingClientFulfillment.kind !== "read") {
+    throw new Error(`${MODULE_PREFIX}: no pending read() awaiting a snapshot for this session.`);
+  }
+  const { toolUseId } = entry.pendingClientFulfillment;
+  entry.pendingClientFulfillment = undefined;
+
+  entry.lastSnapshotRefs = extractRefs(snapshot);
+  entry.history.push(buildPageSnapshotToolResult(toolUseId, snapshot));
+  return { type: "read", snapshot };
+}
+
+/**
+ * true-embedded-browser epic, embedded-automation-bridge wiring. Completes
+ * a turn `advanceLoopTurn()` returned `{type: "need_execution"}` for
+ * (full-auto mode only -- guided mode's pending click/fill goes through
+ * `resolveApproval()` below instead) -- the client has already executed
+ * the click/fill against the embedded pane (via
+ * `clickEmbeddedElementByRef()`/`typeIntoEmbeddedElementByRef()`) and
+ * reports the real outcome string back here, pushed as the SAME
+ * tool_result shape `executeClickOrFill()`'s own return value already
+ * produces for the real-chrome path.
+ */
+export function provideActionOutcome(sessionId: string, outcome: string): LoopEvent {
+  const entry = loops.get(sessionId);
+  const pending = entry?.pendingClientFulfillment;
+  if (!pending || (pending.kind !== "click" && pending.kind !== "fill")) {
+    throw new Error(`${MODULE_PREFIX}: no pending click()/fill() execution awaiting an outcome for this session.`);
+  }
+  entry.pendingClientFulfillment = undefined;
+
+  entry.history.push({
+    role: "user",
+    content: [{ type: "tool_result", tool_use_id: pending.toolUseId, content: [{ type: "text", text: outcome }] }],
+  });
+  return { type: pending.kind, ref: pending.ref!, value: pending.value, reason: pending.reason ?? "", pending: false, executed: true };
+}
+
+/**
  * Resolves a pending Guided-mode approval. `approve: false` (Reject) never
  * touches the page — the LLM is told the action was rejected and continues
  * from there. `approve: true` executes the click/fill for real;
  * `editedValue` (Edit-then-approve) overrides the LLM's own proposed fill
  * value when present, never used for click.
  */
+/**
+ * `driver`: real-chrome (non-null) executes the approved click/fill
+ * inline and pushes its outcome, byte-identical to this function's own
+ * pre-refactor version, returning `undefined`. The embedded-pane path
+ * (`driver: null`) cannot execute anything itself (see
+ * `AssistPageDriver`'s own doc comment) -- on an APPROVED action it
+ * instead moves the approval into `pendingClientFulfillment` and returns
+ * `{ needsExecution: {tool, ref, value} }`, telling the caller (the
+ * Server Action wrapping this) to have the client execute the click/fill
+ * against the embedded pane and then call `provideActionOutcome()`. A
+ * REJECTED action needs no execution either way -- pushes the same
+ * rejection tool_result immediately and returns `undefined` regardless
+ * of `driver`.
+ */
 export async function resolveApproval(
   sessionId: string,
-  page: Page,
+  driver: AssistPageDriver | null,
   approve: boolean,
   editedValue?: string,
-): Promise<void> {
+): Promise<{ needsExecution: { tool: "click" | "fill"; ref: string; value?: string } } | undefined> {
   const entry = loops.get(sessionId);
   if (!entry?.pendingApproval) {
     throw new Error(`${MODULE_PREFIX}: no pending approval for this session.`);
   }
-  const { toolUseId, tool, ref, value } = entry.pendingApproval;
+  const { toolUseId, tool, ref, value, reason } = entry.pendingApproval;
   entry.pendingApproval = undefined;
 
   if (!approve) {
@@ -371,15 +516,22 @@ export async function resolveApproval(
         },
       ],
     });
-    return;
+    return undefined;
   }
 
   const finalValue = tool === "fill" ? (editedValue ?? value) : undefined;
-  const outcome = await executeClickOrFill(page, tool, ref, finalValue);
+
+  if (!driver) {
+    entry.pendingClientFulfillment = { toolUseId, kind: tool, ref, value: finalValue, reason };
+    return { needsExecution: { tool, ref, value: finalValue } };
+  }
+
+  const outcome = tool === "click" ? await driver.click(ref) : await driver.fill(ref, finalValue ?? "");
   entry.history.push({
     role: "user",
     content: [{ type: "tool_result", tool_use_id: toolUseId, content: [{ type: "text", text: outcome }] }],
   });
+  return undefined;
 }
 
 /** Answers a pending ask_human() question, letting the loop resume on its next advanceLoopTurn() call. */

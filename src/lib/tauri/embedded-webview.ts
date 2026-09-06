@@ -303,3 +303,141 @@ export async function typeIntoEmbeddedElementByText(text: string, value: string)
   })()`;
   return evalInEmbeddedWebview<{ typed: boolean }>(js);
 }
+
+// ---------------------------------------------------------------------------
+// true-embedded-browser epic, embedded-automation-bridge wiring into
+// guided/full-auto profile-assist. profile-assist-loop.ts's own tool-use
+// loop is REF-BASED (Playwright's `page.locator("body").ariaSnapshot({mode:
+// "ai"})`, annotating elements with `[ref=eN]`, then
+// `page.locator("aria-ref=eN")` to act on one) -- NOT screenshot-coordinate-
+// based, contrary to what this epic's own original research assumed. That
+// makes it directly portable to the embedded pane via the SAME
+// embedded_webview_eval() bridge the find/click/type helpers above already
+// use -- no vision model, no OS-level input, needed for this (the DEFAULT)
+// backend at all.
+//
+// `snapshotEmbeddedWebview()`'s own output format doesn't need to be
+// byte-identical to Playwright's ariaSnapshot -- profile-assist-loop.ts's
+// own prompt only ever tells the model "you'll see refs like [ref=e2]",
+// never asserts a specific tree-serialization format -- it just needs
+// real `[ref=eN]` markers `extractRefs()`'s own regex can find, and enough
+// role/label context for the model to make good decisions. Refs are
+// reassigned FRESH on every snapshot call (a `data-gigradar-ref` attribute
+// written directly onto each element, replacing any prior value) --
+// mirrors Playwright's own ariaSnapshot, which is also a fresh, one-shot
+// annotation per call, never a persisted id.
+// ---------------------------------------------------------------------------
+
+export interface EmbeddedSnapshotResult {
+  snapshot: string;
+}
+
+/**
+ * Walks the embedded pane's own DOM for visible, interactive/labeled
+ * elements (links, buttons, form controls, headings -- headings included
+ * unlabeled-role-free so the model gets real page structure/context, not
+ * just a flat control list), assigns each a fresh `[ref=eN]`, and returns
+ * a flat, one-line-per-element text snapshot. Elements with genuinely no
+ * usable label (no text/aria-label/placeholder/value) are skipped
+ * entirely -- an unlabeled `<div>` wrapper is real page structure noise,
+ * not something profile-assist-loop.ts's own click()/fill() tools could
+ * meaningfully target anyway.
+ */
+export async function snapshotEmbeddedWebview(): Promise<string> {
+  const js = `(function() {
+    function role(tag, type) {
+      if (tag === "a") return "link";
+      if (tag === "button") return "button";
+      if (tag === "select") return "combobox";
+      if (tag === "textarea") return "textbox";
+      if (tag === "input") {
+        if (type === "checkbox") return "checkbox";
+        if (type === "radio") return "radio";
+        if (type === "submit" || type === "button") return "button";
+        return "textbox";
+      }
+      return "generic";
+    }
+    try {
+      var sel = "a, button, input, textarea, select, h1, h2, h3, h4, [role]";
+      var nodes = document.querySelectorAll(sel);
+      var lines = [];
+      var n = 0;
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        var rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        var tag = el.tagName.toLowerCase();
+        var type = (el.getAttribute("type") || "").toLowerCase();
+        var explicitRole = el.getAttribute("role");
+        var label = (el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.innerText || el.value || el.getAttribute("title") || "").trim();
+        if (!label) continue;
+        label = label.replace(/\\s+/g, " ").slice(0, 120);
+        n += 1;
+        var ref = "e" + n;
+        el.setAttribute("data-gigradar-ref", ref);
+        var r = explicitRole || role(tag, type);
+        lines.push("- " + r + " \\"" + label.replace(/"/g, "'") + "\\" [ref=" + ref + "]");
+      }
+      return {ok: true, result: {snapshot: lines.join("\\n")}};
+    } catch (e) {
+      return {ok: false, error: String((e && e.message) || e)};
+    }
+  })()`;
+  const result = await evalInEmbeddedWebview<EmbeddedSnapshotResult>(js);
+  return result.snapshot;
+}
+
+/**
+ * Clicks the element carrying `data-gigradar-ref="${ref}"` (assigned by
+ * the MOST RECENT snapshotEmbeddedWebview() call -- a stale ref from a
+ * prior snapshot may not resolve to anything, same "refs expire on the
+ * next read()" contract profile-assist-loop.ts's own ref-validation
+ * already enforces server-side). Returns the SAME outcome-message
+ * convention `executeClickOrFill()` (profile-assist-loop.ts) already
+ * produces for the real-chrome path, so `provideActionOutcome()` receives
+ * an identically-shaped string regardless of which backend ran.
+ */
+export async function clickEmbeddedElementByRef(ref: string): Promise<string> {
+  const refJson = JSON.stringify(ref);
+  const js = `(function() {
+    try {
+      var el = document.querySelector('[data-gigradar-ref="' + ${refJson} + '"]');
+      if (!el) return {ok: true, result: {outcome: "Failed to click ref " + ${refJson} + ": element not found (snapshot may be stale)."}};
+      el.click();
+      return {ok: true, result: {outcome: "Clicked ref " + ${refJson} + "."}};
+    } catch (e) {
+      return {ok: true, result: {outcome: "Failed to click ref " + ${refJson} + ": " + String((e && e.message) || e)}};
+    }
+  })()`;
+  const result = await evalInEmbeddedWebview<{ outcome: string }>(js);
+  return result.outcome;
+}
+
+/** The fill() counterpart to clickEmbeddedElementByRef() -- same native-prototype-value-setter trick typeIntoEmbeddedElementByText() already uses, for the SAME React-controlled-input reason. */
+export async function fillEmbeddedElementByRef(ref: string, value: string): Promise<string> {
+  const refJson = JSON.stringify(ref);
+  const valueJson = JSON.stringify(value);
+  const js = `(function() {
+    try {
+      var el = document.querySelector('[data-gigradar-ref="' + ${refJson} + '"]');
+      if (!el) return {ok: true, result: {outcome: "Failed to fill ref " + ${refJson} + ": element not found (snapshot may be stale)."}};
+      var proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      var descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(el, ${valueJson});
+      } else {
+        el.value = ${valueJson};
+      }
+      el.dispatchEvent(new Event("input", {bubbles: true}));
+      el.dispatchEvent(new Event("change", {bubbles: true}));
+      return {ok: true, result: {outcome: "Filled ref " + ${refJson} + " with the provided value."}};
+    } catch (e) {
+      return {ok: true, result: {outcome: "Failed to fill ref " + ${refJson} + ": " + String((e && e.message) || e)}};
+    }
+  })()`;
+  const result = await evalInEmbeddedWebview<{ outcome: string }>(js);
+  return result.outcome;
+}

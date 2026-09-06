@@ -25,7 +25,16 @@ import { resolveLlmCredential } from "@/lib/config/env-store";
 import { ConfigSchema } from "@/lib/config/schema";
 import { readRawConfig } from "@/lib/config/save";
 import { suggestProfileFields, type FieldSuggestion } from "@/lib/apply/profile-suggest";
-import { advanceLoopTurn, answerHuman, clearLoop, resolveApproval, type LoopEvent } from "@/lib/apply/profile-assist-loop";
+import {
+  advanceLoopTurn,
+  answerHuman,
+  clearLoop,
+  playwrightAssistPageDriver,
+  provideActionOutcome,
+  provideSnapshot,
+  resolveApproval,
+  type LoopEvent,
+} from "@/lib/apply/profile-assist-loop";
 import type { ActionResult } from "@/lib/actions/result";
 import type { LlmCredential } from "@/lib/config/env-store";
 import type { ApplyProfileConfig, Profile } from "@/lib/types";
@@ -218,7 +227,7 @@ export async function advanceLoopTurnAction(sessionId: string): Promise<ActionRe
 
   try {
     const page = getAssistSessionPage(sessionId);
-    const event = await advanceLoopTurn(sessionId, page, inputs.mode, inputs.profile, inputs.applyProfile, inputs.credential);
+    const event = await advanceLoopTurn(sessionId, playwrightAssistPageDriver(page), inputs.mode, inputs.profile, inputs.applyProfile, inputs.credential);
     return actionOk(event);
   } catch (e) {
     return actionErr(e);
@@ -232,7 +241,7 @@ export async function resolveApprovalAction(
 ): Promise<ActionResult<null>> {
   try {
     const page = getAssistSessionPage(sessionId);
-    await resolveApproval(sessionId, page, approve, editedValue);
+    await resolveApproval(sessionId, playwrightAssistPageDriver(page), approve, editedValue);
     return actionOk(null);
   } catch (e) {
     return actionErr(e);
@@ -246,6 +255,87 @@ export async function answerHumanAction(sessionId: string, answer: string): Prom
   } catch (e) {
     return actionErr(e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// true-embedded-browser epic, embedded-automation-bridge wiring into
+// guided/full-auto profile-assist. There is no server-held assist
+// "session" at all for this path (unlike the real-chrome flow's
+// assist-session.ts registry, which holds a live Playwright
+// Browser/Context/Page) -- the client generates its OWN sessionId
+// (crypto.randomUUID()) and passes `mode` explicitly on every call, since
+// profile-assist-loop.ts's own advanceLoopTurn()/resolveApproval() already
+// take both as direct parameters rather than looking them up from a
+// registry. Mirrors resolveEmbeddedAssistSessionAction()'s own
+// "no browser needed" pattern from the manual-mode story.
+// ---------------------------------------------------------------------------
+
+/**
+ * Advances the embedded-pane loop by one turn (driver: null -- see
+ * advanceLoopTurn()'s own doc comment). Returns `need_snapshot`/
+ * `need_execution` instead of fulfilling read()/full-auto click-fill
+ * inline; the client completes those via
+ * provideEmbeddedSnapshotAction()/provideEmbeddedActionOutcomeAction()
+ * below.
+ */
+export async function decideEmbeddedLoopTurnAction(sessionId: string, mode: "guided" | "full-auto"): Promise<ActionResult<LoopEvent>> {
+  const credential = resolveLlmCredential();
+  if (!credential) return actionErr(new Error(MISSING_API_KEY_ERROR));
+  const profileData = readProfileAndApplyProfile();
+  if ("error" in profileData) return actionErr(new Error(profileData.error));
+
+  try {
+    const event = await advanceLoopTurn(sessionId, null, mode, profileData.profile, profileData.applyProfile, credential);
+    return actionOk(event);
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/** Completes a `need_snapshot` turn -- the client has already read a fresh embedded-pane snapshot (snapshotEmbeddedWebview(), a client-side Tauri IPC call) and hands it back here. */
+export async function provideEmbeddedSnapshotAction(sessionId: string, snapshot: string): Promise<ActionResult<LoopEvent>> {
+  try {
+    return actionOk(provideSnapshot(sessionId, snapshot));
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/** Completes a `need_execution` turn (full-auto mode) -- the client has already executed the click/fill against the embedded pane and reports the real outcome string back here. */
+export async function provideEmbeddedActionOutcomeAction(sessionId: string, outcome: string): Promise<ActionResult<LoopEvent>> {
+  try {
+    return actionOk(provideActionOutcome(sessionId, outcome));
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/**
+ * The embedded-pane equivalent of resolveApprovalAction() (Guided mode).
+ * On approval, resolveApproval(sessionId, null, ...) does NOT execute
+ * anything itself -- it returns `{needsExecution: {tool, ref, value}}`,
+ * which this action passes straight through so the client can execute
+ * the click/fill against the embedded pane and then call
+ * provideEmbeddedActionOutcomeAction(). On rejection, `needsExecution` is
+ * absent -- nothing further for the client to do.
+ */
+export async function resolveEmbeddedApprovalAction(
+  sessionId: string,
+  approve: boolean,
+  editedValue?: string,
+): Promise<ActionResult<{ needsExecution?: { tool: "click" | "fill"; ref: string; value?: string } }>> {
+  try {
+    const result = await resolveApproval(sessionId, null, approve, editedValue);
+    return actionOk(result ?? {});
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/** Ends an embedded-pane guided/full-auto loop -- clears its history (clearLoop(), the same function the real-chrome path's endAssistSessionAction() already calls). No browser/session resource to close for this path at all. */
+export async function endEmbeddedLoopSessionAction(sessionId: string): Promise<ActionResult<null>> {
+  clearLoop(sessionId);
+  return actionOk(null);
 }
 
 // ---------------------------------------------------------------------------

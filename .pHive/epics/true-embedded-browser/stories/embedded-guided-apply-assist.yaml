@@ -4,6 +4,76 @@ title: "Manual-mode profile-assist sessions use the embedded webview instead of 
 status: in_progress
 
 progress_note: |
+  UPDATE 2026-09-06, part 3: guided/full-auto are now wired to the true
+  embedded pane too, not just manual mode. Key discovery that unlocked
+  this cheaply: gigradar's own `profile-assist-loop.ts` guided/full-auto
+  mechanism was ALREADY ARIA-ref-based
+  (`page.locator("body").ariaSnapshot({mode:"ai"})` +
+  `page.locator("aria-ref=eN")`), not screenshot-coordinate-based as
+  this epic's own docs had assumed -- so it needed no vision model and
+  no OS-level cursor input to reach the embedded pane, just a DOM-based
+  ref mechanism reusing embedded-automation-bridge's already-proven
+  `embedded_webview_eval()`.
+
+  Refactored `profile-assist-loop.ts` around a new `AssistPageDriver`
+  interface (`{snapshot, click, fill}`) so the same LLM-call/history/
+  tool-parsing logic drives both the real-chrome path
+  (`playwrightAssistPageDriver(page)`, byte-identical behavior, proven
+  by the full pre-existing test suite passing unchanged) and the
+  embedded-pane path (`driver: null`). Since a Server Action can't call
+  client-side Tauri IPC directly, the embedded path uses a split
+  decide/provide protocol: `advanceLoopTurn()`/`resolveApproval()`
+  return `need_snapshot`/`need_execution` events instead of fulfilling
+  them inline; new `provideSnapshot()`/`provideActionOutcome()` complete
+  the turn once the CLIENT has done the real DOM work via three new
+  `embedded-webview.ts` functions (`snapshotEmbeddedWebview()` --
+  ARIA-ish ref-tagged text snapshot via a hand-rolled DOM walk, not
+  Playwright's real ariaSnapshot; `clickEmbeddedElementByRef()`;
+  `fillEmbeddedElementByRef()`, React-controlled-input-safe via the
+  native value-setter-descriptor trick embedded-automation-bridge
+  already established). Five new Server Actions
+  (`decideEmbeddedLoopTurnAction`, `provideEmbeddedSnapshotAction`,
+  `provideEmbeddedActionOutcomeAction`, `resolveEmbeddedApprovalAction`,
+  `endEmbeddedLoopSessionAction`) and a client-side
+  `runUntilBlockedEmbedded()` drive the loop; `handleStart()` now
+  branches on `isTauri() && mode !== "manual"` to open the true embedded
+  pane for guided/full-auto too (reusing the same `resolveEmbeddedAssistSessionAction()`
+  manual mode already established, and the same cookie-seeding flow);
+  the guided/full-auto render branch shows the true embedded pane (no
+  screenshot relay, no native-window toggle) when `session.isEmbedded`.
+
+  A real bug caught by new tests before shipping: `resolveApproval()`'s
+  embedded branch initially dropped the `reason` field when building
+  `pendingClientFulfillment`, so `provideActionOutcome()` would return
+  an empty reason string. Fixed; covered by
+  `resolveApproval(driver: null): embedded-pane approved execution
+  defers to the client`.
+
+  `npm test` (1596 passed, 3 skipped, including ~90 new lines across 4
+  new describe blocks in profile-assist-loop.test.ts) and `npm run
+  typecheck` both clean.
+
+  STILL NOT DONE, unchanged from before (real, remaining scope):
+  (1) the settings toggle for choosing DOM/eval-bridge vs. vision/
+  OS-input as the automation backend -- now buildable in principle
+  (guided/full-auto ARE wired to a real embedded backend), but
+  `embedded-vision-automation-mode` itself is still not started, so a
+  toggle today would have exactly one real option. Deferred until that
+  story lands or the owner asks for the toggle regardless.
+  (2) "Refresh suggestions" has no embedded-pane equivalent yet -- same
+  gap as before, separate scope.
+  (3) live, real-account end-to-end testing of the embedded guided/
+  full-auto flow (a real source, a real saved session, watching the
+  LLM actually click/fill through the embedded pane) needs the owner's
+  own screen time -- same category of gap as every other Story in this
+  epic's live-verification notes.
+  (4) whether the screenshot-relay mechanism (`embedded-view-interactive`
+  story) can be retired now that guided/full-auto have a true embedded
+  path -- NOT verified, still serves the real-chrome (non-Tauri-embedded)
+  path unchanged, so nothing to retire yet; worth revisiting once the
+  vision backend exists and if real-chrome mode itself is ever
+  deprecated.
+
   UPDATE 2026-09-06, continued: manual mode itself is BUILT and
   live-verified. New `EmbeddedManualAssist` component
   (profile-assist-client.tsx) -- self-contained, gated on `isTauri()`,
