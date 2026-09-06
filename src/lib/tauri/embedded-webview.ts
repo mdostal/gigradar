@@ -441,3 +441,39 @@ export async function fillEmbeddedElementByRef(ref: string, value: string): Prom
   const result = await evalInEmbeddedWebview<{ outcome: string }>(js);
   return result.outcome;
 }
+
+/**
+ * embedded-vision-automation-mode story. Thin bridge to
+ * src-tauri/src/embedded_webview_vision.rs's 5 commands -- the vision/
+ * OS-synthetic-input automation backend, the owner-mandated foreground-
+ * only alternative to the DOM/ref bridge above. Every command past
+ * `beginEmbeddedVisionSession()` is refused SERVER-SIDE (not just by a
+ * caller convention here) unless a session is currently open -- see that
+ * module's own `InteractiveSessionGate` for the real enforcement.
+ */
+
+/** Opens the server-side gate every other vision-mode command checks. Call this exactly when a guided/full-auto session in Vision mode starts -- never speculatively, never for an unattended/scheduled path. */
+export async function beginEmbeddedVisionSession(): Promise<void> {
+  await invokeTauri("embedded_vision_begin_session");
+}
+
+/** Closes the gate. Call when the session ends, is paused, or the profile-assist panel is closed/navigated away -- idempotent, safe to call even if no session was open. */
+export async function endEmbeddedVisionSession(): Promise<void> {
+  await invokeTauri("embedded_vision_end_session");
+}
+
+/** Captures gigradar's own main window (scoped so it is structurally impossible to include any other app/window -- see the Rust module's own header comment) and returns it as a data URL. Refused server-side if no vision session is open. */
+export async function captureEmbeddedVisionScreenshot(): Promise<string> {
+  const base64Png = await invokeTauri<string>("embedded_webview_vision_capture");
+  return `data:image/png;base64,${base64Png}`;
+}
+
+/** Synthesizes a real left-click at (x, y) -- POINTS relative to the captured window's own top-left, matching captureEmbeddedVisionScreenshot()'s own coordinate convention exactly. Moves the real OS cursor; refused server-side if no vision session is open or the gigradar window isn't frontmost. */
+export async function clickEmbeddedVisionPoint(x: number, y: number): Promise<void> {
+  await invokeTauri("embedded_webview_vision_click", { x, y });
+}
+
+/** Types `text` via a real synthesized keyboard event into whatever currently has keyboard focus. Same refusal guards as clickEmbeddedVisionPoint(). */
+export async function typeEmbeddedVisionText(text: string): Promise<void> {
+  await invokeTauri("embedded_webview_vision_type", { text });
+}

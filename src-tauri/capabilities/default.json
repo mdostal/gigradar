@@ -23,6 +23,11 @@
     "allow-embedded-webview-close",
     "allow-embedded-webview-eval",
     "allow-embedded-webview-read-session",
+    "allow-embedded-vision-begin-session",
+    "allow-embedded-vision-end-session",
+    "allow-embedded-webview-vision-capture",
+    "allow-embedded-webview-vision-click",
+    "allow-embedded-webview-vision-type",
     {
       "identifier": "shell:allow-execute",
       "allow": [

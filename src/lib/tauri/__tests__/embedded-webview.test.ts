@@ -16,9 +16,17 @@ vi.mock("@/lib/is-tauri", () => ({ isTauri: () => true }));
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
-const { findEmbeddedElementByText, clickEmbeddedElementByText, typeIntoEmbeddedElementByText, setEmbeddedWebviewCookies } = await import(
-  "../embedded-webview.js"
-);
+const {
+  findEmbeddedElementByText,
+  clickEmbeddedElementByText,
+  typeIntoEmbeddedElementByText,
+  setEmbeddedWebviewCookies,
+  beginEmbeddedVisionSession,
+  endEmbeddedVisionSession,
+  captureEmbeddedVisionScreenshot,
+  clickEmbeddedVisionPoint,
+  typeEmbeddedVisionText,
+} = await import("../embedded-webview.js");
 
 function baseCookie(overrides: Partial<Parameters<typeof setEmbeddedWebviewCookies>[0][number]> = {}) {
   return {
@@ -156,5 +164,38 @@ describe("setEmbeddedWebviewCookies", () => {
     const [, args] = invokeMock.mock.calls[0]!;
     const js = (args as { js: string }).js;
     expect(js).toContain("expires=");
+  });
+});
+
+describe("embedded-vision-automation-mode bridge", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("beginEmbeddedVisionSession / endEmbeddedVisionSession invoke the exact Rust command names with no args", async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await beginEmbeddedVisionSession();
+    expect(invokeMock).toHaveBeenCalledWith("embedded_vision_begin_session", undefined);
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await endEmbeddedVisionSession();
+    expect(invokeMock).toHaveBeenCalledWith("embedded_vision_end_session", undefined);
+  });
+
+  it("captureEmbeddedVisionScreenshot wraps the raw base64 PNG the Rust side returns as a data: URL", async () => {
+    invokeMock.mockResolvedValueOnce("QUJD");
+    const dataUrl = await captureEmbeddedVisionScreenshot();
+    expect(invokeMock).toHaveBeenCalledWith("embedded_webview_vision_capture", undefined);
+    expect(dataUrl).toBe("data:image/png;base64,QUJD");
+  });
+
+  it("clickEmbeddedVisionPoint/typeEmbeddedVisionText pass their arguments through untouched -- no JS-injection surface here (plain Tauri command args, not a generated script)", async () => {
+    invokeMock.mockResolvedValueOnce(undefined);
+    await clickEmbeddedVisionPoint(12.5, 340);
+    expect(invokeMock).toHaveBeenCalledWith("embedded_webview_vision_click", { x: 12.5, y: 340 });
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await typeEmbeddedVisionText('say "hi"');
+    expect(invokeMock).toHaveBeenCalledWith("embedded_webview_vision_type", { text: 'say "hi"' });
   });
 });

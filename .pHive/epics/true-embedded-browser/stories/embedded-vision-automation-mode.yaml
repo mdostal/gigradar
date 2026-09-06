@@ -1,9 +1,93 @@
 id: embedded-vision-automation-mode
 epic: true-embedded-browser
 title: "Vision/OS-input automation backend -- a foreground-only, human-supervised fallback when the DOM bridge can't find what it needs"
-status: pending
+status: in_progress
 complexity: high
 methodology: classic
+
+progress_note: |
+  UPDATE 2026-09-06: the native macOS primitives + the hard "never
+  unattended" enforcement gate are BUILT, real, and tested -- the part
+  of this story its own risk section treats as release-blocking. NOT
+  YET DONE: wiring these primitives into the actual guided/full-auto LLM
+  tool-use loop (acceptance criterion 4). Both halves, in detail:
+
+  BUILT: new `src-tauri/src/embedded_webview_vision.rs`, macOS-only
+  (gated at its `mod` declaration in lib.rs, mirroring
+  embedded_webview_cookies.rs's own convention; non-macOS gets 5 stub
+  commands returning a specific "only implemented on macOS" error, never
+  a silent no-op). Real API choices, resolved by reading the actual
+  vendored `objc2-core-graphics`/`objc2-screen-capture-kit` 0.3.2
+  generated bindings (not assumed from Apple's docs):
+    - `InteractiveSessionGate` (a plain `AtomicBool` in Tauri managed
+      state) is the REAL enforcement point -- `embedded_vision_begin_session()`/
+      `embedded_vision_end_session()` open/close it; every other command
+      (capture/click/type) checks `gate.is_active()` as its literal FIRST
+      line and refuses with a specific error otherwise. Unit-tested
+      directly (not just through the UI) in this module's own `#[cfg(test)]`
+      block -- `cargo test` passes (3 new tests, 8 total in the crate).
+    - `embedded_webview_vision_capture()` uses
+      `SCShareableContent::getCurrentProcessShareableContentWithCompletionHandler`
+      (NOT the unrestricted, system-wide variant) -- a STRONGER guarantee
+      than PID-filtering a full window list after the fact: Apple's own
+      API scopes this call to only this process's own windows, so it is
+      structurally impossible to ever see another app's window, and it
+      needs no Screen Recording permission grant at all to self-capture.
+      This satisfies the "never any other window/app" acceptance
+      criterion by construction, the real lesson from this epic's own
+      earlier screencapture-region privacy incidents (see
+      feedback_never_screenshot_the_real_desktop.md). Picks this
+      process's own largest on-screen window, builds an
+      `SCContentFilter(desktopIndependentWindow:)`, and captures via
+      `SCScreenshotManager.captureImageWithFilter` -- returns base64 PNG,
+      encoded by the pure-Rust `image` crate (no ImageIO dependency).
+    - COORDINATE CONVENTION, deliberate: the captured image's pixel
+      dimensions are set to exactly the window's own frame size in
+      POINTS (not multiplied by the Retina backing scale) -- so a vision
+      model's returned coordinate is directly addable to the window's
+      frame origin with no scale-factor math anywhere. Trades Retina
+      sharpness for coordinate-correctness on purpose.
+    - `embedded_webview_vision_click()`/`_type()` use
+      `CGEvent.post(tap: .cghidEventTap)` (the exact mechanism this
+      epic's own live POC validated) -- click additionally checks the
+      main window `is_focused()` via Tauri's own API first (this story's
+      medium-severity risk: never fire a synthetic click at whatever's
+      now frontmost if the owner clicked away).
+    - Frontend bridge: 5 new functions in `embedded-webview.ts`
+      (`beginEmbeddedVisionSession`/`endEmbeddedVisionSession`/
+      `captureEmbeddedVisionScreenshot`/`clickEmbeddedVisionPoint`/
+      `typeEmbeddedVisionText`), same `invokeTauri()`/never-silent-error
+      convention as every other export in that file. 6 new tests.
+  `cargo check`/`cargo clippy`/`cargo test` and `npm run typecheck`/
+  `npm test` (1599 passed, 3 skipped) all clean.
+
+  STILL NOT DONE (real, remaining scope, not silently dropped):
+  (1) acceptance criterion 4 -- actually wiring Vision mode into
+  guided/full-auto's LLM tool-use loop. REAL DESIGN FINDING this update
+  surfaced: `profile-assist-loop.ts`'s existing tool schema
+  (`click`/`fill` take a `ref: string` from an ARIA-ref snapshot,
+  `read()` returns ARIA text) is baked into the Anthropic tool
+  definitions and system prompt -- a vision backend fundamentally needs
+  a DIFFERENT tool shape (`click_at(x, y)`/`fill_at(x, y, value)`, and a
+  `read()` that returns an actual image content block, not text). This
+  is not a drop-in `AssistPageDriver` implementation of the SAME
+  interface Story `embedded-guided-apply-assist` built (`{snapshot,
+  click, fill}` with ref-based click/fill) -- it needs its own tool-
+  schema variant selected by `mode`/backend, a real, separate design
+  task. SimMan's own `locate()`/`verify()` grounding-prompt conventions
+  (github.com/firefly-events/simman, the user's own team's tool) remain
+  the right reference for that prompt design, per this epic's own
+  design-discussion.md.
+  (2) the settings toggle (embedded-guided-apply-assist's own scope) is
+  still deferred -- exposing a "Vision" option before criterion 4 lands
+  would select a mode nothing consumes yet.
+  (3) live verification of the native pieces built here -- the CGImage
+  pixel-layout assumption (BGRA8) and the exact point-vs-pixel behavior
+  of `SCStreamConfiguration.width/height` are UNVERIFIED at runtime
+  (compiles clean, mirrors the POC's own API choices, but this exact
+  code has not run against the real packaged app) -- needs the owner's
+  own screen time, same category of gap as every other native piece
+  this epic has shipped.
 depends_on: [embedded-automation-bridge]
 
 description: |
