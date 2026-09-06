@@ -53,16 +53,32 @@ progress_note: |
   new describe blocks in profile-assist-loop.test.ts) and `npm run
   typecheck` both clean.
 
+  UPDATE 2026-09-06, part 5: item (2) below is DONE too. Refactored
+  `suggestProfileFields()` (profile-suggest.ts) to take an
+  already-captured `snapshot: string` instead of a Playwright `Page` --
+  it had no OTHER page dependency once the single `ariaSnapshot()` call
+  was pulled out to the caller, so this made it a thin, driver-agnostic
+  function immediately reusable by both paths: the real-chrome
+  `suggestProfileFieldsAction()` now takes the snapshot itself before
+  calling it (zero behavior change), and a new
+  `suggestEmbeddedProfileFieldsAction(snapshot)` reuses it unmodified for
+  the embedded pane. `EmbeddedManualAssist` gained the SAME "Refresh
+  suggestions" UI the real-chrome manual-mode flow already has --
+  `snapshotEmbeddedWebview()` (client-side) feeds the new action. Updated
+  `profile-suggest.test.ts`'s call sites (the function no longer takes a
+  fake Page at all) -- `npm test`: 1608 passed, 3 skipped, `npm run
+  typecheck` clean.
+
   UPDATE 2026-09-06, part 4: item (1) below is DONE -- see
   embedded-vision-automation-mode's own progress_note for the full
-  settings-toggle + vision-tool-loop wiring. Items (2)-(4) remain open,
-  unchanged.
+  settings-toggle + vision-tool-loop wiring. Items (2)-(4) remain open
+  otherwise.
 
   STILL NOT DONE, unchanged from before (real, remaining scope):
-  (1) [DONE -- see UPDATE above] the settings toggle for choosing
+  (1) [DONE -- see UPDATE part 4 above] the settings toggle for choosing
   DOM/eval-bridge vs. vision/OS-input as the automation backend.
-  (2) "Refresh suggestions" has no embedded-pane equivalent yet -- same
-  gap as before, separate scope.
+  (2) [DONE -- see UPDATE part 5 above] "Refresh suggestions" for the
+  embedded pane.
   (3) live, real-account end-to-end testing of the embedded guided/
   full-auto flow (a real source, a real saved session, watching the
   LLM actually click/fill through the embedded pane) needs the owner's
