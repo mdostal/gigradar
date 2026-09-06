@@ -53,13 +53,14 @@ progress_note: |
   new describe blocks in profile-assist-loop.test.ts) and `npm run
   typecheck` both clean.
 
+  UPDATE 2026-09-06, part 4: item (1) below is DONE -- see
+  embedded-vision-automation-mode's own progress_note for the full
+  settings-toggle + vision-tool-loop wiring. Items (2)-(4) remain open,
+  unchanged.
+
   STILL NOT DONE, unchanged from before (real, remaining scope):
-  (1) the settings toggle for choosing DOM/eval-bridge vs. vision/
-  OS-input as the automation backend -- now buildable in principle
-  (guided/full-auto ARE wired to a real embedded backend), but
-  `embedded-vision-automation-mode` itself is still not started, so a
-  toggle today would have exactly one real option. Deferred until that
-  story lands or the owner asks for the toggle regardless.
+  (1) [DONE -- see UPDATE above] the settings toggle for choosing
+  DOM/eval-bridge vs. vision/OS-input as the automation backend.
   (2) "Refresh suggestions" has no embedded-pane equivalent yet -- same
   gap as before, separate scope.
   (3) live, real-account end-to-end testing of the embedded guided/

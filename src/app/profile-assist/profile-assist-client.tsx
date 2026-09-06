@@ -18,6 +18,7 @@ import {
   getSessionScreenshotAction,
   provideEmbeddedActionOutcomeAction,
   provideEmbeddedSnapshotAction,
+  provideEmbeddedVisualSnapshotAction,
   resolveApprovalAction,
   resolveEmbeddedApprovalAction,
   resolveEmbeddedAssistSessionAction,
@@ -29,12 +30,17 @@ import type { FieldSuggestion } from "@/lib/apply/profile-suggest";
 import type { LoopEvent } from "@/lib/apply/profile-assist-loop";
 import { isTauri } from "@/lib/is-tauri";
 import {
+  beginEmbeddedVisionSession,
+  captureEmbeddedVisionScreenshot,
   clickEmbeddedElementByRef,
+  clickEmbeddedVisionPoint,
   closeEmbeddedWebview,
+  endEmbeddedVisionSession,
   fillEmbeddedElementByRef,
   setEmbeddedWebviewCookies,
   showEmbeddedWebview,
   snapshotEmbeddedWebview,
+  typeEmbeddedVisionText,
 } from "@/lib/tauri/embedded-webview";
 
 type Tab = "manual" | "guided" | "full-auto";
@@ -55,7 +61,11 @@ type SessionState =
   // existing real-chrome flow (advanceLoopTurnAction(), sessionId comes
   // from startAssistSessionAction()). Never set for manual mode, which
   // has its own separate EmbeddedManualAssist component and state.
-  | { status: "active"; sessionId: string; isEmbedded: boolean }
+  // `backend`: embedded-vision-automation-mode story -- which automation
+  // backend an EMBEDDED session is using ("dom" is the always-on default
+  // for the real-chrome path too, kept here just so isEmbedded sessions
+  // have a single source of truth instead of a second piece of state).
+  | { status: "active"; sessionId: string; isEmbedded: boolean; backend: "dom" | "vision" }
   | { status: "ending" }
   | { status: "error"; message: string };
 
@@ -98,6 +108,9 @@ function TranscriptLine({ item }: { item: TranscriptItem }) {
   if (event.type === "read") {
     return <p className="text-xs text-slate-500">Looked at the page.</p>;
   }
+  if (event.type === "read_visual") {
+    return <p className="text-xs text-slate-500">Looked at a screenshot of the page.</p>;
+  }
   if (event.type === "click" || event.type === "fill") {
     const verb = event.type === "click" ? "Clicked" : `Filled "${event.value}" into`;
     const status =
@@ -109,6 +122,25 @@ function TranscriptLine({ item }: { item: TranscriptItem }) {
     return (
       <p className="text-sm text-slate-700">
         {verb} <code className="text-xs text-slate-500">{event.ref}</code> — {event.reason}
+        <span className="text-slate-400">{status}</span>
+      </p>
+    );
+  }
+  if (event.type === "click_at" || event.type === "fill_at") {
+    const verb = event.type === "click_at" ? "Clicked" : `Filled "${event.value}" at`;
+    const status =
+      item.resolvedApproval === "rejected"
+        ? " (rejected by you)"
+        : event.pending
+          ? " (awaiting your approval)"
+          : "";
+    return (
+      <p className="text-sm text-slate-700">
+        {verb}{" "}
+        <code className="text-xs text-slate-500">
+          ({Math.round(event.x)}, {Math.round(event.y)})
+        </code>{" "}
+        — {event.reason}
         <span className="text-slate-400">{status}</span>
       </p>
     );
@@ -262,7 +294,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
   const [session, setSession] = useState<SessionState>({ status: "idle" });
   const [suggest, setSuggest] = useState<SuggestState>({ status: "idle" });
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
-  const [pendingEvent, setPendingEvent] = useState<Extract<LoopEvent, { type: "click" | "fill" }> | null>(null);
+  const [pendingEvent, setPendingEvent] = useState<Extract<LoopEvent, { type: "click" | "fill" | "click_at" | "fill_at" }> | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [humanAnswer, setHumanAnswer] = useState("");
@@ -308,6 +340,14 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
   // isTauri() && tab !== "manual" -- see the render branch below.
   const guidedPaneRef = useRef<HTMLDivElement>(null);
 
+  // embedded-vision-automation-mode story. The settings toggle
+  // embedded-guided-apply-assist's own progress_note deferred until a
+  // second real backend existed -- it now does. Only meaningful for
+  // guided/full-auto in the packaged Tauri app (isTauri() && tab !==
+  // "manual"); chosen once, before Start, and carried on `session` for
+  // the rest of that session's life (see SessionState's own comment).
+  const [automationBackend, setAutomationBackend] = useState<"dom" | "vision">("dom");
+
   async function refreshScreenshot(sessionId: string) {
     if (viewModeRef.current !== "embedded") return;
     setScreenshot((prev) => ({ ...prev, status: "loading" }));
@@ -338,6 +378,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     // pane, seed cookies, then drive the loop via runUntilBlockedEmbedded().
     if (isTauri() && mode !== "manual") {
       const sessionId = crypto.randomUUID();
+      const backend = automationBackend;
       const result = await resolveEmbeddedAssistSessionAction(sourceId);
       if (!result.ok) {
         setSession({ status: "error", message: result.error });
@@ -354,14 +395,22 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
           await setEmbeddedWebviewCookies(result.data.storageState.cookies);
           await showEmbeddedWebview(result.data.profileUrl, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
         }
+        // embedded-vision-automation-mode story. Opens the server-side
+        // InteractiveSessionGate every vision command checks -- MUST
+        // happen before the first decideEmbeddedLoopTurnAction() call,
+        // and only for an explicit, human-started foreground session
+        // (never speculatively) per that story's own hard constraint.
+        if (backend === "vision") {
+          await beginEmbeddedVisionSession();
+        }
       } catch (e) {
         setSession({ status: "error", message: e instanceof Error ? e.message : String(e) });
         return;
       }
-      setSession({ status: "active", sessionId, isEmbedded: true });
+      setSession({ status: "active", sessionId, isEmbedded: true, backend });
       setSuggest({ status: "idle" });
       setAgentEngaged(true);
-      void runUntilBlockedEmbedded(sessionId, mode);
+      void runUntilBlockedEmbedded(sessionId, mode, backend);
       return;
     }
 
@@ -370,7 +419,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
       setSession({ status: "error", message: result.error });
       return;
     }
-    setSession({ status: "active", sessionId: result.data.sessionId, isEmbedded: false });
+    setSession({ status: "active", sessionId: result.data.sessionId, isEmbedded: false, backend: "dom" });
     setSuggest({ status: "idle" });
     void refreshScreenshot(result.data.sessionId);
     // embedded-view-interactive story: Embedded view starts purely
@@ -390,6 +439,9 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     setSession({ status: "ending" });
 
     if (session.isEmbedded) {
+      if (session.backend === "vision") {
+        await endEmbeddedVisionSession().catch(() => {});
+      }
       await closeEmbeddedWebview().catch(() => {});
       await endEmbeddedLoopSessionAction(sessionId);
       setSession({ status: "idle" });
@@ -481,7 +533,48 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
    * turn_limit_reached) is handled identically to runUntilBlocked() --
    * same transcript/pendingEvent/pendingQuestion state, same control flow.
    */
-  async function runUntilBlockedEmbedded(sessionId: string, mode: "guided" | "full-auto") {
+  /**
+   * embedded-vision-automation-mode story. Executes a `needsExecution`/
+   * `need_execution`/`need_visual_execution` payload against whichever
+   * backend produced it -- a ref means the DOM/eval-bridge backend
+   * (clickEmbeddedElementByRef()/fillEmbeddedElementByRef()); x/y means
+   * vision (clickEmbeddedVisionPoint(), which moves the REAL OS cursor,
+   * then typeEmbeddedVisionText() for a fill). Shared by
+   * runUntilBlockedEmbedded()'s full-auto path and handleApproval()'s
+   * guided-approval path so the two never drift out of sync.
+   */
+  async function executeEmbeddedAction(
+    needsExecution:
+      | { tool: "click" | "fill"; ref: string; value?: string }
+      | { tool: "click_at" | "fill_at"; x: number; y: number; value?: string },
+  ): Promise<string> {
+    if ("ref" in needsExecution) {
+      return needsExecution.tool === "click" ? clickEmbeddedElementByRef(needsExecution.ref) : fillEmbeddedElementByRef(needsExecution.ref, needsExecution.value ?? "");
+    }
+    await clickEmbeddedVisionPoint(needsExecution.x, needsExecution.y);
+    if (needsExecution.tool === "fill_at") {
+      await typeEmbeddedVisionText(needsExecution.value ?? "");
+      return `Filled at (${needsExecution.x}, ${needsExecution.y}) with the provided value.`;
+    }
+    return `Clicked at (${needsExecution.x}, ${needsExecution.y}).`;
+  }
+
+  /**
+   * true-embedded-browser epic, embedded-automation-bridge wiring. The
+   * embedded-pane equivalent of runUntilBlocked() above -- drives
+   * decideEmbeddedLoopTurnAction()'s own split protocol: `need_snapshot`/
+   * `need_visual_snapshot` is fulfilled by calling
+   * snapshotEmbeddedWebview()/captureEmbeddedVisionScreenshot() then
+   * provideEmbeddedSnapshotAction()/provideEmbeddedVisualSnapshotAction();
+   * `need_execution`/`need_visual_execution` (full-auto only) is
+   * fulfilled via executeEmbeddedAction() then
+   * provideEmbeddedActionOutcomeAction(). Every OTHER event
+   * (read/read_visual/click(_at)-pending/fill(_at)-pending/invalid_ref/
+   * ask_human/done/turn_limit_reached) is handled identically to
+   * runUntilBlocked() -- same transcript/pendingEvent/pendingQuestion
+   * state, same control flow, regardless of backend.
+   */
+  async function runUntilBlockedEmbedded(sessionId: string, mode: "guided" | "full-auto", backend: "dom" | "vision") {
     if (runningRef.current) return;
     runningRef.current = true;
     try {
@@ -489,7 +582,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
       while (true) {
         if (!agentEngagedRef.current) return;
         setTranscript((prev) => [...prev, { kind: "advancing" }]);
-        let result = await decideEmbeddedLoopTurnAction(sessionId, mode);
+        let result = await decideEmbeddedLoopTurnAction(sessionId, mode, backend);
 
         if (result.ok && result.data.type === "need_snapshot") {
           try {
@@ -498,10 +591,23 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
           } catch (e) {
             result = { ok: false, error: e instanceof Error ? e.message : String(e) };
           }
-        } else if (result.ok && result.data.type === "need_execution") {
-          const { tool, ref, value } = result.data;
+        } else if (result.ok && result.data.type === "need_visual_snapshot") {
           try {
-            const outcome = tool === "click" ? await clickEmbeddedElementByRef(ref) : await fillEmbeddedElementByRef(ref, value ?? "");
+            const imageDataUrl = await captureEmbeddedVisionScreenshot();
+            result = await provideEmbeddedVisualSnapshotAction(sessionId, imageDataUrl);
+          } catch (e) {
+            result = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+        } else if (result.ok && result.data.type === "need_execution") {
+          try {
+            const outcome = await executeEmbeddedAction(result.data);
+            result = await provideEmbeddedActionOutcomeAction(sessionId, outcome);
+          } catch (e) {
+            result = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+        } else if (result.ok && result.data.type === "need_visual_execution") {
+          try {
+            const outcome = await executeEmbeddedAction(result.data);
             result = await provideEmbeddedActionOutcomeAction(sessionId, outcome);
           } catch (e) {
             result = { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -518,7 +624,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
         const event = result.data;
         setTranscript((prev) => [...prev, { kind: "event", event }]);
 
-        if (event.type === "click" || event.type === "fill") {
+        if (event.type === "click" || event.type === "fill" || event.type === "click_at" || event.type === "fill_at") {
           if (event.pending) {
             setPendingEvent(event);
             setEditValue(event.value ?? "");
@@ -533,7 +639,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
         if (event.type === "done" || event.type === "turn_limit_reached") {
           return;
         }
-        // "read" / "invalid_ref" — no human input needed, keep advancing.
+        // "read" / "read_visual" / "invalid_ref" — no human input needed, keep advancing.
       }
     } finally {
       runningRef.current = false;
@@ -546,6 +652,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     const finalValue = useEditedValue ? editValue : undefined;
 
     if (session.isEmbedded) {
+      const backend = session.backend;
       const result = await resolveEmbeddedApprovalAction(sessionId, approve, finalValue);
       setTranscript((prev) =>
         prev.map((item, i) =>
@@ -562,10 +669,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
       const needsExecution = result.data.needsExecution;
       if (needsExecution) {
         try {
-          const outcome =
-            needsExecution.tool === "click"
-              ? await clickEmbeddedElementByRef(needsExecution.ref)
-              : await fillEmbeddedElementByRef(needsExecution.ref, needsExecution.value ?? "");
+          const outcome = await executeEmbeddedAction(needsExecution);
           const outcomeResult = await provideEmbeddedActionOutcomeAction(sessionId, outcome);
           if (!outcomeResult.ok) {
             setTranscript((prev) => [...prev, { kind: "error", message: outcomeResult.error }]);
@@ -576,7 +680,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
           return;
         }
       }
-      void runUntilBlockedEmbedded(sessionId, tab as "guided" | "full-auto");
+      void runUntilBlockedEmbedded(sessionId, tab as "guided" | "full-auto", backend);
       return;
     }
 
@@ -669,6 +773,25 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
           ))}
         </select>
       </label>
+      {isTauri() && tab !== "manual" && (
+        <label className="flex flex-col gap-1 text-sm text-slate-700">
+          Automation backend
+          <select
+            value={automationBackend}
+            onChange={(e) => setAutomationBackend(e.target.value as "dom" | "vision")}
+            disabled={session.status === "starting"}
+            className="rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900"
+          >
+            <option value="dom">DOM (default, fast, never moves your cursor)</option>
+            <option value="vision">Vision (fallback -- moves your real cursor while it works)</option>
+          </select>
+          {automationBackend === "vision" && (
+            <span className="text-xs text-amber-700">
+              Vision mode will move your mouse cursor while it&apos;s running. Stay at your screen while it works.
+            </span>
+          )}
+        </label>
+      )}
       <button
         type="button"
         onClick={handleStart}
@@ -798,9 +921,9 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
               {pendingEvent && (
                 <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
                   <p className="text-sm text-amber-900">
-                    Proposed: {pendingEvent.type === "click" ? "click" : "fill"}{" "}
-                    <code className="text-xs">{pendingEvent.ref}</code>
-                    {pendingEvent.type === "fill" && (
+                    Proposed: {pendingEvent.type === "click" || pendingEvent.type === "click_at" ? "click" : "fill"}{" "}
+                    <code className="text-xs">{"x" in pendingEvent ? `(${Math.round(pendingEvent.x)}, ${Math.round(pendingEvent.y)})` : pendingEvent.ref}</code>
+                    {(pendingEvent.type === "fill" || pendingEvent.type === "fill_at") && (
                       <>
                         {" "}
                         with{" "}
@@ -818,7 +941,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
                   <div className="mt-2 flex gap-2">
                     <button
                       type="button"
-                      onClick={() => handleApproval(true, pendingEvent.type === "fill")}
+                      onClick={() => handleApproval(true, pendingEvent.type === "fill" || pendingEvent.type === "fill_at")}
                       className="rounded-md border border-green-600 bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-700"
                     >
                       Approve
@@ -959,9 +1082,9 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
               {pendingEvent && (
                 <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
                   <p className="text-sm text-amber-900">
-                    Proposed: {pendingEvent.type === "click" ? "click" : "fill"}{" "}
-                    <code className="text-xs">{pendingEvent.ref}</code>
-                    {pendingEvent.type === "fill" && (
+                    Proposed: {pendingEvent.type === "click" || pendingEvent.type === "click_at" ? "click" : "fill"}{" "}
+                    <code className="text-xs">{"x" in pendingEvent ? `(${Math.round(pendingEvent.x)}, ${Math.round(pendingEvent.y)})` : pendingEvent.ref}</code>
+                    {(pendingEvent.type === "fill" || pendingEvent.type === "fill_at") && (
                       <>
                         {" "}
                         with{" "}
@@ -979,7 +1102,7 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
                   <div className="mt-2 flex gap-2">
                     <button
                       type="button"
-                      onClick={() => handleApproval(true, pendingEvent.type === "fill")}
+                      onClick={() => handleApproval(true, pendingEvent.type === "fill" || pendingEvent.type === "fill_at")}
                       className="rounded-md border border-green-600 bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-700"
                     >
                       Approve

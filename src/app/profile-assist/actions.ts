@@ -32,6 +32,7 @@ import {
   playwrightAssistPageDriver,
   provideActionOutcome,
   provideSnapshot,
+  provideVisualSnapshot,
   resolveApproval,
   type LoopEvent,
 } from "@/lib/apply/profile-assist-loop";
@@ -278,14 +279,18 @@ export async function answerHumanAction(sessionId: string, answer: string): Prom
  * provideEmbeddedSnapshotAction()/provideEmbeddedActionOutcomeAction()
  * below.
  */
-export async function decideEmbeddedLoopTurnAction(sessionId: string, mode: "guided" | "full-auto"): Promise<ActionResult<LoopEvent>> {
+export async function decideEmbeddedLoopTurnAction(
+  sessionId: string,
+  mode: "guided" | "full-auto",
+  backend: "dom" | "vision" = "dom",
+): Promise<ActionResult<LoopEvent>> {
   const credential = resolveLlmCredential();
   if (!credential) return actionErr(new Error(MISSING_API_KEY_ERROR));
   const profileData = readProfileAndApplyProfile();
   if ("error" in profileData) return actionErr(new Error(profileData.error));
 
   try {
-    const event = await advanceLoopTurn(sessionId, null, mode, profileData.profile, profileData.applyProfile, credential);
+    const event = await advanceLoopTurn(sessionId, null, mode, profileData.profile, profileData.applyProfile, credential, backend);
     return actionOk(event);
   } catch (e) {
     return actionErr(e);
@@ -296,6 +301,15 @@ export async function decideEmbeddedLoopTurnAction(sessionId: string, mode: "gui
 export async function provideEmbeddedSnapshotAction(sessionId: string, snapshot: string): Promise<ActionResult<LoopEvent>> {
   try {
     return actionOk(provideSnapshot(sessionId, snapshot));
+  } catch (e) {
+    return actionErr(e);
+  }
+}
+
+/** embedded-vision-automation-mode story. The visual counterpart to provideEmbeddedSnapshotAction() -- completes a `need_visual_snapshot` turn with a screenshot (captureEmbeddedVisionScreenshot(), a client-side Tauri IPC call) instead of an ARIA snapshot. */
+export async function provideEmbeddedVisualSnapshotAction(sessionId: string, imageDataUrl: string): Promise<ActionResult<LoopEvent>> {
+  try {
+    return actionOk(provideVisualSnapshot(sessionId, imageDataUrl));
   } catch (e) {
     return actionErr(e);
   }
@@ -323,7 +337,11 @@ export async function resolveEmbeddedApprovalAction(
   sessionId: string,
   approve: boolean,
   editedValue?: string,
-): Promise<ActionResult<{ needsExecution?: { tool: "click" | "fill"; ref: string; value?: string } }>> {
+): Promise<
+  ActionResult<{
+    needsExecution?: { tool: "click" | "fill"; ref: string; value?: string } | { tool: "click_at" | "fill_at"; x: number; y: number; value?: string };
+  }>
+> {
   try {
     const result = await resolveApproval(sessionId, null, approve, editedValue);
     return actionOk(result ?? {});
