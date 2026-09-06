@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-06
+
+### Added
+
+- Manual-mode profile-assist sessions now open inside the embedded pane
+  instead of a separate, positioned OS-level Chrome window — the
+  already-authenticated profile page shows up right inside the app,
+  with no extra window ever appearing.
+
 ## [0.38.0] - 2026-09-06
 
 ### Fixed
