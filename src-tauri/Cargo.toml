@@ -52,3 +52,18 @@ objc2-foundation = { version = "0.3", features = ["NSHTTPCookie", "NSArray", "NS
 objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKHTTPCookieStore"] }
 block2 = "0.6"
 tokio = { version = "1", features = ["sync"] }
+# embedded-vision-automation-mode story: CGEvent.post(tap: .cghidEventTap)
+# for the synthetic click/type this story's own owner-mandated
+# foreground-only mode requires (see that story's design-discussion.md
+# §7 for the live POC this mirrors), and SCContentFilter(
+# desktopIndependentWindow:) + SCScreenshotManager.captureImage() for a
+# capture that can PROVABLY contain only the embedded pane's own window
+# content, never any other app/window on screen (the real screenshot-
+# privacy lesson from this epic's own POC phase -- see
+# feedback_never_screenshot_the_real_desktop.md).
+objc2-screen-capture-kit = { version = "0.3.2", default-features = false, features = ["SCScreenshotManager", "SCShareableContent", "SCStream", "SCError", "std", "block2", "objc2-core-foundation", "objc2-core-graphics"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGEventTypes", "CGEvent", "CGEventSource", "CGDirectDisplay", "CGWindow", "CGImage", "CGRemoteOperation", "CGDataProvider"] }
+image = { version = "0.25.6", default-features = false, features = ["png"] }
+base64 = "0.23.1"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFCGTypes", "CFData", "std"] }
+libc = "0.2.189"

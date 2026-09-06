@@ -33,6 +33,11 @@ fn main() {
             "embedded_webview_close",
             "embedded_webview_eval",
             "embedded_webview_read_session",
+            "embedded_vision_begin_session",
+            "embedded_vision_end_session",
+            "embedded_webview_vision_capture",
+            "embedded_webview_vision_click",
+            "embedded_webview_vision_type",
         ])),
     )
     .expect("gigradar: tauri_build failed");

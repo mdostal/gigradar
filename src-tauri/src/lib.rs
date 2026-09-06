@@ -40,6 +40,49 @@ async fn embedded_webview_read_session() -> Result<serde_json::Value, String> {
     Err("gigradar embedded-webview: cookie extraction is only implemented on macOS.".to_string())
 }
 
+// true-embedded-browser epic, embedded-vision-automation-mode story: the
+// vision + real-cursor automation backend, macOS-only (see that
+// module's own header comment for the full design). Non-macOS gets
+// specific, actionable errors for every command -- never a silent
+// no-op -- same convention as embedded_webview_read_session above.
+#[cfg(target_os = "macos")]
+mod embedded_webview_vision;
+#[cfg(target_os = "macos")]
+use embedded_webview_vision::{
+    embedded_vision_begin_session, embedded_vision_end_session, embedded_webview_vision_capture,
+    embedded_webview_vision_click, embedded_webview_vision_type, InteractiveSessionGate,
+};
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Default)]
+struct InteractiveSessionGate;
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn embedded_vision_begin_session() {}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn embedded_vision_end_session() {}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn embedded_webview_vision_capture() -> Result<String, String> {
+    Err("gigradar embedded-webview: vision-mode automation is only implemented on macOS.".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn embedded_webview_vision_click(_x: f64, _y: f64) -> Result<(), String> {
+    Err("gigradar embedded-webview: vision-mode automation is only implemented on macOS.".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn embedded_webview_vision_type(_text: String) -> Result<(), String> {
+    Err("gigradar embedded-webview: vision-mode automation is only implemented on macOS.".to_string())
+}
+
 mod updater;
 use updater::{get_update_channel, get_update_status, install_update, snooze_update, UpdateState};
 
@@ -150,6 +193,7 @@ pub fn run() {
         .manage(UpdateState::default())
         .manage(SidecarHandle::default())
         .manage(EmbeddedWebviewHandle::default())
+        .manage(InteractiveSessionGate::default())
         .invoke_handler(tauri::generate_handler![
             get_update_channel,
             get_update_status,
@@ -161,6 +205,11 @@ pub fn run() {
             embedded_webview_close,
             embedded_webview_eval,
             embedded_webview_read_session,
+            embedded_vision_begin_session,
+            embedded_vision_end_session,
+            embedded_webview_vision_capture,
+            embedded_webview_vision_click,
+            embedded_webview_vision_type,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
