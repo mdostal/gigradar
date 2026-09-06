@@ -107,12 +107,33 @@ interface UpsertOneResult {
  * "new", and firstSeen is meant to never move. Also clears
  * `unavailable_since` unconditionally: reappearing in a scan is definitionally
  * "not unavailable anymore", regardless of how it got flagged.
+ *
+ * rank-buckets epic, grill-pass fix: also preserves any per-group
+ * `matched_rank_buckets` entry with `source: "manual"` on an existing
+ * row — the same "a re-scan must never silently reset something the
+ * owner explicitly set" principle `status` above already gets, extended
+ * to the confirm/override control (setRankBucket()). Without this, a
+ * gig re-seen on the next scan would have its manual confirmation
+ * clobbered by the freshly-recomputed rule/AI result, exactly like
+ * `status`/`first_seen` would be without their own preservation logic.
  */
 function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
   const key = gigKey(gig.sourceId, gig.externalId);
-  const existing = db.prepare("SELECT unavailable_since FROM gigs WHERE key = ?").get(key) as
-    | { unavailable_since: string | null }
+  const existing = db.prepare("SELECT unavailable_since, matched_rank_buckets FROM gigs WHERE key = ?").get(key) as
+    | { unavailable_since: string | null; matched_rank_buckets: string | null }
     | undefined;
+
+  const existingManualRankBuckets: Record<string, RankBucketAssignment> = {};
+  if (existing?.matched_rank_buckets) {
+    const existingMap: Record<string, RankBucketAssignment> = JSON.parse(existing.matched_rank_buckets);
+    for (const [groupId, assignment] of Object.entries(existingMap)) {
+      if (assignment.source === "manual") existingManualRankBuckets[groupId] = assignment;
+    }
+  }
+  const mergedRankBuckets =
+    Object.keys(existingManualRankBuckets).length > 0
+      ? { ...gig.matchedRankBuckets, ...existingManualRankBuckets }
+      : gig.matchedRankBuckets;
 
   const params = {
     key,
@@ -141,7 +162,7 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     matched_group_scores: gig.matchedGroupScores === undefined ? null : JSON.stringify(gig.matchedGroupScores),
     matched_group_bands: gig.matchedGroupBands === undefined ? null : JSON.stringify(gig.matchedGroupBands),
     match_band: gig.matchBand ?? null,
-    matched_rank_buckets: gig.matchedRankBuckets === undefined ? null : JSON.stringify(gig.matchedRankBuckets),
+    matched_rank_buckets: mergedRankBuckets === undefined ? null : JSON.stringify(mergedRankBuckets),
     rank_bucket: gig.rankBucket === undefined ? null : JSON.stringify(gig.rankBucket),
     now,
   };
@@ -476,14 +497,24 @@ export function setTier(key: string, tier: Gig["tier"], opts: DbOption = {}): vo
  */
 export function setRankBucket(key: string, groupId: string, assignment: RankBucketAssignment, opts: DbOption = {}): void {
   const db = opts.db ?? getDb();
-  const row = db.prepare("SELECT matched_rank_buckets FROM gigs WHERE key = :key").get({ key }) as { matched_rank_buckets: string | null } | undefined;
-  if (!row) {
-    throw new Error(`gigradar store: setRankBucket: no gig with key "${key}"`);
-  }
-  const current: Record<string, RankBucketAssignment> = row.matched_rank_buckets !== null ? JSON.parse(row.matched_rank_buckets) : {};
-  current[groupId] = assignment;
-  db.prepare("UPDATE gigs SET matched_rank_buckets = :matched_rank_buckets WHERE key = :key").run({
-    matched_rank_buckets: JSON.stringify(current),
-    key,
+  // Grill-pass fix: this read-modify-write must be atomic -- two confirm/
+  // override calls for the SAME gig but DIFFERENT groups (e.g. two tabs
+  // open on different group views) racing within the same window could
+  // otherwise have the second UPDATE overwrite the whole column based on
+  // a stale read, silently discarding the first group's just-confirmed
+  // assignment. BEGIN IMMEDIATE serializes concurrent writers the same
+  // way this codebase's other multi-statement writes already do (see
+  // withTransaction()'s own doc comment).
+  withTransaction(db, () => {
+    const row = db.prepare("SELECT matched_rank_buckets FROM gigs WHERE key = :key").get({ key }) as { matched_rank_buckets: string | null } | undefined;
+    if (!row) {
+      throw new Error(`gigradar store: setRankBucket: no gig with key "${key}"`);
+    }
+    const current: Record<string, RankBucketAssignment> = row.matched_rank_buckets !== null ? JSON.parse(row.matched_rank_buckets) : {};
+    current[groupId] = assignment;
+    db.prepare("UPDATE gigs SET matched_rank_buckets = :matched_rank_buckets WHERE key = :key").run({
+      matched_rank_buckets: JSON.stringify(current),
+      key,
+    });
   });
 }

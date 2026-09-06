@@ -81,6 +81,27 @@ export function extractRankBucketLabels(rawConfig: Record<string, unknown>, grou
 }
 
 /**
+ * rank-buckets epic, grill-pass fix. The real, config-order primary
+ * group's own id -- `groups[0].id`, same anchoring convention every other
+ * extractor in this file already uses for unscoped routes. Resolved HERE,
+ * server-side, from the real config document, rather than guessed
+ * client-side per-gig from `Object.keys(gig.matchedRankBuckets)[0]` (the
+ * bug this replaces: that guess breaks when the primary group has no
+ * rankBuckets configured but a secondary one does, and JS object key
+ * enumeration order for integer-like keys doesn't reliably reflect
+ * insertion order anyway). `undefined` when there's no configured group at
+ * all (first-run, no config yet).
+ */
+export function resolvePrimaryGroupId(rawConfig: Record<string, unknown>): string | undefined {
+  const groups = rawConfig.groups;
+  if (!Array.isArray(groups)) return undefined;
+  const group = groups[0];
+  if (typeof group !== "object" || group === null) return undefined;
+  const id = (group as Record<string, unknown>).id;
+  return typeof id === "string" ? id : undefined;
+}
+
+/**
  * Resolves `groupId` (a `/[group]/` route param) against
  * `config.groups[].id` — never a slug re-derived from `label` (which the
  * owner can freely rename; see `GroupConfig.id`'s own doc comment in

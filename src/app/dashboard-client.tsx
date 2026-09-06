@@ -25,7 +25,6 @@ import {
   isWithinSeenWindow,
   resolveDisplayBand,
   resolveDisplayRankBucket,
-  resolvePrimaryRankBucketGroupId,
   SEEN_WINDOW_OPTIONS,
   shortProfileLabel,
   type SeenWindow,
@@ -410,6 +409,7 @@ export function DashboardClient({
   groupId,
   hideOutOfBandDefault = true,
   rankBucketLabels = [],
+  rankBucketGroupId,
 }: {
   gigs: StoredGig[];
   draftedGigKeys?: ReadonlySet<string>;
@@ -423,6 +423,16 @@ export function DashboardClient({
   hideOutOfBandDefault?: boolean;
   /** rank-buckets epic. The relevant group's own real, owner-named bucket labels (resolved server-side via dashboard-data.ts's extractRankBucketLabels()) -- the Rank Bucket column only renders at all when this is non-empty. */
   rankBucketLabels?: string[];
+  /**
+   * rank-buckets epic, grill-pass fix. The real group id the Rank Bucket
+   * column should read/write -- on a scoped view (`/[group]/gigs`) this is
+   * just `groupId` again; on an unscoped view (`/gigs`) it's the config-order
+   * PRIMARY group's id, resolved server-side via dashboard-data.ts's
+   * resolvePrimaryGroupId() and passed down here explicitly. Replaces the
+   * old per-gig "guess from matchedRankBuckets' own key order" heuristic --
+   * see resolveDisplayRankBucket()'s own header comment in dashboard-filter.ts.
+   */
+  rankBucketGroupId?: string;
 }) {
   const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -491,6 +501,8 @@ export function DashboardClient({
 
   const [isPending, startTransition] = useTransition();
   const [errorByKey, setErrorByKey] = useState<Record<string, string>>({});
+  const [rankBucketPending, startRankBucketTransition] = useTransition();
+  const [rankBucketErrorByKey, setRankBucketErrorByKey] = useState<Record<string, string>>({});
   const [, startDraftTransition] = useTransition();
   const [generatingKeys, setGeneratingKeys] = useState<ReadonlySet<string>>(new Set());
   const [draftErrorByKey, setDraftErrorByKey] = useState<Record<string, string>>({});
@@ -587,6 +599,27 @@ export function DashboardClient({
       const result = await updateGigStatusAction(key, status);
       if (!result.ok) {
         setErrorByKey((prev) => ({ ...prev, [key]: result.error }));
+      }
+    });
+  }
+
+  /**
+   * Grill-pass fix: mirrors handleStatusChange()'s own convention above --
+   * a confirm/override write is a real Server Action call that can fail
+   * (e.g. a stale bucket name after a concurrent config edit), so it needs
+   * the same pending-disabled/error-surfaced treatment rather than a bare
+   * fire-and-forget `void` call that silently swallowed failures.
+   */
+  function handleRankBucketChange(key: string, groupId: string, bucket: string | null) {
+    setRankBucketErrorByKey((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _removed, ...rest } = prev;
+      return rest;
+    });
+    startRankBucketTransition(async () => {
+      const result = await confirmRankBucketAction(key, groupId, bucket);
+      if (!result.ok) {
+        setRankBucketErrorByKey((prev) => ({ ...prev, [key]: result.error }));
       }
     });
   }
@@ -977,33 +1010,34 @@ export function DashboardClient({
             // "select" filterKind (a single-value dropdown) rather than
             // inventing a new one -- passesRankBucketFilter()'s own
             // contract is already "one specific label or all."
-            accessorFn: (g: StoredGig) => resolveDisplayRankBucket(g, groupId)?.bucket ?? "",
+            accessorFn: (g: StoredGig) => resolveDisplayRankBucket(g, rankBucketGroupId)?.bucket ?? "",
             cell: ({ row }: { row: { original: StoredGig } }) => {
               const gig = row.original;
-              const assignment = resolveDisplayRankBucket(gig, groupId);
-              const targetGroupId = groupId ?? resolvePrimaryRankBucketGroupId(gig);
+              const assignment = resolveDisplayRankBucket(gig, rankBucketGroupId);
               const isPendingConfirmation = assignment?.source === "ai" && !assignment.confirmed;
-              if (!targetGroupId) return <span className="text-theme-text-dim">—</span>;
+              if (!rankBucketGroupId) return <span className="text-theme-text-dim">—</span>;
               return (
-                <select
-                  value={assignment?.bucket ?? ""}
-                  title={assignment?.reason}
-                  onChange={(e) => {
-                    void confirmRankBucketAction(gig.key, targetGroupId, e.target.value === "" ? null : e.target.value);
-                  }}
-                  className={`rounded-md border px-1.5 py-0.5 text-xs ${isPendingConfirmation ? "border-dashed border-theme-accent" : "border-theme-surface-border"}`}
-                >
-                  <option value="">Unassigned</option>
-                  {rankBucketLabels.map((label) => (
-                    <option key={label} value={label}>
-                      {isPendingConfirmation && label === assignment?.bucket ? `🤖 ${label}?` : label}
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <select
+                    value={assignment?.bucket ?? ""}
+                    title={assignment?.reason}
+                    disabled={rankBucketPending}
+                    onChange={(e) => handleRankBucketChange(gig.key, rankBucketGroupId, e.target.value === "" ? null : e.target.value)}
+                    className={`rounded-md border px-1.5 py-0.5 text-xs disabled:opacity-50 ${isPendingConfirmation ? "border-dashed border-theme-accent" : "border-theme-surface-border"}`}
+                  >
+                    <option value="">Unassigned</option>
+                    {rankBucketLabels.map((label) => (
+                      <option key={label} value={label}>
+                        {isPendingConfirmation && label === assignment?.bucket ? `🤖 ${label}?` : label}
+                      </option>
+                    ))}
+                  </select>
+                  {rankBucketErrorByKey[gig.key] && <p className="mt-1 max-w-[16rem] text-xs text-red-600">{rankBucketErrorByKey[gig.key]}</p>}
+                </>
               );
             },
             filterFn: (row: { original: StoredGig }, _id: string, value: unknown) =>
-              !value || value === "all" || resolveDisplayRankBucket(row.original, groupId)?.bucket === value,
+              !value || value === "all" || resolveDisplayRankBucket(row.original, rankBucketGroupId)?.bucket === value,
             meta: { filterKind: "select" as const, selectOptions: rankBucketLabels },
           },
         ]

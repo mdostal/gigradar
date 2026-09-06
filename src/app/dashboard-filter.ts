@@ -131,25 +131,21 @@ export function isWithinSeenWindow(firstSeenIso: string, window: SeenWindow, now
 // zero new engine work; Rank Bucket just needed to exist as a dimension.
 
 /**
- * The bucket assignment to DISPLAY/FILTER a gig by. On a scoped view
- * (`groupId` given, e.g. `/[group]/gigs`), that group's own specific
- * assignment. On an unscoped view (`/gigs`, `/today` -- no groupId), the
- * FIRST group (in `matchedRankBuckets`' own key order, which mirrors
- * scan-time primary-group-first processing order) that has one --
- * deliberately reads `matchedRankBuckets` fresh rather than trusting the
- * separately-stored flat `rankBucket` field, so a confirm/override action
- * (which only ever updates `matchedRankBuckets`, see store/gigs.ts's
- * setRankBucket() header comment) is reflected immediately without
- * needing to also keep a second field in sync. `undefined` means this gig
- * has no rank-bucket data at all for the relevant scope -- a valid,
- * common state (the feature is opt-in per group), never an error.
+ * The bucket assignment to DISPLAY/FILTER a gig by, for `groupId` --
+ * always the real, config-order PRIMARY group's id on an unscoped view
+ * (`/gigs`, `/today`), resolved server-side via dashboard-data.ts's
+ * resolvePrimaryGroupId() and passed down as a prop, never guessed
+ * per-gig from `matchedRankBuckets`' own key order (grill-pass fix: that
+ * guess broke when the primary group had no rankBuckets configured but a
+ * secondary one did, and JS object key enumeration for integer-like keys
+ * doesn't reliably reflect insertion order anyway). `undefined` `groupId`
+ * (no configured group at all) or no assignment for that group both
+ * legitimately mean "nothing to show" -- a valid, common state (the
+ * feature is opt-in per group), never an error.
  */
-export function resolveDisplayRankBucket(gig: Pick<StoredGig, "matchedRankBuckets">, groupId?: string): RankBucketAssignment | undefined {
-  if (groupId) return gig.matchedRankBuckets?.[groupId];
-  const buckets = gig.matchedRankBuckets;
-  if (!buckets) return undefined;
-  const firstKey = Object.keys(buckets)[0];
-  return firstKey !== undefined ? buckets[firstKey] : undefined;
+export function resolveDisplayRankBucket(gig: Pick<StoredGig, "matchedRankBuckets">, groupId: string | undefined): RankBucketAssignment | undefined {
+  if (!groupId) return undefined;
+  return gig.matchedRankBuckets?.[groupId];
 }
 
 /**
@@ -165,18 +161,4 @@ export function resolveDisplayRankBucket(gig: Pick<StoredGig, "matchedRankBucket
 export function passesRankBucketFilter(assignment: RankBucketAssignment | undefined, filter: string | "all"): boolean {
   if (filter === "all") return true;
   return assignment?.bucket === filter;
-}
-
-/**
- * Which group's rank bucket the confirm/override control (Server Action
- * confirmRankBucketAction()) should write to on an UNSCOPED view -- the
- * same "first group in matchedRankBuckets' own key order" this file's
- * resolveDisplayRankBucket() already uses for DISPLAY, reused here so a
- * confirm/override write always targets the exact group whose assignment
- * is currently shown, never a mismatched one. On a scoped view
- * (`/[group]/gigs`), the caller already knows the group id directly and
- * has no need for this function.
- */
-export function resolvePrimaryRankBucketGroupId(gig: Pick<StoredGig, "matchedRankBuckets">): string | undefined {
-  return Object.keys(gig.matchedRankBuckets ?? {})[0];
 }

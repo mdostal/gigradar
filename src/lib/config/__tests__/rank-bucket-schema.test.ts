@@ -52,4 +52,24 @@ describe("GroupConfig.rankBuckets schema", () => {
   it("rejects a non-boolean rankBucketAiOverlay", () => {
     expect(GroupConfigSchema.safeParse(baseGroup(undefined, "yes")).success).toBe(false);
   });
+
+  // Grill-pass fix: "all" is the shared "select" filterKind's reserved
+  // "clear filter" sentinel (dashboard-client.tsx) -- an owner-named bucket
+  // literally called "All" would be unselectable/misread as "no filter."
+  it("rejects a bucket named 'all', case-insensitively", () => {
+    expect(GroupConfigSchema.safeParse(baseGroup([{ label: "all" }])).success).toBe(false);
+    expect(GroupConfigSchema.safeParse(baseGroup([{ label: "All" }])).success).toBe(false);
+    expect(GroupConfigSchema.safeParse(baseGroup([{ label: "  ALL  " }])).success).toBe(false);
+  });
+
+  // Grill-pass fix: two identically-labeled buckets in one group produce a
+  // duplicate React key and an ambiguous <select> value.
+  it("rejects duplicate bucket labels within the same group", () => {
+    const result = GroupConfigSchema.safeParse(baseGroup([{ label: "Tier 1" }, { label: "Tier 1" }]));
+    expect(result.success).toBe(false);
+  });
+
+  it("allows the same label to be reused across DIFFERENT groups -- uniqueness is per-group, not global", () => {
+    expect(GroupConfigSchema.safeParse(baseGroup([{ label: "Tier 1" }])).success).toBe(true);
+  });
 });

@@ -64,7 +64,11 @@ function ruleMatches(gig: Gig, rule: RankBucketRule): { matched: boolean; reason
     const haystack = `${gig.title ?? ""} ${gig.description ?? ""}`;
     const hit = firstWholeWordMatch(haystack, rule.keywords);
     if (!hit) {
-      return { matched: false, reasons: [`[${rule.label}] no configured keyword matched title/description`] };
+      // Grill-pass fix: must include `reasons` accumulated so far (e.g. a
+      // passing rate check above) -- a fresh array here silently dropped
+      // that context, under-reporting why a rule almost matched, contrary
+      // to this module's own "explanatory reasons for every rule tried" contract.
+      return { matched: false, reasons: [...reasons, `[${rule.label}] no configured keyword matched title/description`] };
     }
     reasons.push(`[${rule.label}] keyword "${hit}" matched`);
   }
