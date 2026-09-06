@@ -4,6 +4,47 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-09-05
+
+### Added
+
+- Rank Buckets — a third, orthogonal ranking signal per group, alongside
+  tier (role type) and band (rate range): owner-NAMED, ORDERED buckets
+  (e.g. "Tier 1", "Tier 2") with real, tunable rate/keyword rules. A gig
+  is assigned to the FIRST bucket (in declared order) whose rule it
+  satisfies — mixed mechanism, per owner direction: simple rules always
+  run first, with an opt-in AI-suggested overlay reviewing the rule
+  result and proposing a different bucket (with a reason) for the owner
+  to confirm or override, never silently replacing it.
+- A new `/config/rank-buckets` settings page — add/remove/reorder buckets
+  per group (order is a real, persisted rule-precedence signal), plus the
+  AI-overlay toggle.
+- A new Rank Bucket column/filter on every giglist view (`/today`,
+  `/gigs`, `/[group]/gigs`) and the first real confirm/override control
+  in the app (a `<select>`, with a dashed border + 🤖 marker while an
+  AI suggestion awaits confirmation).
+
+### Fixed
+
+- A manual bucket confirm/override could be silently discarded by the
+  next scheduled rescan — the rescan write path unconditionally
+  overwrote the stored assignment with the fresh rule/AI result.
+- A rank-bucket rule's explanatory "why did/didn't this match" reasons
+  could be silently dropped when a rate check passed but the keyword
+  check failed.
+- A real read-modify-write race in the confirm/override write path
+  (now transactional).
+- The config schema now rejects a bucket literally named "all"
+  (case-insensitive — collides with the giglist filter's reserved
+  "clear filter" value) and rejects duplicate bucket names within one
+  group; the settings page's own client-side validation now matches.
+- The Rank Bucket column's confirm/override control now surfaces write
+  failures inline instead of swallowing them silently.
+- On an unscoped view (`/gigs`, `/today`), which group's rank-bucket
+  assignment to show/write was previously guessed per-gig from raw
+  scan-order data; it's now resolved once, correctly, from the real
+  config's own primary group.
+
 ## [0.35.1] - 2026-09-05
 
 ### Fixed
