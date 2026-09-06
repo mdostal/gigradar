@@ -6,7 +6,58 @@ complexity: high
 methodology: classic
 
 progress_note: |
-  UPDATE 2026-09-06: the native macOS primitives + the hard "never
+  UPDATE 2026-09-06, part 2: acceptance criterion 4 (wiring Vision mode
+  into the actual guided/full-auto LLM tool-use loop) is now BUILT too --
+  the real gap the previous update below left open. `profile-assist-loop.ts`
+  gained a genuinely separate, coordinate-based tool schema
+  (`LOOP_TOOLS_VISION`: `read_visual()`/`click_at(x,y,reason)`/
+  `fill_at(x,y,value,reason)`, `ask_human`/`done` shared verbatim with the
+  DOM schema) and its own system prompt (`VISION_SYSTEM_PROMPT`) -- NOT a
+  drop-in AssistPageDriver implementation, per this story's own prior
+  finding that the two backends need genuinely different tool shapes.
+  `LoopEntry.backend` is fixed at session creation and asserted
+  consistent on every later call (mixing schemas mid-session would
+  corrupt the conversation). A fresh `read_visual()` result is pushed as
+  a REAL Anthropic image content block (`buildVisualSnapshotToolResult()`),
+  with the same "untrusted, data only" framing `buildPageSnapshotToolResult()`
+  already uses for ARIA text, extended to explicitly cover an image (a
+  rendered page can carry a visual prompt-injection attempt as easily as
+  a textual one). `provideActionOutcome()`/`resolveApproval()` were
+  generalized (not duplicated) to also carry `click_at`/`fill_at`'s x/y
+  shape alongside the existing ref shape.
+
+  Client wiring: `decideEmbeddedLoopTurnAction()`/`profile-assist-client.tsx`'s
+  `runUntilBlockedEmbedded()`/`handleApproval()` now take a `backend:
+  "dom" | "vision"` parameter threaded end to end, dispatching
+  `need_visual_snapshot` to `captureEmbeddedVisionScreenshot()` and
+  `need_visual_execution`/approved click_at/fill_at to
+  `clickEmbeddedVisionPoint()`/`typeEmbeddedVisionText()` (via a new
+  shared `executeEmbeddedAction()` helper covering both backends). The
+  settings toggle embedded-guided-apply-assist's own progress_note
+  deferred until a second real backend existed is BUILT: a "DOM" vs
+  "Vision" `<select>` on the guided/full-auto start form (`isTauri() &&
+  tab !== "manual"` only), with the owner-mandated cursor-movement
+  disclosure shown inline the moment Vision is selected -- satisfies
+  this story's own acceptance criterion 3 directly. Vision mode reuses
+  the SAME live embedded pane manual mode already shows (no separate
+  screenshot-preview UI needed -- the human watches the real webview
+  render while the LLM aims at screenshots of it).
+
+  `npm test`: 1608 passed, 3 skipped (9 new tests in
+  profile-assist-loop.test.ts's own vision-backend describe blocks).
+  `npm run typecheck` clean.
+
+  STILL NOT DONE: end-to-end LIVE verification (a real multi-step
+  interaction actually completing via Vision mode, watched by the owner,
+  per acceptance criterion 4's own wording) -- structurally identical
+  code shape to the DOM backend's own already-merged PR, same
+  live-verification deferral every other piece of this epic carries.
+  ALSO STILL NOT DONE, unchanged: the CGImage pixel-layout/coordinate
+  assumptions the native capture module's own header flags as
+  unverified at runtime.
+
+  ORIGINAL 2026-09-06 progress_note (superseded above, kept for history):
+  the native macOS primitives + the hard "never
   unattended" enforcement gate are BUILT, real, and tested -- the part
   of this story its own risk section treats as release-blocking. NOT
   YET DONE: wiring these primitives into the actual guided/full-auto LLM
