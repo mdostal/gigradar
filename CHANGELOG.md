@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-09-06
+
+### Fixed
+
+- A real, severe bug affecting the whole app: every one of gigradar's
+  own custom Tauri commands — including the "Check for Updates" tray
+  action's manual update check, install, and snooze — has been silently
+  unreachable from the frontend since it was first added, in every
+  build. The failure was swallowed everywhere it's called, so it never
+  surfaced as a visible crash. Root cause: the packaged app's build
+  configuration never declared the commands it registers, so Tauri's
+  own permission system refused every one of them by default. Fixed.
+
+### Added
+
+- The embedded pane (from the true-embedded-browser epic's foundational
+  work) can now be driven directly — finding, clicking, and typing into
+  real page content — without needing a separate browser automation
+  engine, and without ever moving your real mouse cursor. This is the
+  groundwork for guided/full-auto profile-assist sessions to run fully
+  inside the embedded pane; not yet wired into that flow.
+
 ## [0.37.0] - 2026-09-06
 
 ### Added
