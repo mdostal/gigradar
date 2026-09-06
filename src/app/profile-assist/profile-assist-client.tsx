@@ -12,9 +12,14 @@ import {
   advanceLoopTurnAction,
   answerHumanAction,
   clickSessionAtAction,
+  decideEmbeddedLoopTurnAction,
   endAssistSessionAction,
+  endEmbeddedLoopSessionAction,
   getSessionScreenshotAction,
+  provideEmbeddedActionOutcomeAction,
+  provideEmbeddedSnapshotAction,
   resolveApprovalAction,
+  resolveEmbeddedApprovalAction,
   resolveEmbeddedAssistSessionAction,
   startAssistSessionAction,
   suggestProfileFieldsAction,
@@ -23,7 +28,14 @@ import {
 import type { FieldSuggestion } from "@/lib/apply/profile-suggest";
 import type { LoopEvent } from "@/lib/apply/profile-assist-loop";
 import { isTauri } from "@/lib/is-tauri";
-import { closeEmbeddedWebview, setEmbeddedWebviewCookies, showEmbeddedWebview } from "@/lib/tauri/embedded-webview";
+import {
+  clickEmbeddedElementByRef,
+  closeEmbeddedWebview,
+  fillEmbeddedElementByRef,
+  setEmbeddedWebviewCookies,
+  showEmbeddedWebview,
+  snapshotEmbeddedWebview,
+} from "@/lib/tauri/embedded-webview";
 
 type Tab = "manual" | "guided" | "full-auto";
 
@@ -36,7 +48,14 @@ const TABS: { id: Tab; label: string; enabled: boolean }[] = [
 type SessionState =
   | { status: "idle" }
   | { status: "starting" }
-  | { status: "active"; sessionId: string }
+  // `isEmbedded`: true for the packaged-Tauri-app's real embedded pane
+  // (guided/full-auto driven via decideEmbeddedLoopTurnAction()'s own
+  // split protocol -- no server-held Playwright session at all, sessionId
+  // is a plain client-generated crypto.randomUUID()), false for the
+  // existing real-chrome flow (advanceLoopTurnAction(), sessionId comes
+  // from startAssistSessionAction()). Never set for manual mode, which
+  // has its own separate EmbeddedManualAssist component and state.
+  | { status: "active"; sessionId: string; isEmbedded: boolean }
   | { status: "ending" }
   | { status: "error"; message: string };
 
@@ -281,6 +300,14 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
   agentEngagedRef.current = agentEngaged;
   const [humanTypeText, setHumanTypeText] = useState("");
 
+  // true-embedded-browser epic, embedded-automation-bridge wiring. Guided/
+  // full-auto's OWN embedded pane in the packaged Tauri app -- distinct
+  // from the "embedded view" screenshot-relay pane above (which shows a
+  // real-chrome window's screenshot; this ref backs a REAL embedded
+  // webview, no separate OS window at all). Only ever mounted when
+  // isTauri() && tab !== "manual" -- see the render branch below.
+  const guidedPaneRef = useRef<HTMLDivElement>(null);
+
   async function refreshScreenshot(sessionId: string) {
     if (viewModeRef.current !== "embedded") return;
     setScreenshot((prev) => ({ ...prev, status: "loading" }));
@@ -301,12 +328,49 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     // Tab and AssistMode are the same union ("manual" | "guided" |
     // "full-auto") by design — the tab IS the mode, no mapping needed.
     const mode = tab;
+
+    // true-embedded-browser epic, embedded-automation-bridge wiring. The
+    // packaged-Tauri-app path for guided/full-auto: no server-held
+    // Playwright session at all (see decideEmbeddedLoopTurnAction()'s own
+    // header comment) -- resolve the real profileUrl + storageState via
+    // the SAME resolveEmbeddedAssistSessionAction() manual mode already
+    // uses (it doesn't care which mode is asking), show the real embedded
+    // pane, seed cookies, then drive the loop via runUntilBlockedEmbedded().
+    if (isTauri() && mode !== "manual") {
+      const sessionId = crypto.randomUUID();
+      const result = await resolveEmbeddedAssistSessionAction(sourceId);
+      if (!result.ok) {
+        setSession({ status: "error", message: result.error });
+        return;
+      }
+      if (!guidedPaneRef.current) {
+        setSession({ status: "error", message: "gigradar profile-assist: embedded pane not mounted." });
+        return;
+      }
+      try {
+        const rect = guidedPaneRef.current.getBoundingClientRect();
+        await showEmbeddedWebview(result.data.profileUrl, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+        if (result.data.storageState.cookies.length > 0) {
+          await setEmbeddedWebviewCookies(result.data.storageState.cookies);
+          await showEmbeddedWebview(result.data.profileUrl, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+        }
+      } catch (e) {
+        setSession({ status: "error", message: e instanceof Error ? e.message : String(e) });
+        return;
+      }
+      setSession({ status: "active", sessionId, isEmbedded: true });
+      setSuggest({ status: "idle" });
+      setAgentEngaged(true);
+      void runUntilBlockedEmbedded(sessionId, mode);
+      return;
+    }
+
     const result = await startAssistSessionAction(sourceId, mode);
     if (!result.ok) {
       setSession({ status: "error", message: result.error });
       return;
     }
-    setSession({ status: "active", sessionId: result.data.sessionId });
+    setSession({ status: "active", sessionId: result.data.sessionId, isEmbedded: false });
     setSuggest({ status: "idle" });
     void refreshScreenshot(result.data.sessionId);
     // embedded-view-interactive story: Embedded view starts purely
@@ -324,6 +388,19 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     if (session.status !== "active") return;
     const sessionId = session.sessionId;
     setSession({ status: "ending" });
+
+    if (session.isEmbedded) {
+      await closeEmbeddedWebview().catch(() => {});
+      await endEmbeddedLoopSessionAction(sessionId);
+      setSession({ status: "idle" });
+      setSuggest({ status: "idle" });
+      setTranscript([]);
+      setPendingEvent(null);
+      setPendingQuestion(null);
+      setScreenshot({ status: "idle" });
+      return;
+    }
+
     const result = await endAssistSessionAction(sessionId);
     if (!result.ok) {
       setSession({ status: "error", message: result.error });
@@ -391,10 +468,118 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
     }
   }
 
+  /**
+   * true-embedded-browser epic, embedded-automation-bridge wiring. The
+   * embedded-pane equivalent of runUntilBlocked() above -- drives
+   * decideEmbeddedLoopTurnAction()'s own split protocol: `need_snapshot`
+   * is fulfilled by calling snapshotEmbeddedWebview() (client-side
+   * embedded_webview_eval()) then provideEmbeddedSnapshotAction();
+   * `need_execution` (full-auto only) is fulfilled by
+   * clickEmbeddedElementByRef()/fillEmbeddedElementByRef() then
+   * provideEmbeddedActionOutcomeAction(). Every OTHER event
+   * (read/click-pending/fill-pending/invalid_ref/ask_human/done/
+   * turn_limit_reached) is handled identically to runUntilBlocked() --
+   * same transcript/pendingEvent/pendingQuestion state, same control flow.
+   */
+  async function runUntilBlockedEmbedded(sessionId: string, mode: "guided" | "full-auto") {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (!agentEngagedRef.current) return;
+        setTranscript((prev) => [...prev, { kind: "advancing" }]);
+        let result = await decideEmbeddedLoopTurnAction(sessionId, mode);
+
+        if (result.ok && result.data.type === "need_snapshot") {
+          try {
+            const snapshot = await snapshotEmbeddedWebview();
+            result = await provideEmbeddedSnapshotAction(sessionId, snapshot);
+          } catch (e) {
+            result = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+        } else if (result.ok && result.data.type === "need_execution") {
+          const { tool, ref, value } = result.data;
+          try {
+            const outcome = tool === "click" ? await clickEmbeddedElementByRef(ref) : await fillEmbeddedElementByRef(ref, value ?? "");
+            result = await provideEmbeddedActionOutcomeAction(sessionId, outcome);
+          } catch (e) {
+            result = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+        }
+
+        setTranscript((prev) => prev.slice(0, -1)); // drop the "advancing" placeholder
+
+        if (!result.ok) {
+          setTranscript((prev) => [...prev, { kind: "error", message: result.error }]);
+          return;
+        }
+
+        const event = result.data;
+        setTranscript((prev) => [...prev, { kind: "event", event }]);
+
+        if (event.type === "click" || event.type === "fill") {
+          if (event.pending) {
+            setPendingEvent(event);
+            setEditValue(event.value ?? "");
+            return;
+          }
+          continue; // full-auto executed already — keep going (Guided reaches here only via read/invalid_ref)
+        }
+        if (event.type === "ask_human") {
+          setPendingQuestion(event.question);
+          return;
+        }
+        if (event.type === "done" || event.type === "turn_limit_reached") {
+          return;
+        }
+        // "read" / "invalid_ref" — no human input needed, keep advancing.
+      }
+    } finally {
+      runningRef.current = false;
+    }
+  }
+
   async function handleApproval(approve: boolean, useEditedValue: boolean) {
     if (session.status !== "active" || !pendingEvent) return;
     const sessionId = session.sessionId;
     const finalValue = useEditedValue ? editValue : undefined;
+
+    if (session.isEmbedded) {
+      const result = await resolveEmbeddedApprovalAction(sessionId, approve, finalValue);
+      setTranscript((prev) =>
+        prev.map((item, i) =>
+          i === prev.length - 1 && item.kind === "event"
+            ? { ...item, resolvedApproval: approve ? "approved" : "rejected" }
+            : item,
+        ),
+      );
+      setPendingEvent(null);
+      if (!result.ok) {
+        setTranscript((prev) => [...prev, { kind: "error", message: result.error }]);
+        return;
+      }
+      const needsExecution = result.data.needsExecution;
+      if (needsExecution) {
+        try {
+          const outcome =
+            needsExecution.tool === "click"
+              ? await clickEmbeddedElementByRef(needsExecution.ref)
+              : await fillEmbeddedElementByRef(needsExecution.ref, needsExecution.value ?? "");
+          const outcomeResult = await provideEmbeddedActionOutcomeAction(sessionId, outcome);
+          if (!outcomeResult.ok) {
+            setTranscript((prev) => [...prev, { kind: "error", message: outcomeResult.error }]);
+            return;
+          }
+        } catch (e) {
+          setTranscript((prev) => [...prev, { kind: "error", message: e instanceof Error ? e.message : String(e) }]);
+          return;
+        }
+      }
+      void runUntilBlockedEmbedded(sessionId, tab as "guided" | "full-auto");
+      return;
+    }
+
     const result = await resolveApprovalAction(sessionId, approve, finalValue);
     setTranscript((prev) =>
       prev.map((item, i) =>
@@ -588,6 +773,90 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           {session.status === "idle" || session.status === "starting" || session.status === "error" ? (
             startForm
+          ) : session.status === "active" && session.isEmbedded ? (
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-slate-600">
+                  {tab === "guided"
+                    ? "The session is embedded below — every proposed action needs your approval below before it happens."
+                    : "The session is embedded below — the LLM acts on it directly. It'll pause and ask if it's unsure."}
+                </p>
+                {doneButton}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div ref={guidedPaneRef} className="h-[600px] w-full rounded-md border border-dashed border-slate-300 bg-slate-50" />
+                <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                  {transcript.length === 0 ? (
+                    <p className="text-xs text-slate-400">Starting…</p>
+                  ) : (
+                    transcript.map((item, i) => <TranscriptLine key={i} item={item} />)
+                  )}
+                </div>
+              </div>
+
+              {pendingEvent && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
+                  <p className="text-sm text-amber-900">
+                    Proposed: {pendingEvent.type === "click" ? "click" : "fill"}{" "}
+                    <code className="text-xs">{pendingEvent.ref}</code>
+                    {pendingEvent.type === "fill" && (
+                      <>
+                        {" "}
+                        with{" "}
+                        <input
+                          type="text"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          className="rounded border border-slate-300 px-1.5 py-0.5 text-sm"
+                        />
+                      </>
+                    )}
+                    {" — "}
+                    {pendingEvent.reason}
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleApproval(true, pendingEvent.type === "fill")}
+                      className="rounded-md border border-green-600 bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-700"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApproval(false, false)}
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {pendingQuestion && (
+                <div className="rounded-md border border-blue-300 bg-blue-50 p-3">
+                  <p className="text-sm text-blue-900">{pendingQuestion}</p>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      type="text"
+                      value={humanAnswer}
+                      onChange={(e) => setHumanAnswer(e.target.value)}
+                      placeholder="Your answer…"
+                      className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAnswerHuman}
+                      disabled={!humanAnswer.trim()}
+                      className="whitespace-nowrap rounded-md border border-brand-accent bg-brand-accent px-3 py-1 text-sm font-medium text-brand-bg disabled:opacity-50"
+                    >
+                      Answer
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-3">
