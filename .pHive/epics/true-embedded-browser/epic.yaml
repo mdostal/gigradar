@@ -10,5 +10,25 @@ stories:
     depends_on: [embedded-webview-cookie-extraction-macos]
   - id: embedded-guided-apply-assist
     depends_on: [embedded-webview-child-mechanism]
+  - id: embedded-automation-bridge
+    depends_on: [embedded-webview-child-mechanism]
+  - id: embedded-vision-automation-mode
+    depends_on: [embedded-automation-bridge]
   - id: unattended-scans-never-open-a-window
     depends_on: []
+
+# 2026-09-06 revision: embedded-guided-apply-assist's original "guided/
+# full-auto structurally cannot follow manual mode into the embedded
+# pane" conclusion was wrong -- see design-discussion.md §6 for the real,
+# 4-thread research redo that found it. Two new stories
+# (embedded-automation-bridge, embedded-vision-automation-mode) implement
+# the two non-Chromium automation paths that actually let ALL profile-
+# assist modes move into the embedded pane, as an owner-facing toggle
+# (per the owner's own explicit "both, with toggles" direction) rather
+# than picking one. embedded-guided-apply-assist itself is narrowed back
+# to manual mode + wiring the automation-bridge toggle in
+# (unblocked -- owner's decision: "yes everything moves embedded").
+# A third path (true Chromium embedding via CEF) was researched and found
+# real/credible but NOT scoped as a story here -- it's a genuine,
+# separate, much larger future epic (see design-discussion.md §6's Path C),
+# proposed for a later, explicit go/no-go, not committed to now.

@@ -1,0 +1,87 @@
+id: embedded-automation-bridge
+epic: true-embedded-browser
+title: "DOM/eval-bridge automation backend -- guided/full-auto drive the embedded pane via webview.eval(), no CDP or OS-level input needed"
+status: pending
+complexity: high
+methodology: classic
+depends_on: [embedded-webview-child-mechanism]
+
+description: |
+  The DEFAULT automation backend for guided/full-auto profile-assist
+  sessions once they move into the embedded pane (see
+  embedded-guided-apply-assist's own progress_note and
+  design-discussion.md §6/§7 for the full research + live-verified
+  proof-of-concept behind this). Real prior art this mirrors:
+  danielraffel/tauri-webdriver injects a JS bridge into a Tauri/WKWebView
+  app and relays element-finding/click/type/read/screenshot commands
+  through it -- a full W3C WebDriver server with NO CDP dependency at
+  all. This story builds an in-house equivalent, scoped to exactly what
+  profile-assist needs (not a general WebDriver server).
+
+  Why this is the DEFAULT, not just "the cheap option": a synthetic
+  MouseEvent/.click() dispatched via webview.eval() happens entirely
+  inside the web page's own JS/DOM event model -- it never touches the
+  real OS cursor or HID input stream, unlike embedded-vision-automation-mode's
+  OS-level CGEvent approach (live-verified this session to visibly hijack
+  the owner's real mouse cursor while running). This lets the owner keep
+  using their own mouse/keyboard for anything else while guided/full-auto
+  runs against the embedded pane -- the owner's own stated ideal ("work
+  side by side").
+
+  1. New Rust command `embedded_webview_eval(js: String) -> Promise<String>`
+     in `embedded_webview.rs`, using Tauri's own `WebviewWindow::eval()`
+     (a real, stable, documented API -- no new dependency). Returns the
+     JS expression's own JSON-stringified result so the frontend bridge
+     gets real data back, not just fire-and-forget execution.
+  2. A small, purpose-built JS bridge (injected via eval(), or Tauri's
+     `initializationScript` if that reaches a child webview -- confirm
+     this at implementation time, don't assume) exposing: find an element
+     by visible text/aria-label/role (mirroring how the owner's own
+     accessibility-tree POC found "Today" by its title), read its real
+     on-screen bounding rect, dispatch a synthetic `MouseEvent`/`.click()`
+     or set an `<input>`'s `.value` + dispatch `input`/`change` events for
+     typing. Every dispatched event stays entirely inside this ONE
+     webview's own DOM -- never touches window-level/OS input in any way.
+  3. Wire profile-assist's existing `clickSessionAtAction()`/
+     `typeIntoSessionAction()` call sites (or a new, parallel pair
+     specifically for the embedded-pane path -- decide which based on how
+     cleanly the existing functions' contracts map, don't force a
+     one-size-fits-all signature) to route through this bridge when the
+     owner's settings toggle (built by embedded-guided-apply-assist) is
+     set to "DOM bridge" -- the default.
+  4. A settings-page readout of WHAT this mode can/can't do -- real,
+     honest copy (e.g. "works best on pages with clear text/labels;
+     switch to Vision mode below if a page doesn't respond correctly"),
+     not silent about its own limits.
+
+acceptance_criteria:
+  - "embedded_webview_eval() executes real JS against the embedded pane's own webview and returns its real result -- live-verified, not just unit-tested against a mock."
+  - "Given a real page rendered in the embedded pane, the bridge can find a real, visible element by its text/label and report its accurate on-screen bounding rect."
+  - "A dispatched synthetic click/type action via this bridge does NOT move the owner's real OS mouse cursor at any point -- verified by watching the actual cursor during a live test, the same way the owner caught embedded-vision-automation-mode's cursor-hijacking side effect."
+  - "Guided/full-auto profile-assist, with the settings toggle set to DOM bridge, completes a real multi-step interaction (at least: navigate, find an element by label, click it, confirm the resulting page state changed) against the embedded pane -- live-verified end to end."
+  - "This mechanism has ZERO code path reachable from runRadar()/the scheduler/any unattended scan -- same enforced-not-just-documented posture as unattended-scans-never-open-a-window, since this whole backend only exists for a human-initiated profile-assist session."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src-tauri/src/embedded_webview.rs
+      purpose: "Story 1's existing show/hide/navigate/close commands -- this story adds eval() alongside them, same module, same conventions."
+    - path: src/app/profile-assist/actions.ts
+      purpose: "clickSessionAtAction()/typeIntoSessionAction() -- the existing guided/full-auto click/type call sites this story's bridge becomes an alternative backend for."
+    - path: src/lib/tauri/embedded-webview.ts
+      purpose: "the frontend bridge module every embedded-webview Tauri command is exposed through -- eval() gets added here too, same isTauri()-guarded convention."
+
+design_decisions:
+  - decision: This is the DEFAULT automation backend, not the fallback.
+    rationale: "It's cheaper (roughly 500-2,000 tokens and sub-second per step vs. vision's 1,000+ tokens and 1-5 seconds, per this session's own research) AND less disruptive (no real cursor hijacking) -- strictly better than vision mode whenever a page's DOM/ARIA coverage is good enough for it, which is the common case."
+  - decision: Build a purpose-built bridge scoped to profile-assist's actual needs, not a general WebDriver server.
+    rationale: "tauri-webdriver is real prior art proving the MECHANISM (webview.eval() + injected JS bridge) works -- gigradar doesn't need a full W3C WebDriver protocol server, just the specific find/read/click/type operations profile-assist's own two functions already define the contract for."
+
+risks:
+  - severity: medium
+    description: "A page with poor/missing ARIA labels or heavily obfuscated class names may not expose enough for text/label-based element-finding to work reliably."
+    mitigation: "This is exactly what embedded-vision-automation-mode's fallback toggle exists for -- not this story's problem to solve alone. Document the real limitation in the settings copy rather than overclaiming universal coverage."
+
+references:
+  - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
+    relevant_excerpt: "§6 (2026-09-06 correction, Path B) and §7 (live proof-of-concept -- the cursor-hijacking finding that makes this the DEFAULT backend, not vision mode)."

@@ -1,111 +1,109 @@
 id: embedded-guided-apply-assist
 epic: true-embedded-browser
-title: "Guided profile-assist/apply sessions use the embedded webview instead of a positioned OS-level window"
+title: "Manual-mode profile-assist sessions use the embedded webview instead of a positioned OS-level window"
 status: pending
 
 progress_note: |
-  REAL, DISQUALIFYING FINDING (2026-09-03) -- this story's own scope as
-  originally written is NOT achievable. `clickSessionAtAction()`/
-  `typeIntoSessionAction()` (src/app/profile-assist/actions.ts) --
-  the mechanism "guided"/"full-auto" mode's own LLM-driven clicking uses
-  -- work by taking a RATIO-scaled coordinate against a Playwright
-  SCREENSHOT and returning a fresh screenshot back. That is Playwright/CDP
-  automation, full stop. This epic's own design-discussion.md §2 already
-  established, as a hard finding, that CDP does not exist for Tauri's
-  embedded webview on macOS (WKWebView has no CDP support at all --
-  only Windows' WebView2 does). This means clickSessionAtAction()/
-  typeIntoSessionAction() CANNOT be retargeted at the embedded webview,
-  under any circumstances, on this platform -- not a workaround-able gap,
-  a hard architectural wall this epic's own earlier research already
-  identified but this story's own original scope failed to apply to
-  itself.
+  RESCOPED 2026-09-06 -- this story's original "REAL, DISQUALIFYING
+  FINDING" (2026-09-03) that guided/full-auto could never follow manual
+  mode into the embedded pane is RETRACTED. See design-discussion.md §6
+  for the full research redo (owner's own pushback, 4 parallel research
+  threads: CEF-in-Tauri, Electron's CDP story, WKWebView's native
+  automation options, the vision-agent landscape). Short version: this
+  story's own original scope was right that guided/full-auto's
+  screenshot-coordinate mechanism needs an automation backend that
+  doesn't exist yet for the embedded pane -- but wrong to conclude none
+  could ever exist. Two real, buildable, non-Chromium paths exist (a
+  DOM/eval-bridge mode and a vision/OS-synthetic-input mode -- see
+  embedded-automation-bridge and embedded-vision-automation-mode, split
+  out as their OWN stories since they're real, independent pieces of
+  work, not a detail of this one).
 
-  CORRECTED SCOPE: only "manual" mode (pure human mouse/keyboard, no LLM
-  clicking involved at all) could genuinely move to the embedded webview.
-  "guided" and "full-auto" modes MUST keep using a real,
-  Playwright-controlled OS window (today's positionChromeWindowSideBySide()
-  approach), unchanged, because the LLM's own ability to click/type
-  through them fundamentally requires CDP.
+  This story itself is NARROWED back to its original core: manual mode
+  (pure human interaction, no LLM clicking at all) moving into the
+  embedded pane -- which needs nothing from the two automation stories
+  above, only Story 1's mechanism (show/hide/navigate) plus seeding the
+  pane with the already-loaded storageState, exactly as originally
+  scoped below. It also wires in the settings TOGGLE (owner's own
+  explicit ask: "we have BOTH and TOGGLES in settings") that
+  embedded-automation-bridge/embedded-vision-automation-mode's backends
+  plug into, once guided/full-auto are ready to use it -- this story
+  does not itself have to wait for those two to land first.
 
-  This INVERTS this story's own original open question (which asked
-  "should manual mode ALSO move to embedded, given guided/full-auto
-  already would") -- the real answer is the reverse: manual is the ONLY
-  candidate, and guided/full-auto structurally cannot follow. Given this
-  also means the epic's own "no separate OS window, ever" framing does
-  NOT fully hold for guided/full-auto assist sessions specifically (a
-  real, permanent exception, not a temporary gap), this needs the
-  owner's own explicit direction before any implementation -- deliberately
-  NOT built this session. See the overnight-status artifact from this
-  session for the live version of this decision.
+  UNBLOCKED: owner's own explicit decision, 2026-09-06 -- "yes everything
+  moves embedded." No longer pending owner direction.
 
-  UPDATE 2026-09-06: re-presented as a concrete, standalone decision
-  artifact (with a real recommendation: move manual mode to the embedded
-  pane) rather than buried in a general status report --
-  https://claude.ai/code/artifact/0c1c3ec2-b43a-4020-b649-9fa152ec3a8b.
-  Still deliberately NOT built pending the owner's own reply.
 complexity: medium
 methodology: classic
 depends_on: [embedded-webview-child-mechanism]
 
 description: |
   Replaces assist-session.ts's `positionChromeWindowSideBySide()` real
-  OS-window flow (guided/full-auto profile-assist) with the embedded
-  webview from Story 1. Unlike Story 3 (Capture Login), this does NOT
-  depend on Story 2's cookie extraction -- profile-assist already reads a
-  storageState from disk/Portunus BEFORE opening the browser (see
-  assist-session.ts's existing `readSessionViaPortunus()`/
+  OS-window flow for MANUAL-mode profile-assist sessions with the
+  embedded webview from Story 1. Unlike Story 3 (Capture Login), this
+  does NOT depend on Story 2's cookie extraction -- profile-assist
+  already reads a storageState from disk/Portunus BEFORE opening the
+  browser (see assist-session.ts's existing `readSessionViaPortunus()`/
   `readStorageStateFile()` calls); this story only needs to SHOW that
   already-authenticated session inside the embedded pane, not extract a
   NEW session back out of it afterward.
 
   1. `startAssistSession()` (assist-session.ts): for the packaged Tauri
-     app, seed the embedded webview with the already-loaded
-     `scopedStorageState` (via Tauri's own cookie-SETTING path, if one
-     exists at this Tauri version -- research as part of this story,
-     since design-discussion.md §2's research only confirmed reading is
-     unsolved, not setting; a setter may already exist even though a
-     getter (Story 2) doesn't) and navigate to `profileUrl`, instead of
-     spawning real-chrome + positioning it.
-  2. The embedded live-view pane (`embedded-view-interactive` story,
-     already shipped) and the guided/full-auto assist flow (clickSessionAtAction/
-     typeIntoSessionAction) now operate against the SAME embedded webview
-     directly, rather than screenshotting/relaying a separate OS window's
-     content -- a real simplification, not just a relocation, once this
-     lands (verify whether the screenshot-relay mechanism can be retired
-     entirely or still serves a distinct purpose -- don't assume, check).
-  3. "manual" mode: per assist-session.ts's own existing comment ("a real
-     browser window is open on your desktop, use it directly"), this
-     mode's whole point is a real, directly-usable window -- CONFIRM with
-     the owner whether manual mode should ALSO move to the embedded pane
-     (consistent with "no separate OS window, ever") or deliberately stay
-     as a real OS window (since manual mode users may want a normal,
-     full-featured Chrome window, not a constrained embedded view) --
-     flagged as a real open question for the owner in this epic's own
-     status artifact, not assumed either way.
+     app AND manual mode specifically, seed the embedded webview with the
+     already-loaded `scopedStorageState` and navigate to `profileUrl`,
+     instead of spawning real-chrome + positioning it. Cookie-SETTING
+     into a Tauri embedded webview is genuinely unresearched by this
+     story's own prior version -- research it as a real first step here
+     (Story 1/2's own research only covered READING cookies out, not
+     setting them in). If no clean setter API exists at this Tauri
+     version, evaluate `embedded_webview_eval()` (built by
+     embedded-automation-bridge, or build a minimal version of it here if
+     that story hasn't landed yet) injecting `document.cookie` writes for
+     the non-HttpOnly subset, same limitation this app's session-capture
+     already documents elsewhere for cookie injection via JS.
+  2. Guided/full-auto mode: once `embedded-automation-bridge` and/or
+     `embedded-vision-automation-mode` land, wire profile-assist's
+     existing `clickSessionAtAction()`/`typeIntoSessionAction()` call
+     sites to route through whichever backend the owner's settings
+     toggle (built by this story) currently selects, instead of always
+     targeting a spawned real Chrome window. This story adds the TOGGLE
+     UI/setting itself (a real, owner-visible control, not a hidden env
+     var) even if only one backend exists yet -- the other slots in
+     without a second settings-UI change later.
+  3. The embedded live-view pane (`embedded-view-interactive` story,
+     already shipped) and the guided/full-auto assist flow now operate
+     against the SAME embedded webview directly, rather than
+     screenshotting/relaying a separate OS window's content, once wired
+     -- verify whether the screenshot-relay mechanism can be retired
+     entirely or still serves a distinct purpose (e.g. a lower-fidelity
+     preview) -- don't assume, check.
 
 acceptance_criteria:
-  - "In the packaged Tauri app, starting a guided or full-auto profile-assist session shows the already-authenticated profile page INSIDE the embedded pane -- no separate OS-level positioned window ever appears for these two modes."
-  - "The existing clickSessionAtAction/typeIntoSessionAction guided-interaction mechanism (or its embedded-webview equivalent) still works end-to-end against the embedded surface -- live-verified, not just unit-tested."
-  - "Manual mode's real behavior (embedded vs. real OS window) is resolved via the owner's own explicit answer to this story's own open question, not silently assumed."
-  - "electron/browser runtime mode keeps today's existing positioned-OS-window flow unchanged."
+  - "In the packaged Tauri app, starting a MANUAL profile-assist session shows the already-authenticated profile page INSIDE the embedded pane -- no separate OS-level positioned window ever appears for this mode."
+  - "A real, owner-visible settings control exists to choose the guided/full-auto automation backend (DOM/eval-bridge vs. vision/OS-synthetic-input) for when embedded-automation-bridge/embedded-vision-automation-mode land -- built here even if only one backend is available yet."
+  - "electron/browser runtime mode keeps today's existing positioned-OS-window flow unchanged, for every profile-assist mode."
 
 context:
   codebase: /Users/mdostal/Documents/work/gigradar
   key_files:
     - path: src/lib/auth/assist-session.ts
-      purpose: "startAssistSession() -- the exact function this story modifies for the packaged-Tauri-app case."
+      purpose: "startAssistSession() -- the exact function this story modifies for the packaged-Tauri-app, manual-mode case."
     - path: src/app/profile-assist/profile-assist-client.tsx
       purpose: "the embedded live-view pane / guided-mode UI this story's embedded webview becomes the real backing surface for."
+    - path: src/lib/auth/embedded-capture.ts
+      purpose: "embedded-capture-login-flow story's own precedent for seeding/reading state through the embedded webview -- reuse its conventions (server-side URL resolution, client-side Tauri IPC, normalize-before-persist) rather than inventing new ones."
 
 design_decisions:
   - decision: This story does not depend on Story 2 (cookie extraction) -- only on Story 1 (the child-webview mechanism itself).
     rationale: "Profile-assist already has a valid storageState BEFORE opening the browser (loaded from disk/Portunus) -- it only needs to SHOW that session, never extract a new one afterward. Sequencing it independent of Story 2 lets it ship without waiting on that story's real, unresolved risk."
+  - decision: Guided/full-auto's actual automation-backend wiring is split into its own stories (embedded-automation-bridge, embedded-vision-automation-mode), not built inline here.
+    rationale: "Each backend is a real, independent, non-trivial piece of engineering (a new JS-bridge/eval() mechanism; a new OS-level CGEvent/screenshot mechanism) -- bundling either into this story would blow its scope past 'manual mode moves to embedded,' the part that's genuinely ready to build today with zero new research."
 
 risks:
   - severity: medium
     description: "Whether Tauri (at this repo's pinned version) exposes any cookie-SETTING API for a webview is genuinely unconfirmed -- Story 1/2's research only checked cookie READING."
-    mitigation: "This story's own step 1 explicitly scopes real research into cookie-setting as its own first step, not an assumption carried over from Story 2's (different) finding."
+    mitigation: "This story's own step 1 explicitly scopes real research into cookie-setting as its own first step, not an assumption carried over from Story 2's (different) finding. A JS-injection fallback (non-HttpOnly cookies only) is an accepted, documented limitation if no native setter exists."
 
 references:
   - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
-    relevant_excerpt: "§3 resolved architecture."
+    relevant_excerpt: "§3 resolved architecture; §6 (2026-09-06 correction) for why guided/full-auto are no longer permanently excluded."

@@ -1,0 +1,99 @@
+id: embedded-vision-automation-mode
+epic: true-embedded-browser
+title: "Vision/OS-input automation backend -- a foreground-only, human-supervised fallback when the DOM bridge can't find what it needs"
+status: pending
+complexity: high
+methodology: classic
+depends_on: [embedded-automation-bridge]
+
+description: |
+  The SECOND automation backend for guided/full-auto profile-assist,
+  selectable via the same settings toggle embedded-automation-bridge's
+  DOM-bridge mode plugs into (built by embedded-guided-apply-assist).
+  Live-verified this session, against gigradar's own real running
+  window, scoped strictly to its own PID throughout:
+  `AXUIElementCreateApplication(pid)` for structured reads,
+  `SCContentFilter(desktopIndependentWindow:)` (ScreenCaptureKit) for a
+  screenshot that can only ever contain that one window's content, and
+  `CGEvent.post(tap: .cghidEventTap)` at a coordinate read from either
+  the accessibility tree or a vision model's own analysis, for the click
+  itself.
+
+  HARD, OWNER-MANDATED CONSTRAINT, not a preference: this mode visibly
+  moves the owner's REAL mouse cursor while it runs (confirmed live --
+  the owner watched it happen) -- acceptable ONLY as an explicit,
+  foreground, human-initiated, human-supervised "auto-drive" style mode
+  ("I should be doing that and watching it"), and it must be PROVABLY
+  unreachable from any unattended/scheduled code path, on the exact same
+  footing as unattended-scans-never-open-a-window's own enforcement, not
+  merely documented as foreground-only. If this mode is ever reachable
+  from runRadar()/the scheduler/any background scan, that is a bug
+  severe enough to treat as a regression of Story 5's own guarantee, not
+  a normal defect.
+
+  1. New macOS-only (`#[cfg(target_os = "macos")]`, mirroring
+     embedded_webview_cookies.rs's own platform-gating convention) Rust
+     commands: `embedded_webview_capture() -> Promise<bytes>` (scoped
+     ScreenCaptureKit capture of the embedded pane's own child webview --
+     confirm whether Tauri's PlatformWebview handle exposes something
+     capture-scopable directly, or whether this needs the same
+     PID+window-bounds approach the owner's own POC validated) and
+     `embedded_webview_synthetic_click(x, y)`/`embedded_webview_synthetic_type(text)`
+     (the CGEvent mechanism, gated behind this story's own explicit
+     "foreground session active" check -- see the enforcement mechanism
+     below).
+  2. Enforcement mechanism for the "never unattended" constraint: these
+     commands must check (and refuse, with a specific error, if false) a
+     real, server-tracked "an interactive profile-assist session is
+     currently open" flag -- NOT just a client-side UI gate a caller
+     could bypass by calling the Tauri command directly. Design this
+     explicitly; don't assume the UI never calling it unattended is
+     sufficient.
+  3. A vision-model call (reusing this app's existing LLM-provider
+     harness/credential resolution, never a new, parallel provider
+     integration) that takes the scoped screenshot and profile-assist's
+     current instruction, returns a target coordinate + action (click/
+     type/scroll), mirroring the exact contract `clickSessionAtAction()`/
+     `typeIntoSessionAction()` already define for the real-Chrome path --
+     this backend is a drop-in alternative implementation of that same
+     contract, not a new one.
+  4. Settings UI: an explicit, honest disclosure -- "Vision mode will
+     move your mouse cursor while it's running. Use it when a page
+     doesn't respond correctly in the default mode, and stay at your
+     screen while it works" -- shown at the point the owner selects this
+     mode, not buried in documentation.
+
+acceptance_criteria:
+  - "embedded_webview_capture()'s output is confirmed (by inspection, the same way this session's own POC confirmed it) to contain ONLY the embedded pane's own content -- never any other window/app, even ones overlapping it on screen."
+  - "The synthetic click/type commands are REFUSED with a specific error when no interactive profile-assist session is currently open server-side -- verified by calling them directly (bypassing the UI) and confirming the refusal, not just trusting the UI never does this."
+  - "A real, visible disclosure of the cursor-movement side effect is shown before this mode's first use in a given session."
+  - "Guided/full-auto profile-assist, with the settings toggle set to Vision mode, completes the SAME real multi-step interaction embedded-automation-bridge's own acceptance criteria define, live-verified -- proving this backend is a genuine drop-in alternative, not a lesser one."
+  - "This mechanism has ZERO code path reachable from runRadar()/the scheduler/any unattended scan -- enforced by story-owned tests that call the underlying functions directly from a simulated unattended context and confirm they refuse, not just documented intent."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/profile-assist/actions.ts
+      purpose: "clickSessionAtAction()/typeIntoSessionAction()'s existing contract this backend implements a second time, against the embedded pane instead of a real Chrome window."
+    - path: src/lib/llm/
+      purpose: "(confirm exact path at implementation time) this app's existing LLM-provider harness/credential resolution -- reused for the vision-model call, never a new parallel integration."
+    - path: .pHive/epics/true-embedded-browser/stories/embedded-automation-bridge.yaml
+      purpose: "the DEFAULT backend this story is the fallback alternative to -- same settings toggle, same profile-assist call-site contract."
+
+design_decisions:
+  - decision: This is the FALLBACK, not the default -- selected explicitly by the owner via settings, never auto-chosen.
+    rationale: "It's more expensive (roughly 1,000+ tokens and 1-5 seconds per step vs. the DOM bridge's sub-second/cheaper cost) AND visibly disruptive (real cursor hijacking, live-confirmed) -- the 2026 industry-standard pattern is DOM-first with vision as an explicit fallback, not vision-first."
+  - decision: The "never unattended" constraint is enforced server-side by a real session-state check, not just a UI convention.
+    rationale: "Owner's own explicit ruling treats this as a hard requirement, not a preference -- and this session's own earlier incident (an unscoped screenshot capturing unrelated windows) is a direct example of why a convention alone isn't enough; the enforcement needs to be real code, testable, and provably correct."
+
+risks:
+  - severity: high
+    description: "If the 'foreground session active' check has any bypass (a race condition, a stale flag never cleared on session end, a second code path that doesn't check it), this mode could fire unattended -- exactly the failure mode Story 5 exists to prevent everywhere else in this app."
+    mitigation: "Story-owned tests that attempt to call the underlying commands from a simulated unattended context and assert refusal -- not just relying on the UI's own gating. Treat any gap here as release-blocking, not a nice-to-have."
+  - severity: medium
+    description: "CGEvent.post(tap: .cghidEventTap) relies on the embedded pane's window being genuinely frontmost/key at click time -- if the owner clicks away to another app mid-automation, a queued synthetic click could theoretically land on whatever's now frontmost."
+    mitigation: "Check the target window is actually key/frontmost immediately before each synthetic input dispatch; refuse (with a clear, resumable error) rather than fire blind if it isn't."
+
+references:
+  - path: .pHive/epics/true-embedded-browser/docs/design-discussion.md
+    relevant_excerpt: "§6 (2026-09-06 correction, Path A) and §7 (live proof-of-concept -- exact APIs validated, the postToPid negative result, and the owner's own cursor-hijacking ruling)."
