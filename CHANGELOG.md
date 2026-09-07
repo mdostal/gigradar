@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-09-06
+
+### Fixed
+
+- On a group's own giglist page, gigs could show the wrong Tier and the
+  wrong matched-profile badge — carried over from a DIFFERENT group you
+  also track, instead of this group's own real result. Found by
+  building a genuinely new, unrelated group from scratch and checking
+  it end to end. Now each group's giglist always shows that group's own
+  tier and profile match, never another group's.
+
+### Added
+
+- A one-click "+ Add custom source" button on the Config page — no more
+  hunting for the "Custom (LLM)" checkbox after adding a blank source
+  row. Works for any site, not just the built-in presets.
+- The Setup wizard's example text is no longer fractional-executive-
+  specific — it now reads the same regardless of what kind of work
+  you're tracking.
+
 ## [0.40.0] - 2026-09-06
 
 ### Added
