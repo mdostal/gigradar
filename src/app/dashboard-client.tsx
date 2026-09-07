@@ -905,13 +905,16 @@ export function DashboardClient({
       header: "Title",
       accessorFn: (g) => g.title,
       cell: ({ row }) => (
-        <button
-          type="button"
-          onClick={() => openExternalUrl(row.original.url)}
+        <a
+          href={row.original.url}
+          onClick={(e) => {
+            e.preventDefault();
+            openExternalUrl(row.original.url);
+          }}
           className="text-left font-medium text-theme-text hover:underline"
         >
           {row.original.title}
-        </button>
+        </a>
       ),
       sortingFn: sortingFnFor("title"),
       filterFn: (row, _id, value) =>

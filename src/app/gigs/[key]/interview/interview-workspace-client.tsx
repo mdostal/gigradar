@@ -139,13 +139,16 @@ export function InterviewWorkspaceClient({
             {formatRate(gig.rate)} · First seen {formatDate(gig.firstSeen)}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => openExternalUrl(gig.url)}
+        <a
+          href={gig.url}
+          onClick={(e) => {
+            e.preventDefault();
+            openExternalUrl(gig.url);
+          }}
           className="shrink-0 rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised"
         >
           Open original listing ↗
-        </button>
+        </a>
       </div>
       {gig.outcomeReason && (
         <p className="mt-1 text-xs text-theme-text-dim">

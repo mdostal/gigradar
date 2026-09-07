@@ -266,13 +266,16 @@ function DraftCard({ item, checked, onToggleChecked }: { item: DraftListItem; ch
 
           {showApprovedView && (
             <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <button
-                type="button"
-                onClick={() => openExternalUrl(item.gigUrl)}
+              <a
+                href={item.gigUrl}
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternalUrl(item.gigUrl);
+                }}
                 className="text-sm font-medium text-blue-700 hover:underline"
               >
                 Open the real job listing ↗
-              </button>
+              </a>
 
               <div className="mt-2">
                 <p className="text-xs font-medium text-slate-500">Copy-ready draft</p>

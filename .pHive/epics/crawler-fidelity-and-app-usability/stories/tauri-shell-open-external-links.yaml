@@ -87,6 +87,31 @@ progress_note: |
   to be the actual mechanism that resolves and validates capabilities (the
   bundling step itself does not re-validate the ACL any differently).
 
+  Regression + fix (2026-09-07, PR #175 CI failure): the initial
+  implementation converted every one of the five external-link sites from
+  a real `<a href target="_blank">` (accessible role="link") to a
+  `<button onClick={...}>` (role="button"). That silently changed
+  accessible semantics on every site and broke two committed Playwright
+  e2e specs that assert on `getByRole("link", { name: ... })`
+  (tests/e2e/dashboard.spec.ts and tests/e2e/chat-panel.spec.ts, both
+  keying off the giglist's title-cell link). Fixed by reverting all five
+  sites (dashboard-client.tsx, gig-detail-panel.tsx, drafts-client.tsx,
+  today-client.tsx, interview-workspace-client.tsx) back to real `<a
+  href={url}>` tags with an onClick handler that calls
+  `event.preventDefault()` then `openExternalUrl(url)` -- href stays set
+  (graceful degradation before JS runs, native middle-click/right-click
+  "open in new tab" still works) and `target="_blank"` is dropped (no
+  longer correct now that opening is handled programmatically). Updated
+  open-external.ts's own doc comment to say call sites should render a
+  real `<a>`, not a `<button>` -- the helper itself is element-agnostic.
+  open-external.test.ts needed no changes: it tests `openExternalUrl()`
+  directly, not any component markup. Re-ran the full suite after the
+  fix: npm test (123 files / 1678 tests, 3 pre-existing skips) and npm
+  run typecheck both pass clean, and `npm run test:e2e` was run locally
+  (real build + server, isolated XDG_DATA_HOME/GIGRADAR_DB_PATH temp
+  dirs per the existing e2e discipline) -- all 3 specs pass, including
+  the two that had failed in CI.
+
 description: |
   Real, confirmed-by-reading-the-file bug. `src-tauri/capabilities/default.json`'s
   `permissions` array grants `shell:allow-execute` (scoped only to the

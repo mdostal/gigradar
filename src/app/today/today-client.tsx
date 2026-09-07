@@ -660,9 +660,16 @@ export function TodayClient({
                               {generatingPrepKeys.has(gig.key) ? "Analyzing…" : "Fit & prep analysis"}
                             </button>
                           )}
-                          <button type="button" onClick={() => openExternalUrl(gig.url)} className={`${styles.btn} ${styles.btnGhost}`}>
+                          <a
+                            href={gig.url}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              openExternalUrl(gig.url);
+                            }}
+                            className={`${styles.btn} ${styles.btnGhost}`}
+                          >
                             View listing ↗
-                          </button>
+                          </a>
                         </div>
                         {draftErrorByKey[gig.key] && <p className={styles.detailError}>{draftErrorByKey[gig.key]}</p>}
                         {gig.status !== "interview" && prepErrorByKey[gig.key] && <p className={styles.detailError}>{prepErrorByKey[gig.key]}</p>}
