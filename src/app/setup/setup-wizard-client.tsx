@@ -316,15 +316,33 @@ export function SetupWizardClient({ existing }: { existing: Config | null }) {
           <div className="mt-3 flex flex-col gap-3">
             <label>
               <span className={labelClass}>Core titles (one per line -- exact title matches, always GREEN)</span>
-              <textarea value={state.coreTitlesText} onChange={(e) => set("coreTitlesText", e.target.value)} rows={3} className={inputClass} placeholder="fractional cto" />
+              <textarea
+                value={state.coreTitlesText}
+                onChange={(e) => set("coreTitlesText", e.target.value)}
+                rows={3}
+                className={inputClass}
+                placeholder="e.g. a title you'd take immediately"
+              />
             </label>
             <label>
               <span className={labelClass}>Keywords (one per line -- broader GREEN signals)</span>
-              <textarea value={state.keywordsText} onChange={(e) => set("keywordsText", e.target.value)} rows={3} className={inputClass} placeholder="staff engineer" />
+              <textarea
+                value={state.keywordsText}
+                onChange={(e) => set("keywordsText", e.target.value)}
+                rows={3}
+                className={inputClass}
+                placeholder="e.g. a broader phrase that signals a good fit"
+              />
             </label>
             <label>
               <span className={labelClass}>Red keywords (one per line -- definitely not this)</span>
-              <textarea value={state.redKeywordsText} onChange={(e) => set("redKeywordsText", e.target.value)} rows={3} className={inputClass} placeholder="recruiter" />
+              <textarea
+                value={state.redKeywordsText}
+                onChange={(e) => set("redKeywordsText", e.target.value)}
+                rows={3}
+                className={inputClass}
+                placeholder="e.g. a word that means this definitely isn't for you"
+              />
             </label>
           </div>
         </section>

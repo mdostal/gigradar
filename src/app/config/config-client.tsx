@@ -1116,14 +1116,37 @@ function SettingsEditor({
   pairs,
   onChange,
   auth,
+  focusValueKey,
+  onFocused,
 }: {
   pairs: SettingPair[];
   onChange: (next: SettingPair[]) => void;
   /** The selected source's auth type, if known — drives the value hint below. Undefined (e.g. no source selected yet) falls back to a generic hint. */
   auth?: "none" | "api-key" | "browser-session";
+  /**
+   * dynamic-onboarding-ux-fixes story: when set, the value input of the
+   * pair whose key matches this is focused once on mount -- used by the
+   * "+ Add custom source" button so the newly-added row's URL field is
+   * ready to type into immediately, no click required. Only ever passed
+   * for the specific row that was just added (see caller), so an
+   * unrelated remount of an existing row's SettingsEditor never re-fires
+   * this.
+   */
+  focusValueKey?: string;
+  onFocused?: () => void;
 }) {
   const hint = auth ? SETTINGS_HINT_BY_AUTH[auth] : undefined;
   const valuePlaceholder = hint?.placeholder ?? "value";
+  const focusRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (focusValueKey && focusRef.current) {
+      focusRef.current.focus();
+      onFocused?.();
+    }
+    // Intentionally mount-only: this is a one-shot "focus the field I just
+    // added" effect, not a live sync with focusValueKey/onFocused.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div>
       <span className={labelClass}>Settings</span>
@@ -1146,6 +1169,7 @@ function SettingsEditor({
               type="text"
               value={pair.value}
               placeholder={valuePlaceholder}
+              ref={pair.key === focusValueKey ? focusRef : undefined}
               onChange={(e) => {
                 const value = e.target.value;
                 onChange(pairs.map((p, idx) => (idx === i ? { ...p, value } : p)));
@@ -1747,6 +1771,23 @@ export function ConfigClient({
         prev.sources.map((s) => s.id),
       );
       return { ...prev, sources: [...prev.sources, sourceToDraft(source)] };
+    });
+  }
+
+  // "+ Add custom source" (dynamic-onboarding-ux-fixes story) -- a one-click
+  // sibling to "+ Add source (blank)" below: same array-append shape, but
+  // with isCustom already true and a starter "url" settings pair, so a
+  // brand-new user reaches the LLM-driven, any-site source path without
+  // first having to discover and check the separate "Custom (LLM)"
+  // checkbox by hand. Tracks which row to auto-focus the URL value input
+  // for (see SettingsEditor's focusValueKey prop below).
+  const [focusUrlForSourceIndex, setFocusUrlForSourceIndex] = useState<number | null>(null);
+
+  function handleAddCustomSource() {
+    setFocusUrlForSourceIndex(draft.sources.length);
+    setDraft({
+      ...draft,
+      sources: [...draft.sources, { id: "", enabled: true, isCustom: true, isGmailDigest: false, settings: [{ key: "url", value: "" }] }],
     });
   }
 
@@ -2661,6 +2702,8 @@ export function ConfigClient({
                 <SettingsEditor
                   pairs={source.settings}
                   auth={KNOWN_SOURCES.find((known) => known.id === source.id)?.auth}
+                  focusValueKey={focusUrlForSourceIndex === i ? "url" : undefined}
+                  onFocused={() => setFocusUrlForSourceIndex(null)}
                   onChange={(settings) => {
                     setDraft({
                       ...draft,
@@ -2861,15 +2904,20 @@ export function ConfigClient({
               Add
             </button>
           </div>
-          <button
-            type="button"
-            onClick={() =>
-              setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, isCustom: false, isGmailDigest: false, settings: [] }] })
-            }
-            className="self-start text-sm font-medium text-theme-text-dim hover:underline"
-          >
-            + Add source (blank)
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() =>
+                setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, isCustom: false, isGmailDigest: false, settings: [] }] })
+              }
+              className="self-start text-sm font-medium text-theme-text-dim hover:underline"
+            >
+              + Add source (blank)
+            </button>
+            <button type="button" onClick={handleAddCustomSource} className="self-start text-sm font-medium text-theme-text-dim hover:underline">
+              + Add custom source
+            </button>
+          </div>
         </div>
       </section>
       )}
