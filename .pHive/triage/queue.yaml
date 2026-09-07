@@ -1,6 +1,6 @@
 entries:
   - id: t-001
-    state: plan-ready
+    state: closed
     kind: bug
     title: "Scan pipeline (scheduler cycles and manual `npm run radar` runs) can hang indefinitely with zero CPU, blocking all results"
     description: |
@@ -37,8 +37,8 @@ entries:
     severity: critical
     linked_epic: usability-and-completeness-audit
     linked_story: scan-pipeline-per-source-timeout
-    closed_reason: null
-    closed_at: null
+    closed_reason: "shipped in PR #179 -- 60s per-source fetch timeout added at runner.ts's shared source-loop call site, live-confirmed via a controlled reproduction before the fix, regression test proves a hung source no longer blocks later sources"
+    closed_at: "2026-09-07T18:30:00Z"
     state_history:
       - state: inbox
         at: "2026-09-07T17:46:00Z"
@@ -48,3 +48,5 @@ entries:
         at: "2026-09-07T17:48:00Z"
       - state: plan-ready
         at: "2026-09-07T18:05:00Z"
+      - state: closed
+        at: "2026-09-07T18:30:00Z"
