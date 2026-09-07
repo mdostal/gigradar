@@ -183,6 +183,41 @@ class HarnessQueryError extends Error {}
  * resolution ever doesn't hold for a Tauri/Electron bundle — not yet
  * hit in practice, revisit if it is.
  */
+/**
+ * ai-verify-timeout-and-cap story (triage t-003): the ONE shared
+ * Promise.race-against-a-deadline shape for a per-call LLM timeout,
+ * introduced so a second call site (matching/ai-verify.ts's
+ * applyAiVerification()) doesn't hand-roll a third independent copy of
+ * this exact mechanism after apply/runner.ts's `fetchWithTimeout()`
+ * (t-001, a source-fetch deadline) and matching/rank-bucket-ai-overlay.ts's
+ * own already-shipped `applyRankBucketAiOverlay()` timeout (t-002, its
+ * own inline Promise.race — left as-is, a separate already-reviewed call
+ * site, not retrofitted onto this helper to avoid touching shipped code
+ * for a pure refactor). New call sites needing this exact "race one
+ * promise against a deadline, abandon it un-cancelled on the timeout-wins
+ * branch, always clear the timer" shape should use this helper instead of
+ * writing their own.
+ *
+ * `task`'s promise is never cancelled on timeout — nothing here assumes
+ * the caller's async work supports cancellation (same discipline every
+ * prior call site of this shape already follows) — it's simply abandoned,
+ * never awaited again. `buildTimeoutError` is called only once the
+ * deadline actually wins the race, so each caller can throw its own
+ * specific, distinguishable error type (e.g. `AiVerifyTimeoutError`)
+ * rather than a generic one.
+ */
+export async function raceWithTimeout<T>(task: Promise<T>, timeoutMs: number, buildTimeoutError: () => Error): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(buildTimeoutError()), timeoutMs);
+  });
+  try {
+    return await Promise.race([task, deadline]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 export async function generateHarnessObject<T>(schema: z.ZodType<T>, content: string | MessageParam["content"]): Promise<T> {
   // z.toJSONSchema() always includes a top-level "$schema" meta key — the
   // claude CLI's own --json-schema validator rejects it outright ("not a

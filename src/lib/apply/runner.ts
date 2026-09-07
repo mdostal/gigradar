@@ -77,6 +77,41 @@ const SOURCE_FETCH_TIMEOUT_MS = 60_000;
  */
 export const RANK_BUCKET_AI_OVERLAY_CAP = 10;
 
+/**
+ * ai-verify-timeout-and-cap story (triage t-003, p1/major): the IDENTICAL
+ * unbounded-aggregate-cost risk `RANK_BUCKET_AI_OVERLAY_CAP` above exists
+ * to bound, for `matching/ai-verify.ts`'s `applyAiVerification()` call
+ * below -- a real claude-CLI/LLM call made per (gig, aiVerify-opted-in
+ * group) pair, from the SAME per-gig loop, with `AI_VERIFY_TIMEOUT_MS`
+ * (ai-verify.ts) bounding each individual call but not the aggregate.
+ * Flagged by the developer who fixed t-002 and confirmed live/active:
+ * BOTH of the owner's real groups (`fractional-hourly`, `full-time`) have
+ * `aiVerify: true` today.
+ *
+ * Same value as `RANK_BUCKET_AI_OVERLAY_CAP` (10), for the same reasons:
+ * this cap only ever counts a call that would ACTUALLY invoke the AI
+ * (`group.aiVerify === true` AND a credential resolved this cycle -- the
+ * same condition `applyAiVerification()` itself checks before calling
+ * out), each call is a single small structured-output classification (the
+ * same shape of call `RANK_BUCKET_AI_OVERLAY_CAP`'s own calls are, per
+ * `AI_VERIFY_TIMEOUT_MS`'s own doc comment in ai-verify.ts), and the two
+ * caps bound two independently-configured, potentially-simultaneously-hit
+ * pipeline stages -- there's no shared reasoning for picking a different
+ * number for one over the other absent a distinct observed cost profile,
+ * which doesn't exist here (same call shape, same 20s per-call timeout).
+ * Worst case (all 10 calls hit the 20s timeout): the same 200s (~3.3min)
+ * addition `RANK_BUCKET_AI_OVERLAY_CAP`'s own doc comment above computes.
+ *
+ * The counter this cap bounds (`aiVerifyCallsThisCycle`, declared below)
+ * is passed into `applyAiVerification()` as a remaining-budget number
+ * rather than checked inline in this loop like `RANK_BUCKET_AI_OVERLAY_CAP`
+ * is -- see `applyAiVerification()`'s own doc comment in ai-verify.ts for
+ * why (that function's per-gig call internally loops over every matched,
+ * opted-in group itself, unlike the rank-bucket overlay's per-(gig,group)
+ * call site directly in this loop).
+ */
+export const AI_VERIFY_CAP = 10;
+
 /** Thrown by {@link fetchWithTimeout} when `SOURCE_FETCH_TIMEOUT_MS` elapses before `src.fetch()` settles — distinguishable from a real thrown error (never confused with e.g. a bad-login `Error` in the catch block below) by its own `name` and a message that always contains "timed out after". */
 export class SourceFetchTimeoutError extends Error {
   constructor(sourceId: string, timeoutMs: number) {
@@ -185,6 +220,10 @@ export async function runRadar(
   // concurrent/sequential test runs and separate cycles never leak into
   // each other.
   let rankBucketAiOverlayCallsThisCycle = 0;
+  // ai-verify-timeout-and-cap story: same "local to one runRadar()
+  // invocation, never module-scope state" discipline as
+  // rankBucketAiOverlayCallsThisCycle above, for the SAME reasons.
+  let aiVerifyCallsThisCycle = 0;
 
   for (const sc of config.sources.filter((s) => s.enabled)) {
     // llm-custom-sources epic: a kind:"custom-llm" source is NEVER in the
@@ -276,14 +315,24 @@ export async function runRadar(
       // No-op (matchedGroupIds/aiFlags pass through unchanged) when no
       // group in scope has aiVerify on, or no LLM credential resolved this
       // cycle — byte-identical to before this feature existed either way.
-      const { matchedGroupIds, aiFlags } = await applyAiVerification(
+      // ai-verify-timeout-and-cap story (triage t-003): the remaining
+      // AI_VERIFY_CAP budget for this cycle is passed in so
+      // applyAiVerification()'s own per-group loop stops calling out once
+      // it's exhausted (see that function's own doc comment for why the
+      // cap check lives there rather than here, unlike
+      // RANK_BUCKET_AI_OVERLAY_CAP's below) — `callsMade` reports back how
+      // many real calls it actually made, so this cycle's running counter
+      // stays accurate across every gig/source this loop still has left.
+      const { matchedGroupIds, aiFlags, callsMade: aiVerifyCallsMade } = await applyAiVerification(
         g,
         heuristicMatchedGroupIds,
         scopedGroupsById,
         config.profile,
         config.applyProfile,
         runOpts.credential,
+        Math.max(0, AI_VERIFY_CAP - aiVerifyCallsThisCycle),
       );
+      aiVerifyCallsThisCycle += aiVerifyCallsMade ?? 0;
       // The flat/legacy Gig.tier stays anchored to the primary group's OWN
       // tier result (customizable-tier-scoring epic: respects that group's
       // own tierScoring mode now, not always the keyword classifier) —
