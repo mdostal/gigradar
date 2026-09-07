@@ -1,0 +1,110 @@
+id: group-aware-auto-fire-trust
+epic: group-scoped-automation-fixes
+title: Auto-fire rules can be scoped to a specific group (optional, backward-compatible)
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [group-aware-auto-draft-and-notify]
+
+description: |
+  Real gap found by this epic's own research: `AutoFireRuleConfig`
+  (`src/lib/types.ts`, ~lines 480-486) is keyed only by `(sourceId,
+  tier)` -- no group concept exists in the graduated-trust model at
+  all. `evaluateAutoFire()` (`src/lib/apply/autofire.ts`, ~line 169)
+  reads the flat, PRIMARY-group `gig.tier` to find a matching rule via
+  `findAutoFireRule(gig.sourceId, tier, config)`. Net effect: for a
+  multi-group owner, auto-fire can only ever act on primary-group
+  matches, even once a rule is fully graduated and enabled.
+
+  **The one real design decision this story implements** (already made,
+  see design-discussion.md §2 -- do not re-litigate it, just build it):
+  `AutoFireRuleConfig` gets a new OPTIONAL `groupId?: string` field.
+
+  - `undefined` (the default; every rule configured before this story
+    shipped) means "applies regardless of which group matched" --
+    byte-identical behavior to today.
+  - An explicit `groupId` scopes the rule to gigs that are green-tier
+    for THAT specific group (via `gig.matchedGroupTiers?.[groupId]`,
+    NOT the flat `gig.tier`).
+
+  Concretely:
+  1. Add `groupId?: string` to `AutoFireRuleConfig` (types.ts) and its
+     zod schema (find `AutoFireRuleConfigSchema` or equivalent in
+     `src/lib/config/schema.ts`).
+  2. `findAutoFireRule(sourceId, tier, config, groupId?)` -- when
+     `groupId` is passed, prefer a rule matching `(sourceId, tier,
+     groupId)` exactly; a rule with `groupId: undefined` still matches
+     ANY groupId (the backward-compat case) but a rule WITH an explicit
+     groupId only matches that same one. Design the precedence
+     carefully: if a gig matches multiple groups green, and rules exist
+     for more than one of them, which rule fires? Reasonable default:
+     evaluate against every group the gig is green for that has an
+     enabled rule, same "first real match, not silently arbitrary"
+     spirit this codebase uses elsewhere (e.g. rank-bucket.ts's
+     first-match-wins) -- but this needs a real decision, not a guess;
+     make it, document it in a code comment, and cover it with a test.
+  3. `evaluateAutoFire()` (autofire.ts) needs to iterate the gig's
+     OWN matched groups (via `matchedGroupTiers`) rather than reading
+     the single flat `gig.tier`, finding whichever rule(s) actually
+     apply.
+  4. `approvedCount()`/`isGraduated()` stay scoped to whatever
+     `(sourceId, tier)` (optionally `+groupId`) the resolved rule uses
+     for its own decision-log queries -- a group-scoped rule's
+     graduation count must only include approvals from THAT group's own
+     gigs, never mixed with an unscoped or different-group rule's count.
+  5. Config UI (`config-client.tsx`'s auto-fire rules section) gets a
+     new, optional "Group" selector per rule (only shown/relevant when
+     `draft.groups.length > 1`, mirroring the existing pattern
+     `SourceConfig.groupIds`'s own per-group checkboxes use) -- leaving
+     it unset keeps the rule's current "any group" behavior.
+
+  This is a safety-relevant system (real-world submission automation) --
+  be conservative. If a fully-correct precedence design for the
+  "multiple applicable rules" case genuinely isn't clear from the
+  existing code, escalate the specific ambiguity back rather than
+  guessing on something that affects auto-submission.
+
+acceptance_criteria:
+  - "An existing (no groupId) auto-fire rule's behavior, including its graduation/trust counts, is completely unchanged after this story ships -- a real regression test proves it."
+  - "A NEW rule with an explicit groupId only ever fires for gigs green-tier under THAT specific group -- never a different group's green match, even for the same sourceId+tier pair."
+  - "A group-scoped rule's approvedCount()/graduation status is scoped to that group's own approved gigs -- never inflated by another group's or an unscoped rule's approvals."
+  - "The Config UI's auto-fire rules section shows a Group selector only when multiple groups exist, and it's genuinely optional (leaving it blank preserves today's behavior)."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/autofire.ts
+      purpose: "evaluateAutoFire()/findAutoFireRule()/approvedCount()/isGraduated() -- the real trust logic this story extends."
+    - path: src/lib/types.ts
+      purpose: "AutoFireRuleConfig's shape (~lines 480-486) -- the schema addition."
+    - path: src/app/config/config-client.tsx
+      purpose: "The auto-fire rules settings UI, and SourceConfig.groupIds's own existing per-group-checkbox UI pattern (search for 'Scoped to groups' in this file) to mirror for the new rule-level Group selector."
+    - path: project memory user_gigradar_rate_tier_lists / project_gigradar_auto_fire_trust_spec
+      purpose: "The owner's own real trust-spec context: real auto-submit gated by 3-approval/source/tier trust + owner-configurable checks -- this story extends that model, never weakens it."
+
+design_decisions:
+  - decision: "AutoFireRuleConfig.groupId is optional; undefined means 'any group' (backward compatible)."
+    rationale: "Mirrors SourceConfig.groupIds's own established 'unscoped = every group' convention -- never invent a second convention for the same shape of problem. Also the safer default for a trust system: an ungraduated group's gigs never silently inherit another group's already-earned trust."
+
+risks:
+  - severity: high
+    description: "This touches real-world, irreversible auto-submission trust logic. A precedence bug in 'which rule fires when a gig matches multiple groups' could either under-fire (a real regression the owner would notice as 'my graduated rule stopped firing') or, worse, over-fire (an ungraduated group's gig fires because of a different group's graduated rule)."
+    mitigation: "Explicit acceptance criteria above requiring a real regression test for the no-groupId case AND a real test proving graduation counts stay correctly isolated per group. Escalate rather than guess if the multi-applicable-rule precedence isn't clearly derivable from existing code."
+
+steps:
+  - id: implement
+    description: Add the optional groupId field + scoped evaluation logic + config UI selector
+    agent: developer
+  - id: test
+    description: Real regression tests for backward compatibility AND correct group-scoping/graduation isolation; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Careful review of the trust/graduation logic specifically -- this is the highest-risk story in the epic
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

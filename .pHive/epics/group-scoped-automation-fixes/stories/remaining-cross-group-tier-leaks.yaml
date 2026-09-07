@@ -1,0 +1,92 @@
+id: remaining-cross-group-tier-leaks
+epic: group-scoped-automation-fixes
+title: Fix remaining flat-tier display leaks (overview tiles, gig detail panel, interview workspace, MCP list_gigs)
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  PR #163 fixed dashboard-client.tsx's Tier/Profile columns to use
+  group-scoped resolvers (`resolveDisplayTier(gig, groupId)`/
+  `resolveDisplayProfileIds(gig, groupId)` in `src/app/dashboard-filter.ts`)
+  instead of the flat, primary-group-anchored `Gig.tier`/
+  `matchedProfileIds`. A follow-up sweep found the SAME bug class in 4
+  more places that were missed because they're not part of the main
+  giglist table:
+
+  1. `src/app/dashboard-overview-client.tsx` (~lines 38, 96) — the
+     per-group Dashboard's own overview tiles ("green count," "recent
+     24h") read flat `g.tier` directly; the component never receives a
+     `groupId` prop at all. Thread `groupId` through from its caller
+     (find where `[group]/page.tsx` renders it) and swap both reads to
+     `resolveDisplayTier(g, groupId)`.
+  2. `src/app/gig-detail-panel.tsx` (~lines 68, 87) — the tier badge
+     shown when a gig's detail panel is opened reads flat `gig.tier`.
+     Its call site is `dashboard-client.tsx:1423` — that component
+     already has `groupId` in scope (it's a prop/param on
+     DashboardClient itself, used by the fixed Tier column). Thread it
+     through to `GigDetailPanel` as a new prop and swap the read.
+  3. `src/app/gigs/[key]/interview/interview-workspace-client.tsx`
+     (~lines 82, 118) — same `TIER_BADGE_STYLE[gig.tier]` pattern.
+     Check whether this route has a `groupId` available (it's a
+     `/gigs/[key]/interview` route — check if group-scoping applies
+     here at all, or if this route is legitimately group-agnostic like
+     `/drafts`; if the latter, leave it using the flat tier and
+     document why in a code comment, don't force a fix that doesn't fit).
+  4. `src/mcp/server.ts`'s `handleListGigs` (~line 163) — already
+     applies `args.groupId` as a filter but then filters `args.tier`
+     against the flat `gig.tier`, not that group's own tier via
+     `matchedGroupTiers`. `src/mcp/` deliberately does not import from
+     `src/app/` (a real architectural boundary — check for an existing
+     comment documenting this before assuming you can just import
+     `resolveDisplayTier`); write a small standalone equivalent
+     resolver function locally in the MCP module instead, or in
+     `src/lib/matching/` if that's a better-fitting shared home — your
+     call, but do NOT create a second copy-pasted implementation of the
+     same logic if a shared location makes more sense; check what
+     `src/lib/dashboard-data.ts`/`dashboard-filter.ts` actually depend
+     on before deciding where the boundary really is.
+
+acceptance_criteria:
+  - "dashboard-overview-client.tsx's tiles show the CORRECT per-group counts when viewing a non-primary group's Dashboard page."
+  - "Opening a gig's detail panel from a non-primary group's giglist shows that group's own tier badge, not the primary group's."
+  - "interview-workspace-client.tsx either correctly resolves its own group-scoped tier, or is confirmed+documented as legitimately group-agnostic (not silently left broken either way)."
+  - "MCP's list_gigs tool, called with both groupId and tier filters together, returns gigs matching THAT group's own tier, not the flat/primary one."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/dashboard-filter.ts
+      purpose: "resolveDisplayTier()/resolveDisplayBand() -- the established pattern every one of these fixes should mirror exactly."
+    - path: src/app/dashboard-client.tsx
+      purpose: "PR #163's own reference implementation of this exact fix for the Tier/Profile columns -- read the git history/blame on this file around those columns for the precise before/after shape."
+    - path: src/mcp/server.ts
+      purpose: "handleListGigs() (~line 163) -- the tier-filter bug; check this file's own header/boundary comments regarding src/app/ imports before deciding how to share the resolver logic."
+
+design_decisions:
+  - decision: Each of the 4 fixes mirrors the EXACT resolveDisplayTier/resolveDisplayBand pattern from PR #163 -- no new convention invented.
+    rationale: "Consistency; a reviewer (or the owner) checking this epic against the last one should see the same shape of fix, not four different ad-hoc approaches."
+
+steps:
+  - id: implement
+    description: Fix all 4 call sites (or document why one is legitimately out of scope)
+    agent: developer
+  - id: test
+    description: Add/extend test coverage per call site; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for consistency with the resolveDisplayTier/resolveDisplayBand pattern
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
+
+risks:
+  - severity: low
+    description: "interview-workspace-client.tsx might not have a groupId concept naturally available at its route, making a 'correct' fix awkward."
+    mitigation: "The story explicitly allows documenting this one as out-of-scope/group-agnostic if that's what's actually true, rather than forcing a bad fix."
