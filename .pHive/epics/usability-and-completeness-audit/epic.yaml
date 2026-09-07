@@ -1,0 +1,31 @@
+name: usability-and-completeness-audit
+title: "Deep triage findings: scan-pipeline hang (p0), draft-format data coverage, resume-store feature, and housekeeping -- from 3 real audit passes (code, product, UI/UX via simman)"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+
+stories:
+  - id: scan-pipeline-per-source-timeout
+    title: "Per-source fetch timeout/circuit-breaker so one hung source can't block an entire scan cycle forever (triage t-001, p0/critical)"
+    complexity: medium
+    depends_on: []
+
+  - id: application-format-coverage-per-source
+    title: "Audit each of the 8 uncovered source adapters' real application flow and set honest Source.applicationFormat values"
+    complexity: medium
+    depends_on: []
+
+  - id: resume-store-multi-resume-and-tailoring
+    title: "Multi-resume store: keyed/versioned storage, per-application resume selection, gig-fit suggestions, gated review feedback"
+    complexity: high
+    depends_on: []
+
+  - id: config-add-group-discoverability-and-spike-cleanup
+    title: "Investigate real 'add new group' discoverability in Config (simman finding) + delete the orphaned embedded-webview-spike page"
+    complexity: low
+    depends_on: []
+
+references:
+  - path: .pHive/epics/usability-and-completeness-audit/docs/design-discussion.md
+    relevant_excerpt: "§1 the scan-pipeline hang (emergency finding, triage t-001); §2 the precise draft-format root cause; §3 the resume-store inventory; §4 the 3-pass audit results including the legacy-tool comparison verdict."
+  - path: .pHive/triage/queue.yaml
+    relevant_excerpt: "t-001, priority p0/severity critical -- the scan-pipeline hang this epic's first story fixes."

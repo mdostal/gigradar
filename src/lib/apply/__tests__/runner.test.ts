@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config, EngagementProfile, Gig, RoleAreaConfig } from "../../types.js";
 import { registerSource } from "../../sources/source.js";
 import { VerificationChallengeError } from "../../sources/verification-challenge.js";
@@ -57,6 +57,25 @@ registerSource({
       throw new VerificationChallengeError("verification-blocked", "https://example.com/blocked-page");
     }
     return [];
+  },
+});
+
+// scan-pipeline-per-source-timeout story (triage t-001, usability-and-
+// completeness-audit epic): a fourth registered double whose `fetch()`
+// NEVER settles -- neither resolves nor rejects -- standing in for the
+// live-confirmed real hang (a bare Node `fetch()` with no `AbortSignal`,
+// stalled against a dead TCP connection; see runner.ts's
+// SOURCE_FETCH_TIMEOUT_MS doc comment for the controlled local
+// reproduction that confirmed this). Proves runRadar()'s own per-source
+// deadline (not this test file) is what rescues the cycle.
+registerSource({
+  id: "hung-source",
+  label: "Hung (test double)",
+  auth: "none",
+  fetch(): Promise<Gig[]> {
+    return new Promise<Gig[]>(() => {
+      // Deliberately never resolves or rejects.
+    });
   },
 });
 
@@ -227,6 +246,43 @@ describe("runRadar + store integration", () => {
 
     expect(result.errors[0]?.needsVerification).toBeUndefined();
     expect(result.errors[0]?.blockedUrl).toBeUndefined();
+  });
+
+  it("a hung source (fetch() never settles) times out and does not block sources scanned after it in the same cycle (scan-pipeline-per-source-timeout, triage t-001)", async () => {
+    vi.useFakeTimers();
+    try {
+      const config = makeConfig();
+      // "hung-source" is scanned FIRST -- proves the loop actually moves on
+      // to braintrust afterward, rather than merely surfacing an error for
+      // the hung one while everything else silently never ran either.
+      config.sources = [
+        { id: "hung-source", enabled: true },
+        { id: "braintrust", enabled: true },
+      ];
+      nextGigs = [makeGig("1", "Still Reachable After The Hang")];
+
+      const resultPromise = runRadar(config, { db });
+      // Advance exactly the story's own documented per-source deadline --
+      // proves the runner's OWN timeout fires (not merely that the test
+      // waited long enough for something else to happen). Without a real
+      // per-source timeout, this promise would never settle and the test
+      // itself would hang/timeout.
+      await vi.advanceTimersByTimeAsync(60_000);
+      const result = await resultPromise;
+
+      const hungError = result.errors.find((e) => e.sourceId === "hung-source");
+      expect(hungError?.message).toBe('source "hung-source" timed out after 60000ms');
+      // Distinguishable from a real thrown error (e.g. the "flaky" double's
+      // auth-failure case above) -- never conflated with it.
+      expect(hungError?.needsVerification).toBeUndefined();
+
+      // The source scheduled AFTER the hung one still ran and its results
+      // made it all the way through to both the in-memory result and the store.
+      expect(result.results.some((r) => r.gig.externalId === "1")).toBe(true);
+      expect(getGig("braintrust:1", { db })).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("an unregistered source id surfaces in errors[] without touching the store", async () => {
