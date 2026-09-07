@@ -14,6 +14,7 @@ import type { MatchBand, RankBucketAssignment } from "@/lib/types";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { confirmRankBucketAction, generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "../actions";
 import { canGenerateDraft, draftButtonLabel } from "../dashboard-draft";
+import { openExternalUrl } from "@/lib/tauri/open-external";
 import {
   BAND_LABEL,
   distinctSources,
@@ -659,9 +660,9 @@ export function TodayClient({
                               {generatingPrepKeys.has(gig.key) ? "Analyzing…" : "Fit & prep analysis"}
                             </button>
                           )}
-                          <a href={gig.url} target="_blank" rel="noreferrer noopener" className={`${styles.btn} ${styles.btnGhost}`}>
+                          <button type="button" onClick={() => openExternalUrl(gig.url)} className={`${styles.btn} ${styles.btnGhost}`}>
                             View listing ↗
-                          </a>
+                          </button>
                         </div>
                         {draftErrorByKey[gig.key] && <p className={styles.detailError}>{draftErrorByKey[gig.key]}</p>}
                         {gig.status !== "interview" && prepErrorByKey[gig.key] && <p className={styles.detailError}>{prepErrorByKey[gig.key]}</p>}

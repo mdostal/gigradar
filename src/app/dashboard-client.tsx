@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { GigStatus, OutcomeReason, StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
+import { openExternalUrl } from "@/lib/tauri/open-external";
 import { bulkMarkAppliedElsewhereAction, confirmRankBucketAction, generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
 import { DASHBOARD_PREFS_STORAGE_KEY, deserializeDashboardPrefs, serializeDashboardPrefs } from "./dashboard-prefs";
@@ -880,14 +881,13 @@ export function DashboardClient({
       header: "Title",
       accessorFn: (g) => g.title,
       cell: ({ row }) => (
-        <a
-          href={row.original.url}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="font-medium text-theme-text hover:underline"
+        <button
+          type="button"
+          onClick={() => openExternalUrl(row.original.url)}
+          className="text-left font-medium text-theme-text hover:underline"
         >
           {row.original.title}
-        </a>
+        </button>
       ),
       sortingFn: sortingFnFor("title"),
       filterFn: (row, _id, value) =>

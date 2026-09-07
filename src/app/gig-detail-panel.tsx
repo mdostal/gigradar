@@ -21,6 +21,7 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import type { StoredGig } from "@/lib/store";
+import { openExternalUrl } from "@/lib/tauri/open-external";
 import { resolveDisplayTier } from "./dashboard-filter";
 import { formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "./dashboard-client";
 
@@ -175,15 +176,18 @@ export function GigDetailPanel({
           </dl>
 
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1">
-            <a
-              href={gig.url}
-              target="_blank"
-              rel="noreferrer noopener"
+            {/* tauri-shell-open-external-links story. In the packaged app this must go through
+                tauri-plugin-shell's `open` command rather than a bare `<a target="_blank">` --
+                see src/lib/tauri/open-external.ts for why (falls back to window.open in the
+                browser/Electron runtimes). */}
+            <button
+              type="button"
+              onClick={() => openExternalUrl(gig.url)}
               className="text-sm font-medium text-theme-text underline underline-offset-2 hover:no-underline"
             >
               Open original listing ↗
-            </a>
-            {/* Additive, not a replacement -- see the "Open original listing" link above, unchanged. Launches the existing profile-assist/embedded-webview mechanism (src/app/profile-assist/), pre-scoped to this gig's own source and url. */}
+            </button>
+            {/* Additive, not a replacement -- see the "Open original listing" button above, unchanged. Launches the existing profile-assist/embedded-webview mechanism (src/app/profile-assist/), pre-scoped to this gig's own source and url. */}
             <Link
               href={profileAssistHref(gig)}
               className="text-sm font-medium text-theme-accent underline underline-offset-2 hover:no-underline"
