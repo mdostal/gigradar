@@ -1,5 +1,5 @@
 name: real-usability-verification-and-fixes
-title: "Real, evidence-based fixes for two confirmed UI bugs found by auditing the actual running app + real data (Today's Picks feedback, dashboard freshness accuracy) -- broader click-through audit queued pending simman"
+title: "Real, evidence-based fixes for confirmed UI bugs found by actually clicking through the running app + real data with simman -- not code-reading, not isolated instances"
 target_codebase: /Users/mdostal/Documents/work/gigradar
 methodology: classic
 
@@ -8,12 +8,38 @@ stories:
     title: "Today's Picks 'Analyze' button fetches a real result that never renders on that card -- show it"
     complexity: low
     depends_on: []
+    status: complete
+    shipped_pr: 184
 
   - id: status-strip-reflects-cycle-completion
     title: "Dashboard freshness status should reflect actual scan-cycle completion, not just the most recent per-gig touch"
     complexity: medium
     depends_on: []
+    status: complete
+    shipped_pr: 185
+
+  - id: external-link-click-silent-failure
+    title: "Clicking a gig's external-link title produces zero visible result in the real running app -- root-cause the silent failure and add real error feedback"
+    complexity: medium
+    depends_on: []
+    status: complete
+    shipped_pr: 187
+
+  - id: resume-management-discoverable-from-dashboard
+    title: "Resume management (shipped today, PR #181) is not discoverable anywhere on the real Config Dashboard"
+    complexity: low
+    depends_on: []
+    status: complete
+    shipped_pr: 186
+
+  - id: drafts-page-open-posting-link-for-all-statuses
+    title: "Drafts page 'Open the real job listing' link should show for a draft in any status, not just approved/submitted"
+    complexity: low
+    depends_on: []
+    status: in_progress
 
 references:
   - path: .pHive/epics/real-usability-verification-and-fixes/docs/design-discussion.md
-    relevant_excerpt: "§1(b) the confirmed Today's Picks feedback bug with exact file:line; §1(c) the status-strip structural gap; §2 the deferred broader click-through audit, blocked on a transient tool reconnection, not abandoned."
+    relevant_excerpt: "§1(a-c) the three findings from the first real code+DOM audit pass; §2 the deferred simman click-through, later completed and confirming/finding additional real bugs (external-link runtime failure, resume-management discoverability)."
+  - path: .pHive/triage/queue.yaml
+    relevant_excerpt: "t-004 -- the Drafts-page open-posting link gap, flagged by the external-link-click-silent-failure fix's own real-data check."
