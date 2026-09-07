@@ -168,4 +168,29 @@ CREATE TABLE IF NOT EXISTS resume_review_suggestions (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_resume_review_suggestions_gig_key ON resume_review_suggestions(gig_key);
+
+-- status-strip-reflects-cycle-completion story (real-usability-verification-
+-- and-fixes epic). Append-only, one row per completed scan cycle -- mirrors
+-- autofire_decisions' append-only audit-log pattern above. This is the REAL
+-- per-cycle completion signal the scheduler (src/scheduler/index.ts) and the
+-- manual "Sweep now" action (src/app/actions.ts's sweepNowAction()) already
+-- compute every time a cycle finishes (which sources errored via
+-- runRadar()'s own errors[], and -- for the scheduler only -- which sources
+-- were skipped this cycle for being in an active backoff window) --
+-- persisted here so src/lib/status/status-strip.ts's freshness label can
+-- honestly distinguish a fully-completed cycle from a partial one, instead
+-- of only ever computing MAX(gigs.last_seen) (per-GIG recency, not
+-- per-CYCLE completion -- see that file's own header comment for the real
+-- gap this closes). incomplete_source_ids covers BOTH real errors/timeouts
+-- AND backoff-skipped sources -- either way, that source's data did NOT get
+-- refreshed this cycle, which is exactly what the owner needs to know to
+-- trust or distrust what he's looking at.
+CREATE TABLE IF NOT EXISTS scan_cycles (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  completed_at          TEXT NOT NULL,      -- ISO datetime the cycle finished
+  sources_total         INTEGER NOT NULL,   -- count of ENABLED sources this cycle was supposed to cover
+  incomplete_source_ids TEXT NOT NULL       -- JSON-stringified string[] of source ids that errored or were skipped (backoff) this cycle -- [] means a full, clean cycle
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_scan_cycles_completed_at ON scan_cycles(completed_at);
 `;

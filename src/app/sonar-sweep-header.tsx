@@ -7,8 +7,16 @@
 // signal-deck-main-dashboard story — see this epic's own
 // docs/design-discussion.md §1 for the exact markup/timing this ports.
 // Replaces the plain-text status pills that used to render this same data
-// (computeStatusStrip()'s sourcesLabel/profileLabel/lastScanLabel — reused
-// UNCHANGED, no new data source).
+// (computeStatusStrip()'s sourcesLabel/profileLabel/lastScanLabel).
+//
+// status-strip-reflects-cycle-completion story (real-usability-
+// verification-and-fixes epic): the "Last sweep" Instrument below also now
+// reads status.cycleStatus/incompleteSourceCount (computeStatusStrip()'s
+// real, scheduler-sourced signal — see status-strip.ts's own doc comment)
+// so this real, visible dashboard widget — not just the JSON-only
+// status.lastScanLabel string that nothing was ever actually rendering —
+// honestly distinguishes "up to date" from "partially updated" instead of
+// only ever showing a per-gig-recency timestamp.
 //
 // "use client": the sweep icon animates continuously and "Last sweep"
 // ticks live off a real timestamp (matching metrics/page.tsx's own
@@ -77,7 +85,26 @@ export function SonarSweepHeader({
     }
   }
 
-  const lastScanLabel = scanIso === null ? "never run" : formatRelativeTime(scanIso, clientNow);
+  // status-strip-reflects-cycle-completion story (real-usability-
+  // verification-and-fixes epic): status.cycleStatus/incompleteSourceCount
+  // (computeStatusStrip()'s real, scheduler-sourced signal -- see
+  // status-strip.ts's own doc comment) is appended to the ticking relative
+  // timestamp below rather than replacing it, so "how long ago" keeps
+  // ticking live exactly as before while ALSO honestly surfacing whether
+  // that last cycle actually finished cleanly. Frozen at page-load time
+  // like status.sourcesLabel/status.profileLabel already are -- a manual
+  // "Sweep now" (handled entirely client-side below) only ticks scanIso,
+  // not this cycle-completion suffix, until the next real page load/
+  // revalidation picks up the fresh scan_cycles row sweepNowAction() just
+  // wrote.
+  const cycleSuffix =
+    status.cycleStatus === "partial"
+      ? ` — ${status.incompleteSourceCount} source${status.incompleteSourceCount === 1 ? "" : "s"} incomplete`
+      : status.cycleStatus === "full"
+        ? " (up to date)"
+        : "";
+  const cyclePartial = status.cycleStatus === "partial";
+  const lastScanLabel = scanIso === null ? "never run" : `${formatRelativeTime(scanIso, clientNow)}${cycleSuffix}`;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-4 border-b border-theme-surface-border pb-4">
@@ -92,7 +119,7 @@ export function SonarSweepHeader({
       <div className="flex flex-wrap items-center gap-5">
         <Instrument label="Sources" value={status.sourcesLabel} warn={status.sourcesLabel.includes("need attention")} />
         <Instrument label="Profile" value={status.profileLabel.replace(/^Profile:\s*/, "")} warn={status.profileLabel.includes("needs setup")} />
-        <Instrument label="Last sweep" value={lastScanLabel} />
+        <Instrument label="Last sweep" value={lastScanLabel} warn={cyclePartial} />
         <button
           type="button"
           onClick={handleSweepNow}

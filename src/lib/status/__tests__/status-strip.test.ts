@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeCycleCompleteness,
   computeLastScanIso,
   computeProfileComplete,
   computeSourceCounts,
@@ -208,6 +209,8 @@ describe("computeStatusStrip", () => {
       sourcesLabel: "0 sources configured",
       profileLabel: "Profile: needs setup",
       lastScanLabel: "Last scan: never run",
+      cycleStatus: "unknown",
+      incompleteSourceCount: 0,
     });
   });
 
@@ -218,5 +221,71 @@ describe("computeStatusStrip", () => {
       now,
     );
     expect(status.sourcesLabel).toBe("2 sources configured (1 need attention)");
+  });
+
+  // -- status-strip-reflects-cycle-completion story (real-usability-
+  // verification-and-fixes epic) -- proves BOTH directions per this
+  // story's own acceptance criteria: a fully-completed last cycle renders
+  // an honest "up to date" label, and a partial one (real errors/timeouts/
+  // backoff-skips) renders an honest "N source(s) didn't complete" label,
+  // driven by the scheduler's/manual-sweep's own real per-cycle signal
+  // (getLastScanCycle()'s result, passed in as `lastCycle`) -- NOT a wider
+  // MAX(lastSeen) window or a cosmetic-only copy change.
+  const gigsWithOneScan = [{ lastSeen: "2026-01-10T10:00:00.000Z" }];
+
+  it("falls back to the plain (pre-cycle-tracking) timestamp label when no cycle has EVER been recorded (lastCycle omitted) -- an install that predates this signal, never a false 'up to date' claim", () => {
+    const status = computeStatusStrip(gigsWithOneScan, {}, now);
+    expect(status.lastScanLabel).toBe("Last scan: 2 hours ago");
+    expect(status.cycleStatus).toBe("unknown");
+    expect(status.incompleteSourceCount).toBe(0);
+  });
+
+  it("shows an honest 'up to date' label when the last recorded cycle had zero incomplete sources (a REAL fully-completed cycle)", () => {
+    const status = computeStatusStrip(gigsWithOneScan, {}, now, { sourcesTotal: 8, incompleteSourceIds: [] });
+    expect(status.lastScanLabel).toBe("Last scan: up to date (2 hours ago)");
+    expect(status.cycleStatus).toBe("full");
+    expect(status.incompleteSourceCount).toBe(0);
+  });
+
+  it("shows an honest 'partially updated' label naming the count when the last recorded cycle had real errored/timed-out/skipped sources", () => {
+    const status = computeStatusStrip(gigsWithOneScan, {}, now, {
+      sourcesTotal: 10,
+      incompleteSourceIds: ["gofractional", "ateam"],
+    });
+    expect(status.lastScanLabel).toBe("Last scan: partially updated (2 hours ago) — 2 sources didn't complete");
+    expect(status.cycleStatus).toBe("partial");
+    expect(status.incompleteSourceCount).toBe(2);
+  });
+
+  it("singularizes the partial-cycle suffix for exactly one incomplete source", () => {
+    const status = computeStatusStrip(gigsWithOneScan, {}, now, { sourcesTotal: 10, incompleteSourceIds: ["gofractional"] });
+    expect(status.lastScanLabel).toBe("Last scan: partially updated (2 hours ago) — 1 source didn't complete");
+  });
+
+  it("a partial-cycle signal never overrides 'Last scan: never run' when no gig has ever been scanned at all", () => {
+    const status = computeStatusStrip([], {}, now, { sourcesTotal: 10, incompleteSourceIds: ["gofractional"] });
+    expect(status.lastScanLabel).toBe("Last scan: never run");
+  });
+});
+
+// -- computeCycleCompleteness -------------------------------------------------
+
+describe("computeCycleCompleteness", () => {
+  it("is 'unknown' (never 'full') when no cycle has ever been recorded -- claiming completion with zero real evidence is exactly the falsely-reassuring label this story removes", () => {
+    expect(computeCycleCompleteness(null)).toEqual({ cycleStatus: "unknown", incompleteSourceCount: 0 });
+  });
+
+  it("is 'full' when the last recorded cycle's incompleteSourceIds is empty", () => {
+    expect(computeCycleCompleteness({ sourcesTotal: 5, incompleteSourceIds: [] })).toEqual({
+      cycleStatus: "full",
+      incompleteSourceCount: 0,
+    });
+  });
+
+  it("is 'partial' with the real count when the last recorded cycle has >=1 incomplete source", () => {
+    expect(computeCycleCompleteness({ sourcesTotal: 5, incompleteSourceIds: ["a", "b", "c"] })).toEqual({
+      cycleStatus: "partial",
+      incompleteSourceCount: 3,
+    });
   });
 });

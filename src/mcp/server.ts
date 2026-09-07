@@ -45,6 +45,7 @@ import { resolveLlmCredential } from "../lib/config/env-store.js";
 import { readRawConfig } from "../lib/config/save.js";
 import { computeStatusStrip } from "../lib/status/status-strip.js";
 import { getGig, listGigs, setStatus } from "../lib/store/gigs.js";
+import { getLastScanCycle } from "../lib/store/scan-cycles.js";
 import type { GigFilter, GigStatus, StoredGig } from "../lib/store/types.js";
 import type { Tier } from "../lib/types.js";
 
@@ -251,7 +252,13 @@ export async function handleGetStatusSummary(args: GetStatusSummaryArgs = {}): P
   try {
     const gigs = listGigs(args.groupId ? { groupId: args.groupId } : {});
     const rawConfig = readRawConfig();
-    const status = computeStatusStrip(gigs, rawConfig);
+    // status-strip-reflects-cycle-completion story: same real per-cycle
+    // completion signal src/app/dashboard-data.ts's loadDashboardData()
+    // now feeds computeStatusStrip() -- see status-strip.ts's own doc
+    // comment for what "unknown" (getLastScanCycle() returns nothing yet)
+    // vs "full"/"partial" means.
+    const lastCycle = getLastScanCycle();
+    const status = computeStatusStrip(gigs, rawConfig, Date.now(), lastCycle ?? null);
     return toolOk(status);
   } catch (e) {
     return toolError(e);

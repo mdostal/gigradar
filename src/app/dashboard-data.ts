@@ -5,7 +5,7 @@
 // to drift out of sync. `groupId` omitted/undefined means "every group"
 // (today's pre-Slice-3 behavior, unchanged).
 import { readRawConfig } from "@/lib/config/save";
-import { listDrafts, listGigs, listInterviewPrep } from "@/lib/store";
+import { getLastScanCycle, listDrafts, listGigs, listInterviewPrep } from "@/lib/store";
 import type { StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { computeLastScanIso, computeStatusStrip, type StatusStripView } from "@/lib/status/status-strip";
@@ -196,7 +196,12 @@ export function resolveHideOutOfBandDefault(rawConfig: Record<string, unknown>, 
 export function loadDashboardData(groupId?: string): DashboardData {
   const gigs = listGigs(groupId ? { groupId } : {});
   const rawConfig = readRawConfig();
-  const status = computeStatusStrip(gigs, rawConfig);
+  // status-strip-reflects-cycle-completion story: the real per-cycle
+  // completion signal (getLastScanCycle()) is unscoped by group -- a scan
+  // cycle covers every configured source across every group in one pass,
+  // there's no per-group notion of "this group's own cycle completed".
+  const lastCycle = getLastScanCycle();
+  const status = computeStatusStrip(gigs, rawConfig, Date.now(), lastCycle ?? null);
   const lastScanIso = computeLastScanIso(gigs);
   const engagementProfiles = extractEngagementProfileSummaries(rawConfig, groupId);
   const draftedGigKeys = new Set(listDrafts().map((d) => d.gigKey));

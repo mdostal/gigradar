@@ -184,3 +184,19 @@ export interface StoredChatPreference {
   sessionId: string | null;
   createdAt: string;
 }
+
+/**
+ * A `scan_cycles` row as persisted by the store (store/scan-cycles.ts's
+ * recordScanCycle()) — status-strip-reflects-cycle-completion story. The
+ * real per-cycle completion signal src/lib/status/status-strip.ts uses to
+ * distinguish a fully-completed last cycle from a partial one; see
+ * schema.ts's own header comment on this table for the full rationale.
+ */
+export interface StoredScanCycle {
+  /** ISO datetime the cycle finished. */
+  completedAt: string;
+  /** Count of enabled sources this cycle was supposed to cover. */
+  sourcesTotal: number;
+  /** Source ids that errored or were skipped (backoff) this cycle — [] means a full, clean cycle. */
+  incompleteSourceIds: string[];
+}

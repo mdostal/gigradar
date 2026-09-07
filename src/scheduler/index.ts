@@ -46,7 +46,7 @@ import { resolveLlmCredential } from "../lib/config/env-store.js";
 import { sendDesktopNotification } from "../lib/notify/desktop.js";
 import { raiseIssue, resolveIssuesForSource } from "../lib/notify/issues.js";
 import { registerAllSources } from "../lib/sources/register-all.js";
-import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting, runStaleGigMaintenance } from "../lib/store/index.js";
+import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting, recordScanCycle, runStaleGigMaintenance } from "../lib/store/index.js";
 import { getSubmitAdapter } from "../lib/submit/adapter.js";
 import type { ApplyProfileConfig, Config, Gig, MatchResult, SourceConfig } from "../lib/types.js";
 import { BackoffTracker, DEFAULT_MAX_BACKOFF_MS } from "./backoff.js";
@@ -533,6 +533,24 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
       }
 
       logCycleSummary(result, tracker, skippedSourceIds);
+
+      // status-strip-reflects-cycle-completion story (real-usability-
+      // verification-and-fixes epic): persists THIS cycle's real
+      // completion state -- errored (erroredIds, from runRadarFn()'s own
+      // errors[]) AND backoff-skipped (skippedSourceIds, already computed
+      // above) source ids, against the full count of ENABLED sources this
+      // cycle was supposed to cover -- so src/lib/status/status-strip.ts's
+      // freshness label can honestly distinguish a fully-completed cycle
+      // from a partial one, instead of only ever reflecting
+      // MAX(gig.lastSeen) (per-gig recency, not per-cycle completion; see
+      // that file's own header comment for the real gap this closes).
+      // Never derives a NEW judgment about cycle health -- just persists
+      // the exact same errored/skipped sets this function already computed
+      // for backoff-tracking and issue-raising above.
+      recordScanCycle({
+        sourcesTotal: config.sources.filter((s) => s.enabled).length,
+        incompleteSourceIds: [...skippedSourceIds, ...erroredIds],
+      });
 
       // notifications-epic: a source erroring isn't catastrophic (backoff
       // above already handles repeats), but the owner should be able to

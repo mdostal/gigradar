@@ -14,7 +14,7 @@
 //     presence/shape checks, never resolved secret values. Because it's
 //     raw/unvalidated, every field here is read defensively (unknown shape
 //     in, never throws).
-import type { StoredGig } from "@/lib/store";
+import type { StoredGig, StoredScanCycle } from "@/lib/store";
 import { KNOWN_SOURCES } from "@/lib/sources/origins";
 
 export interface StatusStripView {
@@ -22,9 +22,42 @@ export interface StatusStripView {
   sourcesLabel: string;
   /** "Profile: complete" or "Profile: needs setup". */
   profileLabel: string;
-  /** "Last scan: 2 hours ago" or "Last scan: never run". */
+  /**
+   * "Last scan: up to date (2 hours ago)" (the last real cycle fully
+   * completed), "Last scan: partially updated (2 hours ago) — 3 source(s)
+   * didn't complete" (the last real cycle had errors/timeouts/backoff
+   * skips), the pre-cycle-tracking fallback "Last scan: 2 hours ago" (gigs
+   * exist but no scan_cycles row has ever been recorded — an install that
+   * predates this signal), or "Last scan: never run". See
+   * computeCycleCompleteness()'s own doc comment for the real signal this
+   * is built from.
+   */
   lastScanLabel: string;
+  /**
+   * "full" (last recorded cycle had zero incomplete sources), "partial"
+   * (last recorded cycle had >=1 source error/timeout/backoff-skip), or
+   * "unknown" (no scan_cycles row exists yet — see `lastCycle`'s own doc
+   * comment on computeStatusStrip()). Exposed separately from
+   * `lastScanLabel` so a UI can style a partial cycle distinctly (e.g. the
+   * same amber "needs attention" treatment `sourcesLabel`/`profileLabel`
+   * already use) without re-parsing the label string.
+   */
+  cycleStatus: "full" | "partial" | "unknown";
+  /** Count of sources that errored/timed-out/were skipped in the last recorded cycle. 0 when `cycleStatus` is "full" or "unknown". */
+  incompleteSourceCount: number;
 }
+
+/**
+ * The real per-cycle completion signal this module needs — a trimmed view
+ * of `StoredScanCycle` (src/lib/store/types.ts), passed in already-fetched
+ * (this module stays DB-free, matching its own "pure logic, directly
+ * unit-testable" header comment) from `getLastScanCycle()`'s result.
+ * `null`/`undefined` means no cycle has ever been recorded yet (a brand-new
+ * install, or a DB that predates this story) — status-strip.ts then falls
+ * back to the old MAX(lastSeen)-only label rather than claiming "partial"
+ * or "full" about a cycle it has no real data on.
+ */
+export type LastScanCycleInput = Pick<StoredScanCycle, "sourcesTotal" | "incompleteSourceIds"> | null;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -149,18 +182,54 @@ export function formatRelativeTime(iso: string, now: number = Date.now()): strin
   return RELATIVE_TIME_FORMATTER.format(diffSec, "second");
 }
 
+export interface CycleCompleteness {
+  cycleStatus: "full" | "partial" | "unknown";
+  incompleteSourceCount: number;
+}
+
 /**
- * Builds the three status-strip labels from `gigs` (listGigs()'s result)
- * and `rawConfig` (readRawConfig()'s result). Never throws: every input is
- * treated as untrusted/possibly-absent, matching readRawConfig()'s own
- * ENOENT-tolerant, non-resolving contract (an empty `{}` — first run, no
- * config.json yet — renders the same "0 sources configured" / "Profile:
- * needs setup" strip a fully-populated-but-empty config would).
+ * status-strip-reflects-cycle-completion story (real-usability-
+ * verification-and-fixes epic): the real cycle-completion signal, derived
+ * from `lastCycle` (`getLastScanCycle()`'s result — the scheduler's/manual
+ * "Sweep now"'s own already-computed per-cycle errored/timed-out/
+ * backoff-skipped source ids, see store/scan-cycles.ts) rather than
+ * inferred from gig timestamps. `null`/`undefined` (no scan_cycles row
+ * exists yet) is honestly "unknown" — NEVER "full": claiming a cycle
+ * "fully completed" with zero real evidence either way would be exactly
+ * the falsely-reassuring label this story exists to remove.
+ */
+export function computeCycleCompleteness(lastCycle: LastScanCycleInput): CycleCompleteness {
+  if (!lastCycle) return { cycleStatus: "unknown", incompleteSourceCount: 0 };
+  const incompleteSourceCount = lastCycle.incompleteSourceIds.length;
+  return { cycleStatus: incompleteSourceCount > 0 ? "partial" : "full", incompleteSourceCount };
+}
+
+/**
+ * Builds the status-strip labels from `gigs` (listGigs()'s result),
+ * `rawConfig` (readRawConfig()'s result), and `lastCycle`
+ * (`getLastScanCycle()`'s result — see `LastScanCycleInput`'s own doc
+ * comment). Never throws: every input is treated as untrusted/
+ * possibly-absent, matching readRawConfig()'s own ENOENT-tolerant,
+ * non-resolving contract (an empty `{}` — first run, no config.json yet —
+ * renders the same "0 sources configured" / "Profile: needs setup" strip a
+ * fully-populated-but-empty config would).
+ *
+ * `lastScanLabel`'s freshness text now honestly distinguishes THREE real
+ * states rather than one undifferentiated MAX(gig.lastSeen) timestamp (the
+ * owner's own real complaint this story fixes — see this module's header
+ * comment): "up to date" (the last recorded cycle had zero incomplete
+ * sources), "partially updated ... — N source(s) didn't complete" (the last
+ * recorded cycle had real errors/timeouts/backoff-skips), or the bare
+ * pre-existing timestamp form when no cycle has ever been recorded yet
+ * (`lastCycle` omitted/null — an install that predates this signal, or one
+ * that has gigs from a source other than a tracked cycle, e.g. a
+ * status-reconciliation backfill).
  */
 export function computeStatusStrip(
   gigs: readonly Pick<StoredGig, "lastSeen">[],
   rawConfig: Record<string, unknown>,
   now: number = Date.now(),
+  lastCycle: LastScanCycleInput = null,
 ): StatusStripView {
   const { configured, needingAttention } = computeSourceCounts(rawConfig);
   const sourcesLabel =
@@ -171,7 +240,21 @@ export function computeStatusStrip(
   const profileLabel = `Profile: ${computeProfileComplete(rawConfig) ? "complete" : "needs setup"}`;
 
   const lastScanIso = computeLastScanIso(gigs);
-  const lastScanLabel = lastScanIso === null ? "Last scan: never run" : `Last scan: ${formatRelativeTime(lastScanIso, now)}`;
+  const { cycleStatus, incompleteSourceCount } = computeCycleCompleteness(lastCycle);
 
-  return { sourcesLabel, profileLabel, lastScanLabel };
+  let lastScanLabel: string;
+  if (lastScanIso === null) {
+    lastScanLabel = "Last scan: never run";
+  } else {
+    const relative = formatRelativeTime(lastScanIso, now);
+    if (cycleStatus === "full") {
+      lastScanLabel = `Last scan: up to date (${relative})`;
+    } else if (cycleStatus === "partial") {
+      lastScanLabel = `Last scan: partially updated (${relative}) — ${incompleteSourceCount} source${incompleteSourceCount === 1 ? "" : "s"} didn't complete`;
+    } else {
+      lastScanLabel = `Last scan: ${relative}`;
+    }
+  }
+
+  return { sourcesLabel, profileLabel, lastScanLabel, cycleStatus, incompleteSourceCount };
 }

@@ -18,6 +18,8 @@ export {
   setDraftStatus,
 } from "./drafts.js";
 export { getInterviewPrep, listInterviewPrep, saveInterviewPrep } from "./prep.js";
+export { getLastScanCycle, recordScanCycle } from "./scan-cycles.js";
+export type { RecordScanCycleInput } from "./scan-cycles.js";
 export { listResumeReviewSuggestions, saveResumeReviewSuggestion } from "./resume-reviews.js";
 export type { ResumeReviewSuggestion } from "./resume-reviews.js";
 export {
@@ -41,4 +43,5 @@ export type {
   StoredDraft,
   StoredGig,
   StoredInterviewPrep,
+  StoredScanCycle,
 } from "./types.js";
