@@ -153,6 +153,23 @@ function CompanyLine({ company, cls }: { company: string | undefined; cls: strin
   return company ? <span className={cls}>{company}</span> : <span className={`${cls} ${styles.unlisted}`}>Company not listed</span>;
 }
 
+// today-picks-analyze-feedback story (real-usability-verification-and-fixes
+// epic). The ONE rendering of a gig's prepByKey result, shared verbatim by
+// BOTH the Today's Picks card and the Full Roster row -- extracted so the
+// two places can never silently drift into two different summaries of the
+// identical PrepPacketContent (the same "no second, divergent display
+// format" reasoning this story's own design_decisions call out). Before
+// this story, only the Full Roster read prepByKey at all -- clicking
+// "Analyze" on a Picks card genuinely fetched and stored a real result, but
+// that card itself never rendered it, so the button appeared to do nothing.
+export function PrepSummary({ prep }: { prep: PrepPacketContent }) {
+  return (
+    <p className={styles.detailPrep}>
+      Fit score: {prep.score}/100 — {prep.recommendation}
+    </p>
+  );
+}
+
 /**
  * Self-hosted at build time via next/font/google, never a runtime request
  * to Google's CDN -- same reasoning as Signal Deck's own font loading
@@ -507,6 +524,7 @@ export function TodayClient({
                 </div>
                 {draftErrorByKey[gig.key] && <p className={styles.detailError}>{draftErrorByKey[gig.key]}</p>}
                 {prepErrorByKey[gig.key] && <p className={styles.detailError}>{prepErrorByKey[gig.key]}</p>}
+                {prepByKey[gig.key] && <PrepSummary prep={prepByKey[gig.key]!} />}
               </article>
             ))}
           </div>
@@ -673,11 +691,7 @@ export function TodayClient({
                         </div>
                         {draftErrorByKey[gig.key] && <p className={styles.detailError}>{draftErrorByKey[gig.key]}</p>}
                         {gig.status !== "interview" && prepErrorByKey[gig.key] && <p className={styles.detailError}>{prepErrorByKey[gig.key]}</p>}
-                        {gig.status !== "interview" && prepByKey[gig.key] && (
-                          <p className={styles.detailPrep}>
-                            Fit score: {prepByKey[gig.key]!.score}/100 — {prepByKey[gig.key]!.recommendation}
-                          </p>
-                        )}
+                        {gig.status !== "interview" && prepByKey[gig.key] && <PrepSummary prep={prepByKey[gig.key]!} />}
                       </div>
                     )}
                   </div>
