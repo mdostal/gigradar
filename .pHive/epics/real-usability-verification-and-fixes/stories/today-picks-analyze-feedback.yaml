@@ -1,10 +1,63 @@
 id: today-picks-analyze-feedback
 epic: real-usability-verification-and-fixes
 title: "Today's Picks 'Analyze' button fetches a real result that never renders on that card -- show it"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED, PR #184 (feat/today-picks-analyze-feedback -> dev, not yet
+  merged -- awaiting review per standing process, "do not merge, report
+  PR URL and stop").
+
+  Fix: extracted the Full Roster's existing prepByKey rendering (the
+  one-line "Fit score: X/100 -- recommendation" <p>) into a new shared
+  `PrepSummary({ prep })` component in today-client.tsx, now rendered by
+  BOTH the Today's Picks card (new -- this was the whole bug) and the
+  Full Roster row (unchanged output, now via the shared component
+  instead of an inlined duplicate). One rendering of PrepPacketContent,
+  never two divergent copies.
+
+  npm test (full suite, 1746 passed) and npm run typecheck both clean.
+  Added src/app/today/__tests__/today-client.test.ts covering the shared
+  PrepSummary component (this repo has no React Testing Library --
+  follows error-boundaries.test.ts's established renderToStaticMarkup()
+  + createElement() pattern).
+
+  REAL verification against an actual running app (not just automated
+  tests), per this epic's own standing requirement:
+    1. Seeded an isolated XDG_DATA_HOME/XDG_CONFIG_HOME temp dir (never
+       the real ~/.local/share/gigradar) with one tier:"green",
+       status:"new" gig plus a persisted interview_prep row, via the
+       store's own recordScan()/setTier()/saveInterviewPrep() -- a
+       throwaway script, deleted before commit, never landed in the PR.
+    2. Ran a real `npx next dev` dev server against that isolated data
+       dir and curled http://127.0.0.1:<port>/today.
+    3. POST-FIX: the served HTML contains
+       `<p class="today_detailPrep__...">Fit score: 91/100 --
+       VERIFYPURSUEMARKER</p>` located INSIDE the Picks card's own
+       <article>...</article> element (confirmed by locating the
+       string's byte position relative to the </article></div></section>
+       boundary that closes the Picks section) -- i.e. genuinely part of
+       the Picks card's own rendered DOM, not just present somewhere on
+       the page.
+    4. PRE-FIX regression check: `git stash` on just today-client.tsx
+       (restoring the exact prior buggy code), same seeded data, same
+       dev server, re-curled /today. The marker string
+       "VERIFYPURSUEMARKER" appears exactly ONCE in the served HTML --
+       only inside the Next.js RSC hydration payload (the serialized
+       props JSON embedded for client-side hydration) -- and is ABSENT
+       from the Picks card's rendered DOM. This reproduces the reported
+       bug exactly: the fetch/state-update genuinely happens (visible in
+       the hydration payload), but the card itself renders nothing,
+       matching the owner's own live complaint verbatim.
+    5. `git stash pop` to restore the fix; re-ran npm test + npm run
+       typecheck clean one more time before committing.
+  No real browser/Playwright was opened at any point (isolated `next
+  dev` + curl only, per this session's standing constraint). The real
+  ~/.local/share/gigradar data dir was never read or written -- all
+  verification used a throwaway XDG_DATA_HOME/XDG_CONFIG_HOME temp dir.
 
 description: |
   Confirmed REAL bug via direct code read against the current, real running
