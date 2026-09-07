@@ -104,8 +104,22 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
+// group-aware-auto-draft-and-notify story: runAutoDraft() now reads
+// Gig.matchedGroupTiers/matchedGroupBands (per-group) instead of the flat
+// tier/matchBand fields -- stamped here under makeConfig()'s own single
+// group id ("g1") so this file's tests keep exercising exactly the same
+// single-group green+in-band scenario they always have.
 function matchResultFor(gig: Gig): MatchResult {
-  return { gig, pass: true, score: 1, reasons: [], tier: "green", matchBand: gig.matchBand ?? "in-band", matchedProfiles: [] };
+  const matchBand = gig.matchBand ?? "in-band";
+  return {
+    gig: { ...gig, matchBand, matchedGroupTiers: { g1: "green" }, matchedGroupBands: { g1: matchBand } },
+    pass: true,
+    score: 1,
+    reasons: [],
+    tier: "green",
+    matchBand,
+    matchedProfiles: [],
+  };
 }
 
 describe("runAutoDraft: graduated-auto-fire-trust wiring", () => {
