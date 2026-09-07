@@ -112,7 +112,7 @@ entries:
         at: "2026-09-07T18:55:00Z"
 
   - id: t-003
-    state: plan-ready
+    state: closed
     kind: bug
     title: "applyAiVerification() has the identical unbounded per-gig claude-CLI shape as t-002 -- CONFIRMED live/active: both of the owner's real groups have aiVerify:true"
     description: |
@@ -140,8 +140,8 @@ entries:
     severity: major
     linked_epic: usability-and-completeness-audit
     linked_story: ai-verify-timeout-and-cap
-    closed_reason: null
-    closed_at: null
+    closed_reason: "shipped in PR #183 -- same 20s per-call timeout + 10-call per-cycle cap pattern as t-002, reusing a shared raceWithTimeout() helper; regression tests prove the fallback and cap enforcement"
+    closed_at: "2026-09-07T19:10:00Z"
     state_history:
       - state: inbox
         at: "2026-09-07T18:55:00Z"
@@ -151,3 +151,5 @@ entries:
         at: "2026-09-07T18:57:00Z"
       - state: plan-ready
         at: "2026-09-07T18:58:00Z"
+      - state: closed
+        at: "2026-09-07T19:10:00Z"

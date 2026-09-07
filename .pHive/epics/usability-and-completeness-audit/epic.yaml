@@ -8,24 +8,46 @@ stories:
     title: "Per-source fetch timeout/circuit-breaker so one hung source can't block an entire scan cycle forever (triage t-001, p0/critical)"
     complexity: medium
     depends_on: []
+    status: complete
+    shipped_pr: 179
 
   - id: application-format-coverage-per-source
     title: "Audit each of the 8 uncovered source adapters' real application flow and set honest Source.applicationFormat values"
     complexity: medium
     depends_on: []
+    status: complete
+    shipped_pr: 180
 
   - id: resume-store-multi-resume-and-tailoring
     title: "Multi-resume store: keyed/versioned storage, per-application resume selection, gig-fit suggestions, gated review feedback"
     complexity: high
     depends_on: []
+    status: complete
+    shipped_pr: 181
 
   - id: config-add-group-discoverability-and-spike-cleanup
     title: "Investigate real 'add new group' discoverability in Config (simman finding) + delete the orphaned embedded-webview-spike page"
     complexity: low
     depends_on: []
+    status: complete
+    shipped_pr: 178
+
+  - id: rank-bucket-ai-overlay-timeout-and-cap
+    title: "Bound applyRankBucketAiOverlay()'s per-gig claude-CLI subprocess with a real timeout and a per-cycle cap (triage t-002, p1)"
+    complexity: medium
+    depends_on: []
+    status: complete
+    shipped_pr: 182
+
+  - id: ai-verify-timeout-and-cap
+    title: "Bound applyAiVerification()'s per-gig claude-CLI call with the same timeout+cap pattern (triage t-003, p1)"
+    complexity: medium
+    depends_on: []
+    status: complete
+    shipped_pr: 183
 
 references:
   - path: .pHive/epics/usability-and-completeness-audit/docs/design-discussion.md
     relevant_excerpt: "§1 the scan-pipeline hang (emergency finding, triage t-001); §2 the precise draft-format root cause; §3 the resume-store inventory; §4 the 3-pass audit results including the legacy-tool comparison verdict."
   - path: .pHive/triage/queue.yaml
-    relevant_excerpt: "t-001, priority p0/severity critical -- the scan-pipeline hang this epic's first story fixes."
+    relevant_excerpt: "t-001 (p0, shipped PR #179), t-002 (p1, shipped PR #182), t-003 (p1, shipped PR #183) -- all three scan-cycle-blocking bugs found and fixed this epic."

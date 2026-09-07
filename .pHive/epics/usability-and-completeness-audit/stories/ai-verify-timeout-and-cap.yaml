@@ -1,10 +1,112 @@
 id: ai-verify-timeout-and-cap
 epic: usability-and-completeness-audit
 title: "Bound applyAiVerification()'s per-gig claude-CLI call with the same timeout+cap pattern as rank-bucket-ai-overlay (triage t-003, p1)"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED: PR #183 (https://github.com/mdostal/gigradar/pull/183),
+  branch feat/ai-verify-timeout-and-cap off origin/dev (no merge conflict
+  -- dev hadn't moved since the branch point at 75cc298, the same commit
+  t-002/PR #182 landed).
+
+  **0. Shared timeout mechanism, not a third copy:** extracted
+  `raceWithTimeout(task, timeoutMs, buildTimeoutError)` into
+  `src/lib/config/llm-client.ts` -- the ONE place the
+  Promise.race()+setTimeout()+finally(clearTimeout) shape now lives for a
+  new LLM-call-timeout call site. `applyRankBucketAiOverlay()`'s own
+  already-shipped t-002 timeout (`rank-bucket-ai-overlay.ts`) was
+  deliberately left untouched and NOT retrofitted onto this helper -- it's
+  a separate, already-reviewed call site, and this session's standing
+  constraint was "do not touch t-002's own fix." `fetchWithTimeout()`
+  (`apply/runner.ts`, t-001) also stays untouched (different domain: a
+  source fetch, not an LLM call). Net effect: still only ONE new
+  independent copy of the race shape (t-002's), not a third.
+
+  **1. Per-call timeout (AI_VERIFY_TIMEOUT_MS = 20_000,
+  src/lib/matching/ai-verify.ts):** `applyAiVerification()`'s per-group
+  loop now races each `verifyGroupMatch()` call against a 20s deadline via
+  `raceWithTimeout()`. On timeout, the new `AiVerifyTimeoutError` lands in
+  the SAME try/catch that already handles a real thrown API error -- no
+  new fallback branch needed, since a timeout is philosophically identical
+  to "AI verification unavailable this cycle" (this file's own header
+  comment: "never a replacement for the heuristic").
+
+  Reasoning for 20s (same value AND same reasoning as
+  RANK_BUCKET_AI_OVERLAY_TIMEOUT_MS, deliberately not re-derived from
+  scratch): this is the SAME shape of call -- a single structured-output
+  round trip via the identical `createAiSdkModel()`/`generateHarnessObject()`
+  factories `suggestRankBucket()` uses, with the LLM prompt bulk being
+  candidate background/resume text rather than bucket definitions -- so
+  t-002's own live-observed ~10-15s real subprocess/API norm and its ~2x
+  headroom justification applies without a new, independently-measured
+  number. No new live process inspection was run for this story since no
+  new call shape exists to characterize.
+
+  **2. Per-cycle cap (AI_VERIFY_CAP = 10, src/lib/apply/runner.ts):** a
+  local (not module-scope) `aiVerifyCallsThisCycle` counter, declared
+  alongside `rankBucketAiOverlayCallsThisCycle` at the same
+  one-runRadar()-invocation scope. Same value/reasoning as
+  RANK_BUCKET_AI_OVERLAY_CAP: only counts a call that would ACTUALLY
+  invoke the AI, same per-call cost profile (a single small
+  structured-output classification), same worst-case bound if every
+  capped call actually hit its timeout (10 * 20s = 200s, ~3.3min).
+
+  Enforced differently from t-002's cap, by necessity of the two
+  functions' different loop shapes -- documented in full in
+  `applyAiVerification()`'s own doc comment (ai-verify.ts):
+  `RANK_BUCKET_AI_OVERLAY_CAP` is checked directly in runner.ts's loop
+  because that loop calls `applyRankBucketAiOverlay()` once per (gig,
+  group) pair itself. `applyAiVerification()` is instead called ONCE per
+  gig and internally loops over every matched, `aiVerify`-opted-in group
+  in that one call -- moving that loop out to runner.ts to place the cap
+  check there would have meant duplicating the function's own
+  group-filtering/aiFlags-building logic at the call site. Chose instead:
+  runner.ts passes the remaining budget in (`Math.max(0, AI_VERIFY_CAP -
+  aiVerifyCallsThisCycle)`) as a new `remainingCap` parameter (default
+  `Infinity`, so every pre-existing call site/test is unaffected), and
+  `applyAiVerification()` reports back how many calls it actually made via
+  a new `callsMade` field on its return value, which runner.ts adds to its
+  running counter. A group beyond the budget within one gig's own call
+  gets no LLM call, no aiFlags entry -- its heuristic match stands
+  unchanged for that group, this cycle, and self-heals on a later scan
+  once the cap resets -- same "no data loss, just deferred" posture as
+  t-002.
+
+  **3. Tests (all new, plus 2 existing exact-equality assertions in
+  ai-verify.test.ts updated for the new `callsMade` field on
+  applyAiVerification()'s return shape):**
+  - `matching/__tests__/ai-verify.test.ts`: timeout-fallback via
+    `vi.useFakeTimers()`/`advanceTimersByTimeAsync()` (mirrors
+    rank-bucket-ai-overlay.test.ts's own t-002 shape exactly), a
+    fast-settle-not-false-positive-killed test, a `callsMade` reporting
+    test, and a `remainingCap` describe block (zero-budget no-op,
+    partial-budget stops partway leaving the rest's heuristic match
+    untouched, default-unlimited-for-existing-callers).
+  - `apply/__tests__/runner-ai-verify-cap.test.ts` (new file): proves
+    `AI_VERIFY_CAP` is enforced end-to-end by `runRadar()` across MORE
+    eligible gigs than the cap in one cycle, mirrors
+    runner-rank-bucket.test.ts's own RANK_BUCKET_AI_OVERLAY_CAP
+    enforcement describe block. Unlike runner-ai-verify.test.ts (which
+    mocks matching/ai-verify.js wholesale to test ONLY runRadar()'s own
+    wiring), this file needed the REAL applyAiVerification() to run since
+    the cap logic now lives inside it -- so only the underlying
+    `generateText()` call is mocked (same "zero real API calls" shape
+    matching/__tests__/ai-verify.test.ts itself already uses), not the
+    whole ai-verify.js module.
+
+  Full verification, run twice (once in the main checkout before moving
+  the diff into an isolated worktree per this session's process, once
+  again inside the worktree before committing): `npm test` -- 1744
+  passed, 3 skipped (pre-existing, unrelated), 0 failed. `npm run
+  typecheck` -- clean.
+
+  Did NOT touch: the heuristic match logic (gate()/tiering.ts/
+  group-match.ts, all untouched), `applyRankBucketAiOverlay()`'s own
+  already-shipped t-002 fix (a separate, independent call site --
+  rank-bucket-ai-overlay.ts was not modified at all by this story).
 
 description: |
   Triage entry t-003 (.pHive/triage/queue.yaml, priority p1/severity
