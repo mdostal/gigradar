@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-09-06
+
+### Fixed
+
+- If you track more than one group, auto-draft and desktop notifications
+  now correctly react to a real green match in ANY of your groups — not
+  just whichever one happens to be first. Before this, a group that
+  wasn't your "primary" one got full visibility on the Dashboard but
+  silently never triggered an auto-drafted application or a
+  notification, no matter how good the match was.
+- Auto-fire rules can now optionally be scoped to a specific group —
+  useful once you're running several groups with very different levels
+  of trust in the results. Leaving it unset keeps today's behavior
+  exactly as it is.
+- A few more places that could show one group's tier on another group's
+  page, on top of the giglist fix from the last release: the Dashboard
+  overview tiles, the gig detail panel's tier badge, and the `list_gigs`
+  MCP tool.
+
 ## [0.41.0] - 2026-09-06
 
 ### Fixed
