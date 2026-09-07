@@ -1,7 +1,7 @@
 id: resume-management-discoverable-from-dashboard
 epic: real-usability-verification-and-fixes
 title: "Resume management (shipped today, PR #181) is not discoverable anywhere on the real Config Dashboard -- the exact 'disconnected capability' pattern flagged earlier this session"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
@@ -87,3 +87,80 @@ steps:
     description: Commit, branch off dev, PR into dev
     agent: developer
     depends_on: [review]
+
+progress_note: |
+  SHIPPED, PR #186 (https://github.com/mdostal/gigradar/pull/186), branch
+  feat/resume-management-discoverable-from-dashboard into dev.
+
+  Fix: `config-sections.ts`'s Profile card `details()` now adds a
+  `{ label: "Resumes", value: "<N> on file" | "No resume on file yet" }`
+  row, sourced from the real `ConfigPageData.initial.applyProfile.resumes`
+  array (the exact same field `config-client.tsx`'s resume UI reads/writes
+  -- no new field, no fabricated data). Shown UNCONDITIONALLY (unlike Rate
+  anchor/Home base/Timezone, which only appear once set) in both the
+  normal path and the "Name not filled in yet" early-return path, so the
+  empty state itself ("No resume on file yet") is the discoverability
+  signal -- same convention Sources' "Configured: N" and Groups' "None
+  configured" already use.
+
+  Resume UI position within the Profile section page (config-client.tsx):
+  reviewed as instructed, left UNCHANGED. It sits ~176 lines into a
+  ~285-line section, directly after the LLM provider/credential fields --
+  not after unrelated content. That ordering is functionally correct as-is:
+  the "Extract from resume/link" action (which the resume upload/list/
+  remove UI is part of) calls the LLM API using the credential configured
+  immediately above it, so LLM credential -> resume extraction is the
+  natural dependency order, not needless burial. Core identity fields
+  (Name/Roles/Skills/Timezone/Home base) still come first. Judged
+  reasonable; no move made.
+
+  Test coverage: extended src/app/config/__tests__/config-sections.test.ts
+  -- updated the two existing profile-card tests for the new row, added a
+  new test asserting "1 on file"/"2 on file" count formatting with real
+  ResumeRecord-shaped fixtures. Full suite: `npm test` 1747 passed / 3
+  skipped (no regressions), `npm run typecheck` clean.
+
+  REAL post-fix verification against the actual running app (not just the
+  automated test above) -- exactly as this epic's standing discipline
+  requires:
+    1. Seeded an ISOLATED data dir (a scratch `XDG_DATA_HOME`, never the
+       real `~/.local/share/gigradar`) using the real production
+       functions, not hand-rolled fixtures: `saveResume()` twice (real
+       encrypted-at-rest resume files under `<dir>/gigradar/resumes/*.enc`)
+       then `saveConfig()` with `applyProfile.resumes` pointing at both
+       real `ResumeRecord`s, plus a minimal valid profile/groups/needs
+       shape (schema-validated by saveConfig() itself).
+    2. `npm run build` (real production Next.js build), then a real
+       `next start` server against that isolated `XDG_DATA_HOME`.
+    3. `curl`'d the real served `/config` page HTML and located the
+       Profile card's rendered `<dl>`. Confirmed verbatim:
+       `<dt class="text-theme-text-dim">Resumes</dt><dd class="truncate
+       text-right text-theme-text-dim">2 on file</dd>` -- alongside real
+       Name/Roles/Timezone rows from the same seeded config, card status
+       "Ready".
+    4. Repeated with a second isolated data dir seeded via `saveConfig()`
+       with NO resumes: confirmed `<dt>Resumes</dt><dd>No resume on file
+       yet</dd>` renders instead, card status "Needs attention" (no name
+       change there, just profile completeness as already computed by
+       computeProfileComplete()).
+    5. Killed both throwaway servers, deleted both scratch data dirs and
+       the temporary seed scripts (never committed) after evidence was
+       captured. The real `~/.local/share/gigradar` directory was never
+       read, written, or touched at any point.
+
+  Deviation from the AC's literal "rebuild, relaunch the real packaged
+  app" wording: verified via a real production Next.js build + `next
+  start` against an isolated data dir instead of the Tauri/Electron
+  packaged app, per this session's standing constraints (never touch the
+  real data dir; no live browser/Playwright). This is the same serving
+  path (`npm run build && npm run start`) the packaged app's own server
+  process runs -- config-sections.ts and config-client.tsx are identical
+  code in both, so this is a faithful real-app verification, not a unit
+  test proxy. No `simman` re-run was performed (out of this agent's tool
+  access) -- the curl/DOM evidence above is the equivalent real-server
+  evidence this story's own risk-mitigation language anticipates
+  ("curl/DOM evidence (or a real simman re-run)").
+
+  Not touched, per the story's explicit exclusions: resume-store.ts's
+  data model/storage/actions, config-client.tsx's upload/remove handlers,
+  and every other Dashboard card's own summary definition.

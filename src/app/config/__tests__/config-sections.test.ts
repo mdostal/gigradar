@@ -60,9 +60,12 @@ function section(id: string) {
 }
 
 describe("profile section", () => {
-  it("falls back to 'Not filled in yet' when name is empty", () => {
+  it("falls back to 'Not filled in yet' when name is empty, but still shows the resume row", () => {
     const data = baseData({ initial: { ...baseData().initial, profile: { name: "", roles: [], skills: [], timezone: "" } } });
-    expect(section("profile").details(data)).toEqual([{ label: "Name", value: "Not filled in yet" }]);
+    expect(section("profile").details(data)).toEqual([
+      { label: "Name", value: "Not filled in yet" },
+      { label: "Resumes", value: "No resume on file yet" },
+    ]);
   });
 
   it("includes rate anchor/home base/timezone rows only when each is actually present", () => {
@@ -70,7 +73,7 @@ describe("profile section", () => {
       initial: { ...baseData().initial, profile: { name: "Test User", roles: ["Fractional CTO"], skills: ["TypeScript"], timezone: "" } },
     });
     const rows = section("profile").details(withNothingExtra);
-    expect(rows.map((r) => r.label)).toEqual(["Name", "Roles"]);
+    expect(rows.map((r) => r.label)).toEqual(["Name", "Roles", "Resumes"]);
 
     const withExtras = baseData({
       initial: {
@@ -83,6 +86,30 @@ describe("profile section", () => {
     expect(richRows).toContainEqual({ label: "Rate anchor", value: "$275/hr" });
     expect(richRows).toContainEqual({ label: "Home base", value: "Chicago" });
     expect(richRows).toContainEqual({ label: "Timezone", value: "America/Chicago" });
+  });
+
+  it("shows a real resume count on the Resumes row once resumes are on file", () => {
+    const oneResume = baseData({
+      initial: {
+        ...baseData().initial,
+        applyProfile: { email: "a@b.com", resumes: [{ id: "r1", label: "CTO resume", path: "/resumes/r1.enc", uploadedAt: "2026-01-01T00:00:00.000Z" }] },
+      },
+    });
+    expect(section("profile").details(oneResume)).toContainEqual({ label: "Resumes", value: "1 on file" });
+
+    const twoResumes = baseData({
+      initial: {
+        ...baseData().initial,
+        applyProfile: {
+          email: "a@b.com",
+          resumes: [
+            { id: "r1", label: "CTO resume", path: "/resumes/r1.enc", uploadedAt: "2026-01-01T00:00:00.000Z" },
+            { id: "r2", label: "SWE resume", path: "/resumes/r2.enc", uploadedAt: "2026-01-02T00:00:00.000Z" },
+          ],
+        },
+      },
+    });
+    expect(section("profile").details(twoResumes)).toContainEqual({ label: "Resumes", value: "2 on file" });
   });
 
   it("shows at most the first two roles", () => {

@@ -60,7 +60,21 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
     href: "/config/profile",
     details: (data) => {
       const p = data.initial.profile;
-      if (!p.name) return [{ label: "Name", value: "Not filled in yet" }];
+      // resume-management-discoverable-from-dashboard story: a live simman
+      // exploration of the real running Config Dashboard found zero
+      // indication anywhere that resume management (PR #181) exists -- the
+      // upload/list/remove UI lives inside this same Profile section's own
+      // detail page, but nothing on the card summary hinted at it. Shown
+      // unconditionally (unlike Rate anchor/Home base/Timezone below, which
+      // only appear once set) so an empty state ("No resume on file yet")
+      // is itself the discoverability signal, same convention Sources'
+      // "Configured: N" and Groups' "None configured" already use.
+      const resumeCount = data.initial.applyProfile?.resumes?.length ?? 0;
+      const resumeRow: ConfigDetailRow = {
+        label: "Resumes",
+        value: resumeCount > 0 ? `${resumeCount} on file` : "No resume on file yet",
+      };
+      if (!p.name) return [{ label: "Name", value: "Not filled in yet" }, resumeRow];
       const rows: ConfigDetailRow[] = [
         { label: "Name", value: p.name },
         { label: "Roles", value: p.roles.slice(0, 2).join(", ") || "None set" },
@@ -68,6 +82,7 @@ export const CONFIG_SECTIONS: readonly ConfigSectionMeta[] = [
       if (data.initial.applyProfile?.rateAnchor) rows.push({ label: "Rate anchor", value: `$${data.initial.applyProfile.rateAnchor}/hr` });
       if (p.homeBase?.city) rows.push({ label: "Home base", value: p.homeBase.city });
       if (p.timezone) rows.push({ label: "Timezone", value: p.timezone });
+      rows.push(resumeRow);
       return rows;
     },
     status: (data) => (computeProfileComplete(data.initial as unknown as Record<string, unknown>) ? "ok" : "warn"),
