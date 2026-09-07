@@ -21,7 +21,8 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import type { StoredGig } from "@/lib/store";
-import { openExternalUrl } from "@/lib/tauri/open-external";
+import { useOpenExternalLink } from "@/lib/tauri/use-open-external-link";
+import { ExternalLinkFeedbackToast } from "@/lib/tauri/external-link-feedback-toast";
 import { resolveDisplayTier } from "./dashboard-filter";
 import { formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "./dashboard-client";
 
@@ -92,6 +93,7 @@ export function GigDetailPanel({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose, onPrev, onNext]);
 
+  const { openExternalLink, feedback: externalLinkFeedback, dismissFeedback: dismissExternalLinkFeedback } = useOpenExternalLink();
   const displayTier = resolveDisplayTier(gig, groupId);
   const tierStyle = displayTier ? TIER_BADGE_STYLE[displayTier] : TIER_BADGE_FALLBACK_STYLE;
 
@@ -186,7 +188,7 @@ export function GigDetailPanel({
               href={gig.url}
               onClick={(e) => {
                 e.preventDefault();
-                openExternalUrl(gig.url);
+                openExternalLink(gig.url);
               }}
               className="text-sm font-medium text-theme-text underline underline-offset-2 hover:no-underline"
             >
@@ -233,6 +235,8 @@ export function GigDetailPanel({
           </div>
         </div>
       </div>
+
+      <ExternalLinkFeedbackToast feedback={externalLinkFeedback} onDismiss={dismissExternalLinkFeedback} />
     </div>
   );
 }

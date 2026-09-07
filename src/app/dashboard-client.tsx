@@ -15,7 +15,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { GigStatus, OutcomeReason, StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
-import { openExternalUrl } from "@/lib/tauri/open-external";
+import { useOpenExternalLink } from "@/lib/tauri/use-open-external-link";
+import { ExternalLinkFeedbackToast } from "@/lib/tauri/external-link-feedback-toast";
 import { bulkMarkAppliedElsewhereAction, confirmRankBucketAction, generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "./actions";
 import { canGenerateDraft, draftButtonLabel } from "./dashboard-draft";
 import { DASHBOARD_PREFS_STORAGE_KEY, deserializeDashboardPrefs, serializeDashboardPrefs } from "./dashboard-prefs";
@@ -462,6 +463,7 @@ export function DashboardClient({
   rankBucketGroupId?: string;
 }) {
   const router = useRouter();
+  const { openExternalLink, feedback: externalLinkFeedback, dismissFeedback: dismissExternalLinkFeedback } = useOpenExternalLink();
   const [sorting, setSorting] = useState<SortingState>([]);
   // Default landing view is the "To review" pipeline tab (status: new only)
   // -- a fresh install/cleared-prefs visit lands on "what do I need to act
@@ -909,7 +911,7 @@ export function DashboardClient({
           href={row.original.url}
           onClick={(e) => {
             e.preventDefault();
-            openExternalUrl(row.original.url);
+            openExternalLink(row.original.url);
           }}
           className="text-left font-medium text-theme-text hover:underline"
         >
@@ -1477,6 +1479,8 @@ export function DashboardClient({
           prepSection={renderPrepSection(selectedGig)}
         />
       )}
+
+      <ExternalLinkFeedbackToast feedback={externalLinkFeedback} onDismiss={dismissExternalLinkFeedback} />
     </div>
   );
 }

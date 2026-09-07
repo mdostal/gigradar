@@ -26,7 +26,8 @@ import type { ApplyProfileConfig, Profile } from "@/lib/types";
 import { generateDraftAction, generatePrepPacketAction } from "../../../actions";
 import { canGenerateDraft, draftButtonLabel } from "../../../dashboard-draft";
 import { formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "../../../dashboard-client";
-import { openExternalUrl } from "@/lib/tauri/open-external";
+import { useOpenExternalLink } from "@/lib/tauri/use-open-external-link";
+import { ExternalLinkFeedbackToast } from "@/lib/tauri/external-link-feedback-toast";
 
 const DRAFT_STATUS_LABEL: Record<StoredDraft["status"], string> = {
   draft: "Drafted — not yet reviewed",
@@ -74,6 +75,7 @@ export function InterviewWorkspaceClient({
   applyProfile: ApplyProfileConfig | undefined;
 }) {
   const router = useRouter();
+  const { openExternalLink, feedback: externalLinkFeedback, dismissFeedback: dismissExternalLinkFeedback } = useOpenExternalLink();
   const [prep, setPrep] = useState(initialPrep);
   const [prepError, setPrepError] = useState<string | undefined>();
   const [draftError, setDraftError] = useState<string | undefined>();
@@ -143,7 +145,7 @@ export function InterviewWorkspaceClient({
           href={gig.url}
           onClick={(e) => {
             e.preventDefault();
-            openExternalUrl(gig.url);
+            openExternalLink(gig.url);
           }}
           className="shrink-0 rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised"
         >
@@ -283,6 +285,8 @@ export function InterviewWorkspaceClient({
           <p className="mt-2 text-sm text-theme-text-dim">This gig is tier "red" — no draft can be generated for it.</p>
         )}
       </section>
+
+      <ExternalLinkFeedbackToast feedback={externalLinkFeedback} onDismiss={dismissExternalLinkFeedback} />
     </main>
   );
 }
