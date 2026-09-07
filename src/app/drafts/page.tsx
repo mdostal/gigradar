@@ -1,6 +1,8 @@
+import { readRawConfig } from "@/lib/config/save";
 import { getGig, listDrafts } from "@/lib/store";
+import { extractGroupSummaries } from "../layout";
 import { DraftsClient } from "./drafts-client";
-import type { DraftListItem } from "./drafts-filter";
+import { resolveDraftMatchedGroups, type DraftListItem } from "./drafts-filter";
 
 // Single-user local app, no CDN — see src/app/page.tsx's header comment.
 // Here specifically: the scheduler's auto-draft/auto-fire path writes drafts
@@ -21,6 +23,12 @@ export const dynamic = "force-dynamic";
 // getGig() "should" never return undefined for a persisted draft — the
 // filter below is defensive, not expected to ever actually drop a row.
 export default function DraftsPage() {
+  // drafts-page-group-context story: the raw (unresolved -- purely for
+  // group ids/labels, never a secret) config read, same
+  // extractGroupSummaries() NavHeader's own switcher already uses -- one
+  // real registry of configured groups, never a second hand-rolled copy.
+  const groups = extractGroupSummaries(readRawConfig());
+
   const drafts = listDrafts();
   const items: DraftListItem[] = drafts.flatMap((draft) => {
     const gig = getGig(draft.gigKey);
@@ -39,6 +47,7 @@ export default function DraftsPage() {
         gigRate: gig.rate,
         gigTier: gig.tier,
         gigSourceId: gig.sourceId,
+        matchedGroups: resolveDraftMatchedGroups(gig, groups),
       },
     ];
   });

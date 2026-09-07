@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DRAFT_STATUS_TABS, filterDrafts, formatCopyReadyDraft, type DraftListItem } from "../drafts-filter";
+import { DRAFT_STATUS_TABS, filterDrafts, formatCopyReadyDraft, resolveDraftMatchedGroups, type DraftListItem } from "../drafts-filter";
 
 function makeItem(overrides: Partial<DraftListItem> & { gigKey: string }): DraftListItem {
   return {
@@ -12,6 +12,7 @@ function makeItem(overrides: Partial<DraftListItem> & { gigKey: string }): Draft
     gigCompany: "Acme",
     gigUrl: `https://example.test/${overrides.gigKey}`,
     gigSourceId: "gofractional",
+    matchedGroups: [],
     ...overrides,
   };
 }
@@ -69,5 +70,59 @@ describe("formatCopyReadyDraft", () => {
     const content = { coverText: "Hi", answers: { Q1: "A1" } };
     const result = formatCopyReadyDraft(content);
     expect(result).not.toBe(JSON.stringify(content));
+  });
+});
+
+// drafts-page-group-context story (group-scoped-automation-fixes epic):
+// real usability gap this closes -- a gig can now be auto-drafted purely
+// because it's green for a NON-primary group, so the Drafts list needs to
+// show WHICH group(s) actually matched, each with its own real tier, not
+// the flat/primary tier alone.
+describe("resolveDraftMatchedGroups", () => {
+  const groups = [
+    { id: "fractional", label: "Fractional Work" },
+    { id: "drone", label: "Drone Services" },
+  ];
+
+  it("with only ONE group configured, returns [] -- zero added visual noise for the common single-group case", () => {
+    const gig = { tier: "red" as const, matchedGroupIds: ["fractional"], matchedGroupTiers: { fractional: "green" as const } };
+    expect(resolveDraftMatchedGroups(gig, [{ id: "fractional", label: "Fractional Work" }])).toEqual([]);
+  });
+
+  it("with zero groups configured (first-run, no config yet), returns [] rather than throwing", () => {
+    const gig = { tier: "green" as const, matchedGroupIds: undefined, matchedGroupTiers: undefined };
+    expect(resolveDraftMatchedGroups(gig, [])).toEqual([]);
+  });
+
+  it("a gig that matched exactly one (non-primary) group shows THAT group's own label and tier, not the flat/primary tier", () => {
+    const gig = { tier: "red" as const, matchedGroupIds: ["drone"], matchedGroupTiers: { drone: "green" as const } };
+    expect(resolveDraftMatchedGroups(gig, groups)).toEqual([{ id: "drone", label: "Drone Services", tier: "green" }]);
+  });
+
+  it("a gig that matched multiple groups shows each with its own tier, never a single ambiguous badge", () => {
+    const gig = {
+      tier: "green" as const,
+      matchedGroupIds: ["fractional", "drone"],
+      matchedGroupTiers: { fractional: "green" as const, drone: "yellow" as const },
+    };
+    expect(resolveDraftMatchedGroups(gig, groups)).toEqual([
+      { id: "fractional", label: "Fractional Work", tier: "green" },
+      { id: "drone", label: "Drone Services", tier: "yellow" },
+    ]);
+  });
+
+  it("a matched group with no scoped tier entry falls back to 'yellow' via resolveDisplayTier's own no-match convention, never the flat tier", () => {
+    const gig = { tier: "red" as const, matchedGroupIds: ["drone"], matchedGroupTiers: undefined };
+    expect(resolveDraftMatchedGroups(gig, groups)).toEqual([{ id: "drone", label: "Drone Services", tier: "yellow" }]);
+  });
+
+  it("a matched id with no corresponding configured group (stale/renamed) falls back to the raw id as its own label instead of being dropped", () => {
+    const gig = { tier: "green" as const, matchedGroupIds: ["deleted-group"], matchedGroupTiers: { "deleted-group": "green" as const } };
+    expect(resolveDraftMatchedGroups(gig, groups)).toEqual([{ id: "deleted-group", label: "deleted-group", tier: "green" }]);
+  });
+
+  it("2+ groups configured but this gig has no matchedGroupIds at all (pre-multi-group data) returns [] -- the Drafts list falls back to the flat tier badge", () => {
+    const gig = { tier: "yellow" as const, matchedGroupIds: undefined, matchedGroupTiers: undefined };
+    expect(resolveDraftMatchedGroups(gig, groups)).toEqual([]);
   });
 });
