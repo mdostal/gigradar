@@ -48,7 +48,7 @@ import { raiseIssue, resolveIssuesForSource } from "../lib/notify/issues.js";
 import { registerAllSources } from "../lib/sources/register-all.js";
 import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting, runStaleGigMaintenance } from "../lib/store/index.js";
 import { getSubmitAdapter } from "../lib/submit/adapter.js";
-import type { ApplyProfileConfig, Config, MatchResult, SourceConfig } from "../lib/types.js";
+import type { ApplyProfileConfig, Config, Gig, MatchResult, SourceConfig } from "../lib/types.js";
 import { BackoffTracker, DEFAULT_MAX_BACKOFF_MS } from "./backoff.js";
 
 /**
@@ -181,11 +181,16 @@ function logCycleSummary(
  * AND `config.applyProfile` set. Either missing logs exactly ONE clear
  * line naming which, and skips auto-drafting entirely for the cycle.
  *
- * Eligibility: `tier === "green"` AND `getDraftFn(gigKey(...)) === undefined`
- * — ANY existing draft, regardless of its status (`draft`/`approved`/
- * `rejected`/`submitted`), excludes a gig from future auto-drafting. Never
- * silently overwrites a decision the user already made about a gig; the user
- * can still manually re-request a draft via the existing dashboard button.
+ * Eligibility: green tier AND in-band rate for at least one in-scope group
+ * (group-aware-auto-draft-and-notify story — see `isGreenInBandForAnyGroup()`
+ * below; NOT limited to the primary group) AND
+ * `getDraftFn(gigKey(...)) === undefined` — ANY existing draft, regardless
+ * of its status (`draft`/`approved`/`rejected`/`submitted`), excludes a gig
+ * from future auto-drafting. Never silently overwrites a decision the user
+ * already made about a gig; the user can still manually re-request a draft
+ * via the existing dashboard button. A draft stays ONE artifact per gig even
+ * when multiple groups match it — only the eligibility check is group-aware,
+ * not the drafting mechanism itself.
  *
  * Each eligible gig's `stageApplicationFn()` call is individually
  * try/caught — one gig's failure is logged and does NOT stop the rest of
@@ -266,6 +271,52 @@ async function attemptAutoFire(
   }
 }
 
+/**
+ * group-aware-auto-draft-and-notify story: true when at least one of the
+ * owner's groups is GREEN tier AND in-band rate for this gig -- the SAME
+ * group must satisfy BOTH checks (a gig green for group A but only in-band
+ * for group B does not count). Mirrors runRadar()'s own already-fixed
+ * precedent for `MatchResult.pass` (see runner.ts's own comment: "'pass'
+ * reflects whether this gig cleared ANY in-scope group, not just the
+ * primary one") -- runAutoDraft()'s eligibility gate below applies that
+ * SAME principle instead of reading the flat, primary-group-only
+ * `gig.tier`/`gig.matchBand`.
+ *
+ * `matchedGroupTiers`/`matchedGroupBands` are unconditionally stamped onto
+ * every gig by a real runRadar() scan (see runner.ts) -- a gig with neither
+ * (only possible for hand-constructed data predating the
+ * multi-group-architecture epic) fails closed here, the same "automation
+ * firing on stale/unclassified data is the worse outcome" discipline
+ * runAutoDraft() already applies to a missing flat `matchBand` below.
+ *
+ * For a single-group install this is byte-identical to the old primary-
+ * group-only check: there is only one group to find, and it IS the
+ * primary group.
+ */
+function isGreenInBandForAnyGroup(gig: Gig): boolean {
+  const tiers = gig.matchedGroupTiers;
+  const bands = gig.matchedGroupBands;
+  if (!tiers) return false;
+  return Object.keys(tiers).some((groupId) => tiers[groupId] === "green" && bands?.[groupId] === "in-band");
+}
+
+/**
+ * group-aware-auto-draft-and-notify story: true when at least one of the
+ * owner's groups is GREEN tier for this gig -- band is deliberately NOT
+ * part of this check, matching runNotifyOnGreenMatch()'s own pre-existing
+ * "tier only" scope (see that function's doc comment; this story doesn't
+ * add a check the original notify-on-green-match story never had). Same
+ * "any in-scope group, not just primary" principle as
+ * isGreenInBandForAnyGroup() above -- see that function's doc comment for
+ * the fail-closed/single-group-byte-identical reasoning, which applies
+ * here identically.
+ */
+function isGreenForAnyGroup(gig: Gig): boolean {
+  const tiers = gig.matchedGroupTiers;
+  if (!tiers) return false;
+  return Object.values(tiers).some((t) => t === "green");
+}
+
 export async function runAutoDraft(
   config: Config,
   passed: MatchResult[],
@@ -298,8 +349,14 @@ export async function runAutoDraft(
   // resolveDisplayBand() fallback (see that file's header comment) --
   // automation firing on stale/unclassified rate data is the worse
   // outcome, display hiding a legitimate historical gig is not.
+  //
+  // group-aware-auto-draft-and-notify story: this used to read the flat
+  // r.tier/r.gig.matchBand (the PRIMARY group's own result only) -- widened
+  // to isGreenInBandForAnyGroup() so a gig that's a real green+in-band
+  // match for a non-primary group is no longer silently skipped. See that
+  // function's own doc comment above.
   const eligible = passed
-    .filter((r) => r.tier === "green" && r.gig.matchBand === "in-band" && getDraftFn(gigKey(r.gig.sourceId, r.gig.externalId)) === undefined)
+    .filter((r) => isGreenInBandForAnyGroup(r.gig) && getDraftFn(gigKey(r.gig.sourceId, r.gig.externalId)) === undefined)
     .slice(0, AUTO_DRAFT_CAP);
 
   let draftedCount = 0;
@@ -337,9 +394,13 @@ export async function runAutoDraft(
  * `passed` matches and `newlyInsertedKeys`, fires ONE best-effort desktop
  * notification (`notifyFn`, `sendDesktopNotification()` unmodified) when the
  * cycle found one or more BRAND-NEW green-tier matches — opt-in via
- * `config.notifyOnGreenMatch`. Never throws: `sendDesktopNotification()`
- * itself never rejects (see its own doc comment), and the call here is still
- * wrapped defensively so a notification can never fail the cycle.
+ * `config.notifyOnGreenMatch`. "Green-tier match" means green for at least
+ * one in-scope group (group-aware-auto-draft-and-notify story — see
+ * `isGreenForAnyGroup()` above; NOT limited to the primary group), same
+ * widening as `runAutoDraft()`'s own eligibility check above. Never throws:
+ * `sendDesktopNotification()` itself never rejects (see its own doc
+ * comment), and the call here is still wrapped defensively so a
+ * notification can never fail the cycle.
  *
  * "New" is `newlyInsertedKeys` (from `runRadar()`'s own `recordScan()`
  * insertion signal) — a gig re-seen on a later scan is never re-notified,
@@ -356,8 +417,14 @@ export async function runNotifyOnGreenMatch(
   if (!config.notifyOnGreenMatch) return;
 
   const newKeys = new Set(newlyInsertedKeys);
+  // group-aware-auto-draft-and-notify story: this used to read the flat
+  // r.tier (the PRIMARY group's own result only) -- widened to
+  // isGreenForAnyGroup() so a brand-new gig that's a real green match for a
+  // non-primary group still triggers a notification. Band is deliberately
+  // NOT part of this check, same as before this story -- see that
+  // function's own doc comment above.
   const newGreenMatches = passed.filter(
-    (r) => r.tier === "green" && newKeys.has(gigKey(r.gig.sourceId, r.gig.externalId)),
+    (r) => isGreenForAnyGroup(r.gig) && newKeys.has(gigKey(r.gig.sourceId, r.gig.externalId)),
   );
 
   if (newGreenMatches.length === 0) return;

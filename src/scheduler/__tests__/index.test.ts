@@ -76,12 +76,27 @@ function emptyResult(): RunRadarResult {
 // eligibility) keeps testing exactly that, unaffected by the additive
 // matchBand check -- see makeMatchResult()'s own matchBand parameter for
 // the tests that specifically need a different value.
+//
+// group-aware-auto-draft-and-notify story: runAutoDraft()/
+// runNotifyOnGreenMatch() now read matchedGroupTiers/matchedGroupBands
+// (per-GROUP, keyed by groupId) instead of the flat tier/matchBand fields --
+// stamped here under makeConfig()'s own single group id ("g1") so every
+// existing test in this file (which only ever sets the flat fields) keeps
+// exercising exactly the single-group case it always has, byte-identical.
 function makeGig(externalId: string, sourceId = "braintrust", matchBand: Gig["matchBand"] = "in-band"): Gig {
-  return { sourceId, externalId, title: `Gig ${externalId}`, url: `https://example.test/${sourceId}/${externalId}`, matchBand };
+  return {
+    sourceId,
+    externalId,
+    title: `Gig ${externalId}`,
+    url: `https://example.test/${sourceId}/${externalId}`,
+    matchBand,
+    matchedGroupBands: { g1: matchBand },
+  };
 }
 
 function makeMatchResult(externalId: string, tier: Tier, sourceId = "braintrust", matchBand: Gig["matchBand"] = "in-band"): MatchResult {
-  return { gig: makeGig(externalId, sourceId, matchBand), pass: true, reasons: [], score: 1, tier, matchBand, matchedProfiles: [] };
+  const gig = { ...makeGig(externalId, sourceId, matchBand), matchedGroupTiers: { g1: tier } };
+  return { gig, pass: true, reasons: [], score: 1, tier, matchBand, matchedProfiles: [] };
 }
 
 let activeHandles: SchedulerHandle[] = [];
