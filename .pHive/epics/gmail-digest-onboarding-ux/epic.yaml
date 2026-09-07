@@ -1,0 +1,14 @@
+name: gmail-digest-onboarding-ux
+title: One-click "Add email digest source" button, mirroring the one-click custom-source button
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+
+stories:
+  - id: one-click-add-gmail-digest-source
+    title: One-click "Add email digest source" button, mirroring the one-click custom-source button
+    complexity: low
+    depends_on: []
+
+references:
+  - path: .pHive/epics/dynamic-groups-band-audit/stories/dynamic-onboarding-ux-fixes.yaml
+    relevant_excerpt: "The exact one-click-add-button pattern (handleAddCustomSource()) this epic mirrors for the Gmail-digest case."
