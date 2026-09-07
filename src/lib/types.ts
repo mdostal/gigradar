@@ -476,10 +476,29 @@ export interface Config {
  * threshold -- see `approvedCount()`/`isGraduated()` in
  * `src/lib/apply/autofire.ts`. `dailyCap` bounds how many auto-fires this
  * pair can trigger per day even once graduated and enabled.
+ *
+ * `groupId` (group-aware-auto-fire-trust story, group-scoped-automation-
+ * fixes epic) is OPTIONAL. `undefined` -- the default, and every rule
+ * configured before this field existed -- means "applies regardless of
+ * which of the owner's groups matched," byte-identical to this rule's
+ * behavior before `groupId` existed. An explicit `groupId` scopes the
+ * rule to gigs that are green-tier for THAT SPECIFIC group (via
+ * `Gig.matchedGroupTiers?.[groupId]`, never the flat `Gig.tier`) --
+ * mirrors `SourceConfig.groupIds`'s own established "unscoped = every
+ * group, explicit = just these" convention (see that field's own doc
+ * comment) rather than inventing a second convention for the same shape
+ * of problem. See `src/lib/apply/autofire.ts`'s `findAutoFireRule()`/
+ * `evaluateAutoFire()` for the full matching/precedence contract, and
+ * `.pHive/epics/group-scoped-automation-fixes/docs/design-discussion.md`
+ * §2 for the full rationale (this is the safer default for a trust
+ * system: an ungraduated group's gigs never silently inherit another
+ * group's already-earned trust).
  */
 export interface AutoFireRuleConfig {
   sourceId: string;
   tier: Tier;
+  /** See this interface's own doc comment above. Omitted means "any group." */
+  groupId?: string;
   enabled: boolean;
   minApprovals: number;
   dailyCap: number;

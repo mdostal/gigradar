@@ -260,6 +260,8 @@ interface DraftApplyProfile {
 interface DraftAutoFireRule {
   sourceId: string;
   tier: Tier;
+  /** group-aware-auto-fire-trust story. Undefined means "any group" — see AutoFireRuleConfig's own doc comment in types.ts. */
+  groupId?: string;
   enabled: boolean;
   minApprovals: string;
   dailyCap: string;
@@ -451,6 +453,7 @@ function configToDraft(config: Config): DraftConfig {
       rules: (config.autoFire?.rules ?? []).map((r) => ({
         sourceId: r.sourceId,
         tier: r.tier,
+        groupId: r.groupId,
         enabled: r.enabled,
         minApprovals: String(r.minApprovals),
         dailyCap: String(r.dailyCap),
@@ -658,6 +661,7 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
     rules: draft.autoFire.rules.map((r) => ({
       sourceId: r.sourceId,
       tier: r.tier,
+      ...(r.groupId !== undefined && { groupId: r.groupId }),
       enabled: r.enabled,
       minApprovals: draftNumber(r.minApprovals),
       dailyCap: draftNumber(r.dailyCap),
@@ -1503,16 +1507,19 @@ type TrustStatus = { status: "idle" } | { status: "loading" } | { status: "loade
 function AutoFireRulesEditor({
   rules,
   onChange,
+  groups,
 }: {
   rules: DraftAutoFireRule[];
   onChange: (next: DraftAutoFireRule[]) => void;
+  /** group-aware-auto-fire-trust story. The Group selector below only shows when there's more than one — same `draft.groups.length > 1` gate `SourceConfig.groupIds`'s own "Scoped to groups" checkboxes use. */
+  groups: DraftGroup[];
 }) {
   const [statusByIndex, setStatusByIndex] = useState<Record<number, TrustStatus>>({});
 
   async function checkStatus(i: number, rule: DraftAutoFireRule) {
     if (rule.sourceId.trim() === "") return;
     setStatusByIndex((prev) => ({ ...prev, [i]: { status: "loading" } }));
-    const result = await getAutoFireApprovedCountAction(rule.sourceId, rule.tier);
+    const result = await getAutoFireApprovedCountAction(rule.sourceId, rule.tier, rule.groupId);
     setStatusByIndex((prev) => ({
       ...prev,
       [i]: result.ok ? { status: "loaded", approvedCount: result.data } : { status: "error", message: result.error },
@@ -1559,6 +1566,26 @@ function AutoFireRulesEditor({
                   ))}
                 </select>
               </label>
+              {groups.length > 1 && (
+                <label>
+                  <span className={labelClass}>Group</span>
+                  <select
+                    value={r.groupId ?? ""}
+                    onChange={(e) => {
+                      const groupId = e.target.value === "" ? undefined : e.target.value;
+                      onChange(rules.map((rr, idx) => (idx === i ? { ...rr, groupId } : rr)));
+                    }}
+                    className={inputClass}
+                  >
+                    <option value="">Any group</option>
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.label || "(untitled group)"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label>
                 <span className={labelClass}>Min approvals to graduate</span>
                 <input
@@ -3234,6 +3261,7 @@ export function ConfigClient({
         <AutoFireRulesEditor
           rules={draft.autoFire.rules}
           onChange={(rules) => setDraft({ ...draft, autoFire: { ...draft.autoFire, rules } })}
+          groups={draft.groups}
         />
       </section>
       )}

@@ -692,19 +692,22 @@ export async function removeResumeAction(): Promise<ActionResult<null>> {
 
 /**
  * Read-only trust-status lookup for one `(sourceId, tier)` auto-fire pair
- * (graduated-auto-fire-trust epic) — the `/config` Auto-fire section's
- * "Check status" button calls this. Wraps `approvedCount()`
- * (`src/lib/apply/autofire.ts`) directly: a plain SQL read against the real
- * approval history, never mutates anything, no `revalidatePath()` call (the
- * pattern every OTHER action in this file follows after a write — this one
- * is deliberately not a write). `minApprovals`/graduated-or-not is computed
- * client-side against the CURRENT (possibly unsaved) draft form value, not
- * here — this action only reports the one real number it can answer:
- * how many approvals actually exist right now for this pair.
+ * (graduated-auto-fire-trust epic), optionally scoped to `groupId`
+ * (group-aware-auto-fire-trust story — see `approvedCount()`'s own doc
+ * comment in autofire.ts for what scoping actually filters on) — the
+ * `/config` Auto-fire section's "Check status" button calls this. Wraps
+ * `approvedCount()` (`src/lib/apply/autofire.ts`) directly: a plain SQL
+ * read against the real approval history, never mutates anything, no
+ * `revalidatePath()` call (the pattern every OTHER action in this file
+ * follows after a write — this one is deliberately not a write).
+ * `minApprovals`/graduated-or-not is computed client-side against the
+ * CURRENT (possibly unsaved) draft form value, not here — this action only
+ * reports the one real number it can answer: how many approvals actually
+ * exist right now for this pair (and group, if scoped).
  */
-export async function getAutoFireApprovedCountAction(sourceId: string, tier: Tier): Promise<ActionResult<number>> {
+export async function getAutoFireApprovedCountAction(sourceId: string, tier: Tier, groupId?: string): Promise<ActionResult<number>> {
   try {
-    return actionOk(approvedCount(sourceId, tier));
+    return actionOk(approvedCount(sourceId, tier, { groupId }));
   } catch (e) {
     return actionErr(e);
   }

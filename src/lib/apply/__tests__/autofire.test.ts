@@ -52,6 +52,44 @@ function seedApprovedDraft(sourceId: string, externalId: string, tier: Gig["tier
   setDraftStatus(gigKey, "approved", { db, now: "2026-01-01T00:00:00.000Z" });
 }
 
+/**
+ * group-aware-auto-fire-trust story. Same shape as seedApprovedDraft()
+ * above, but stamps `matchedGroupTiers` (and matching `matchedGroupBands`
+ * when `matchBand` is given) onto the gig -- what a real multi-group
+ * runRadar() scan produces, and what approvedCount()/isGraduated()'s own
+ * `groupId` scoping filters on (never the flat `gigs.tier` column for a
+ * scoped query).
+ */
+function seedApprovedDraftForGroups(
+  sourceId: string,
+  externalId: string,
+  matchedGroupTiers: Record<string, Gig["tier"]>,
+  opts: { flatTier?: Gig["tier"]; matchBand?: Gig["matchBand"]; matchedGroupBands?: Record<string, Gig["matchBand"]> } = {},
+): string {
+  recordScan(
+    [
+      {
+        sourceId,
+        gigs: [
+          makeGig({
+            sourceId,
+            externalId,
+            tier: opts.flatTier,
+            matchBand: opts.matchBand,
+            matchedGroupTiers: matchedGroupTiers as Gig["matchedGroupTiers"],
+            matchedGroupBands: opts.matchedGroupBands as Gig["matchedGroupBands"],
+          }),
+        ],
+      },
+    ],
+    { db, now: "2026-01-01T00:00:00.000Z" },
+  );
+  const gigKey = `${sourceId}:${externalId}`;
+  saveDraft(gigKey, { coverText: "hi", answers: {} }, { db, now: "2026-01-01T00:00:00.000Z" });
+  setDraftStatus(gigKey, "approved", { db, now: "2026-01-01T00:00:00.000Z" });
+  return gigKey;
+}
+
 function seedDraftWithStatus(
   sourceId: string,
   externalId: string,
@@ -88,6 +126,31 @@ describe("approvedCount", () => {
 
   it("returns 0 when nothing has ever been approved for the pair", () => {
     expect(approvedCount("src-a", "green", { db })).toBe(0);
+  });
+
+  describe("group-aware-auto-fire-trust story — opts.groupId scoping", () => {
+    it("a group-scoped query counts ONLY approvals whose gig was green for that specific group, never another group's approvals for the same sourceId+tier", () => {
+      // 3 approvals green for group-a, 1 approval green for group-b -- same
+      // sourceId+tier pair throughout. flatTier: "green" on all of them so
+      // the UNSCOPED assertion below (which reads the flat gigs.tier column,
+      // exactly as it always has) has something real to count.
+      seedApprovedDraftForGroups("src-a", "a1", { "group-a": "green" }, { flatTier: "green" });
+      seedApprovedDraftForGroups("src-a", "a2", { "group-a": "green" }, { flatTier: "green" });
+      seedApprovedDraftForGroups("src-a", "a3", { "group-a": "green" }, { flatTier: "green" });
+      seedApprovedDraftForGroups("src-a", "b1", { "group-b": "green" }, { flatTier: "green" });
+
+      expect(approvedCount("src-a", "green", { db, groupId: "group-a" })).toBe(3);
+      expect(approvedCount("src-a", "green", { db, groupId: "group-b" })).toBe(1);
+      // Unscoped stays exactly what it always was -- every approval for the pair, regardless of group.
+      expect(approvedCount("src-a", "green", { db })).toBe(4);
+    });
+
+    it("a gig green for MULTIPLE groups counts toward every one of those groups' own scoped queries", () => {
+      seedApprovedDraftForGroups("src-a", "both", { "group-a": "green", "group-b": "green" });
+
+      expect(approvedCount("src-a", "green", { db, groupId: "group-a" })).toBe(1);
+      expect(approvedCount("src-a", "green", { db, groupId: "group-b" })).toBe(1);
+    });
   });
 });
 
@@ -126,6 +189,23 @@ describe("isGraduated — the owner's exact worked example (3-approval threshold
     const config = {} as Config;
     expect(isGraduated("src-a", "green", config, { db })).toBe(false);
   });
+
+  it("group-aware-auto-fire-trust story: a group-scoped rule's graduation status is isolated to that group's own approvals -- another group's approvals for the same sourceId+tier never count toward it", () => {
+    const scopedRule = { sourceId: "src-a", tier: "green" as const, groupId: "group-b", enabled: true, minApprovals: 2, dailyCap: 3 };
+    const config = { autoFire: { rules: [scopedRule] } } as Config;
+
+    // 3 approvals for group-a (well over the threshold) -- must not count toward group-b's rule.
+    seedApprovedDraftForGroups("src-a", "a1", { "group-a": "green" });
+    seedApprovedDraftForGroups("src-a", "a2", { "group-a": "green" });
+    seedApprovedDraftForGroups("src-a", "a3", { "group-a": "green" });
+    expect(isGraduated("src-a", "green", config, { db, groupId: "group-b" })).toBe(false);
+
+    // Only once group-b itself accumulates its own 2 approvals does it graduate.
+    seedApprovedDraftForGroups("src-a", "b1", { "group-b": "green" });
+    expect(isGraduated("src-a", "green", config, { db, groupId: "group-b" })).toBe(false);
+    seedApprovedDraftForGroups("src-a", "b2", { "group-b": "green" });
+    expect(isGraduated("src-a", "green", config, { db, groupId: "group-b" })).toBe(true);
+  });
 });
 
 describe("findAutoFireRule", () => {
@@ -138,6 +218,34 @@ describe("findAutoFireRule", () => {
     const config = { autoFire: RULE_3 } as Config;
     expect(findAutoFireRule("src-a", "yellow", config)).toBeUndefined();
     expect(findAutoFireRule("src-b", "green", config)).toBeUndefined();
+  });
+
+  describe("group-aware-auto-fire-trust story — groupId scoping", () => {
+    it("an unscoped rule (groupId undefined) still matches ANY groupId passed in -- backward compat", () => {
+      const config = { autoFire: RULE_3 } as Config; // RULE_3's rule has no groupId at all
+      expect(findAutoFireRule("src-a", "green", config, "group-a")).toEqual(RULE_3!.rules[0]);
+      expect(findAutoFireRule("src-a", "green", config, "group-b")).toEqual(RULE_3!.rules[0]);
+    });
+
+    it("a rule WITH an explicit groupId only matches that same groupId, never a different one, even for the same sourceId+tier", () => {
+      const scopedRule = { sourceId: "src-a", tier: "green" as const, groupId: "group-b", enabled: true, minApprovals: 1, dailyCap: 1 };
+      const config = { autoFire: { rules: [scopedRule] } } as Config;
+
+      expect(findAutoFireRule("src-a", "green", config, "group-b")).toEqual(scopedRule);
+      expect(findAutoFireRule("src-a", "green", config, "group-a")).toBeUndefined();
+      // No groupId passed at all -- a scoped rule must never leak into a groupless lookup.
+      expect(findAutoFireRule("src-a", "green", config)).toBeUndefined();
+    });
+
+    it("prefers an EXACT (sourceId, tier, groupId) match over a co-existing unscoped rule for the same pair", () => {
+      const unscopedRule = { sourceId: "src-a", tier: "green" as const, enabled: true, minApprovals: 3, dailyCap: 3 };
+      const scopedRule = { sourceId: "src-a", tier: "green" as const, groupId: "group-b", enabled: true, minApprovals: 1, dailyCap: 1 };
+      const config = { autoFire: { rules: [unscopedRule, scopedRule] } } as Config;
+
+      expect(findAutoFireRule("src-a", "green", config, "group-b")).toEqual(scopedRule);
+      // A different group falls back to the unscoped rule (still "any group").
+      expect(findAutoFireRule("src-a", "green", config, "group-a")).toEqual(unscopedRule);
+    });
   });
 });
 
@@ -428,5 +536,108 @@ describe("evaluateAutoFire — the full decision tree, every stop point independ
     evaluateAutoFire(gigKey, CONFIG, { db, now: "2026-01-01T00:00:00.000Z" });
     evaluateAutoFire(gigKey, CONFIG, { db, now: "2026-01-02T00:00:00.000Z" });
     expect(listAutoFireDecisions(gigKey, { db })).toHaveLength(2);
+  });
+
+  describe("group-aware-auto-fire-trust story", () => {
+    const MULTI_GROUP_ADAPTER_ID = "test-group-aware-autofire-adapter";
+    registerSubmitAdapter({ id: MULTI_GROUP_ADAPTER_ID, submit: async () => ({ ok: true, confirmation: "n/a" }) });
+
+    const TWO_GROUPS = [
+      { id: "group-a", label: "Group A" },
+      { id: "group-b", label: "Group B" },
+    ];
+
+    /** Same shape as seedReadyGig() above, but stamps per-group matchedGroupTiers/matchedGroupBands instead of the flat tier/matchBand. */
+    function seedReadyGigForGroups(externalId: string, matchedGroupTiers: Record<string, Gig["tier"]>, matchedGroupBands: Record<string, Gig["matchBand"]>): string {
+      recordScan(
+        [
+          {
+            sourceId: MULTI_GROUP_ADAPTER_ID,
+            gigs: [
+              makeGig({
+                sourceId: MULTI_GROUP_ADAPTER_ID,
+                externalId,
+                matchedGroupTiers: matchedGroupTiers as Gig["matchedGroupTiers"],
+                matchedGroupBands: matchedGroupBands as Gig["matchedGroupBands"],
+              }),
+            ],
+          },
+        ],
+        { db, now: "2026-01-01T00:00:00.000Z" },
+      );
+      const gigKey = `${MULTI_GROUP_ADAPTER_ID}:${externalId}`;
+      saveDraft(gigKey, GOOD_CONTENT, { db, now: "2026-01-01T00:00:00.000Z" });
+      return gigKey;
+    }
+
+    it("regression: an existing (no-groupId) rule fires for a multi-group gig via ANY matched green group, and its graduation count stays global -- completely unchanged from single-group behavior", () => {
+      // 3 approvals, split across two different groups -- an unscoped rule's
+      // count has always been global (read off the flat gigs.tier column),
+      // and must stay global -- flatTier: "green" on all of them so that
+      // column has something real to count, same as every real gig would.
+      seedApprovedDraftForGroups(MULTI_GROUP_ADAPTER_ID, "reg-a", { "group-a": "green" }, { flatTier: "green" });
+      seedApprovedDraftForGroups(MULTI_GROUP_ADAPTER_ID, "reg-b", { "group-b": "green" }, { flatTier: "green" });
+      seedApprovedDraftForGroups(MULTI_GROUP_ADAPTER_ID, "reg-c", { "group-a": "green" }, { flatTier: "green" });
+
+      const rule = { sourceId: MULTI_GROUP_ADAPTER_ID, tier: "green" as const, enabled: true, minApprovals: 3, dailyCap: 3 };
+      const config: Config = { groups: TWO_GROUPS, autoFire: { rules: [rule] } } as Config;
+
+      // Only green for group-b -- an unscoped rule must still fire (mirrors
+      // isGreenForAnyGroup()'s "any in-scope group" principle).
+      const gigKey = seedReadyGigForGroups("reg-1", { "group-b": "green" }, { "group-b": "in-band" });
+
+      const decision = evaluateAutoFire(gigKey, config, { db, now: "2026-01-02T00:00:00.000Z" });
+      expect(decision.fired).toBe(true);
+      expect(decision.ruleSnapshot).toEqual(rule);
+    });
+
+    it("a NEW rule with an explicit groupId only fires for gigs green-tier under THAT group -- never a different group's green match, even the same sourceId+tier", () => {
+      const scopedRule = { sourceId: MULTI_GROUP_ADAPTER_ID, tier: "green" as const, groupId: "group-b", enabled: true, minApprovals: 1, dailyCap: 3 };
+      const config: Config = { groups: TWO_GROUPS, autoFire: { rules: [scopedRule] } } as Config;
+
+      seedApprovedDraftForGroups(MULTI_GROUP_ADAPTER_ID, "grad", { "group-b": "green" }); // graduates the group-b rule (minApprovals: 1)
+
+      // Green for group-a only -- the group-b-scoped rule must NOT apply.
+      const gigKeyA = seedReadyGigForGroups("gig-a-only", { "group-a": "green" }, { "group-a": "in-band" });
+      const decisionA = evaluateAutoFire(gigKeyA, config, { db, now: "2026-01-02T00:00:00.000Z" });
+      expect(decisionA.fired).toBe(false);
+      expect(decisionA.reasons[0]).toMatch(/no auto-fire rule configured/);
+
+      // Green for group-b -- the scoped rule applies and fires.
+      const gigKeyB = seedReadyGigForGroups("gig-b-only", { "group-b": "green" }, { "group-b": "in-band" });
+      const decisionB = evaluateAutoFire(gigKeyB, config, { db, now: "2026-01-02T00:00:00.000Z" });
+      expect(decisionB.fired).toBe(true);
+      expect(decisionB.ruleSnapshot).toEqual(scopedRule);
+    });
+
+    it("precedence: a DISABLED rule on an earlier-declared group never blocks a LATER group's enabled, graduated rule from firing (avoids a real under-fire regression)", () => {
+      const disabledOnA = { sourceId: MULTI_GROUP_ADAPTER_ID, tier: "green" as const, groupId: "group-a", enabled: false, minApprovals: 1, dailyCap: 3 };
+      const enabledOnB = { sourceId: MULTI_GROUP_ADAPTER_ID, tier: "green" as const, groupId: "group-b", enabled: true, minApprovals: 1, dailyCap: 3 };
+      const config: Config = { groups: TWO_GROUPS, autoFire: { rules: [disabledOnA, enabledOnB] } } as Config;
+
+      seedApprovedDraftForGroups(MULTI_GROUP_ADAPTER_ID, "grad-b", { "group-b": "green" }); // graduates group-b's rule
+
+      // Green for BOTH groups -- group-a (declared first) only has a disabled rule.
+      const gigKey = seedReadyGigForGroups("both-groups", { "group-a": "green", "group-b": "green" }, { "group-a": "in-band", "group-b": "in-band" });
+      const decision = evaluateAutoFire(gigKey, config, { db, now: "2026-01-02T00:00:00.000Z" });
+
+      expect(decision.fired).toBe(true);
+      expect(decision.ruleSnapshot).toEqual(enabledOnB);
+    });
+
+    it("precedence: when MULTIPLE groups each have an enabled, applicable rule, the FIRST group in config.groups' own declared order wins, deterministically", () => {
+      const ruleOnA = { sourceId: MULTI_GROUP_ADAPTER_ID, tier: "green" as const, groupId: "group-a", enabled: true, minApprovals: 1, dailyCap: 3 };
+      const ruleOnB = { sourceId: MULTI_GROUP_ADAPTER_ID, tier: "green" as const, groupId: "group-b", enabled: true, minApprovals: 1, dailyCap: 3 };
+      const config: Config = { groups: TWO_GROUPS, autoFire: { rules: [ruleOnA, ruleOnB] } } as Config;
+
+      seedApprovedDraftForGroups(MULTI_GROUP_ADAPTER_ID, "grad-a", { "group-a": "green" });
+      seedApprovedDraftForGroups(MULTI_GROUP_ADAPTER_ID, "grad-b2", { "group-b": "green" });
+
+      const gigKey = seedReadyGigForGroups("both-groups-2", { "group-a": "green", "group-b": "green" }, { "group-a": "in-band", "group-b": "in-band" });
+      const decision = evaluateAutoFire(gigKey, config, { db, now: "2026-01-02T00:00:00.000Z" });
+
+      expect(decision.fired).toBe(true);
+      expect(decision.ruleSnapshot).toEqual(ruleOnA);
+    });
   });
 });
