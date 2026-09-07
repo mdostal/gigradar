@@ -30,7 +30,7 @@ vi.mock("../../config/llm-client.js", async (importOriginal) => {
 });
 
 import { NoOutputGeneratedError } from "ai";
-import { applyAiVerification, verifyGroupMatch } from "../ai-verify.js";
+import { AI_VERIFY_TIMEOUT_MS, applyAiVerification, verifyGroupMatch } from "../ai-verify.js";
 import { saveResume } from "../../documents/resume-store.js";
 
 beforeEach(() => {
@@ -140,14 +140,14 @@ describe("applyAiVerification: orchestration", () => {
   it("is a no-op (no LLM call, matchedGroupIds/aiFlags unchanged) when no matched group has aiVerify on", async () => {
     const result = await applyAiVerification(FINANCE_GIG, [NO_AI_GROUP.id], groupsById, REAL_PROFILE, undefined, CREDENTIAL);
 
-    expect(result).toEqual({ matchedGroupIds: [NO_AI_GROUP.id], aiFlags: {} });
+    expect(result).toEqual({ matchedGroupIds: [NO_AI_GROUP.id], aiFlags: {}, callsMade: 0 });
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("is a no-op when a group has aiVerify on but no LLM credential resolved this cycle", async () => {
     const result = await applyAiVerification(FINANCE_GIG, [AI_GROUP.id], groupsById, REAL_PROFILE, undefined, undefined);
 
-    expect(result).toEqual({ matchedGroupIds: [AI_GROUP.id], aiFlags: {} });
+    expect(result).toEqual({ matchedGroupIds: [AI_GROUP.id], aiFlags: {}, callsMade: 0 });
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
@@ -186,6 +186,113 @@ describe("applyAiVerification: orchestration", () => {
     expect(result.matchedGroupIds).toEqual([AI_GROUP.id]);
     expect(result.aiFlags).toEqual({});
     expect(console.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports callsMade equal to the number of groups actually verified", async () => {
+    mockGenerateText.mockResolvedValueOnce({ output: { confirmed: true, reason: "Fine." } });
+
+    const result = await applyAiVerification(FINANCE_GIG, [NO_AI_GROUP.id, AI_GROUP.id], groupsById, REAL_PROFILE, undefined, CREDENTIAL);
+
+    expect(result.callsMade).toBe(1);
+  });
+
+  // ai-verify-timeout-and-cap story (triage t-003): a deliberately-hung
+  // test double for the underlying LLM call (never resolves, never rejects
+  // -- standing in for a genuinely slow/stuck real `claude` CLI subprocess
+  // or API call) must not block this function past its own timeout
+  // deadline. Same vi.useFakeTimers()/advanceTimersByTimeAsync() pattern
+  // rank-bucket-ai-overlay.test.ts's own sibling test (t-002) established.
+  it("falls back to the heuristic result, logging a warning, when the AI call never settles within AI_VERIFY_TIMEOUT_MS -- never blocks the per-gig loop", async () => {
+    vi.useFakeTimers();
+    try {
+      mockGenerateText.mockImplementationOnce(
+        () =>
+          new Promise(() => {
+            // Deliberately never resolves or rejects.
+          }),
+      );
+
+      const resultPromise = applyAiVerification(FINANCE_GIG, [AI_GROUP.id], groupsById, REAL_PROFILE, undefined, CREDENTIAL);
+      // Advance exactly the real, documented per-call deadline -- proves
+      // this function's OWN timeout fires (not merely that the test waited
+      // long enough for something else to happen). Without a real timeout,
+      // this promise would never settle and the test itself would hang.
+      await vi.advanceTimersByTimeAsync(AI_VERIFY_TIMEOUT_MS);
+      const result = await resultPromise;
+
+      expect(result.matchedGroupIds).toEqual([AI_GROUP.id]);
+      expect(result.aiFlags).toEqual({});
+      expect(result.callsMade).toBe(1);
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("AI verification failed"));
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("timed out after"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves normally (no fallback) when the AI call settles comfortably before the timeout deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      mockGenerateText.mockResolvedValueOnce({ output: { confirmed: true, reason: "Fast, real answer." } });
+      const resultPromise = applyAiVerification(FINANCE_GIG, [AI_GROUP.id], groupsById, REAL_PROFILE, undefined, CREDENTIAL);
+      // Only advance a little -- proves a normal, fast-settling call is
+      // NOT false-positive-killed by the timeout race.
+      await vi.advanceTimersByTimeAsync(10);
+      const result = await resultPromise;
+      expect(result.matchedGroupIds).toEqual([AI_GROUP.id]);
+      expect(result.aiFlags).toEqual({ [AI_GROUP.id]: { confirmed: true, reason: "Fast, real answer." } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ai-verify-timeout-and-cap story (triage t-003): proves the
+  // `remainingCap` parameter (apply/runner.ts's own AI_VERIFY_CAP budget,
+  // threaded through per this function's own doc comment) actually stops
+  // this function from calling out once exhausted, leaving any further
+  // group's heuristic match untouched for this cycle.
+  describe("remainingCap (AI_VERIFY_CAP enforcement, triage t-003)", () => {
+    const SECOND_AI_GROUP: GroupConfig = { ...CTO_GROUP, id: "ai-on-2", aiVerify: true };
+    const groupsByIdWithTwoAiGroups = new Map([
+      [AI_GROUP.id, AI_GROUP],
+      [SECOND_AI_GROUP.id, SECOND_AI_GROUP],
+    ]);
+
+    it("makes zero calls and reports callsMade: 0 when remainingCap is 0", async () => {
+      const result = await applyAiVerification(FINANCE_GIG, [AI_GROUP.id], groupsById, REAL_PROFILE, undefined, CREDENTIAL, 0);
+
+      expect(mockGenerateText).not.toHaveBeenCalled();
+      expect(result).toEqual({ matchedGroupIds: [AI_GROUP.id], aiFlags: {}, callsMade: 0 });
+    });
+
+    it("verifies only up to remainingCap groups, leaving the rest's heuristic match untouched with no aiFlags entry", async () => {
+      mockGenerateText.mockResolvedValueOnce({ output: { confirmed: true, reason: "First group, within cap." } });
+
+      const result = await applyAiVerification(
+        FINANCE_GIG,
+        [AI_GROUP.id, SECOND_AI_GROUP.id],
+        groupsByIdWithTwoAiGroups,
+        REAL_PROFILE,
+        undefined,
+        CREDENTIAL,
+        1,
+      );
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+      expect(result.callsMade).toBe(1);
+      expect(result.matchedGroupIds).toEqual([AI_GROUP.id, SECOND_AI_GROUP.id]);
+      expect(result.aiFlags).toEqual({ [AI_GROUP.id]: { confirmed: true, reason: "First group, within cap." } });
+      expect(result.aiFlags[SECOND_AI_GROUP.id]).toBeUndefined();
+    });
+
+    it("defaults to unlimited (no remainingCap passed) -- every pre-existing caller's behavior is unaffected", async () => {
+      mockGenerateText.mockResolvedValueOnce({ output: { confirmed: true, reason: "One." } }).mockResolvedValueOnce({ output: { confirmed: true, reason: "Two." } });
+
+      const result = await applyAiVerification(FINANCE_GIG, [AI_GROUP.id, SECOND_AI_GROUP.id], groupsByIdWithTwoAiGroups, REAL_PROFILE, undefined, CREDENTIAL);
+
+      expect(mockGenerateText).toHaveBeenCalledTimes(2);
+      expect(result.callsMade).toBe(2);
+    });
   });
 });
 

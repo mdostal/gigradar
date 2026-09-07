@@ -31,7 +31,7 @@
 import { type FilePart, NoOutputGeneratedError, Output, type TextPart, generateText } from "ai";
 import { z } from "zod";
 import type { ApplyProfileConfig, Gig, GroupConfig, Profile } from "../types.js";
-import { createAiSdkModel, generateHarnessObject, toHarnessContentBlocks } from "../config/llm-client.js";
+import { createAiSdkModel, generateHarnessObject, raceWithTimeout, toHarnessContentBlocks } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 import { loadResume, pickResume } from "../documents/resume-store.js";
 import { buildResumeContentBlock } from "../profile-ingestion/extract.js";
@@ -186,6 +186,37 @@ export async function verifyGroupMatch(
 }
 
 /**
+ * ai-verify-timeout-and-cap story (triage t-003, p1/major): the SAME real
+ * risk `RANK_BUCKET_AI_OVERLAY_TIMEOUT_MS` (rank-bucket-ai-overlay.ts, t-002)
+ * exists to bound -- this module's own header comment already states its
+ * philosophy explicitly ("never a replacement for the heuristic"), so a
+ * timeout here is philosophically identical to the AI verification being
+ * unavailable. Both real owner groups (`fractional-hourly`, `full-time`)
+ * have `aiVerify: true`, so `applyAiVerification()`'s per-gig
+ * `verifyGroupMatch()` call is confirmed live/active, not hypothetical.
+ *
+ * 20_000ms: identical value and reasoning to `RANK_BUCKET_AI_OVERLAY_TIMEOUT_MS`
+ * -- this is the SAME shape of call (a single structured-output round trip
+ * to either a resolved API-key model or the local `claude` CLI harness,
+ * via the same `createAiSdkModel()`/`generateHarnessObject()` factories
+ * rank-bucket-ai-overlay.ts's `suggestRankBucket()` uses), so the same
+ * live-observed ~10-15s real subprocess/API norm and ~2x headroom applies
+ * without needing a second, independently-justified number. The only
+ * addition this call makes over `suggestRankBucket()`'s prompt is the
+ * candidate's tracked background/resume text -- not a materially larger
+ * or slower round trip.
+ */
+export const AI_VERIFY_TIMEOUT_MS = 20_000;
+
+/** Thrown by {@link applyAiVerification} when `AI_VERIFY_TIMEOUT_MS` elapses before one `verifyGroupMatch()` call settles. Caught by the SAME catch block that already handles a real thrown API error -- a timeout is philosophically identical to "AI verification unavailable this cycle" (this file's header comment), so it falls back to the heuristic result exactly like any other failure, with a distinguishable log message. Exported for this story's own regression test. */
+export class AiVerifyTimeoutError extends Error {
+  constructor(groupId: string, timeoutMs: number) {
+    super(`AI verification for group "${groupId}" timed out after ${timeoutMs}ms`);
+    this.name = "AiVerifyTimeoutError";
+  }
+}
+
+/**
  * Orchestrates verifyGroupMatch() across every group `gig` heuristically
  * matched that has `aiVerify: true` -- the one call site apply/runner.ts's
  * main loop needs. A group with `aiVerify` off/unset is left completely
@@ -195,11 +226,40 @@ export async function verifyGroupMatch(
  * one: the heuristic result stands untouched, nothing throws.
  *
  * A per-group verifyGroupMatch() call that itself throws (API error, rate
- * limit, malformed response) NEVER silently drops that group from
- * `matchedGroupIds` -- the heuristic match stands for that group, this
- * cycle, with a console warning naming the gig/group, exactly like a
- * failed desktop notification in notifyOnGreenMatch's own handling never
- * fails the scan around it.
+ * limit, malformed response), OR fails to settle within `timeoutMs`
+ * (ai-verify-timeout-and-cap story, triage t-003 -- see
+ * `AI_VERIFY_TIMEOUT_MS`'s own doc comment above), NEVER silently drops
+ * that group from `matchedGroupIds` -- the heuristic match stands for that
+ * group, this cycle, with a console warning naming the gig/group, exactly
+ * like a failed desktop notification in notifyOnGreenMatch's own handling
+ * never fails the scan around it.
+ *
+ * `remainingCap` (default: unlimited, for every pre-existing caller/test)
+ * is apply/runner.ts's own remaining `AI_VERIFY_CAP` budget for this scan
+ * cycle (that constant, and the single running per-cycle counter, live in
+ * apply/runner.ts -- exactly where `RANK_BUCKET_AI_OVERLAY_CAP` and its own
+ * counter live, see runner.ts's own doc comment on both) -- once exhausted,
+ * any further group in `toVerify` is skipped entirely (no LLM call, no
+ * aiFlags entry, heuristic match stands unchanged), same "self-heals on a
+ * later scan" posture as `RANK_BUCKET_AI_OVERLAY_CAP`.
+ *
+ * The cap is checked HERE, inside this function's own per-group loop,
+ * rather than in apply/runner.ts's per-gig loop like
+ * `RANK_BUCKET_AI_OVERLAY_CAP` is: that cap's call site loops over (gig,
+ * group) pairs directly in runner.ts, one `applyRankBucketAiOverlay()` call
+ * per pair, so runner.ts can cheaply check-and-skip before each call.
+ * `applyAiVerification()` is instead called ONCE per gig and internally
+ * loops over every matched, opted-in group itself -- moving that loop out
+ * to runner.ts just to place the cap check there would mean duplicating
+ * this function's own group-filtering/aiFlags-building logic at the call
+ * site. Passing the remaining budget in and reporting back how many calls
+ * were actually made (`callsMade`) keeps the cap enforcement colocated
+ * with the loop it bounds, while runner.ts still owns the cap's value and
+ * its single per-cycle counter.
+ *
+ * `timeoutMs` defaults to `AI_VERIFY_TIMEOUT_MS` -- overridable only by
+ * this story's own regression test (mirrors `applyRankBucketAiOverlay()`'s
+ * own `timeoutMs` parameter).
  */
 export async function applyAiVerification(
   gig: Gig,
@@ -208,21 +268,39 @@ export async function applyAiVerification(
   profile: Profile,
   applyProfile: ApplyProfileConfig | undefined,
   credential: LlmCredential | undefined,
-): Promise<{ matchedGroupIds: string[]; aiFlags: Record<string, AiVerifyResult> }> {
+  remainingCap: number = Number.POSITIVE_INFINITY,
+  timeoutMs: number = AI_VERIFY_TIMEOUT_MS,
+): Promise<{ matchedGroupIds: string[]; aiFlags: Record<string, AiVerifyResult>; callsMade: number }> {
   const toVerify = matchedGroupIds
     .map((id) => groupsById.get(id))
     .filter((g): g is GroupConfig => g != null && g.aiVerify === true);
 
   if (toVerify.length === 0 || !credential) {
-    return { matchedGroupIds, aiFlags: {} };
+    return { matchedGroupIds, aiFlags: {}, callsMade: 0 };
   }
 
   const aiFlags: Record<string, AiVerifyResult> = {};
   const rejectedIds = new Set<string>();
+  let callsMade = 0;
 
   for (const group of toVerify) {
+    if (callsMade >= remainingCap) {
+      // Over the per-cycle AI_VERIFY_CAP budget: leave this group's
+      // heuristic match untouched for this cycle -- no LLM call, no
+      // aiFlags entry -- it self-heals on a later scan once the cap
+      // resets (see AI_VERIFY_CAP's own doc comment above).
+      console.warn(
+        `gigradar matching: AI verification for group "${group.id}" on "${gig.title}" skipped -- per-cycle cap reached. Heuristic match stands.`,
+      );
+      continue;
+    }
+    callsMade += 1;
     try {
-      const verdict = await verifyGroupMatch(gig, group, profile, applyProfile, credential);
+      const verdict = await raceWithTimeout(
+        verifyGroupMatch(gig, group, profile, applyProfile, credential),
+        timeoutMs,
+        () => new AiVerifyTimeoutError(group.id, timeoutMs),
+      );
       aiFlags[group.id] = verdict;
       if (!verdict.confirmed) rejectedIds.add(group.id);
     } catch (e) {
@@ -235,5 +313,6 @@ export async function applyAiVerification(
   return {
     matchedGroupIds: matchedGroupIds.filter((id) => !rejectedIds.has(id)),
     aiFlags,
+    callsMade,
   };
 }
