@@ -187,6 +187,38 @@ export function matchProfiles(
   return { matched, applicable, profileReasons };
 }
 
+/**
+ * match-warning-tooltip-clarity-and-reliability story (crawler-fidelity-and-
+ * app-usability epic). The dashboard's ⚠ "didn't clear a profile" indicator
+ * (src/app/dashboard-client.tsx) used to show one flat, misleading message
+ * for every such gig — but two genuinely different situations land here:
+ * a source that simply never published a rate/hours figure for this gig
+ * (so gate() had nothing to compare against ANY profile, hourly or salaried
+ * — see `applicable.length === 0` below) vs. a gig whose real, published
+ * numbers (or explicit engagement type) actually failed the user's
+ * configured thresholds. Reuses the EXACT SAME `matchProfiles()`/
+ * `effectiveEngagementType()` gate() itself calls above — no re-derivation
+ * of the rate/hours/type comparison logic a third time in the UI layer
+ * (same "reuse tiering.ts, don't reimplement" discipline as the
+ * gate-fit-check-too-strict epic's gate-uses-role-area-tier-for-fit story).
+ *
+ * Returns `undefined` when the gig DID clear a profile — nothing to explain.
+ */
+export type ProfileMismatchKind = "rate-not-comparable" | "real-mismatch";
+
+export function explainProfileMismatch(gig: Gig, profiles: EngagementProfile[]): ProfileMismatchKind | undefined {
+  const { matched, applicable } = matchProfiles(gig, profiles);
+  if (matched.length > 0) return undefined;
+  // Mirrors gate()'s own `applicable.length === 0` branch above: no
+  // configured profile even applies AND the gig's engagement type couldn't
+  // be determined at all (no rate.unit, no explicit employmentType, no
+  // contractToHire) — the "we have nothing to compare" case. Anything else
+  // (a type-mismatch gate() DOES know about, or a real applicable profile
+  // whose numeric rate/hours genuinely failed) is a real, substantive
+  // mismatch worth the owner's attention.
+  return applicable.length === 0 && effectiveEngagementType(gig) === undefined ? "rate-not-comparable" : "real-mismatch";
+}
+
 /** Convert whatever rate a source gives into `targetUnit` ("hour" or "year"), or null if it can't be compared cleanly. Never cross-converts hour<->year (too speculative — see this project's standing "never fabricate" posture). */
 /** Exported for match-band.ts's reuse — see matchProfiles()'s own export doc comment above. */
 export function normalizeRate(gig: Gig, targetUnit: "hour" | "year"): number | null {

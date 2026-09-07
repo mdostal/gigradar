@@ -32,9 +32,30 @@ import {
   type SeenWindow,
 } from "./dashboard-filter";
 import type { MatchBand } from "@/lib/types";
+import type { ProfileMismatchKind } from "@/lib/matching/gate";
 import { compareByField, compareTierRank, type SortField } from "./dashboard-sort";
 import { GigDetailPanel } from "./gig-detail-panel";
 import { ContextualChatTrigger } from "./contextual-chat/contextual-chat-trigger";
+import { InfoTooltip } from "./info-tooltip";
+
+/**
+ * match-warning-tooltip-clarity-and-reliability story. The two real cases
+ * the Tier column's ⚠ indicator distinguishes -- see
+ * `matching/gate.ts`'s `explainProfileMismatch()` (the actual, reused
+ * classification logic; these are just its UI copy). A gig with no
+ * classification at all (missing `profileMismatchByGigKey` entry -- e.g. a
+ * malformed/first-run config) falls back to `REAL_MISMATCH_TOOLTIP`, the
+ * same single message this warning showed before this story existed.
+ */
+export const RATE_NOT_COMPARABLE_TOOLTIP =
+  "This source doesn't publish a rate/hours figure for this listing, so gigradar couldn't check it against your profile.";
+export const REAL_MISMATCH_TOOLTIP =
+  "This gig didn't meet your configured rate/hours/engagement-type requirements (Config → Needs).";
+
+/** Pure -- the one piece of this story's copy-selection logic worth unit-testing directly (this repo has no React Testing Library dependency; see dashboard-client.test.ts's own header comment). */
+export function resolveProfileMismatchTooltip(kind: ProfileMismatchKind | undefined): string {
+  return kind === "rate-not-comparable" ? RATE_NOT_COMPARABLE_TOOLTIP : REAL_MISMATCH_TOOLTIP;
+}
 
 export const ALL_STATUSES: GigStatus[] = ["new", "applied", "interview", "archived", "ignored"];
 
@@ -408,6 +429,7 @@ export function DashboardClient({
   draftedGigKeys = new Set(),
   initialPrepByGigKey = {},
   engagementProfiles = [],
+  profileMismatchByGigKey = {},
   groupId,
   hideOutOfBandDefault = true,
   rankBucketLabels = [],
@@ -419,6 +441,8 @@ export function DashboardClient({
   initialPrepByGigKey?: Readonly<Record<string, PrepPacketContent>>;
   /** dashboard-profile-grouping story — this install's configured Needs.engagementProfiles, {id,label} only (see page.tsx's extractEngagementProfileSummaries()). Empty for a first-run install with no Needs configured yet -- the Profile column/filter then just shows the "None" bucket for everything, never crashes. */
   engagementProfiles?: { id: string; label: string }[];
+  /** match-warning-tooltip-clarity-and-reliability story -- resolved server-side (dashboard-data.ts's loadDashboardData(), reusing matching/gate.ts's explainProfileMismatch()), keyed by StoredGig.key. Drives which of the two ⚠-tooltip messages the Tier column shows; a gig with no entry falls back to the generic "real mismatch" copy. */
+  profileMismatchByGigKey?: Readonly<Record<string, ProfileMismatchKind>>;
   /** rate-band-match-quality epic. The `/[group]/gigs` route's own group id -- resolveDisplayBand() uses this to show that SPECIFIC group's band rather than the best-across-all-groups fallback `/gigs` (unscoped) needs. Omitted on `/gigs`. */
   groupId?: string;
   /** rate-band-match-quality epic. The relevant group's own real `matchQuality.hideOutOfBandByDefault` setting (resolved server-side, page.tsx) -- seeds the Band column's initial filter, never a hardcoded default here. */
@@ -954,12 +978,11 @@ export function DashboardClient({
               {tier ?? "unrated"}
             </span>
             {tier && tier !== "red" && !clearedAProfile && (
-              <span
-                title="Role-area match only — this gig didn't clear any of your configured engagement-type/rate profiles (Config → Needs)"
-                className="cursor-help text-xs text-theme-text-dim"
-              >
-                ⚠
-              </span>
+              <InfoTooltip
+                trigger="⚠"
+                label={resolveProfileMismatchTooltip(profileMismatchByGigKey[row.original.key])}
+                className="text-theme-text-dim"
+              />
             )}
             {aiRejections.length > 0 && (
               <span

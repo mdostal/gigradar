@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EngagementProfile, Gig, Needs, Profile, RoleAreaConfig } from "../../types.js";
-import { effectiveEngagementType, gate } from "../gate.js";
+import { effectiveEngagementType, explainProfileMismatch, gate } from "../gate.js";
 
 function makeGig(overrides: Partial<Gig> = {}): Gig {
   return {
@@ -289,5 +289,38 @@ describe("gate: roleArea as an alternative way to satisfy the role/skill fit che
 
     expect(result.pass).toBe(false);
     expect(result.reasons.some((r) => r.includes("no role/skill keyword match"))).toBe(true);
+  });
+});
+
+describe("explainProfileMismatch", () => {
+  it("returns undefined for a gig that DID clear a profile -- nothing to explain", () => {
+    const gig = makeGig({ rate: { min: 260, unit: "hour" } });
+    expect(explainProfileMismatch(gig, [FRACTIONAL_CONTRACT_PROFILE])).toBeUndefined();
+  });
+
+  it("returns undefined when the gig's rate is unpublished but an applicable profile exists -- matchProfiles() itself treats that as a PASS ('rate not published — passing, confirm on the call'), so there is no mismatch to explain", () => {
+    const gig = makeGig({}); // no rate/weeklyHours at all -- the real fractionus/fractionaljobs shape
+    const result = explainProfileMismatch(gig, [FRACTIONAL_CONTRACT_PROFILE]);
+    expect(result).toBeUndefined();
+  });
+
+  it("'rate-not-comparable': no configured profile even applies AND the gig's engagement type couldn't be determined -- the real fractionus/fractionaljobs case (no rate, no employmentType, no contractToHire, and this group's only configured profile is salaried)", () => {
+    const gig = makeGig({}); // no rate, no employmentType, no contractToHire
+    expect(explainProfileMismatch(gig, [FULL_TIME_700K_PROFILE])).toBe("rate-not-comparable");
+  });
+
+  it("'real-mismatch': the gig's engagement type IS known but no configured profile accepts it -- a genuine, informative mismatch, not a data-availability gap", () => {
+    const gig = makeGig({ employmentType: "full-time" });
+    expect(explainProfileMismatch(gig, [FRACTIONAL_CONTRACT_PROFILE])).toBe("real-mismatch");
+  });
+
+  it("'real-mismatch': an applicable profile exists and the gig's REAL, published rate genuinely failed the floor", () => {
+    const gig = makeGig({ rate: { min: 50, unit: "hour" } });
+    expect(explainProfileMismatch(gig, [FRACTIONAL_CONTRACT_PROFILE])).toBe("real-mismatch");
+  });
+
+  it("'real-mismatch': an applicable profile exists and the gig's real weeklyHours exceeded the cap", () => {
+    const gig = makeGig({ rate: { min: 260, unit: "hour" }, weeklyHours: 50 });
+    expect(explainProfileMismatch(gig, [FRACTIONAL_CONTRACT_PROFILE])).toBe("real-mismatch");
   });
 });
