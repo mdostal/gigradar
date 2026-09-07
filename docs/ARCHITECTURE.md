@@ -1366,6 +1366,20 @@ files, Windows Task Scheduler XML) is out of scope — one real, working
 example on the owner's own actual platform is this story's bar, not
 exhaustive coverage of every OS.
 
+**Real gotcha, confirmed live (2026-09-07):** `npm run scheduler` is `tsx`
+running TypeScript directly out of a git working tree, not a compiled,
+versioned artifact — a `KeepAlive` launchd job supervising it does **not**
+pick up new commits just because they land on disk. The process's in-memory
+code stays frozen at whatever was checked out when it last started, for as
+long as it keeps running (confirmed: a `gigradar-scheduler` launchd job ran
+for 2+ days straight on a stale checkout, silently re-applying an
+already-fixed matching bug on every cycle, undoing a shipped fix as fast as
+it landed). **Anyone running the scheduler this way must restart it
+(`kill` the process — `KeepAlive` relaunches it immediately with current
+code) as a normal part of picking up any code update**, exactly like
+restarting the packaged app itself after installing a new version. This is
+not automated by anything in this repo's release process today.
+
 ### Verification
 
 `src/scheduler/__tests__/backoff.test.ts` covers the exponential-growth/24h-cap/
