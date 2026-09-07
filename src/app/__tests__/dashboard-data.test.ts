@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, recordScan } from "@/lib/store";
 import { saveConfig } from "@/lib/config/save";
-import { extractEngagementProfileSummaries, extractRankBucketLabels, loadDashboardData, resolveGroupLabel, resolveHideOutOfBandDefault } from "../dashboard-data";
+import { extractEngagementProfiles, extractEngagementProfileSummaries, extractRankBucketLabels, loadDashboardData, resolveGroupLabel, resolveHideOutOfBandDefault } from "../dashboard-data";
 
 // Same isolation pattern as actions.test.ts: a fresh temp-file DB per test
 // (GIGRADAR_DB_PATH) plus an isolated XDG_DATA_HOME for config.json, so this
@@ -153,6 +153,97 @@ describe("loadDashboardData", () => {
     const data = loadDashboardData("g2");
 
     expect(data.engagementProfiles).toEqual([{ id: "p2", label: "Full-time" }]);
+  });
+
+  // match-warning-tooltip-clarity-and-reliability story.
+  describe("profileMismatchByGigKey", () => {
+    it("classifies a gig with no rate/employmentType/contractToHire at all as 'rate-not-comparable' when this group's only profile is salaried (the real fractionus/fractionaljobs shape, scoped to g2's full-time-only profile)", () => {
+      saveConfig(baseConfig());
+      recordScan([
+        {
+          sourceId: "src-a",
+          gigs: [{ sourceId: "src-a", externalId: "1", title: "No rate published", url: "https://example.test/1", matchedGroupIds: ["g2"] }],
+        },
+      ]);
+
+      const data = loadDashboardData("g2");
+      const key = data.gigs[0]!.key;
+
+      expect(data.profileMismatchByGigKey[key]).toBe("rate-not-comparable");
+    });
+
+    it("classifies a gig with a real, published rate that genuinely failed the floor as 'real-mismatch'", () => {
+      saveConfig(baseConfig());
+      recordScan([
+        {
+          sourceId: "src-a",
+          gigs: [
+            {
+              sourceId: "src-a",
+              externalId: "1",
+              title: "Below floor",
+              url: "https://example.test/1",
+              matchedGroupIds: ["g1"],
+              rate: { min: 10, unit: "hour" },
+            },
+          ],
+        },
+      ]);
+
+      const data = loadDashboardData("g1");
+      const key = data.gigs[0]!.key;
+
+      expect(data.profileMismatchByGigKey[key]).toBe("real-mismatch");
+    });
+
+    it("has no entry at all for a gig that DID clear a profile", () => {
+      saveConfig(baseConfig());
+      recordScan([
+        {
+          sourceId: "src-a",
+          gigs: [
+            {
+              sourceId: "src-a",
+              externalId: "1",
+              title: "Clears the floor",
+              url: "https://example.test/1",
+              matchedGroupIds: ["g1"],
+              rate: { min: 120, unit: "hour" },
+            },
+          ],
+        },
+      ]);
+
+      const data = loadDashboardData("g1");
+      const key = data.gigs[0]!.key;
+
+      expect(data.profileMismatchByGigKey[key]).toBeUndefined();
+    });
+  });
+});
+
+describe("extractEngagementProfiles", () => {
+  it("returns the full, schema-valid EngagementProfile for the given group, not just {id, label}", () => {
+    const raw = baseConfig();
+    expect(extractEngagementProfiles(raw, "g1")).toEqual([
+      { id: "p1", label: "Hourly", types: ["contract"], minRate: 100, highRate: 150, maxHours: 20, maxHoursAtHighRate: 40, rateUnit: "hour" },
+    ]);
+  });
+
+  it("reads the first/primary group when groupId is omitted", () => {
+    const raw = baseConfig();
+    expect(extractEngagementProfiles(raw).map((p) => p.id)).toEqual(["p1"]);
+  });
+
+  it("returns [] for a groupId with no matching group, or malformed/missing shapes, rather than throwing", () => {
+    expect(extractEngagementProfiles({ groups: [{ id: "g1" }] }, "does-not-exist")).toEqual([]);
+    expect(extractEngagementProfiles({})).toEqual([]);
+    expect(extractEngagementProfiles({ groups: "not an array" })).toEqual([]);
+  });
+
+  it("returns [] when a configured profile is missing required fields (e.g. the {id, label}-only shape extractEngagementProfileSummaries() tolerates) rather than partially validating", () => {
+    const raw = { groups: [{ id: "g1", needs: { engagementProfiles: [{ id: "p1", label: "Hourly" }] } }] };
+    expect(extractEngagementProfiles(raw, "g1")).toEqual([]);
   });
 });
 

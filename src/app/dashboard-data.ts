@@ -10,6 +10,10 @@ import type { StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { computeLastScanIso, computeStatusStrip, type StatusStripView } from "@/lib/status/status-strip";
 import { DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT } from "@/lib/matching/match-band";
+import { z } from "zod";
+import { explainProfileMismatch, type ProfileMismatchKind } from "@/lib/matching/gate";
+import { EngagementProfileSchema } from "@/lib/config/schema";
+import type { EngagementProfile } from "@/lib/types";
 
 export interface DashboardData {
   gigs: StoredGig[];
@@ -19,6 +23,44 @@ export interface DashboardData {
   engagementProfiles: { id: string; label: string }[];
   draftedGigKeys: Set<string>;
   prepByGigKey: Record<string, PrepPacketContent>;
+  /**
+   * match-warning-tooltip-clarity-and-reliability story: for every gig that
+   * didn't clear an engagement-type/rate profile, WHY -- reused verbatim
+   * from `matching/gate.ts`'s own `explainProfileMismatch()` (which itself
+   * just calls the exact same `matchProfiles()`/`effectiveEngagementType()`
+   * gate() uses, never a second copy of that comparison logic) rather than
+   * re-deriving the distinction in the UI layer. Keyed by `StoredGig.key`;
+   * a gig with no entry either cleared a profile or couldn't be classified
+   * (e.g. malformed engagementProfiles config) -- dashboard-client.tsx
+   * treats a missing entry as "real-mismatch", the same single message
+   * this warning showed before this story.
+   */
+  profileMismatchByGigKey: Record<string, ProfileMismatchKind>;
+}
+
+/**
+ * Full, schema-validated `EngagementProfile`s for one group (or the
+ * primary/first group when `groupId` is omitted) -- same group-lookup
+ * convention as `extractEngagementProfileSummaries()` below, but returning
+ * everything `matching/gate.ts`'s `matchProfiles()`/`explainProfileMismatch()`
+ * need (minRate/highRate/maxHours/rateUnit/types), not just `{id, label}`.
+ * `readRawConfig()`'s document is only ever produced by `saveConfig()`
+ * (which validates against this same schema), so a real installation's
+ * config always parses here; a missing/malformed shape (first-run, no
+ * config yet) yields `[]` rather than throwing, same tolerance as every
+ * other extractor in this file.
+ */
+export function extractEngagementProfiles(rawConfig: Record<string, unknown>, groupId?: string): EngagementProfile[] {
+  const groups = rawConfig.groups;
+  if (!Array.isArray(groups)) return [];
+  const group = groupId ? groups.find((g) => typeof g === "object" && g !== null && (g as Record<string, unknown>).id === groupId) : groups[0];
+  if (typeof group !== "object" || group === null) return [];
+  const needs = (group as Record<string, unknown>).needs;
+  if (typeof needs !== "object" || needs === null) return [];
+  const profiles = (needs as Record<string, unknown>).engagementProfiles;
+  if (!Array.isArray(profiles)) return [];
+  const parsed = z.array(EngagementProfileSchema).safeParse(profiles);
+  return parsed.success ? parsed.data : [];
 }
 
 /**
@@ -160,5 +202,18 @@ export function loadDashboardData(groupId?: string): DashboardData {
   const draftedGigKeys = new Set(listDrafts().map((d) => d.gigKey));
   const prepByGigKey: Record<string, PrepPacketContent> = {};
   for (const p of listInterviewPrep()) prepByGigKey[p.gigKey] = p.content;
-  return { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey };
+
+  // match-warning-tooltip-clarity-and-reliability story: same primary/
+  // first-group-when-unscoped convention `engagementProfiles` above already
+  // uses -- see this function's own tolerance for a missing/malformed
+  // config (extractEngagementProfiles() -> []), which just means no gig
+  // gets classified rather than throwing.
+  const engagementProfilesFull = extractEngagementProfiles(rawConfig, groupId);
+  const profileMismatchByGigKey: Record<string, ProfileMismatchKind> = {};
+  for (const gig of gigs) {
+    const kind = explainProfileMismatch(gig, engagementProfilesFull);
+    if (kind) profileMismatchByGigKey[gig.key] = kind;
+  }
+
+  return { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey };
 }
