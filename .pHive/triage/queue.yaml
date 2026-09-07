@@ -1,0 +1,50 @@
+entries:
+  - id: t-001
+    state: plan-ready
+    kind: bug
+    title: "Scan pipeline (scheduler cycles and manual `npm run radar` runs) can hang indefinitely with zero CPU, blocking all results"
+    description: |
+      Live-confirmed twice on 2026-09-07: a manual `npm run radar` run sat at
+      0.0% CPU for a full 60 minutes with zero database writes before being
+      killed; separately, the `com.mdostal.gigradar-scheduler`
+      launchd-supervised scheduler process hung the same way for over an
+      hour immediately after a restart -- zero scan cycles completed, and
+      none of that day's already-shipped fixes (the gate() roleArea fix,
+      the fractionus/fractionaljobs crawler enrichment fix) had a chance to
+      apply to the owner's real, live data during that entire window.
+
+      The error log shows gofractional/ateam/gun-io failing FAST with
+      clear, well-handled error messages (verification challenge, session
+      expired, bad extraction recipe) -- those are NOT the hang. Something
+      else in the per-source fetch pipeline (most likely a
+      browser-session-driven source like wellfound's real-Chrome
+      automation, or a plain fetch() with no timeout somewhere in the
+      source adapters) can block with no timeout at all, and because
+      sources appear to be awaited in a way that lets one hang stall the
+      WHOLE cycle, every other healthy source's fresh results are withheld
+      right along with it.
+
+      Severe reliability bug: the scheduler is the actual production
+      mechanism keeping the owner's real gig data current. Needs
+      root-cause + a real per-source timeout/circuit-breaker fix (likely
+      in src/scheduler/index.ts's own per-source fetch orchestration
+      and/or src/lib/sources/source.ts's fetch() contract), not just a
+      restart band-aid (which is all that's been done today, twice, as an
+      emergency mitigation).
+    reporter: owner (via session diagnosis)
+    reported_at: "2026-09-07T17:46:00Z"
+    priority: p0
+    severity: critical
+    linked_epic: usability-and-completeness-audit
+    linked_story: scan-pipeline-per-source-timeout
+    closed_reason: null
+    closed_at: null
+    state_history:
+      - state: inbox
+        at: "2026-09-07T17:46:00Z"
+      - state: clarified
+        at: "2026-09-07T17:47:00Z"
+      - state: prioritized
+        at: "2026-09-07T17:48:00Z"
+      - state: plan-ready
+        at: "2026-09-07T18:05:00Z"

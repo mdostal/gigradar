@@ -180,9 +180,9 @@ progress_note: |
   src/lib/apply/__tests__/application-format-coverage.test.ts. Full
   `npm test` (1698 passed) and `npm run typecheck` both clean.
 
-  Note: this epic's own docs/design-discussion.md and the epic dir itself
-  were untracked scratch files that disappeared from the shared working
-  tree partway through this story's execution (presumably cleaned up by a
-  concurrent process in this session) -- this story YAML was reconstructed
-  from the content captured at the start of this run rather than edited
-  in place.
+  Note: this epic dir was untracked/uncommitted scratch when this story's
+  execution began; it transiently disappeared mid-run (a concurrent
+  process in this session) before reappearing, now committed on origin/dev
+  -- this story YAML's own edits were reconstructed from the content
+  captured at the start of this run and merged with origin/dev's real,
+  committed copy rather than clobbering it.
