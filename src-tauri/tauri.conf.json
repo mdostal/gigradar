@@ -48,6 +48,9 @@
       "endpoints": [
         "https://github.com/mdostal/gigradar/releases/latest/download/latest.json"
       ]
+    },
+    "shell": {
+      "open": "https?://.+"
     }
   }
 }

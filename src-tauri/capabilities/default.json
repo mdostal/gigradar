@@ -37,6 +37,7 @@
           "args": true
         }
       ]
-    }
+    },
+    "shell:allow-open"
   ]
 }

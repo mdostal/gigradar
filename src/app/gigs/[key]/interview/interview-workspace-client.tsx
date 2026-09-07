@@ -26,6 +26,7 @@ import type { ApplyProfileConfig, Profile } from "@/lib/types";
 import { generateDraftAction, generatePrepPacketAction } from "../../../actions";
 import { canGenerateDraft, draftButtonLabel } from "../../../dashboard-draft";
 import { formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "../../../dashboard-client";
+import { openExternalUrl } from "@/lib/tauri/open-external";
 
 const DRAFT_STATUS_LABEL: Record<StoredDraft["status"], string> = {
   draft: "Drafted — not yet reviewed",
@@ -140,8 +141,10 @@ export function InterviewWorkspaceClient({
         </div>
         <a
           href={gig.url}
-          target="_blank"
-          rel="noreferrer noopener"
+          onClick={(e) => {
+            e.preventDefault();
+            openExternalUrl(gig.url);
+          }}
           className="shrink-0 rounded-md border border-theme-surface-border bg-theme-surface px-3 py-1.5 text-sm font-medium text-theme-text hover:bg-theme-surface-raised"
         >
           Open original listing ↗

@@ -21,6 +21,7 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import type { StoredGig } from "@/lib/store";
+import { openExternalUrl } from "@/lib/tauri/open-external";
 import { resolveDisplayTier } from "./dashboard-filter";
 import { formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "./dashboard-client";
 
@@ -175,15 +176,23 @@ export function GigDetailPanel({
           </dl>
 
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1">
+            {/* tauri-shell-open-external-links story. Kept as a real `<a href>` (accessible
+                role="link", degrades gracefully, middle-click/right-click "open in new tab"
+                still works) but the click is intercepted so the packaged app can go through
+                tauri-plugin-shell's `open` command instead of `target="_blank"`, which does not
+                reliably shell out from a Tauri webview -- see src/lib/tauri/open-external.ts
+                for why (falls back to window.open in the browser/Electron runtimes). */}
             <a
               href={gig.url}
-              target="_blank"
-              rel="noreferrer noopener"
+              onClick={(e) => {
+                e.preventDefault();
+                openExternalUrl(gig.url);
+              }}
               className="text-sm font-medium text-theme-text underline underline-offset-2 hover:no-underline"
             >
               Open original listing ↗
             </a>
-            {/* Additive, not a replacement -- see the "Open original listing" link above, unchanged. Launches the existing profile-assist/embedded-webview mechanism (src/app/profile-assist/), pre-scoped to this gig's own source and url. */}
+            {/* Additive, not a replacement -- see the "Open original listing" button above, unchanged. Launches the existing profile-assist/embedded-webview mechanism (src/app/profile-assist/), pre-scoped to this gig's own source and url. */}
             <Link
               href={profileAssistHref(gig)}
               className="text-sm font-medium text-theme-accent underline underline-offset-2 hover:no-underline"

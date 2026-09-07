@@ -9,6 +9,7 @@ import { DRAFT_STATUS_TABS, filterDrafts, formatCopyReadyDraft, type DraftListIt
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
 import { formatRate, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "../dashboard-client";
 import { KNOWN_SOURCES } from "@/lib/sources/origins";
+import { openExternalUrl } from "@/lib/tauri/open-external";
 
 /** id -> display label, built once from the same registry the setup wizard/Capture Login already read from (status-strip.ts's own precedent) — never a second, hand-typed copy. Falls back to the raw id (upper-cased) for a source not in the registry (a hand-added custom-llm/gmail-digest source). */
 const SOURCE_LABEL: ReadonlyMap<string, string> = new Map(KNOWN_SOURCES.map((s) => [s.id, s.label]));
@@ -267,8 +268,10 @@ function DraftCard({ item, checked, onToggleChecked }: { item: DraftListItem; ch
             <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
               <a
                 href={item.gigUrl}
-                target="_blank"
-                rel="noreferrer noopener"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternalUrl(item.gigUrl);
+                }}
                 className="text-sm font-medium text-blue-700 hover:underline"
               >
                 Open the real job listing ↗
