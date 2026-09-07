@@ -72,11 +72,24 @@ function formatDate(iso: string | null): string {
  * enforcement (src/app/drafts/actions.ts), not just a UI convention: once
  * approved/rejected/submitted, the content shown is read-only.
  *
- * The real gig URL + copy-ready draft + "Mark submitted" only appear once
- * `status` is `"approved"` (or, for reference, `"submitted"`) — per this
- * story's acceptance criteria ("once approved: the real gig URL ... and a
- * copy-ready draft both appear, and a 'Mark submitted' action becomes
- * available").
+ * The copy-ready draft + "Mark submitted" action only appear once `status`
+ * is `"approved"` (or, for reference, `"submitted"`) — per this story's
+ * acceptance criteria ("once approved: ... a copy-ready draft ... appear[s],
+ * and a 'Mark submitted' action becomes available").
+ *
+ * The "Open the real job listing" link, however, is shown for a draft in
+ * ANY status (drafts-page-open-posting-link-for-all-statuses story,
+ * real-usability-verification-and-fixes epic). It used to be folded into
+ * the same approved/submitted-only block above, but git history
+ * (e8f8cc3, the original draft-review-ui implementation) shows that was
+ * never a deliberate stale-listing safeguard -- it was just how the
+ * original two-phase (edit-while-draft / act-once-approved) structure
+ * happened to group things, the same oversight fa9404c already fixed once
+ * for rate/tier/source ("surface ... on every draft card, not hidden
+ * behind approval"). The owner's real data is 17 drafts, ALL status
+ * 'draft' -- gating this link behind approval hid it from 100% of real
+ * drafts, for no real reason: a not-yet-reviewed posting is exactly when
+ * opening the original listing matters most.
  */
 function DraftCard({ item, checked, onToggleChecked }: { item: DraftListItem; checked: boolean; onToggleChecked: () => void }) {
   const [coverText, setCoverText] = useState(item.content.coverText);
@@ -190,6 +203,25 @@ function DraftCard({ item, checked, onToggleChecked }: { item: DraftListItem; ch
         {item.submittedAt && ` · Submitted ${formatDate(item.submittedAt)}`}
       </p>
 
+      {/* drafts-page-open-posting-link-for-all-statuses story: shown for a
+          draft in ANY status, not just approved/submitted -- see this
+          component's own doc comment above for why the old status gate
+          was removed. Wired through useOpenExternalLink() (real
+          success/error feedback via ExternalLinkFeedbackToast below),
+          never a fire-and-forget click. */}
+      <p className="mt-2">
+        <a
+          href={item.gigUrl}
+          onClick={(e) => {
+            e.preventDefault();
+            openExternalLink(item.gigUrl);
+          }}
+          className="text-sm font-medium text-blue-700 hover:underline"
+        >
+          Open the real job listing ↗
+        </a>
+      </p>
+
       {item.status === "draft" ? (
         <div className="mt-3 flex flex-col gap-3">
           <label className="flex flex-col gap-1 text-sm text-slate-700">
@@ -268,18 +300,7 @@ function DraftCard({ item, checked, onToggleChecked }: { item: DraftListItem; ch
 
           {showApprovedView && (
             <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <a
-                href={item.gigUrl}
-                onClick={(e) => {
-                  e.preventDefault();
-                  openExternalLink(item.gigUrl);
-                }}
-                className="text-sm font-medium text-blue-700 hover:underline"
-              >
-                Open the real job listing ↗
-              </a>
-
-              <div className="mt-2">
+              <div>
                 <p className="text-xs font-medium text-slate-500">Copy-ready draft</p>
                 <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-slate-200 bg-white p-2 text-sm text-slate-900">
                   {formatCopyReadyDraft(item.content)}
