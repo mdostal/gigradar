@@ -1,0 +1,79 @@
+id: drafts-page-group-context
+epic: group-scoped-automation-fixes
+title: Drafts list shows which group(s) a draft's gig actually matched
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Real, newly-relevant usability gap surfaced by this epic's own
+  `group-aware-auto-draft-and-notify` fix (PR #166): a gig can now be
+  auto-drafted purely because it's green for a NON-primary group. The
+  Drafts list (`src/app/drafts/`) has no way to show which group
+  actually triggered a given draft:
+
+  - `DraftListItem.gigTier` (`src/app/drafts/page.tsx:40`) is set from
+    the flat, primary-group-only `gig.tier` (via `drafts-filter.ts:32`),
+    rendered as a badge in `drafts-client.tsx:151`.
+  - `StoredDraft`/`DraftFilter` (`src/lib/store/types.ts:142-158`) carry
+    no `groupId` concept at all, and there is no group label or filter
+    anywhere in the Drafts UI.
+
+  For an owner running multiple groups (e.g. an existing fractional-work
+  group alongside a new Drone Services group), opening Drafts after this
+  epic's own auto-draft fix now shows an unlabeled mix of drafts from
+  every group, with the SAME flat/primary tier badge on all of them
+  (which could be misleadingly yellow/red for a draft that's actually a
+  real GREEN match for a different group). No new plumbing is needed —
+  the underlying gig already carries `matchedGroupIds`/`matchedGroupTiers`
+  (see PR #163/#165's own `resolveDisplayTier()`/`resolveDisplayProfileIds()`
+  pattern in `src/app/dashboard-filter.ts`) -- this is a missing-context
+  UI gap, not a data-leak bug like the earlier stories in this epic.
+
+  Add a small per-row group indicator to the Drafts list: for a draft
+  whose gig matched exactly one group, show that group's label; for a
+  gig that matched multiple groups, show all of them (e.g. small
+  stacked/comma-separated badges) with each group's OWN tier (via
+  `resolveDisplayTier(gig, groupId)`), not the flat one. If the owner
+  only has one group configured, this UI element should not add visual
+  noise -- gate it the same way `dashboard-client.tsx`'s own group-count
+  checks do elsewhere (search for `draft.groups.length > 1` or
+  equivalent).
+
+acceptance_criteria:
+  - "A draft whose gig matched a NON-primary group's green tier shows that group's own label and tier in the Drafts list, not the flat/primary tier."
+  - "A draft whose gig matched multiple groups shows each matched group with its own tier, not a single ambiguous badge."
+  - "With only one group configured, the Drafts list looks exactly as it does today -- no added visual noise for the common single-group case."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/drafts/page.tsx
+      purpose: "DraftListItem's construction (~line 40) -- where gigTier is currently set from the flat tier; needs the per-group matched data instead/in addition."
+    - path: src/app/drafts/drafts-client.tsx
+      purpose: "~line 151 -- renders the current single tier badge; add the group indicator here."
+    - path: src/app/dashboard-filter.ts
+      purpose: "resolveDisplayTier() -- the established per-group resolver pattern to reuse, not reinvent."
+
+design_decisions:
+  - decision: This is a missing-context UI addition, not a bug fix mirroring the exact resolveDisplayTier(gig, groupId) pattern with a single groupId -- a draft's gig can match MULTIPLE groups at once, so the UI needs to show possibly more than one.
+    rationale: "A draft is fundamentally about the gig, not scoped to one group's page the way the giglist/dashboard fixes were -- so the fix here is additive UI context, not swapping one resolver call for another."
+
+steps:
+  - id: implement
+    description: Add per-group context to the Drafts list UI
+    agent: developer
+  - id: test
+    description: Add test coverage; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for consistency with the established resolveDisplayTier pattern and single-group no-noise requirement
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

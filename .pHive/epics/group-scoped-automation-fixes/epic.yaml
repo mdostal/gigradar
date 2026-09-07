@@ -16,6 +16,10 @@ stories:
     title: Auto-fire rules can be scoped to a specific group (optional, backward-compatible)
     complexity: medium
     depends_on: [group-aware-auto-draft-and-notify]
+  - id: drafts-page-group-context
+    title: Drafts list shows which group(s) a draft's gig actually matched
+    complexity: low
+    depends_on: []
 
 references:
   - path: .pHive/epics/group-scoped-automation-fixes/docs/design-discussion.md
