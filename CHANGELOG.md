@@ -4,6 +4,48 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-09-07
+
+### Fixed
+
+- A severe reliability bug: a scan could get stuck on one unresponsive
+  source and never finish, silently leaving your gig list stale for as
+  long as the app kept running with no error shown. Every source now
+  gives up cleanly after a bounded wait if it stalls, so one bad source
+  can no longer hold up everything else.
+- A related slowdown: the AI-assisted matching and rank-suggestion
+  checks could run one gig at a time with no limit, occasionally
+  turning a routine scan into a very long wait. Both are now bounded
+  per scan, with the plain, non-AI result always standing in if a check
+  times out — nothing is ever left unclassified.
+- Drafts almost always looked like a generic cover letter regardless of
+  how a listing actually wants to be applied to (some platforms are
+  one-click "Easy Apply," some use their own multi-field forms). Most
+  of your sources simply never had their real application style
+  recorded — that's now filled in per source based on how each one
+  actually works, so new drafts match the real application flow.
+- Fractionus and FractionalJobs listings now pick up real rate,
+  hours, and employment-type details straight from the listing itself
+  (previously left blank), and listings that have quietly closed are
+  now recognized and archived instead of lingering as if still open.
+- External "Open original listing" links now reliably open in your
+  regular browser from the desktop app.
+- The "role-area match only" warning badge is more reliable and now
+  explains itself more precisely — distinguishing a source that simply
+  never publishes a rate (nothing to check) from a gig that actually
+  failed your configured requirements.
+
+### Added
+
+- A real, personal resume store: keep more than one resume on file,
+  pick which one a given application uses, get an AI suggestion for
+  which resume best fits a specific gig, and request AI feedback on a
+  resume against a gig — every suggestion is proposed for your review,
+  never applied automatically.
+- A gig's detail view now has a direct "Apply with profile assist"
+  action alongside the external listing link, so the assisted-apply
+  tooling is reachable from the gig you're actually looking at.
+
 ## [0.44.0] - 2026-09-07
 
 ### Fixed
