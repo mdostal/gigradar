@@ -26,7 +26,7 @@ vi.mock("../../config/llm-client.js", async (importOriginal) => {
   return { ...actual, generateHarnessObject: mockGenerateHarnessObject };
 });
 
-import { applyRankBucketAiOverlay, suggestRankBucket } from "../rank-bucket-ai-overlay.js";
+import { RANK_BUCKET_AI_OVERLAY_TIMEOUT_MS, applyRankBucketAiOverlay, suggestRankBucket } from "../rank-bucket-ai-overlay.js";
 
 beforeEach(() => {
   mockGenerateText.mockReset();
@@ -107,5 +107,53 @@ describe("applyRankBucketAiOverlay", () => {
     const result = await applyRankBucketAiOverlay(GIG, GROUP, { bucket: "Tier 2", reasons: [] }, CREDENTIAL);
     expect(result).toEqual({ bucket: "Tier 2", source: "rule", confirmed: true });
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("rank-bucket AI overlay failed"));
+  });
+
+  // rank-bucket-ai-overlay-timeout-and-cap story (triage t-002): a
+  // deliberately-hung test double for the underlying LLM call (never
+  // resolves, never rejects -- standing in for a genuinely slow/stuck real
+  // `claude` CLI subprocess) must not block this function past its own
+  // timeout deadline. Same vi.useFakeTimers()/advanceTimersByTimeAsync()
+  // pattern apply/runner.test.ts already established for the sibling
+  // scan-pipeline-per-source-timeout (t-001) fix.
+  it("falls back to the rule-based result, logging a warning, when the AI call never settles within RANK_BUCKET_AI_OVERLAY_TIMEOUT_MS -- never blocks the per-gig loop", async () => {
+    vi.useFakeTimers();
+    try {
+      mockGenerateText.mockImplementationOnce(
+        () =>
+          new Promise(() => {
+            // Deliberately never resolves or rejects.
+          }),
+      );
+
+      const resultPromise = applyRankBucketAiOverlay(GIG, GROUP, { bucket: "Tier 2", reasons: [] }, CREDENTIAL);
+      // Advance exactly the real, documented per-call deadline -- proves
+      // this function's OWN timeout fires (not merely that the test waited
+      // long enough for something else to happen). Without a real timeout,
+      // this promise would never settle and the test itself would hang.
+      await vi.advanceTimersByTimeAsync(RANK_BUCKET_AI_OVERLAY_TIMEOUT_MS);
+      const result = await resultPromise;
+
+      expect(result).toEqual({ bucket: "Tier 2", source: "rule", confirmed: true });
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("rank-bucket AI overlay failed"));
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("timed out after"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves normally (no fallback) when the AI call settles comfortably before the timeout deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      mockGenerateText.mockResolvedValueOnce({ output: { bucket: "Tier 1", reason: "Fast, real answer." } });
+      const resultPromise = applyRankBucketAiOverlay(GIG, GROUP, { bucket: "Tier 2", reasons: [] }, CREDENTIAL);
+      // Only advance a little -- proves a normal, fast-settling call is
+      // NOT false-positive-killed by the timeout race.
+      await vi.advanceTimersByTimeAsync(10);
+      const result = await resultPromise;
+      expect(result).toEqual({ bucket: "Tier 1", source: "ai", confirmed: false, reason: "Fast, real answer." });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
