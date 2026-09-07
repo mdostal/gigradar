@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-09-06
+
+### Added
+
+- If you track more than one group, the Drafts list now shows which
+  group(s) a drafted gig actually matched, each with its own real tier
+  — instead of one badge that could disagree with the group that
+  actually triggered the draft. Nothing changes if you only have one
+  group.
+
 ## [0.42.0] - 2026-09-06
 
 ### Fixed

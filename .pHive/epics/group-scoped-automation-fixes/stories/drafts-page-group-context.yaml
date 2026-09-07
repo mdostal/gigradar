@@ -1,10 +1,21 @@
 id: drafts-page-group-context
 epic: group-scoped-automation-fixes
 title: Drafts list shows which group(s) a draft's gig actually matched
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED PR #168 (2026-09-06), via delegated subagent. Added
+  resolveDraftMatchedGroups(gig, groups) (drafts-filter.ts, pure +
+  tested) reusing resolveDisplayTier() per matched group id; gated on
+  groups.length > 1 so a single-group install renders byte-identical to
+  before. Drafts list now shows one labeled badge per matched group
+  (each with its own real tier) instead of one ambiguous flat/primary
+  badge. Reused extractGroupSummaries(readRawConfig()) -- the same
+  raw-config read NavHeader's own switcher uses, no secret exposure.
+  npm test (1654 passed) and npm run typecheck both clean.
 
 description: |
   Real, newly-relevant usability gap surfaced by this epic's own
