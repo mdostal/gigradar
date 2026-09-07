@@ -1,0 +1,16 @@
+name: match-quality-feedback-loop
+title: "AI-assisted review of REJECTED gigs -- surface config-improvement suggestions, since ai-match-verification only ever sees gigs that already passed"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+
+stories:
+  - id: full-plan-pass-needed
+    title: "Run a real /plan pass on this epic before building (research + design, not pre-decided here)"
+    complexity: medium
+    depends_on: []
+
+references:
+  - path: .pHive/epics/match-quality-feedback-loop/docs/design-discussion.md
+    relevant_excerpt: "§1 why ai-match-verification structurally can't see this class of bug; §2 the rough shape needing a real planning pass."
+  - path: .pHive/epics/gate-fit-check-too-strict/docs/design-discussion.md
+    relevant_excerpt: "The specific, now-fixed bug this epic's own AI-feedback loop is meant to catch generally, for whatever the next version of this bug class looks like."
