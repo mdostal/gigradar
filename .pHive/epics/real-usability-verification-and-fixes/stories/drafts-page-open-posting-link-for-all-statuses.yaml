@@ -1,0 +1,77 @@
+id: drafts-page-open-posting-link-for-all-statuses
+epic: real-usability-verification-and-fixes
+title: "Drafts page 'Open the real job listing' link should show for a draft in any status, not just approved/submitted"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Triage entry t-004. Flagged by the developer who fixed
+  `external-link-click-silent-failure`, confirmed via `simman` + a direct
+  read of the owner's real data: `src/app/drafts/drafts-client.tsx`'s
+  "Open the real job listing" link only renders for drafts with
+  `status: 'approved'` or `'submitted'`. The owner's real, current data has
+  17 drafts, ALL still in `status: 'draft'` (the normal state right after
+  auto-draft or manual "Generate draft" creation, before the owner has
+  reviewed/approved anything) -- meaning this link exists NOWHERE on the
+  real Drafts page today, for any of the owner's real drafts. A user
+  reviewing a fresh, not-yet-approved draft -- the single most common real
+  use of this page -- has no way to open the original posting from it at
+  all, which is exactly the kind of thing the owner has been furious about
+  this session ("I can't open the actual jobs to go check it out").
+
+  **The fix**: show the "Open the real job listing" link (wired through
+  `openExternalUrl()`/`useOpenExternalLink()`, matching the just-shipped
+  `external-link-click-silent-failure` story's real error-feedback
+  mechanism -- reuse it, don't reintroduce a fire-and-forget click) for a
+  draft in ANY status, not just approved/submitted. Read the real current
+  code first to understand why the status check was there in the first
+  place (check git blame/history on that condition) -- if there was a real
+  reason to restrict it (e.g. a submitted draft's original listing might
+  have gone stale/archived and the link is only meaningful before that),
+  confirm whether that reasoning still holds; if not, or if it was simply
+  an oversight, remove the restriction.
+
+  Do NOT touch: the draft approval/submission workflow itself, any other
+  Drafts page functionality.
+
+acceptance_criteria:
+  - "The 'Open the real job listing' link is visible on the Drafts page for a draft in status 'draft' (not just approved/submitted) -- verified against the owner's own real data shape (17 real drafts, all status='draft')."
+  - "The link uses the same real error-feedback mechanism (useOpenExternalLink()/ExternalLinkFeedbackToast) the external-link-click-silent-failure story just shipped -- not a reintroduced fire-and-forget click."
+  - "Real post-fix verification against the ACTUAL running app: rebuild, relaunch (backup first), and confirm via curl/DOM evidence or a real simman re-run that the link now appears for a real draft-status entry."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/drafts/drafts-client.tsx
+      purpose: "The real status-gated link to fix -- find and remove/adjust the status condition."
+    - path: src/lib/tauri/use-open-external-link.ts
+      purpose: "The just-shipped real error-feedback hook to reuse for this link, not a fire-and-forget click."
+
+design_decisions:
+  - decision: Investigate why the status restriction existed before just deleting it.
+    rationale: "A status gate that looks wrong on the surface might have had a real reason (e.g. a stale-listing concern) -- confirm before removing, rather than assuming it was simply a bug."
+
+risks:
+  - severity: low
+    description: "Low blast radius -- a visibility condition change on an existing, already-wired link."
+    mitigation: "Acceptance criteria requires real verification against the owner's actual real-data shape (all-draft-status), not just a generic test."
+
+steps:
+  - id: implement
+    description: Show the open-posting link for a draft in any status, reusing the real error-feedback hook
+    agent: developer
+  - id: test
+    description: Add/extend a test covering the link's visibility across draft statuses; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify against the real running app and the owner's actual real-data shape
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

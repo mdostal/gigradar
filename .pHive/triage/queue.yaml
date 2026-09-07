@@ -111,6 +111,39 @@ entries:
       - state: closed
         at: "2026-09-07T18:55:00Z"
 
+  - id: t-004
+    state: plan-ready
+    kind: bug
+    title: "Drafts page has no visible 'open original posting' link for any draft still in status='draft' (the real, current state of all 17 of the owner's real drafts)"
+    description: |
+      Flagged by the developer fixing external-link-click-silent-failure
+      (2026-09-07), confirmed via simman + real data, deliberately left
+      unfixed (out of that story's own scope): `src/app/drafts/
+      drafts-client.tsx`'s "Open the real job listing" link only renders
+      for drafts with status `approved` or `submitted`. The owner's real,
+      current data has 17 drafts, ALL still in status `draft` -- meaning
+      that link exists nowhere on the real Drafts page today for any of
+      them. A user reviewing a fresh, not-yet-approved draft (the normal,
+      common case right after auto-draft/manual-draft creation) has no way
+      to open the original posting from that page at all.
+    reporter: "developer (external-link-click-silent-failure story), relayed via session diagnosis"
+    reported_at: "2026-09-07T21:55:00Z"
+    priority: p1
+    severity: moderate
+    linked_epic: real-usability-verification-and-fixes
+    linked_story: drafts-page-open-posting-link-for-all-statuses
+    closed_reason: null
+    closed_at: null
+    state_history:
+      - state: inbox
+        at: "2026-09-07T21:55:00Z"
+      - state: clarified
+        at: "2026-09-07T21:56:00Z"
+      - state: prioritized
+        at: "2026-09-07T21:57:00Z"
+      - state: plan-ready
+        at: "2026-09-07T21:58:00Z"
+
   - id: t-003
     state: closed
     kind: bug
