@@ -1,9 +1,37 @@
 id: gate-uses-role-area-tier-for-fit
 epic: gate-fit-check-too-strict
 title: gate() accepts a group's own roleArea tier as an alternative way to satisfy the role/skill fit check
-status: pending
+status: complete
 complexity: medium
 methodology: classic
+
+progress_note: |
+  SHIPPED PR #172 (2026-09-07), via delegated subagent, with one real
+  correction caught during review before merging: the first draft used
+  `roleAreaTier.tier !== "red"`, which also matches YELLOW -- and
+  tiering.ts's tier() returns YELLOW for ANY gig when a group's roleArea
+  is empty/unconfigured, meaning the first draft would have rubber-
+  stamped the fit check for any group with no roleArea keywords filled
+  in. Sent back to the same agent with the exact fix needed
+  (`tier === "green"` -- an ACTIVE positive match only); corrected,
+  re-tested (full suite + a specifically-inverted regression test for
+  this exact failure mode), and merged clean.
+
+  Verified directly against the owner's real gig
+  (fractionaljobs:chief-technology-officer-at-a-healthtech-hardware-brand,
+  the exact one from his own bug report) post-merge: now correctly
+  PASSES gate() for his fractional-hourly group. `npm test` (1659
+  passed) and `npm run typecheck` both clean.
+
+  Note for the owner: a gig still being actively re-seen by its source
+  (i.e. still live on the listing site) self-heals automatically on
+  gigradar's own next scan cycle -- recordScan()'s UPSERT re-runs the
+  full gate()/matchGroups() pipeline on every re-seen gig. A gig that's
+  gone stale (no longer returned by its source) will NOT retroactively
+  get its matchedGroupIds recomputed by any existing mechanism
+  (runStaleGigMaintenance() only recomputes the flat tier field, not
+  gate()'s per-group match) -- deliberately not built here, out of this
+  story's scope; flagged, not silently dropped.
 depends_on: []
 
 description: |

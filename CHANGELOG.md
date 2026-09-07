@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-09-07
+
+### Fixed
+
+- A real, significant matching bug: gigs were silently discarded
+  whenever their title didn't literally overlap with the exact wording
+  of your own profile roles/skills — even when a group's own tier
+  keywords already correctly recognized them as a match (e.g. a
+  listing titled "Chief Technology Officer" versus a profile role of
+  "Fractional CTO"). A group's own tiering now backs up that check, so
+  a gig it already correctly classifies as a real match no longer gets
+  silently thrown away for using different wording than your own notes.
+  A gig still actively listed on its source will pick this up
+  automatically on the next scan.
+
+### Added
+
+- A one-click "+ Add email digest source" button on the Config page —
+  the Gmail job-alert-digest source (already fully built: it reads
+  digest emails and extracts real listings via AI, right into your
+  normal giglist) no longer requires hunting for a checkbox to reach.
+
 ## [0.43.0] - 2026-09-06
 
 ### Added

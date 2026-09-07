@@ -1,9 +1,16 @@
 id: one-click-add-gmail-digest-source
 epic: gmail-digest-onboarding-ux
 title: One-click "Add email digest source" button, mirroring the one-click custom-source button
-status: pending
+status: complete
 complexity: low
 methodology: classic
+
+progress_note: |
+  SHIPPED PR #173 (2026-09-07), via delegated subagent. Added
+  handleAddGmailDigestSource() mirroring handleAddCustomSource()'s
+  pattern exactly, plus a third "+ Add email digest source" button in
+  the same row. npm test (1654 passed at the time) and npm run
+  typecheck both clean.
 depends_on: []
 
 description: |
