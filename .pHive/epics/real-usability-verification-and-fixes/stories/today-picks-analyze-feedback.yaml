@@ -1,0 +1,80 @@
+id: today-picks-analyze-feedback
+epic: real-usability-verification-and-fixes
+title: "Today's Picks 'Analyze' button fetches a real result that never renders on that card -- show it"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Confirmed REAL bug via direct code read against the current, real running
+  app -- owner's own live complaint: "click analyze, what the fuck just
+  happened? I don't fucking know, nowhere does it show anything new."
+
+  `src/app/today/today-client.tsx`: the "Today's Picks" card's "Analyze"
+  button (`onClick={() => handleGeneratePrep(gig.key)}`, ~line 495)
+  correctly shows a loading state ("Analyzing…", ~line 504) and
+  `handleGeneratePrep` (~line 325) correctly fetches a real fit-analysis
+  result and stores it: `setPrepByKey((prev) => ({ ...prev, [key]:
+  result.data }))`. The bug: `prepByKey[gig.key]` is ONLY ever read/rendered
+  at ~line 676, inside a completely different section further down the
+  page (the "Full Roster" list) -- the Picks card itself (~lines 460-510)
+  never reads `prepByKey` at all, only the error-only `prepErrorByKey`. The
+  fetch genuinely succeeds and the state genuinely updates; the button just
+  flips back to its idle label with zero visible change on the card the
+  owner is actually looking at, because that specific card was never wired
+  to show the result it itself triggered.
+
+  **The fix**: render `prepByKey[gig.key]`'s real content (whatever
+  `PrepPacketContent`'s fit-score/recommendation shape is -- check
+  `src/lib/apply/prep.ts`'s real return type) directly on the Picks card,
+  in the same place/style the Full Roster row already uses to show it (
+  reuse that exact rendering, don't invent a second display format for the
+  same data). The Full Roster's own existing render of `prepByKey` stays
+  untouched -- this is additive (the Picks card gains the same visibility
+  the Full Roster already has), not a replacement.
+
+  Do NOT touch: `handleGeneratePrep()`'s own fetch/state-update logic
+  (already correct), `generatePrepPacketAction()`/`generatePrepPacket()`
+  (already correct, untouched), the Full Roster section's own existing
+  correct rendering (reused, not modified).
+
+acceptance_criteria:
+  - "Clicking 'Analyze' on a Today's Picks card, after it completes, visibly renders that gig's real fit-analysis result ON THAT CARD -- not just in the Full Roster section elsewhere on the page."
+  - "The Full Roster section's own existing rendering of the same prepByKey data is unchanged."
+  - "Real post-fix verification against the ACTUAL running app (not just npm test): rebuild, relaunch the real packaged app (backup first per this session's standing procedure), click a real Analyze button on a real Today's Picks card, and confirm via curl/DOM evidence (or simman if reconnected by then) that the real result appears on that card. Document this real verification in the story's own progress_note -- an automated test passing alone does not satisfy this criterion."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/today/today-client.tsx
+      purpose: "The exact file with the bug -- Picks card ~lines 460-510 (never reads prepByKey), handleGeneratePrep ~line 325 (correctly fetches/stores), Full Roster ~line 676 (correctly renders prepByKey -- the pattern to replicate onto the Picks card)."
+    - path: src/lib/apply/prep.ts
+      purpose: "generatePrepPacket()'s real PrepPacketContent return shape -- confirm exactly what fields exist to render before writing the Picks-card display."
+
+design_decisions:
+  - decision: Reuse the Full Roster's existing prepByKey rendering rather than inventing a new display for the Picks card.
+    rationale: "Same data, same meaning -- a second, differently-styled rendering of the identical PrepPacketContent would be exactly the kind of silently-divergent duplicate this session has repeatedly had to fix elsewhere (gate()/tiering.ts, rank-bucket-ai-overlay/ai-verify timeout patterns)."
+
+risks:
+  - severity: low
+    description: "Low blast radius -- purely a display fix, no data/logic change."
+    mitigation: "Acceptance criteria requires real post-rebuild verification against the actual running app, not just an automated test, given this exact class of 'looks done in tests, still broken in the real app' gap is what triggered this whole epic."
+
+steps:
+  - id: implement
+    description: Render prepByKey's real result on the Today's Picks card, reusing the Full Roster's existing display
+    agent: developer
+  - id: test
+    description: Add/extend a test covering the Picks card rendering prepByKey; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify the fix actually shows real content on the real card, not just that a test passes
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

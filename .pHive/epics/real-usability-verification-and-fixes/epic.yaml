@@ -1,0 +1,19 @@
+name: real-usability-verification-and-fixes
+title: "Real, evidence-based fixes for two confirmed UI bugs found by auditing the actual running app + real data (Today's Picks feedback, dashboard freshness accuracy) -- broader click-through audit queued pending simman"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+
+stories:
+  - id: today-picks-analyze-feedback
+    title: "Today's Picks 'Analyze' button fetches a real result that never renders on that card -- show it"
+    complexity: low
+    depends_on: []
+
+  - id: status-strip-reflects-cycle-completion
+    title: "Dashboard freshness status should reflect actual scan-cycle completion, not just the most recent per-gig touch"
+    complexity: medium
+    depends_on: []
+
+references:
+  - path: .pHive/epics/real-usability-verification-and-fixes/docs/design-discussion.md
+    relevant_excerpt: "§1(b) the confirmed Today's Picks feedback bug with exact file:line; §1(c) the status-strip structural gap; §2 the deferred broader click-through audit, blocked on a transient tool reconnection, not abandoned."

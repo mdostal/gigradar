@@ -1,0 +1,104 @@
+id: status-strip-reflects-cycle-completion
+epic: real-usability-verification-and-fixes
+title: "Dashboard freshness status should reflect actual scan-cycle completion, not just the most recent per-gig touch"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Confirmed real structural gap via direct code read + real data query
+  against the actual running app -- owner's own live complaint: "the
+  dashboard claims i'm up to date and did all of today which makes NO
+  SENSE" (said in the context of a day where multiple scan cycles had
+  hung for over an hour each, per this session's own t-001/t-002/t-003
+  triage entries fixed earlier today).
+
+  `src/lib/status/status-strip.ts`'s `computeLastScanIso()` computes
+  `MAX(lastSeen)` across every stored gig -- i.e. "how recently was ANY
+  gig touched by ANY completed per-source fetch," not "did the most
+  recent full scan CYCLE actually complete across all sources." At the
+  moment this was verified, the real number happened to look accurate (8
+  of 10 sources shared one fresh, complete-cycle timestamp, which is
+  itself good news -- confirms today's scan-pipeline fixes genuinely
+  work) -- but the underlying mechanism has no concept of "cycle
+  partial/hung" vs. "cycle complete," so a future partial hang (a new
+  failure mode, or before an already-shipped fix in an earlier state)
+  would still show a falsely reassuring "up to date" label built from
+  whichever sources happened to finish before the hang stalled the rest.
+  This is exactly the shape of thing that could make the owner distrust
+  real, accurate data later, or conversely trust a genuinely stale/broken
+  scan because a few sources' timestamps happened to look fresh.
+
+  **The fix**: give the status strip real visibility into cycle
+  completion, not just per-gig recency. Concretely (real design decision
+  for the implementer to make, informed by what's actually available):
+  - The scheduler (`src/scheduler/index.ts`) already logs a real
+    "cycle complete — N gig(s) found, M passed the gate" line and knows
+    exactly which sources were skipped/errored/timed-out each cycle (see
+    today's own t-001/t-002/t-003 fixes for the real per-source
+    error/timeout accounting already being tracked in `errors[]`). Surface
+    SOME real signal of this to the status strip -- e.g. persist the last
+    cycle's real completion state (full-success / partial -- N of M
+    sources succeeded / errored-out) somewhere `status-strip.ts` can read
+    it, and change the displayed label to honestly distinguish "up to
+    date" (last cycle fully completed) from "partially updated as of
+    [time] -- N source(s) didn't complete" (last cycle had real
+    errors/timeouts) rather than a single undifferentiated freshness
+    timestamp.
+  - Do NOT simply widen the MAX(lastSeen) window or add a vaguer caveat --
+    the fix must give the owner a REAL, accurate signal distinguishing
+    "everything's current" from "some sources are stale/failing," since
+    that distinction is exactly what he needs to trust or distrust what
+    he's looking at.
+
+  Do NOT touch: the scan pipeline itself (`runner.ts`/`scheduler/index.ts`'s
+  own scan/timeout/backoff logic -- already fixed today via t-001/t-002/
+  t-003, untouched here), any other status-strip computation unrelated to
+  freshness (e.g. gig counts, tier breakdowns).
+
+acceptance_criteria:
+  - "The dashboard's freshness indicator distinguishes a fully-completed last cycle from a partial one (some sources errored/timed out/were skipped) -- verified with a REAL constructed scenario (a real, isolated test DB with a mix of fresh and stale/errored source timestamps, or a direct read-only query against a real historical state) proving the label changes accordingly."
+  - "The underlying data used to make this distinction is REAL (drawn from the scheduler's own real per-cycle error/timeout/skip accounting, or an equivalent real persisted signal) -- not a guess or a cosmetic-only copy change that doesn't actually reflect real cycle state."
+  - "Real post-fix verification against the ACTUAL running app: rebuild, relaunch the real packaged app (backup first), and confirm via curl/DOM evidence that the real status strip now shows an honest, cycle-aware label reflecting the app's actual current state. Document this in the story's own progress_note."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/status/status-strip.ts
+      purpose: "computeLastScanIso()/computeStatusStrip() -- the exact logic to change, currently MAX(lastSeen)-only with no cycle-completion concept."
+    - path: src/scheduler/index.ts
+      purpose: "The real per-cycle completion/error/timeout/skip accounting already computed each cycle (see the 'cycle complete — N found, M passed' log line and the errors[]/backoff-state tracking) -- the real signal to surface, not re-derive from scratch."
+    - path: src/lib/apply/runner.ts
+      purpose: "runRadar()'s own real errors[] return value -- the source of truth for which sources actually failed/timed out a given cycle."
+
+design_decisions:
+  - decision: Surface the scheduler's own already-computed real per-cycle completion state, rather than inferring cycle health from gig timestamps alone.
+    rationale: "The scheduler already knows, with certainty, whether a cycle fully completed or had real errors/timeouts -- re-deriving an approximation of that from gig timestamps is strictly worse information than what already exists, and risks yet another silently-diverging parallel computation of the same fact."
+
+risks:
+  - severity: medium
+    description: "A poorly-designed cycle-completion signal could itself become misleading (e.g. showing 'partial' forever if the persisted state isn't updated correctly, or flickering false negatives)."
+    mitigation: "Acceptance criteria requires a real constructed test proving both directions (fully-complete cycle shows accurate 'up to date'; a partial cycle shows an honest partial state) plus real post-rebuild verification against the actual app, not just unit tests in isolation."
+
+steps:
+  - id: research
+    description: Determine the real, least-invasive way to persist/surface the scheduler's own per-cycle completion state for status-strip.ts to read
+    agent: developer
+  - id: implement
+    description: Wire the real cycle-completion signal into computeStatusStrip()'s freshness label
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Add tests proving both the fully-complete and partial-cycle cases render honestly distinct labels; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify the signal is real (not cosmetic) and both directions are genuinely tested
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
