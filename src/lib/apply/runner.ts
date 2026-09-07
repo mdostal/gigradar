@@ -11,7 +11,7 @@ import { matchGroups } from "../matching/group-match.js";
 import { computeTier } from "../matching/score-tiering.js";
 import { applyAiVerification } from "../matching/ai-verify.js";
 import { assignRankBucket } from "../matching/rank-bucket.js";
-import { applyRankBucketAiOverlay } from "../matching/rank-bucket-ai-overlay.js";
+import { applyRankBucketAiOverlay, ruleOnlyRankBucketAssignment } from "../matching/rank-bucket-ai-overlay.js";
 import { gigKey, listGroupScores, recordScan, saveDraft } from "../store/index.js";
 import type { DbOption, RecordScanOptions, SourceScanBatch } from "../store/index.js";
 import { loadConfig } from "../config/load.js";
@@ -41,6 +41,41 @@ import { generateDraft, resolveApplicationFormat } from "./draft.js";
  * any individual adapter.
  */
 const SOURCE_FETCH_TIMEOUT_MS = 60_000;
+
+/**
+ * rank-bucket-ai-overlay-timeout-and-cap story (triage t-002, p1/major):
+ * even with RANK_BUCKET_AI_OVERLAY_TIMEOUT_MS bounding each individual
+ * `applyRankBucketAiOverlay()` call (rank-bucket-ai-overlay.ts), the
+ * per-gig loop below calls it once per (gig, rankBuckets-configured,
+ * opted-in group) pair for EVERY gig a source returns this cycle -- live
+ * process inspection found this is what actually ran a real cycle 12+
+ * minutes past its cron tick (a fresh `claude` CLI subprocess roughly
+ * every 10-15s, one after another, with no cap at all). A per-call
+ * timeout alone still lets the AGGREGATE cost scale unboundedly with
+ * however many green/yellow gigs a cycle happens to see.
+ *
+ * Mirrors this codebase's existing `AUTO_DRAFT_CAP` precedent
+ * (scheduler/index.ts) -- a fixed, non-configurable, exported per-cycle
+ * ceiling on how many real LLM calls one stage of the pipeline can make,
+ * with the SAME "gigs beyond the cap just don't get this stage this
+ * cycle, and self-heal on a later scan once still green/yellow" posture
+ * (see `runAutoDraft()`'s own doc comment in scheduler/index.ts).
+ *
+ * 10, not AUTO_DRAFT_CAP's 5: this cap only ever counts a call that would
+ * ACTUALLY invoke the AI (`group.rankBucketAiOverlay === true` AND a
+ * credential resolved this cycle -- see the call site below), and each
+ * call is a single small structured-output classification, cheaper than
+ * `stageApplication()`'s full draft-generation LLM call that
+ * AUTO_DRAFT_CAP bounds. Worst case (every one of the 10 calls actually
+ * hits RANK_BUCKET_AI_OVERLAY_TIMEOUT_MS's 20s deadline rather than
+ * completing normally): 10 * 20s = 200s (~3.3min) added to a cycle --
+ * still a small, BOUNDED addition instead of the unbounded tens-of-
+ * minutes this story exists to fix. Normal case, going by this story's
+ * own live-observed ~10-15s per real call: roughly 100-150s added, well
+ * under the deliberately-shorter-than-a-typical-cron-tick budget this
+ * fix targets.
+ */
+export const RANK_BUCKET_AI_OVERLAY_CAP = 10;
 
 /** Thrown by {@link fetchWithTimeout} when `SOURCE_FETCH_TIMEOUT_MS` elapses before `src.fetch()` settles — distinguishable from a real thrown error (never confused with e.g. a bad-login `Error` in the catch block below) by its own `name` and a message that always contains "timed out after". */
 export class SourceFetchTimeoutError extends Error {
@@ -144,6 +179,12 @@ export async function runRadar(
   const results: MatchResult[] = [];
   const errors: { sourceId: string; message: string; needsVerification?: boolean; blockedUrl?: string }[] = [];
   const batches: SourceScanBatch[] = [];
+  // rank-bucket-ai-overlay-timeout-and-cap story: counts only calls that
+  // actually invoke the AI (see the call site below) — local to one
+  // runRadar() invocation (one scan cycle), never module-scope state, so
+  // concurrent/sequential test runs and separate cycles never leak into
+  // each other.
+  let rankBucketAiOverlayCallsThisCycle = 0;
 
   for (const sc of config.sources.filter((s) => s.enabled)) {
     // llm-custom-sources epic: a kind:"custom-llm" source is NEVER in the
@@ -291,6 +332,25 @@ export async function runRadar(
       for (const group of scopedGroups) {
         if (!group.rankBuckets || group.rankBuckets.length === 0) continue;
         const ruleResult = assignRankBucket(g, group.rankBuckets);
+        // rank-bucket-ai-overlay-timeout-and-cap story (triage t-002):
+        // this call would actually spawn a real claude-CLI subprocess only
+        // when the group opted in AND a credential resolved this cycle —
+        // the SAME condition applyRankBucketAiOverlay() itself checks
+        // before calling out (rank-bucket-ai-overlay.ts). Only THAT case
+        // counts against RANK_BUCKET_AI_OVERLAY_CAP; a call that would be
+        // a free no-op anyway never spends cap budget for nothing.
+        const wouldCallAi = group.rankBucketAiOverlay === true && runOpts.credential !== undefined;
+        if (wouldCallAi && rankBucketAiOverlayCallsThisCycle >= RANK_BUCKET_AI_OVERLAY_CAP) {
+          // Over the per-cycle cap: keep the rule-based result for THIS
+          // cycle rather than spawning another subprocess — no data loss,
+          // this gig is picked up by the AI overlay on a later scan once
+          // it's still green/yellow and re-scanned (same self-heals
+          // pattern this codebase already uses elsewhere — see
+          // RANK_BUCKET_AI_OVERLAY_CAP's own doc comment above).
+          matchedRankBuckets[group.id] = ruleOnlyRankBucketAssignment(ruleResult);
+          continue;
+        }
+        if (wouldCallAi) rankBucketAiOverlayCallsThisCycle += 1;
         matchedRankBuckets[group.id] = await applyRankBucketAiOverlay(g, group, ruleResult, runOpts.credential);
       }
       // Same primary-group-anchoring convention as flatTier/flatMatchBand

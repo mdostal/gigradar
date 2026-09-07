@@ -14,11 +14,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config, Gig, RankBucketAssignment } from "../../types.js";
 
 const { mockApplyRankBucketAiOverlay } = vi.hoisted(() => ({ mockApplyRankBucketAiOverlay: vi.fn() }));
-vi.mock("../../matching/rank-bucket-ai-overlay.js", () => ({ applyRankBucketAiOverlay: mockApplyRankBucketAiOverlay }));
+// ruleOnlyRankBucketAssignment is NOT mocked -- runner.ts's own per-cycle
+// cap enforcement (rank-bucket-ai-overlay-timeout-and-cap story) calls the
+// REAL one directly (never applyRankBucketAiOverlay()) for a gig beyond
+// the cap, so this test file needs the real implementation, not a mock.
+vi.mock("../../matching/rank-bucket-ai-overlay.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../matching/rank-bucket-ai-overlay.js")>();
+  return { ...actual, applyRankBucketAiOverlay: mockApplyRankBucketAiOverlay };
+});
 
 import { registerSource } from "../../sources/source.js";
 import { closeDb, getDb, getGig } from "../../store/index.js";
-import { runRadar } from "../runner.js";
+import { RANK_BUCKET_AI_OVERLAY_CAP, runRadar } from "../runner.js";
 
 let nextGigs: Gig[] = [];
 registerSource({
@@ -127,5 +134,53 @@ describe("runRadar: rank-bucket wiring (rank-buckets epic)", () => {
     nextGigs = [makeGig("1", { min: 250 })]; // re-scan at a real rate
     await runRadar(makeConfig(), { db });
     expect(getGig("braintrust:1", { db })?.rankBucket).toEqual({ bucket: "Tier 1", source: "rule", confirmed: true });
+  });
+});
+
+// rank-bucket-ai-overlay-timeout-and-cap story (triage t-002): proves the
+// real, exported RANK_BUCKET_AI_OVERLAY_CAP is actually enforced by
+// runRadar() itself -- more AI-overlay-eligible gigs exist in one cycle
+// than the cap, only the capped number get a real applyRankBucketAiOverlay()
+// call, the rest keep their rule-based result for this cycle (self-heals on
+// a later scan, no data loss).
+describe("runRadar: RANK_BUCKET_AI_OVERLAY_CAP enforcement (rank-bucket-ai-overlay-timeout-and-cap, triage t-002)", () => {
+  const CREDENTIAL = { kind: "api-key" as const, provider: "anthropic" as const, value: "fake-api-key" };
+
+  it("calls applyRankBucketAiOverlay at most RANK_BUCKET_AI_OVERLAY_CAP times in one cycle, even with more eligible gigs than the cap", async () => {
+    const total = RANK_BUCKET_AI_OVERLAY_CAP + 5;
+    nextGigs = Array.from({ length: total }, (_, i) => makeGig(String(i), { min: 250 }));
+
+    await runRadar(makeConfig({ rankBucketAiOverlay: true }), { db }, { credential: CREDENTIAL });
+
+    expect(mockApplyRankBucketAiOverlay).toHaveBeenCalledTimes(RANK_BUCKET_AI_OVERLAY_CAP);
+  });
+
+  it("gigs beyond the cap keep the real rule-based rankBucket result this cycle -- never left undefined/broken", async () => {
+    const total = RANK_BUCKET_AI_OVERLAY_CAP + 5;
+    nextGigs = Array.from({ length: total }, (_, i) => makeGig(String(i), { min: 250 }));
+
+    await runRadar(makeConfig({ rankBucketAiOverlay: true }), { db }, { credential: CREDENTIAL });
+
+    // Every gig, capped or not, ends up with a real, non-broken rankBucket
+    // assignment -- the ones beyond the cap never called the (mocked) AI
+    // overlay at all, so they must have gotten there via the direct
+    // rule-based fallback this story adds in runner.ts.
+    for (let i = 0; i < total; i++) {
+      const stored = getGig(`braintrust:${i}`, { db });
+      expect(stored?.rankBucket).toEqual({ bucket: "Tier 1", source: "rule", confirmed: true });
+    }
+  });
+
+  it("does NOT count a call that would be a no-op anyway (no credential resolved) against the cap", async () => {
+    const total = RANK_BUCKET_AI_OVERLAY_CAP + 5;
+    nextGigs = Array.from({ length: total }, (_, i) => makeGig(String(i), { min: 250 }));
+
+    // rankBucketAiOverlay is on, but no credential resolves this cycle --
+    // every call is a free no-op (applyRankBucketAiOverlay's own early
+    // return), so none of them should burn cap budget, and the mock
+    // (standing in for the real function) is still called once per gig.
+    await runRadar(makeConfig({ rankBucketAiOverlay: true }), { db });
+
+    expect(mockApplyRankBucketAiOverlay).toHaveBeenCalledTimes(total);
   });
 });

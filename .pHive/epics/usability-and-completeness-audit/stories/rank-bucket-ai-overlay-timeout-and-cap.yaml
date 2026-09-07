@@ -1,10 +1,112 @@
 id: rank-bucket-ai-overlay-timeout-and-cap
 epic: usability-and-completeness-audit
 title: "Bound applyRankBucketAiOverlay()'s per-gig claude-CLI subprocess with a real timeout and a per-cycle cap (triage t-002, p1)"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED: PR #182 (https://github.com/mdostal/gigradar/pull/182),
+  branch feat/rank-bucket-ai-overlay-timeout-and-cap off origin/dev (no
+  merge conflict -- dev hadn't moved since the branch point).
+
+  **1. Per-call timeout (RANK_BUCKET_AI_OVERLAY_TIMEOUT_MS = 20_000,
+  src/lib/matching/rank-bucket-ai-overlay.ts):** applyRankBucketAiOverlay()
+  now races its internal suggestRankBucket() call against a 20s deadline
+  via the same Promise.race()+setTimeout()+finally(clearTimeout) shape as
+  runner.ts's own fetchWithTimeout() (t-001/PR #179). On timeout, the
+  RankBucketAiOverlayTimeoutError lands in the SAME try/catch that already
+  handles a real thrown API error -- no new fallback branch needed, since
+  a timeout is philosophically identical to "AI overlay unavailable this
+  cycle" (this feature's own documented design). Extracted
+  ruleOnlyRankBucketAssignment() as the single source of truth for the
+  `{ bucket, source: "rule", confirmed: true }` shape, reused by both this
+  function's own early-return/fallback paths and runner.ts's cap logic
+  (item 2) so the two never silently drift apart.
+
+  Reasoning for 20s: this story's own live process inspection observed
+  real subprocess lifetimes of roughly 10-15s (PID 25692 exited after
+  ~10s). 20s gives ~2x headroom over that observed norm so an ordinary
+  call is never false-positive-killed, while still bounding a genuinely
+  stuck one to a small, fixed fraction of an unbounded wait. Deliberately
+  much shorter than SOURCE_FETCH_TIMEOUT_MS's 60s (t-001) -- that budget
+  has to tolerate a real page load/login flow/bot-detection wait a
+  browser-automation SOURCE might need; this is a single structured-output
+  LLM round trip, an order of magnitude below even this shorter deadline
+  in the real observed norm.
+
+  **2. Per-cycle cap (RANK_BUCKET_AI_OVERLAY_CAP = 10,
+  src/lib/apply/runner.ts):** a local (not module-scope) counter inside
+  one runRadar() invocation counts only calls that would ACTUALLY invoke
+  the AI (group.rankBucketAiOverlay === true AND a credential resolved
+  this cycle -- the same condition applyRankBucketAiOverlay() itself
+  checks before calling out, so a call that would be a free no-op never
+  burns cap budget). Once the cap is hit, a gig/group pair gets
+  ruleOnlyRankBucketAssignment(ruleResult) directly -- runner.ts never
+  even calls applyRankBucketAiOverlay(), so no subprocess is spawned at
+  all for capped gigs. No data loss: capped gigs keep a valid rule-based
+  rankBucket this cycle and are picked up by the AI overlay on a later
+  scan once still green/yellow and re-scanned, mirroring this codebase's
+  established "self-heals on next scan" pattern.
+
+  Reasoning for 10 (not AUTO_DRAFT_CAP's 5, scheduler/index.ts -- that's
+  the real precedent mirrored here, despite the story's context note
+  pointing at runner.ts; AUTO_DRAFT_CAP actually lives in
+  scheduler/index.ts, confirmed by grep before implementing): this cap
+  only ever counts a call that genuinely fires the AI, and each such call
+  is a single small structured-output classification, cheaper than
+  stageApplication()'s full draft-generation LLM call that AUTO_DRAFT_CAP
+  bounds -- tolerating a somewhat higher cap while keeping the aggregate
+  bounded. Worst case (every one of the 10 calls actually hits the 20s
+  timeout rather than completing normally): 10 * 20s = 200s (~3.3min)
+  added to a cycle -- a small, BOUNDED addition instead of the unbounded
+  tens-of-minutes this story exists to fix. Normal case, going by this
+  story's own live-observed ~10-15s per real call: roughly 100-150s
+  added.
+
+  **3. Bounded concurrency -- considered, decided AGAINST for this
+  story:** fractionus.ts's DETAIL_FETCH_CONCURRENCY = 3 precedent is a
+  simple, isolated batch-fetch loop with no other state. This call site
+  sits deep inside apply/runner.ts's single per-gig loop, which ALSO runs
+  gate()/matchGroups()/applyAiVerification()/computeTier() synchronously,
+  interleaved, per gig (applyAiVerification() itself is a SECOND
+  sequential, uncapped, un-timed-out AI call site earlier in the same
+  loop, flagged as a related risk below but explicitly out of scope for
+  t-002, whose live evidence specifically named rank-bucket-ai-overlay's
+  subprocess spawns). Decoupling just the rank-bucket-overlay call into a
+  bounded-concurrency batch would require restructuring that loop into a
+  two-pass shape (collect eligible pairs synchronously first, batch-
+  process the AI overlay concurrently second, merge results back into
+  each gig's already-built MatchResult/gigWithTier) -- a materially
+  larger, riskier change than this triage's p1/major severity justifies,
+  especially given how many OTHER concurrently-active stories this same
+  session also touch this exact loop (ai-match-verification,
+  multi-group-architecture, rate-band-match-quality,
+  customizable-tier-scoring, group-aware-auto-fire-trust, etc.) -- real
+  conflict/regression surface for a marginal further reduction in
+  worst-case time, given timeout+cap alone already bounds the worst case
+  to ~3.3min. Not revisited unless a future live cycle shows the
+  timeout+cap fix alone is still insufficient.
+
+  Related, NOT fixed here (flagged for a possible future triage entry):
+  applyAiVerification() (src/lib/matching/ai-verify.ts) has the exact same
+  shape -- sequential, no timeout, no cap, one real AI call per matched
+  group per gig -- sitting even earlier in the same per-gig loop. It could
+  reproduce this same class of bug independently; out of scope here since
+  t-002's own live evidence named the rank-bucket-ai-overlay claude-CLI
+  spawns specifically, not this one.
+
+  Verification: npm test (1735 passed, 3 skipped, 0 failed, 124 files) and
+  npm run typecheck both clean. New regression tests added in
+  src/lib/matching/__tests__/rank-bucket-ai-overlay.test.ts (hung
+  generateText() mock + fake timers proves the timeout-fallback; a
+  fast-resolving call proves no false-positive kill) and
+  src/lib/apply/__tests__/runner-rank-bucket.test.ts (more AI-overlay-
+  eligible gigs than RANK_BUCKET_AI_OVERLAY_CAP in one runRadar() cycle
+  proves only the capped count of real calls happen, capped gigs still
+  get a valid non-broken rule-based rankBucket, and a no-credential cycle
+  never burns cap budget on free no-ops).
 
 description: |
   Triage entry t-002 (.pHive/triage/queue.yaml, priority p1/severity
