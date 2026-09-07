@@ -1,0 +1,24 @@
+name: group-scoped-automation-fixes
+title: "Fix remaining cross-group leaks + make auto-draft/notify/auto-fire actually work for non-primary groups"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+
+stories:
+  - id: remaining-cross-group-tier-leaks
+    title: Fix remaining flat-tier display leaks (overview tiles, gig detail panel, interview workspace, MCP list_gigs)
+    complexity: low
+    depends_on: []
+  - id: group-aware-auto-draft-and-notify
+    title: Auto-draft and notify-on-green-match consider ANY in-scope group, not just the primary one
+    complexity: medium
+    depends_on: []
+  - id: group-aware-auto-fire-trust
+    title: Auto-fire rules can be scoped to a specific group (optional, backward-compatible)
+    complexity: medium
+    depends_on: [group-aware-auto-draft-and-notify]
+
+references:
+  - path: .pHive/epics/group-scoped-automation-fixes/docs/design-discussion.md
+    relevant_excerpt: "§1 findings, §2 the one real design decision (optional AutoFireRuleConfig.groupId), §3 scope + sequencing rationale."
+  - path: .pHive/epics/dynamic-groups-band-audit/docs/design-discussion.md
+    relevant_excerpt: "The original audit + PR #163's fix this epic directly continues."

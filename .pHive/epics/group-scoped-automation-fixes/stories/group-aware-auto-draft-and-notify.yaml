@@ -1,0 +1,102 @@
+id: group-aware-auto-draft-and-notify
+epic: group-scoped-automation-fixes
+title: Auto-draft and notify-on-green-match consider ANY in-scope group, not just the primary one
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Real, significant gap found by this epic's own research: `runAutoDraft()`
+  and `runNotifyOnGreenMatch()` (`src/scheduler/index.ts`, ~lines 302 and
+  360) both filter on `MatchResult.tier`, which `apply/runner.ts` computes
+  as the PRIMARY group's tier only (`flatTier`). For an owner running
+  multiple groups (e.g. an existing fractional-work group plus a new,
+  non-primary "Drone Services" group), a gig that's a real GREEN,
+  in-band match for the non-primary group NEVER gets auto-drafted and
+  NEVER triggers a notification -- silently, because automation only
+  ever looks at whichever group happens to be first in `Config.groups`.
+
+  The fix needs NO new data plumbing -- `Gig.matchedGroupTiers` and
+  `Gig.matchedGroupBands` (both `Record<groupId, ...>`) already carry
+  every group's own real result, stamped on by `runner.ts` today. This
+  is a filter-logic change, not a schema change:
+
+  1. `runAutoDraft()`'s `eligible` filter (currently
+     `r.tier === "green" && r.gig.matchBand === "in-band"`) should
+     become: does there exist at least one `groupId` where
+     `r.gig.matchedGroupTiers?.[groupId] === "green"` AND
+     `r.gig.matchedGroupBands?.[groupId] === "in-band"` (the SAME
+     group for both checks -- a gig green for group A but only
+     in-band for group B does not count). Keep the existing
+     `getDraftFn(...) === undefined` dedupe check unchanged (a draft is
+     one artifact per gig, not per group -- see this story's own
+     design_decisions).
+  2. `runNotifyOnGreenMatch()`'s `newGreenMatches` filter (currently
+     `r.tier === "green"`) should become the same "any in-scope group is
+     green" check (band is NOT part of this one today -- keep it that
+     way, don't add a check the original story never had).
+  3. Match `runRadar()`'s own already-fixed `pass` field precedent
+     (see runner.ts's own comment: "'pass' reflects whether this gig
+     cleared ANY in-scope group, not just the primary one") -- this
+     story is applying that SAME principle to the two scheduler
+     consumers that hadn't caught up to it yet.
+
+  Do NOT change `attemptAutoFire()`'s own call or `AutoFireRuleConfig` in
+  this story -- that's the next story in this epic
+  (`group-aware-auto-fire-trust`), sequenced to land after this one so
+  it doesn't conflict with these same `scheduler/index.ts` edits.
+
+acceptance_criteria:
+  - "A gig that is GREEN + in-band for a NON-primary group (and not green/in-band for the primary group) is auto-drafted when autoDraftOnScan is enabled -- verified by a real test constructing a multi-group Config where the eligible gig's primary-group tier is NOT green."
+  - "The same gig triggers a notify-on-green-match notification under the same non-primary-group-only condition."
+  - "A gig that is green+in-band for NO group (primary or otherwise) is still correctly NOT auto-drafted -- no regression on the reject path."
+  - "Existing single-group behavior is byte-identical (a single-group Config's primary group IS its only group, so 'any group' and 'the primary group' are the same set)."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/scheduler/index.ts
+      purpose: "runAutoDraft() (~line 270-325) and runNotifyOnGreenMatch() (~line 335-370) -- the two functions this story changes."
+    - path: src/lib/apply/runner.ts
+      purpose: "Where matchedGroupTiers/matchedGroupBands/flatTier/flatMatchBand are computed -- read this to confirm exactly what data is already available on MatchResult.gig, no new plumbing needed."
+    - path: src/scheduler/__tests__/auto-draft-tier-scoring.test.ts
+      purpose: "Existing real-pipeline test pattern (construct a real Config, run runRadar, assert on runAutoDraft's behavior) to follow for this story's own new multi-group test case."
+
+code_examples:
+  - title: "runner.ts's own precedent for 'any group, not just primary' semantics"
+    file: src/lib/apply/runner.ts
+    snippet: |
+      // "pass" reflects whether this gig cleared ANY in-scope group, not
+      // just the primary one -- the auto-draft/notify-on-green-match
+      // consumers of RunRadar()'s own `passed` list must react to a real
+      // match in ANY of the owner's groups, not just whichever happens
+      // to be first.
+      pass: matchedGroupIds.length > 0,
+
+design_decisions:
+  - decision: A draft stays ONE artifact per gig, never one per matching group.
+    rationale: "A drafted application/cover-letter is about the GIG, not about which of the owner's groups it happens to match -- there's no sensible notion of 'draft this gig once for Drone Services and again for AI Data Labeling.' Only the ELIGIBILITY check (should this gig get drafted at all) becomes group-aware, not the drafting mechanism itself."
+
+steps:
+  - id: implement
+    description: Widen both eligibility filters to check any in-scope group's own tier/band
+    agent: developer
+  - id: test
+    description: Add a real multi-group test proving a non-primary-group-only match still auto-drafts/notifies; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for exact parity with runner.ts's own "any group" precedent, and that drafting stays one-per-gig
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
+
+risks:
+  - severity: medium
+    description: "Widening auto-draft eligibility means MORE gigs will be auto-drafted than before for any owner already running multiple groups -- a real behavior change, not just a bug fix, for that population."
+    mitigation: "This is the CORRECT behavior per the feature's own original intent (auto-draft green+in-band matches) -- the current behavior is the bug. Called out explicitly in the PR description so the owner is aware of the behavior change, not just told 'bug fixed.'"
