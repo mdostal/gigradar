@@ -97,8 +97,8 @@ entries:
     severity: major
     linked_epic: usability-and-completeness-audit
     linked_story: rank-bucket-ai-overlay-timeout-and-cap
-    closed_reason: null
-    closed_at: null
+    closed_reason: "shipped in PR #182 -- 20s per-call timeout (falls back to the rule-based ruleResult, matching this feature's own 'opt-in overlay' philosophy) plus a per-cycle cap of 10 real AI calls, mirroring AUTO_DRAFT_CAP's existing precedent; regression tests prove both the fallback and the cap"
+    closed_at: "2026-09-07T18:55:00Z"
     state_history:
       - state: inbox
         at: "2026-09-07T18:37:00Z"
@@ -108,3 +108,46 @@ entries:
         at: "2026-09-07T18:39:00Z"
       - state: plan-ready
         at: "2026-09-07T18:40:00Z"
+      - state: closed
+        at: "2026-09-07T18:55:00Z"
+
+  - id: t-003
+    state: plan-ready
+    kind: bug
+    title: "applyAiVerification() has the identical unbounded per-gig claude-CLI shape as t-002 -- CONFIRMED live/active: both of the owner's real groups have aiVerify:true"
+    description: |
+      Flagged by the developer fixing t-002 (2026-09-07), out of that
+      story's own scope: `src/lib/matching/ai-verify.ts`'s
+      `applyAiVerification()` -- called from the same per-gig loop in
+      `src/lib/apply/runner.ts` as the now-fixed `applyRankBucketAiOverlay()`
+      -- has the identical shape that caused t-002: a real claude-CLI/LLM
+      call made per-gig (for groups with `aiVerify` opted in), with no
+      per-call timeout and no per-cycle cap. This was NOT fixed as part of
+      PR #182 (deliberately out of scope, to keep that PR focused), but is
+      a real, live risk of reproducing the exact same "cycle takes tens of
+      minutes" symptom independently, just for AI-VERIFICATION-opted-in
+      groups instead of rankBucket-AI-overlay-opted-in ones.
+
+      Needs the same class of fix PR #182 just shipped: a real per-call
+      timeout on applyAiVerification()'s own LLM call (fall back to the
+      heuristic match result on timeout -- ai-verify.ts's own header
+      comment already states it's "never a replacement for the heuristic"),
+      and a real per-cycle cap mirroring RANK_BUCKET_AI_OVERLAY_CAP's/
+      AUTO_DRAFT_CAP's existing precedent in runner.ts.
+    reporter: "developer (rank-bucket-ai-overlay-timeout-and-cap story), relayed via session diagnosis"
+    reported_at: "2026-09-07T18:55:00Z"
+    priority: p1
+    severity: major
+    linked_epic: usability-and-completeness-audit
+    linked_story: ai-verify-timeout-and-cap
+    closed_reason: null
+    closed_at: null
+    state_history:
+      - state: inbox
+        at: "2026-09-07T18:55:00Z"
+      - state: clarified
+        at: "2026-09-07T18:56:00Z"
+      - state: prioritized
+        at: "2026-09-07T18:57:00Z"
+      - state: plan-ready
+        at: "2026-09-07T18:58:00Z"

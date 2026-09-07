@@ -1,0 +1,99 @@
+id: ai-verify-timeout-and-cap
+epic: usability-and-completeness-audit
+title: "Bound applyAiVerification()'s per-gig claude-CLI call with the same timeout+cap pattern as rank-bucket-ai-overlay (triage t-003, p1)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Triage entry t-003 (.pHive/triage/queue.yaml, priority p1/severity
+  major). Flagged by the developer who fixed t-002
+  (rank-bucket-ai-overlay-timeout-and-cap, PR #182), confirmed live and
+  active by direct read-only check against the owner's real config:
+  **both of the owner's real groups (`fractional-hourly`, `full-time`)
+  have `aiVerify: true`** -- this is not a hypothetical risk, it's
+  currently enabled.
+
+  `src/lib/matching/ai-verify.ts`'s `applyAiVerification()` is called from
+  the SAME per-gig loop in `src/lib/apply/runner.ts` as the now-fixed
+  `applyRankBucketAiOverlay()`, and has the IDENTICAL unbounded shape that
+  caused t-002: a real claude-CLI/LLM call made per-gig (for groups with
+  `aiVerify` opted in), with no per-call timeout and no per-cycle cap.
+  This was deliberately left out of PR #182's scope to keep that fix
+  focused, but given both real groups have this enabled, it is very
+  likely ALREADY contributing to (or independently capable of causing) the
+  same "a scan cycle takes tens of minutes" symptom t-002 just fixed for
+  the rank-bucket overlay.
+
+  **The fix**: apply the exact same pattern PR #182 just shipped for
+  `applyRankBucketAiOverlay()`, adapted to this function:
+  1. A real timeout around `applyAiVerification()`'s own LLM call. On
+     timeout, fall back to the heuristic match result unchanged -- this
+     codebase's own `ai-verify.ts` header comment ALREADY states its
+     philosophy explicitly ("never a replacement for the heuristic"), so a
+     timeout here is philosophically identical to the AI verification
+     being unavailable, exactly like t-002's fix.
+  2. A real, justified per-cycle cap on total `applyAiVerification()`
+     calls per cycle, mirroring `RANK_BUCKET_AI_OVERLAY_CAP`'s and
+     `AUTO_DRAFT_CAP`'s existing precedent in the same `runner.ts` file.
+     Gigs beyond the cap keep their heuristic-only result for that cycle
+     and self-heal on a later scan, matching the same pattern.
+  3. Reuse the SAME timeout-wrapping mechanism `applyRankBucketAiOverlay()`
+     now uses (read that function's real, just-shipped implementation in
+     `rank-bucket-ai-overlay.ts` first -- don't reinvent a second timeout
+     pattern; extract a shared helper if that's the cleaner shape, but
+     don't duplicate the Promise.race logic a third time in this codebase
+     after t-001's `fetchWithTimeout()` and t-002's own timeout).
+
+  Do NOT touch: the heuristic match logic itself (already correct,
+  untouched), `applyRankBucketAiOverlay()`'s own already-shipped fix
+  (a separate, independent call site), `gate()`/`tiering.ts` (unrelated,
+  already fixed earlier this session).
+
+acceptance_criteria:
+  - "A real timeout is added around applyAiVerification()'s LLM call -- a deliberately-hung/slow test double no longer blocks the per-gig loop past a bounded, justified deadline."
+  - "On timeout, the gig's AI-verification flag falls back to the heuristic-only result, never left undefined/broken, matching ai-verify.ts's own stated 'never a replacement for the heuristic' philosophy."
+  - "A real, justified per-cycle cap limits how many applyAiVerification() calls run in one cycle, mirroring RANK_BUCKET_AI_OVERLAY_CAP's precedent -- gigs beyond the cap keep the heuristic-only result for that cycle."
+  - "New regression tests prove both the timeout-fallback and the cap-enforcement, mirroring rank-bucket-ai-overlay.test.ts's/runner-rank-bucket.test.ts's own just-added test shapes."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/matching/ai-verify.ts
+      purpose: "applyAiVerification()'s own real LLM call -- the exact call site needing a timeout, mirroring rank-bucket-ai-overlay.ts's just-shipped fix."
+    - path: src/lib/matching/rank-bucket-ai-overlay.ts
+      purpose: "The JUST-SHIPPED (PR #182) real, working timeout pattern (RankBucketAiOverlayTimeoutError, ruleOnlyRankBucketAssignment() fallback) to replicate here, not reinvent."
+    - path: src/lib/apply/runner.ts
+      purpose: "RANK_BUCKET_AI_OVERLAY_CAP and AUTO_DRAFT_CAP -- the existing per-cycle-cap precedents to mirror for applyAiVerification()'s own cap."
+
+design_decisions:
+  - decision: Mirror t-002's just-shipped fix exactly rather than designing a new pattern.
+    rationale: "Same bug class, same file, same loop, same codebase -- introducing a differently-shaped fix here would be the exact kind of 'two independent implementations of the same thing silently diverging' failure mode this session's gate-fit-check-too-strict epic already had to fix once. Consistency is the point."
+
+risks:
+  - severity: medium
+    description: "A too-aggressive cap or timeout could make AI verification effectively useless; too generous and the compounding-slow-cycle problem persists."
+    mitigation: "Mirror PR #182's already-reviewed, already-justified values/reasoning as the starting point rather than picking new numbers from scratch."
+
+steps:
+  - id: research
+    description: Read applyRankBucketAiOverlay()'s just-shipped timeout/cap implementation in full to replicate its exact pattern for applyAiVerification()
+    agent: developer
+  - id: implement
+    description: Add the per-call timeout with heuristic fallback, and the per-cycle cap, to applyAiVerification()'s invocation
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Add regression tests mirroring rank-bucket-ai-overlay's own new tests; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify consistency with the just-shipped t-002 pattern and that the fallback never leaves a gig's AI-verification state broken
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
