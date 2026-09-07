@@ -157,6 +157,18 @@ export const wellfoundSource: Source = {
   id: "wellfound",
   label: "Wellfound",
   auth: "browser-session",
+  // application-format-coverage-per-source story — REAL research against
+  // Wellfound's own public support article
+  // (help.wellfound.com/article/769-how-do-i-apply-to-a-job): applying is
+  // "a pop-up window ... with the option to add a note. A note is akin to
+  // a cover letter" and candidates should "write an appropriate
+  // introduction that responds directly to the job posting introducing
+  // yourself" — the candidate's profile/resume is what's actually shared;
+  // the note itself is a single short introduction, not a traditional
+  // multi-paragraph letter and not a multi-field form. Matches this
+  // codebase's own "why-fit" shape (see gofractional.ts) more honestly
+  // than "cover-letter".
+  applicationFormat: "why-fit",
   async fetch(cfg: SourceConfig): Promise<Gig[]> {
     const sessionBackend = sessionBackendFrom(cfg);
     const sessionStatePath = sessionBackend === "local" ? sessionStatePathFrom(cfg) : undefined;

@@ -404,6 +404,15 @@ export const builtinSource: Source = {
   id: "builtin",
   label: "BuiltIn",
   auth: "none",
+  // application-format-coverage-per-source story — REAL research, live
+  // `curl` against a real `/job/{slug}/{id}` detail page: the apply button
+  // is branded "Easy Apply" (`data-builtin-track-click-event="job_apply_unauth"`)
+  // and the in-page apply widget is a resume-upload flow
+  // (`resume-upload`/`profileResumeUploaded(...)` in the raw markup) — the
+  // raw HTML has zero mentions of a cover-letter field anywhere in that
+  // widget. Same shape as LinkedIn's own documented Easy-Apply-style
+  // "form-fields" default, not a free-text letter.
+  applicationFormat: "form-fields",
   async fetch(cfg: SourceConfig): Promise<Gig[]> {
     const category = categoryFrom(cfg);
     const html = await fetchCategoryHtml(category);

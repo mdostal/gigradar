@@ -429,6 +429,17 @@ export const fractionalJobsSource: Source = {
   id: "fractionaljobs",
   label: "FractionalJobs",
   auth: "none",
+  // application-format-coverage-per-source story — REAL research, live
+  // `curl` against several real `/jobs/<slug>` detail pages: EVERY one
+  // checked carries the platform's own disclaimer verbatim — "This job was
+  // not posted directly to Fractional Jobs. It's syndicated from another
+  // platform ... To apply, view the application and follow their
+  // guidelines." FractionalJobs is a pure syndication aggregator with no
+  // application mechanism of its own; the real destination (and its real
+  // format) varies gig-by-gig with wherever it was syndicated from.
+  // Deliberately left unset (falls through to the documented "cover-letter"
+  // default) rather than guessed, per this story's own "leave it if it
+  // can't be determined" allowance.
   async fetch(_cfg: SourceConfig): Promise<Gig[]> {
     const html = await fetchJobsHtml();
     const cards = splitJobCards(html);

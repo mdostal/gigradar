@@ -170,6 +170,15 @@ export const braintrustSource: Source = {
   id: "braintrust",
   label: "Braintrust",
   auth: "none",
+  // application-format-coverage-per-source story — REAL research against
+  // Braintrust's own public support article ("Guide: Getting a Job on
+  // Braintrust"): applying is described as "click Apply, set your hourly
+  // rate and availability, answer any questions the employer has, and
+  // attach any files you would like to" — a bid made of discrete fields
+  // (rate, availability, screening-question answers, attachments), not a
+  // free-text pitch or letter. Matches this codebase's "form-fields" shape
+  // (see linkedin.ts), not "proposal" or "cover-letter".
+  applicationFormat: "form-fields",
   async fetch(cfg: SourceConfig): Promise<Gig[]> {
     const roleIds = roleIdsFrom(cfg);
     // Dedup across role ids (a job can plausibly show up under more than one
