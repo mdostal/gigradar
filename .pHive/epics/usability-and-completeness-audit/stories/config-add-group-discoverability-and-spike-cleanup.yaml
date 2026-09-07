@@ -1,7 +1,7 @@
 id: config-add-group-discoverability-and-spike-cleanup
 epic: usability-and-completeness-audit
 title: "Investigate real 'add new group' discoverability in Config (simman finding) + delete the orphaned embedded-webview-spike page"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
@@ -60,6 +60,45 @@ risks:
   - severity: low
     description: "Deleting embedded-webview-spike could break something if the audit's 'not referenced anywhere' claim was wrong."
     mitigation: "Acceptance criteria requires re-confirming zero references (grep + a successful build) before/after deletion, not just trusting the prior audit's claim."
+
+progress_note: |
+  Part 1 -- VERDICT: false alarm from a shallow 2-step vision-model
+  exploration budget, no code change needed. A real, clearly-labeled
+  "+ Add group" action exists at
+  `src/app/config/config-client.tsx:2555-2557` (a `<button
+  onClick={handleAddGroup} disabled={!newGroupLabel.trim()}>+ Add
+  group</button>`, gated alongside the "New group name" input at line
+  2544-2554), inside the "Groups (searches)" section
+  (`activeSection === "groups"`, lines 2519-2582).
+
+  This section is not buried: `/config/groups` (config-sections.ts's
+  `groups` entry, href `/config/groups`) is reached in exactly one click
+  from either the Dashboard's "Groups & Needs" card (page.tsx) or the
+  sidebar's "Groups & Needs" link (config-sidebar.tsx), and
+  `[section]/page.tsx` renders ONLY that section's block for the route --
+  no scrolling past Profile/Sources/etc. is required. The group-name
+  input + "+ Add group" button are the first interactive controls on the
+  page after the existing-group pills, visible without scrolling.
+
+  The "type a name, then click a bordered '+ Add X' button"
+  (`captureButtonClass`) interaction is the SAME established convention
+  used everywhere else in this file for every other repeatable-list add
+  action ("+ Add setting" L1197, "+ Add profile" L1488, "+ Add rule"
+  L1652, "+ Add source (blank)"/"+ Add custom source"/"+ Add email
+  digest source" L2958-2964) -- not a one-off oddity for groups.
+
+  This matches the simman transcript exactly: both of its 2 steps landed
+  on/re-tapped the "Groups & Needs" label (dashboard card, then the now-
+  active sidebar link) and its plan terminated at "the editing interface
+  is displayed" -- i.e. it never got to a 3rd step of typing a name and
+  clicking "+ Add group". A 2-step exploration budget stopping one step
+  short of a real, present, conventionally-styled affordance is not
+  evidence of a UX gap.
+
+  Part 2: confirmed via grep across the whole repo (source, not just
+  nav-header.tsx) that nothing references `embedded-webview-spike`
+  anywhere in `src/` -- deleted `src/app/embedded-webview-spike/`
+  entirely. `npm run build` succeeds with no dangling references.
 
 steps:
   - id: implement
