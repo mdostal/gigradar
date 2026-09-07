@@ -1,0 +1,136 @@
+id: match-warning-tooltip-clarity-and-reliability
+epic: crawler-fidelity-and-app-usability
+title: "Replace the native title= ⚠ tooltip with a reliable custom component and distinguish 'rate not published by source' from 'failed your rate floor'"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+progress_note: |
+  Shipped in PR (branch feat/match-warning-tooltip-clarity-and-reliability).
+  Real implementation, not cosmetic-only:
+
+  1. Reliability: added `src/app/info-tooltip.tsx` (`InfoTooltip`), a real
+     DOM-rendered popover reusing this app's existing relative-container +
+     absolutely-positioned-panel + theme-token pattern (sync-status-
+     dropdown.tsx's own "Sync statuses" dropdown). Opens on hover
+     (onMouseEnter/onMouseLeave state) AND toggles on click/tap for
+     webviews that don't hover-track reliably. The trigger's `aria-label`
+     carries the full message so it's present in the server-rendered HTML
+     from first paint. Replaces the native `title=` span at
+     dashboard-client.tsx's Tier column.
+
+  2. Copy clarity, reusing gate()'s own logic (not re-derived a third
+     time): added `explainProfileMismatch()` to `matching/gate.ts`, which
+     calls the SAME already-exported `matchProfiles()`/
+     `effectiveEngagementType()` gate() itself uses, and mirrors gate()'s
+     own `applicable.length === 0` branch to classify a gig as
+     "rate-not-comparable" (no configured profile even applies AND the
+     engagement type couldn't be determined at all -- the real
+     fractionus/fractionaljobs no-rate-published shape) vs. "real-mismatch"
+     (a genuine numeric rate/hours failure, or a known-but-unaccepted
+     engagement type). `dashboard-data.ts`'s `loadDashboardData()` computes
+     this server-side per gig (`profileMismatchByGigKey`, new
+     `extractEngagementProfiles()` full-schema extractor alongside the
+     existing `{id,label}`-only summary extractor) and threads it through
+     `gigs/page.tsx` + `[group]/gigs/page.tsx` into `DashboardClient`.
+     `dashboard-client.tsx` exports `resolveProfileMismatchTooltip()` (pure,
+     unit-tested) mapping the classification to one of two real messages.
+
+  Verification: `npm test` (1676 tests, all green, extended with new
+  branches in gate.test.ts/dashboard-data.test.ts/dashboard-client.test.ts)
+  and `npm run typecheck` both clean. Per this session's standing no-real-
+  browser-window/no-Playwright rule: verified via `npm run build` + `npm
+  run start` against an isolated temp XDG_DATA_HOME/DB (never the real
+  data dir) seeded with one gig of each case, then curled `/gigs` and
+  confirmed via raw DOM evidence: zero occurrences of the old native
+  `title="Role-area match only..."` attribute, and both new messages
+  present verbatim as `aria-label` on the ⚠ trigger button for their
+  respective seeded gig ("...doesn't publish a rate/hours figure..." for
+  the no-rate gig; "...didn't meet your configured rate/hours/engagement-
+  type requirements..." for the real-mismatch gig).
+
+description: |
+  Real, confirmed-by-reading-the-code UX bug. `src/app/dashboard-client.tsx`
+  (~lines 956-961): a green/yellow-tiered gig that didn't clear any
+  engagement-type/rate profile shows a plain
+  `<span title="Role-area match only -- this gig didn't clear any of your
+  configured engagement-type/rate profiles (Config -> Needs)"
+  className="cursor-help">⚠</span>` -- a NATIVE browser `title` attribute
+  tooltip. Owner's real, live complaint: "the questionmark hover isn't
+  telling me shit."
+
+  Two real, distinct problems here, both to fix:
+
+  1. **Reliability.** A native `title` attribute tooltip is a weak mechanism
+     inside a packaged Tauri webview -- delayed appearance, no touch support,
+     and inconsistent enough that this codebase already has form fixing
+     platform-specific webview gotchas this session (see the
+     Webview::set_cookie() finding from the true-embedded-browser epic).
+     Replace it with a real, custom-rendered tooltip/popover component (this
+     codebase's own existing UI primitives -- check what's already used
+     elsewhere in this app for tooltips/popovers before reaching for a new
+     dependency) that reliably shows on hover (and is at least reachable via
+     click/tap for a webview that doesn't hover-track well).
+  2. **Message clarity.** The current copy reads as "your profile config
+     might be wrong," which is actively misleading at real volume: because
+     of a separate, real bug this same epic also fixes
+     (`fractionus-fractionaljobs-detail-enrichment-and-closed-detection`),
+     rate/hours are currently unpopulated for 100% of `fractionus` and
+     `fractionaljobs` gigs, meaning this exact warning shows on literally
+     every green/yellow gig from two entire sources, always, regardless of
+     whether the owner's profile config is actually fine. The tooltip must
+     distinguish two genuinely different cases and say so plainly:
+       - "This source doesn't publish a rate/hours figure for this listing,
+         so gigradar couldn't check it against your profile" (the common,
+         benign case for sources like these two).
+       - "This gig didn't meet your configured rate/hours/engagement-type
+         requirements" (an actual, real mismatch worth the owner's
+         attention).
+     Check `MatchResult.reasons` (`src/lib/matching/gate.ts`) to see whether
+     this distinction is already derivable from the real reasons text
+     produced there (e.g. an existing "rate not published — passing" reason
+     string) rather than re-deriving it from scratch in the UI layer --
+     reuse what gate() already knows, don't duplicate its logic a third
+     time (same discipline as the `gate-fit-check-too-strict` story's own
+     "reuse tiering.ts, don't reimplement" decision).
+
+acceptance_criteria:
+  - "The ⚠ indicator uses a real, custom-rendered tooltip/popover, not a native title= attribute -- verified to actually render in a real build of the packaged app (curl/log/DOM-evidence verification per this session's established no-real-browser-window methodology), not just in the dev server."
+  - "The tooltip text distinguishes 'rate/hours not published by this source' from 'gig failed your configured rate/engagement profile' as two different messages, derived from gate()'s own real MatchResult.reasons rather than a third independent re-implementation of that check."
+  - "Existing dashboard-client.tsx tests are extended to cover both tooltip-copy branches."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/dashboard-client.tsx
+      purpose: "Lines ~948-961 -- the exact tier badge + ⚠ span this story replaces."
+    - path: src/lib/matching/gate.ts
+      purpose: "MatchResult.reasons -- check whether the 'rate not published, passing' vs 'failed rate floor' distinction is already surfaced here before re-deriving it in the UI."
+
+design_decisions:
+  - decision: Derive the two-case distinction from gate()'s existing reasons text, not a new UI-side re-check.
+    rationale: "gate() already knows exactly why a rate/engagement check passed or was skipped -- reimplementing that distinction in dashboard-client.tsx would be a third independent copy of matching logic, the same class of bug this session's gate-fit-check-too-strict epic just fixed once already."
+
+risks:
+  - severity: low
+    description: "A cosmetic-only fix (just restyling the tooltip without fixing the misleading copy) would look done but leave the actual, higher-value part of the owner's complaint unaddressed."
+    mitigation: "Acceptance criteria requires both the reliability fix AND the two-case copy distinction -- review checks both were actually done, not just one."
+
+steps:
+  - id: implement
+    description: Replace the native title tooltip with a custom component and split the copy into the two real cases, sourced from gate()'s own reasons
+    agent: developer
+  - id: test
+    description: Extend dashboard-client tests for both tooltip-copy branches; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm both the reliability fix and the copy-clarity fix landed, and that the distinction reuses gate()'s existing reasons rather than reimplementing
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

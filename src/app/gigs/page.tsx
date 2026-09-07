@@ -30,7 +30,7 @@ export const dynamic = "force-dynamic";
 // dashboard-data.ts's loadDashboardData(), called here with no groupId
 // (every gig, byte-identical to this page's own pre-relocation behavior).
 export default function AllGigsPage() {
-  const { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey } = loadDashboardData();
+  const { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey } = loadDashboardData();
   // Computed once, server-side — see sonar-sweep-header.tsx's own header
   // comment on why (a client component calling Date.now() itself during
   // render would produce a hydration-mismatch, the exact bug metrics/
@@ -63,6 +63,7 @@ export default function AllGigsPage() {
         draftedGigKeys={draftedGigKeys}
         initialPrepByGigKey={prepByGigKey}
         engagementProfiles={engagementProfiles}
+        profileMismatchByGigKey={profileMismatchByGigKey}
         hideOutOfBandDefault={hideOutOfBandDefault}
         rankBucketLabels={rankBucketLabels}
         rankBucketGroupId={rankBucketGroupId}

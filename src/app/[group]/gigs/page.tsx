@@ -22,7 +22,7 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
   const groupLabel = resolveGroupLabel(rawConfig, groupId);
   if (groupLabel === undefined) notFound();
 
-  const { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey } = loadDashboardData(groupId);
+  const { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey } = loadDashboardData(groupId);
   const now = Date.now();
   // rate-band-match-quality epic: THIS specific group's own real setting.
   const hideOutOfBandDefault = resolveHideOutOfBandDefault(rawConfig, groupId);
@@ -47,6 +47,7 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
         draftedGigKeys={draftedGigKeys}
         initialPrepByGigKey={prepByGigKey}
         engagementProfiles={engagementProfiles}
+        profileMismatchByGigKey={profileMismatchByGigKey}
         groupId={groupId}
         hideOutOfBandDefault={hideOutOfBandDefault}
         rankBucketLabels={rankBucketLabels}
