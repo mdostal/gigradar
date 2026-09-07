@@ -158,7 +158,7 @@ export async function runRadar(
       const gateResult = primaryGroup
         ? gate(g, primaryGroup.needs, config.profile)
         : { gig: g, pass: false, reasons: ["no group in scope for this source"], score: 0, matchedProfiles: [] };
-      const { matchedGroupIds: heuristicMatchedGroupIds, groupTiers, groupScores, groupBands } = matchGroups(g, scopedGroups, config.profile, scorePopulations);
+      const { matchedGroupIds: heuristicMatchedGroupIds, groupTiers, groupScores, groupBands, groupProfileIds } = matchGroups(g, scopedGroups, config.profile, scorePopulations);
       // ai-match-verification epic: a second, LLM-driven check, spent only
       // on groups the heuristic ALREADY matched and that opted in via
       // GroupConfig.aiVerify — see matching/ai-verify.ts's header comment.
@@ -242,6 +242,7 @@ export async function runRadar(
         matchedGroupScores: groupScores,
         matchBand: flatMatchBand,
         matchedGroupBands: groupBands,
+        matchedGroupProfileIds: groupProfileIds,
         ...(Object.keys(aiFlags).length > 0 ? { aiFlags } : {}),
         ...(Object.keys(matchedRankBuckets).length > 0 ? { matchedRankBuckets } : {}),
         ...(flatRankBucket ? { rankBucket: flatRankBucket } : {}),

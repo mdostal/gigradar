@@ -546,6 +546,21 @@ export interface Gig {
    */
   matchedProfileIds?: string[];
   /**
+   * new-domain-group-live-verification story (dynamic-groups-band-audit
+   * epic). Every evaluated group's OWN `matchedProfileIds`
+   * (`Record<groupId, string[]>`), independent of pass/fail — mirrors
+   * `matchedGroupTiers`/`matchedGroupBands`'s own per-group shape exactly.
+   * Real, live-verified gap this story found: the flat `matchedProfileIds`
+   * above is anchored to the PRIMARY (first-in-scope) group only
+   * (runner.ts), so a NON-primary group's own giglist page (`/[group]/
+   * gigs`) was rendering the primary group's engagement-profile id as a
+   * raw, meaningless string badge for gigs that never cleared any profile
+   * of the group actually being viewed. This field lets that page resolve
+   * its OWN group's real matched profiles instead (see dashboard-filter.ts's
+   * `resolveDisplayProfileIds()`).
+   */
+  matchedGroupProfileIds?: Record<string, string[]>;
+  /**
    * multi-group-architecture epic — every `GroupConfig.id` this gig
    * cleared (its gate passed), stamped on by the runner from
    * `matchGroups()`. Same "optional, stamped after gate(), rides through
