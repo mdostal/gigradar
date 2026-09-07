@@ -1,0 +1,39 @@
+<!--
+  Real, live-fetched detail-page HTML from FractionalJobs
+  (https://www.fractionaljobs.io/jobs/chief-technology-officer-at-elevaid),
+  trimmed the same way as fractionaljobs-job-detail-open.html. This is the
+  "second, differently-shaped" real fractionaljobs example this story's
+  acceptance criteria calls for: weekly hours ARE published (10-20 hrs) but
+  Compensation Range is the literal text "Unknown" -- a real, live-observed
+  case of the adapter's own documented "plenty of others show neither"
+  gap. The parser must populate weeklyHours here while correctly leaving
+  rate unset, never guessing a number out of "Unknown".
+
+  IMPORTANT, confirmed live: the "$150 - $200 / hr" text that also appears
+  elsewhere on this exact real page is NOT this job's own compensation --
+  it belongs to a "related jobs" widget at the bottom of the page
+  reusing another listing's own list-card markup (a real trap this
+  story's research had to rule out live, the same class of "looks like a
+  signal but isn't" gap this epic's own header comments warn about
+  elsewhere). Only the labeled "Compensation Range" metatag item (below)
+  is this job's own real value.
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chief Technology Officer | Fractional Jobs</title>
+    <link href="https://www.fractionaljobs.io/jobs/chief-technology-officer-at-elevaid" rel="canonical" />
+  </head>
+  <body>
+    <div class="home-jobs_hiring-block-jobs"><h2 class="heading-style-h4">How Syndicated Job Posts Work</h2><div class="home-jobs_hiring-list job-page"><div>This job was not posted directly to Fractional Jobs. It's syndicated from another platform</div><div>To apply, view the application and follow their guidelines</div><div>Please let them know that Fractional Jobs sent you!</div></div></div><div class="home-jobs_hiring-block-jobs w-condition-invisible"><h2 class="heading-style-h4">This Role is Closed</h2><div class="home-jobs_hiring-list job-page"><div>This company has already made a successful hire.</div><div>Fractional jobs get filled quickly. To get alerted when new fractional jobs go live, subscribe to our alerts.</div></div></div>
+    <div class="content12_metatag-list">
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Weekly Commitment</h2></div><div>10 - 20 hrs</div></div>
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Compensation Range</h2></div><div>Unknown</div></div>
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Company Stage</h2></div><div>Bootstrapped</div></div>
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Industry</h2></div><div>Healthtech</div></div>
+    </div>
+    <!-- Real "related jobs" widget fragment further down this same real page, reusing another listing's OWN list-card markup -- proves the parser must not be fooled by it. -->
+    <div class="job-item_more-info"><div class="text-inline">20 - 40 hrs</div><div class="text-inline"> | </div><div class="text-inline">$150 - $200 / hr</div><div class="text-inline"> | </div><div class="text-inline">Remote (USA time zones)</div></div>
+  </body>
+</html>

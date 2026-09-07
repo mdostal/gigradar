@@ -1,0 +1,221 @@
+id: fractionus-fractionaljobs-detail-enrichment-and-closed-detection
+epic: crawler-fidelity-and-app-usability
+title: "Fetch each listing's own detail page (bounded/lazy, cached) to populate real rate/hours/employment-type and detect Closed/filled listings for auto-archiving"
+status: complete
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  Real, live-confirmed bug (see epic design-discussion.md §2a/2b). Owner's
+  own real data: `SELECT` against `gigs.db` shows **100% of the 346
+  `fractionus` gigs and all 123 `fractionaljobs` gigs** have
+  rate_min/rate_max/weekly_hours/stage = NULL — not a parsing bug on any one
+  listing, a structural gap. Both adapters' own header comments correctly,
+  honestly document that the `/jobs` LIST page card markup genuinely has no
+  rate/hours anywhere (confirmed live when built) — but the owner's own
+  screenshot of a real per-listing DETAIL page
+  (https://fractionus.com/jobs/fractional-cto-at-emanate-technology) shows
+  `$150-$300*` and `10-20 hrs/week*` displayed clearly. That data exists,
+  just one fetch away from where these adapters currently stop.
+
+  Separately, real data shows a specific gig
+  (`fractionus:fractional-cto-at-emanate-technology`) sitting `status: 'new'`,
+  `unavailable_since: NULL`, with `last_seen` bumped to TODAY, while the real
+  site shows a "Closed" badge on that exact listing's detail page. gigradar's
+  existing unavailability mechanism (`src/lib/store/gigs.ts` —
+  `markGoneUnavailable`/the recordScan() sweep) only fires when a gig stops
+  reappearing in a scan's result set at all; it has no way to notice "still
+  listed by the source, but the source itself says closed."
+
+  **What this story must actually build** (a lot of this needs live research
+  first, not guessing from what's already in the codebase — do the research,
+  then design against what's actually found):
+
+  1. Live-fetch a handful of real `fractionus` and `fractionaljobs`
+     per-listing DETAIL pages (both a still-open one and the Emanate
+     Technology closed one) and determine the REAL markup shape for: rate
+     range, weekly hours (fractionus) / hours-or-rate text (fractionaljobs —
+     re-read that adapter's own file-level comment first, it documents what
+     it already knows about this board's markup), employment type if present,
+     and how "Closed"/filled/expired is actually signaled (a badge? changed
+     page copy? a 404? something else?). Do NOT assume `fractionus.ts`'s own
+     comment about the list-card's unparsed `category-link-copy-c` tags is
+     the closed-signal without checking live — that comment only describes
+     the LIST page's card, not the detail page, and may be an unrelated
+     industry/category tag.
+  2. Design a genuinely bounded fetch strategy — these are the actual
+     numbers involved: 346 `fractionus` + 123 `fractionaljobs` = 469
+     listings. Fetching all 469 detail pages on every single scan cycle is
+     not viable (site load, this project's own stated "ethical scraping"
+     convention re-affirmed in both adapters' header comments, scan latency).
+     Reasonable shapes to weigh (pick and justify one, or a combination):
+       - Enrich lazily: only fetch a listing's detail page once it's already
+         cleared this group's role-area tiering (green/yellow) during the
+         normal list-page scan pass — bounds cost to gigs the owner would
+         plausibly ever see, mirrors this session's own
+         `match-quality-feedback-loop` design's cost-consciousness precedent.
+       - Cache permanently: once a gig's detail page has been fetched and its
+         rate/hours/employment_type/closed-status populated, never re-fetch
+         it again on a later scan UNLESS re-verifying open/closed state is
+         itself a recurring, cheap enough check to justify (this is the one
+         place re-fetching still has real value — a listing can go from open
+         to closed after its first enrichment fetch).
+       - Consider: does closed-detection need its OWN periodic re-check
+         independent of rate/hours enrichment (which only needs to happen
+         once)? A real design call, not pre-decided here.
+  3. Populate `rate_min`/`rate_max`/`rate_unit`/`weekly_hours`/
+     `employment_type` on the `Gig` from the detail-page fetch, feeding the
+     SAME existing `Gig` shape/pipeline every other source already uses — no
+     new fields, no schema changes beyond what's already in
+     `src/lib/store/schema.ts` (matches this codebase's existing column set,
+     see the earlier `gate-fit-check-too-strict` epic's own respect for not
+     touching what doesn't need touching).
+  4. When a listing's detail page shows Closed/filled/expired: archive it
+     using the EXISTING mechanism (`unavailable_since` + `status: 'archived'`
+     + `outcome_reason`, see `src/lib/store/types.ts` and
+     `status-reconciliation-outcomes`'s real enum) rather than inventing a
+     new one. Differentiate by the gig's CURRENT status at the moment closure
+     is detected: if it was still `'new'` (never applied), use
+     `outcome_reason: 'expired_unapplied'` (the existing enum value for
+     exactly this case); if it was already `'applied'`/`'interview'`, use
+     whatever existing outcome-reason value already fits "we applied and it
+     closed without us hearing anything" (re-read
+     `src/lib/store/types.ts`'s real enum before picking — do not invent a
+     new enum value without confirming none of the existing ones fit).
+  5. Never fetch a detail page for a gig BELOW its group's role-area tier
+     threshold established in step 2's design — this is the cost bound, not
+     optional.
+
+  Do NOT touch: `gate()`/`tiering.ts` (untouched, already fixed this
+  session), the list-page scraping logic itself (kept exactly as-is, this is
+  additive enrichment layered on top), any other source's adapter.
+
+acceptance_criteria:
+  - "A real, live-fetched detail page for a still-open fractionus listing populates rate_min/rate_max/rate_unit/weekly_hours on that Gig where they were previously always NULL."
+  - "A unit/integration test built from a real, live-fetched snapshot of the Emanate Technology CTO listing's actual closed detail-page HTML (saved as a fixture, same convention as fractionus-jobs.html) proves this fix would correctly archive it (status='archived', unavailable_since set, a real, already-existing outcome_reason value). NEVER write to the owner's real ~/.local/share/gigradar/gigs.db directly -- read-only SELECT against it for research/verification is fine (as already done during this epic's own triage), but all actual writes/mutations happen only against an isolated test DB. The real gig heals itself once this fix ships and the next real scan cycle runs, exactly like the gate() fix did."
+  - "The detail-page fetch is demonstrably bounded — not every one of the 469 fractionus+fractionaljobs listings gets fetched on every cycle; the story's own design-decisions section states and justifies the actual bound chosen."
+  - "A second, differently-shaped fractionaljobs listing (not just the fractionus case that triggered this) is also verified end-to-end, proving the fix generalizes across both sources, not just the one in the bug report."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/sources/fractionus.ts
+      purpose: "The list-page adapter this story adds detail-page enrichment on top of -- read its full header comment first, it documents real prior live research this story must not contradict without re-verifying."
+    - path: src/lib/sources/fractionaljobs.ts
+      purpose: "Same shape, second source this story must also cover -- read its own header comment for what's already confirmed about this board."
+    - path: src/lib/store/gigs.ts
+      purpose: "recordScan()/markGoneUnavailable() -- the EXISTING archival mechanism to reuse for closed-detection, not reinvent."
+    - path: src/lib/store/types.ts
+      purpose: "The real, existing outcome_reason enum -- pick from what's already there."
+    - path: src/lib/sources/__tests__/fixtures/fractionus-jobs.html
+      purpose: "Existing list-page fixture convention -- this story will likely need a NEW fixture for a real detail page (both an open and a closed example), following this same pattern."
+
+design_decisions:
+  - decision: Lazy/bounded enrichment, not a blanket per-listing fetch on every scan.
+    rationale: "469 real listings across these two sources; unconditional per-cycle detail fetches would be a real load/ethics/latency problem this codebase has explicitly guarded against elsewhere (both adapters' own 'ethical scraping' header comments)."
+  - decision: Reuse the existing unavailable_since/outcome_reason archival mechanism for closed-detection, never a parallel new one.
+    rationale: "This mechanism already exists, is tested, and already feeds the owner's real reconciliation/metrics workflows (status-reconciliation-outcomes epic) -- a second, parallel 'closed' concept would fragment that."
+
+risks:
+  - severity: medium
+    description: "Wrong assumptions about the detail page's real markup (guessing instead of live-verifying) would ship a second silently-broken adapter, the exact failure class this whole epic is about."
+    mitigation: "Acceptance criteria explicitly require live-fetched verification against a real open listing AND the real closed Emanate Technology listing, plus a second, differently-shaped fractionaljobs example."
+
+steps:
+  - id: research
+    description: Live-fetch real detail pages from both sources (an open one, the known-closed Emanate Technology one, and a second fractionaljobs example) to confirm the real markup shape for rate/hours/employment-type/closed-status before writing any parsing code
+    agent: developer
+  - id: implement
+    description: Add the bounded/lazy detail-page enrichment fetch and closed-detection/archival logic per the design decided in research
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: New fixtures for real detail-page HTML (open + closed), full regression suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify the fetch bound is real (not accidentally unbounded), the archival reuses existing mechanisms, and the fix is confirmed against the owner's real data read-only before any write
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
+
+progress_note: |
+  Implemented 2026-09-07. Live research (curl-only, no browser) produced a
+  real finding that overturned this story's own starting assumption:
+  re-fetching the real `/jobs` list page (140 real fractionus cards) found
+  it now ALSO carries the exact same `data-status-badge`/price-range/
+  weekly-hours-range/"Fractional Contract" blocks the owner's screenshot
+  showed on a per-listing DETAIL page -- byte-identical values, spot-
+  checked against several listings' own detail pages too (e.g.
+  fractional-cfo-at-baker-tilly-us has neither block on EITHER page,
+  confirming both templates read the same underlying CMS fields, never one
+  having more than the other). Of the 140 real cards sampled: 140/140
+  (100%) had a real status badge -- 97 "Closed" + 3 "Filled" vs only 40
+  "Active" (i.e. the large majority of what this board's list page
+  currently returns is already closed, never detected before this fix);
+  83/140 (59%) had a real price range; 98/140 (70%) had a real weekly-hours
+  range. Given that, fractionus.ts now parses status/rate/hours/employment-
+  type straight off each list card -- zero extra network calls, the SAME
+  single `/jobs` fetch this adapter always made. A bounded, lazy per-
+  listing DETAIL-page fetch (real bound: MAX_DETAIL_FETCHES_PER_SCAN=15,
+  concurrency 3, gated on green/yellow tier + not-archived/ignored + the
+  list card itself lacking a rate) is kept as a defensive fallback in case
+  the two templates ever diverge for a listing this session's sample didn't
+  cover -- it is not the primary mechanism.
+
+  fractionaljobs.io's own list card (the homepage) similarly already
+  carries real weekly-hours and (sometimes) rate text in its
+  `job-item_more-info` fields -- this adapter's own PRIOR header comment had
+  already spotted them ("hours and rate, when present, come first --
+  deliberately not parsed") but chose not to read them; this story finally
+  does, reusing shape-strict parsers that leave a literal "Unknown"
+  (~half of a real 40-listing sample), a non-USD currency (a real
+  "£81.25 - £112.5 / hr" listing), a mismatched-K range ("$5 - $8K / mo"),
+  or a trailing qualifier ("+commission", "OTE") genuinely unparsed rather
+  than guessed. UNLIKE fractionus, this board's compact list card has NO
+  free closed-detection signal -- the real "This Role is Closed" banner
+  only exists on the bigger per-listing DETAIL page template (a genuine
+  Webflow native conditional-visibility toggle, confirmed live by diffing
+  several real fetches: both branches of a CMS boolean render into the
+  static HTML, and `w-condition-invisible` lands on whichever branch does
+  NOT apply -- confirmed a real trap along the way: the literal words
+  "closed"/"filled" appear on EVERY FractionalJobs detail page regardless
+  of real status, via a "related jobs" widget AND the banner's own static
+  copy, so a naive text search would have been a false positive). So this
+  adapter keeps the bounded/lazy per-listing DETAIL-page fetch as its real
+  closed-detection mechanism (same bound), now used for closed-detection
+  primarily, rate/hours as a bonus when it fires.
+
+  Both closed-detection paths reuse the EXISTING archival mechanism with NO
+  new store function: a detected-closed listing is simply OMITTED from the
+  adapter's returned `Gig[]`, and the EXISTING `recordScan()` delisting
+  sweep (store/gigs.ts's `flagUnavailableForSource()`) does the actual
+  `unavailable_since`/`status: 'archived'`/`outcomeReason` stamping exactly
+  as it already does for a listing that vanishes from a source entirely --
+  differentiated by the gig's own current status at closure time
+  ('new' -> 'expired_unapplied', 'applied'/'interview' -> 'withdrawn'),
+  both pre-existing `OutcomeReason` enum values, no new one added.
+
+  Real limitations, flagged not fixed: (1) the bounded detail-page fallback
+  for fractionus gates candidate eligibility on the FLAT (primary-group-
+  anchored) `tier` column, same simplification `stageApplication()`'s own
+  tier==red guard already makes elsewhere in this codebase -- a gig that's
+  only green/yellow for a NON-primary group won't get the fallback fetch
+  (its list-card data, which covers the overwhelming majority of cases,
+  is unaffected). (2) No live-fetched genuinely-closed FractionalJobs
+  example could be found during this research window -- all 40 real
+  listings on its current live homepage were open; the closed-detection
+  fixture for that source is real markup with exactly one CMS toggle class
+  edited (documented in the fixture's own header comment) to represent the
+  confirmed-real signal, not a live capture of an actual closed listing.
+  (3) `fractional-cto-at-emanate-technology` and any other currently-
+  Closed/Filled fractionus gig heals itself (archives correctly) the next
+  time the real scheduler process runs this fixed code -- not verified
+  against the owner's live `gigs.db` by this session (read-only SELECT
+  only, per this story's own constraint); the owner's next real scan cycle
+  will do it.

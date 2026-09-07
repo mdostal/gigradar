@@ -1,0 +1,45 @@
+<!--
+  Real, live-fetched detail-page HTML from FractionalJobs
+  (https://www.fractionaljobs.io/jobs/cfo-advisor-at-a-saas-for-accounting-firms),
+  trimmed to the structural fragments this story's detail-page parser
+  actually reads (the "This Role is Closed" conditional-visibility block +
+  the Weekly Commitment / Compensation Range metatag items) — same
+  "trimmed real page" convention as builtin-job-detail.html. Every fragment
+  below is byte-identical to the real live response captured 2026-09-07.
+  This listing genuinely has a real, parseable rate ($200-$250/hr) AND
+  weekly hours (1-2 hrs) — see fractionaljobs-job-detail-open-no-rate.html
+  for the other, differently-shaped real case (weekly hours present, real
+  rate genuinely absent: "Unknown").
+
+  The Closed-detection signal here is Webflow's OWN native conditional-
+  visibility mechanism, confirmed live by diffing this page against
+  several other real fetches: both the "true" and "false" branches of a
+  CMS boolean field are always rendered into the static HTML, and Webflow
+  bakes `w-condition-invisible` onto whichever branch does NOT apply to
+  THIS item at publish time — the branch that DOES apply omits the class
+  entirely. For this real, live listing, "This Role is Closed" carries
+  `w-condition-invisible` (i.e. hidden -- this listing is NOT closed).
+  IMPORTANT, confirmed live 2026-09-07: the literal strings "closed" and
+  "filled" appear on EVERY FractionalJobs detail page regardless of that
+  listing's real status (this same static banner copy: "Fractional jobs
+  get filled quickly...") -- a naive text search for those words is a
+  false-positive trap; only the class-presence check on this specific
+  wrapping div is the real signal.
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>CFO Advisor | Fractional Jobs</title>
+    <link href="https://www.fractionaljobs.io/jobs/cfo-advisor-at-a-saas-for-accounting-firms" rel="canonical" />
+  </head>
+  <body>
+    <div class="home-jobs_hiring-block-jobs w-condition-invisible"><h2 class="heading-style-h4">How Syndicated Job Posts Work</h2><div class="home-jobs_hiring-list job-page"><div>This job was not posted directly to Fractional Jobs. It's syndicated from another platform</div><div>To apply, view the application and follow their guidelines</div><div>Please let them know that Fractional Jobs sent you!</div></div></div><div class="home-jobs_hiring-block-jobs w-condition-invisible"><h2 class="heading-style-h4">This Role is Closed</h2><div class="home-jobs_hiring-list job-page"><div>This company has already made a successful hire.</div><div>Fractional jobs get filled quickly. To get alerted when new fractional jobs go live, subscribe to our alerts.</div></div></div>
+    <div class="content12_metatag-list">
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Weekly Commitment</h2></div><div>1 - 2 hrs</div></div>
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Compensation Range</h2></div><div>$200 - $250 / hr</div></div>
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Company Stage</h2></div><div>Early-stage VC</div></div>
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Industry</h2></div><div>B2B SaaS</div></div>
+    </div>
+  </body>
+</html>
