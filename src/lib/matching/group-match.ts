@@ -82,7 +82,7 @@ export function matchGroups(
   const groupBands: Record<string, MatchBand> = {};
   const groupProfileIds: Record<string, string[]> = {};
   for (const group of groups) {
-    const gateResult = gate(gig, group.needs, profile);
+    const gateResult = gate(gig, group.needs, profile, group.roleArea);
     if (gateResult.pass) matchedGroupIds.push(group.id);
     groupScores[group.id] = gateResult.score;
     groupProfileIds[group.id] = gateResult.matchedProfiles;

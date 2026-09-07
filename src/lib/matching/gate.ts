@@ -1,4 +1,5 @@
-import type { EngagementProfile, EngagementType, Gig, Needs, Profile, MatchResult } from "../types.js";
+import type { EngagementProfile, EngagementType, Gig, Needs, Profile, MatchResult, RoleAreaConfig } from "../types.js";
+import { tier } from "./tiering.js";
 
 /**
  * Deterministic, explainable GO/NO-GO gate. Every gig gets a pass/fail plus a
@@ -14,9 +15,34 @@ import type { EngagementProfile, EngagementType, Gig, Needs, Profile, MatchResul
  * first) — e.g. a gig could satisfy both a "Fractional/contract" profile
  * and a separate "Contract-to-hire" profile.
  *
+ * gate-fit-check-too-strict epic (gate-uses-role-area-tier-for-fit story):
+ * the "fit" check below (fitScore(), literal phrase-overlap between
+ * Profile.roles/skills and the gig's title+description) used to be the
+ * ONLY way a gig could clear the role/skill fit requirement — but that
+ * free text was never designed to be the sole source of truth for role
+ * relevance, and a real gig can be a correct match without literally
+ * sharing a phrase with it (e.g. "Chief Technology Officer" vs. the
+ * user's own "Fractional CTO"). The optional `roleArea` parameter lets a
+ * caller also pass a group's own, already-configured, already-tested
+ * `RoleAreaConfig` (matching/tiering.ts) as a second, independent way to
+ * clear the SAME check: fit only hard-fails when the phrase-overlap check
+ * ALSO finds nothing AND (no roleArea was given OR that roleArea's own
+ * tier() call doesn't come back "green"). Deliberately NOT `!== "red"` —
+ * tier() returns YELLOW for a group with no roleArea keywords configured
+ * at all (EMPTY_ROLE_AREA_CONFIG) just as readily as for a genuinely
+ * unrecognized gig, so treating YELLOW as a pass here would rubber-stamp
+ * every gig for any group that hasn't filled in roleArea keywords,
+ * silently defeating the fit check for that group. Requiring an ACTIVE,
+ * POSITIVE "green" match (a real coreTitles/keywords hit) keeps this
+ * purely additive — an OR against the existing check — so nothing that
+ * passed before can newly fail, and a group with no roleArea configured
+ * gets byte-identical old behavior (no escape hatch at all); see
+ * design-discussion.md in gate-fit-check-too-strict for the full
+ * root-cause writeup.
+ *
  * Pure function — no I/O, fully unit-testable.
  */
-export function gate(gig: Gig, needs: Needs, profile: Profile): MatchResult {
+export function gate(gig: Gig, needs: Needs, profile: Profile, roleArea?: RoleAreaConfig): MatchResult {
   const reasons: string[] = [];
   let pass = true;
   const fail = (msg: string) => { pass = false; reasons.push("✗ " + msg); };
@@ -51,9 +77,16 @@ export function gate(gig: Gig, needs: Needs, profile: Profile): MatchResult {
 
   // ---- fit ----
   const fit = fitScore(gig, profile);
-  if (fit > 0) ok(`role/skill fit (${Math.round(fit * 100)}%)`);
-  else fail("no role/skill keyword match");
-  if (fit === 0) pass = false;
+  if (fit > 0) {
+    ok(`role/skill fit (${Math.round(fit * 100)}%)`);
+  } else {
+    const roleAreaTier = roleArea ? tier(gig, roleArea) : undefined;
+    if (roleAreaTier && roleAreaTier.tier === "green") {
+      ok(`role/skill fit backed by this group's own role-area tier (green)`);
+    } else {
+      fail("no role/skill keyword match");
+    }
+  }
 
   return {
     gig,

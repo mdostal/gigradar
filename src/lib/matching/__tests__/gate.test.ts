@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EngagementProfile, Gig, Needs, Profile } from "../../types.js";
+import type { EngagementProfile, Gig, Needs, Profile, RoleAreaConfig } from "../../types.js";
 import { effectiveEngagementType, gate } from "../gate.js";
 
 function makeGig(overrides: Partial<Gig> = {}): Gig {
@@ -210,5 +210,84 @@ describe("gate: no applicable profile at all produces a clear, distinct reason f
     const result = gate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), EMPTY_PROFILE);
     expect(result.pass).toBe(false);
     expect(result.reasons.some((r) => r.includes('"full-time" not accepted by any configured profile'))).toBe(true);
+  });
+});
+
+// gate-fit-check-too-strict epic (gate-uses-role-area-tier-for-fit story).
+// Real, live bug: fitScore()'s literal profile.roles/skills phrase-overlap
+// check was the ONLY way to clear the fit requirement, hard-rejecting a
+// gig whose SAME group's own roleArea already, correctly tiered it
+// GREEN/YELLOW (e.g. "Chief Technology Officer" vs. the profile's own
+// "Fractional CTO" -- no literal substring overlap, but obviously the same
+// role). These tests prove the fix is additive-only: a newly-passing case
+// (roleArea backs the fit), a still-correctly-failing case (roleArea's own
+// redKeywords also reject it), and byte-identical old-call-shape behavior
+// when roleArea is omitted entirely.
+describe("gate: roleArea as an alternative way to satisfy the role/skill fit check (additive, never a replacement)", () => {
+  // Deliberately no literal overlap with "Chief Technology Officer" --
+  // fitScore() must return 0 here so these tests actually exercise the new
+  // roleArea path rather than accidentally passing via the old check.
+  const NO_LITERAL_OVERLAP_PROFILE: Profile = {
+    name: "Test User",
+    roles: ["Fractional CTO", "Strategic CTO"],
+    skills: ["Kubernetes"],
+    timezone: "UTC",
+  };
+
+  it("a gig with no literal profile.roles/skills overlap PASSES when the group's own roleArea coreTitles recognize its title", () => {
+    const gig = makeGig({
+      title: "Chief Technology Officer",
+      description: "Lead engineering for a healthtech hardware brand.",
+      rate: { min: 260, unit: "hour" },
+    });
+    const roleArea: RoleAreaConfig = { coreTitles: ["Chief Technology Officer"], keywords: [], redKeywords: [] };
+
+    const result = gate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), NO_LITERAL_OVERLAP_PROFILE, roleArea);
+
+    expect(result.pass).toBe(true);
+    expect(result.reasons.some((r) => r.includes("role-area tier"))).toBe(true);
+    // The old, literal-overlap failure reason must NOT appear -- the
+    // roleArea path is what saved this gig, not the phrase-match.
+    expect(result.reasons.some((r) => r.includes("no role/skill keyword match"))).toBe(false);
+  });
+
+  it("a genuinely irrelevant gig (RED-tiered by roleArea's own redKeywords, no profile.roles/skills overlap either) still correctly FAILS", () => {
+    const gig = makeGig({
+      title: "Warehouse Associate",
+      description: "Forklift operation and inventory management.",
+      rate: { min: 260, unit: "hour" },
+    });
+    const roleArea: RoleAreaConfig = { coreTitles: [], keywords: [], redKeywords: ["Warehouse Associate"] };
+
+    const result = gate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), NO_LITERAL_OVERLAP_PROFILE, roleArea);
+
+    expect(result.pass).toBe(false);
+    expect(result.reasons.some((r) => r.includes("no role/skill keyword match"))).toBe(true);
+  });
+
+  it("gate() called WITHOUT a roleArea argument at all behaves byte-identically to before this story (old call shape, still fails on fit)", () => {
+    const gig = makeGig({
+      title: "Chief Technology Officer",
+      description: "Lead engineering for a healthtech hardware brand.",
+      rate: { min: 260, unit: "hour" },
+    });
+
+    const result = gate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), NO_LITERAL_OVERLAP_PROFILE);
+
+    expect(result.pass).toBe(false);
+    expect(result.reasons.some((r) => r.includes("no role/skill keyword match"))).toBe(true);
+  });
+
+  it("a roleArea that tiers YELLOW (e.g. an empty/unconfigured one -- no coreTitles/keywords/redKeywords at all) does NOT save the gig -- tier() returns YELLOW just as readily for 'no roleArea keywords configured' as for a genuinely unrecognized gig, so treating YELLOW as a pass here would rubber-stamp every gig for any group that hasn't filled in roleArea keywords, silently defeating the fit check entirely. Only an ACTIVE, POSITIVE 'green' match may save it.", () => {
+    const gig = makeGig({
+      title: "Chief Technology Officer",
+      rate: { min: 260, unit: "hour" },
+    });
+    const EMPTY_ROLE_AREA: RoleAreaConfig = { coreTitles: [], keywords: [], redKeywords: [] };
+
+    const result = gate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), NO_LITERAL_OVERLAP_PROFILE, EMPTY_ROLE_AREA);
+
+    expect(result.pass).toBe(false);
+    expect(result.reasons.some((r) => r.includes("no role/skill keyword match"))).toBe(true);
   });
 });
