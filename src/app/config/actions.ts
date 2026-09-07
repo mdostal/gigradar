@@ -12,14 +12,14 @@ import { resolveOAuthClientCredentials } from "@/lib/auth/oauth-credentials";
 import { GMAIL_PROVIDER } from "@/lib/auth/oauth-providers/gmail";
 import { resolveLlmCredential, setEnvVar } from "@/lib/config/env-store";
 import { type ConfigEdits, readRawConfig, saveConfig } from "@/lib/config/save";
-import { deleteResume, getResumePath, saveResume } from "@/lib/documents/resume-store";
+import { deleteResume, getResumePath, newResumeId, saveResume } from "@/lib/documents/resume-store";
 import { extractProfile } from "@/lib/profile-ingestion/extract";
 import { customLlmSource } from "@/lib/sources/custom-llm-source";
 import { GOOGLE_SSO_LOGIN_URL, GOOGLE_SSO_ORIGINS, SOURCES_OFFERING_GOOGLE_SSO, resolveAllowedOrigins, resolveLoginUrl } from "@/lib/sources/origins";
 import { readSessionViaPortunus, PORTUNUS_SESSION_ACCOUNT } from "@/lib/auth/session-backend";
 import type { ActionResult } from "@/lib/actions/result";
 import type { ExtractProfileInput } from "@/lib/profile-ingestion/extract";
-import type { Config, Profile, SourceConfig, Tier } from "@/lib/types";
+import type { Config, Profile, ResumeRecord, SourceConfig, Tier } from "@/lib/types";
 
 /**
  * Finds `sourceId`'s raw entry in `rawSources` and returns it as a
@@ -538,23 +538,26 @@ const MISSING_CREDENTIAL_ERROR =
  * persist-resume-on-upload story) — the SAME raw bytes/mediaType
  * `extractProfile()` reads for its one-shot analysis, ALSO handed to
  * `saveResume()` below so a resume upload persists once, not twice.
- * `undefined` when no file was uploaded at all.
+ * `undefined` when no file was uploaded at all. `fileName` (resume-store-
+ * multi-resume-and-tailoring story) is the uploaded file's own name, used
+ * as the new `ResumeRecord.label`'s default so a multi-resume list shows
+ * something more useful than a bare generated id.
  */
 async function buildExtractInput(
   formData: FormData,
-): Promise<{ input: ExtractProfileInput; resumeUpload?: { data: Buffer; mediaType: string } }> {
+): Promise<{ input: ExtractProfileInput; resumeUpload?: { data: Buffer; mediaType: string; fileName?: string } }> {
   const input: ExtractProfileInput = {};
-  let resumeUpload: { data: Buffer; mediaType: string } | undefined;
+  let resumeUpload: { data: Buffer; mediaType: string; fileName?: string } | undefined;
 
   const file = formData.get("resumeFile");
   if (file instanceof File && file.size > 0) {
     const buffer = Buffer.from(await file.arrayBuffer());
     if (file.type === "application/pdf") {
       input.resumeFile = { data: buffer, mediaType: "application/pdf" };
-      resumeUpload = { data: buffer, mediaType: "application/pdf" };
+      resumeUpload = { data: buffer, mediaType: "application/pdf", fileName: file.name || undefined };
     } else {
       input.resumeText = buffer.toString("utf8");
-      resumeUpload = { data: buffer, mediaType: "text/plain" };
+      resumeUpload = { data: buffer, mediaType: "text/plain", fileName: file.name || undefined };
     }
   }
 
@@ -602,12 +605,15 @@ function rawApplyProfile(raw: Record<string, unknown>): Record<string, unknown> 
  * fully unusable input or a genuine Anthropic API error reaches this
  * function's `catch` and comes back as `{ok:false}`.
  *
- * **career-documents epic, persist-resume-on-upload story**: when a resume
- * file was uploaded, it's now ALSO persisted — `saveResume()`
- * (`resume-store.ts`) writes the real bytes encrypted-at-rest, and (only
- * when `applyProfile.email` is already set, since `ApplyProfileConfigSchema`
- * requires it) `saveConfig()` records the resulting path as
- * `applyProfile.resumePath`. This is DELIBERATELY independent of the
+ * **career-documents epic, persist-resume-on-upload story; redesigned as
+ * keyed/versioned storage by resume-store-multi-resume-and-tailoring**:
+ * when a resume file was uploaded, it's now ALSO persisted — `saveResume()`
+ * (`resume-store.ts`) writes the real bytes encrypted-at-rest under a
+ * freshly generated `resumeId`, and (only when `applyProfile.email` is
+ * already set, since `ApplyProfileConfigSchema` requires it) `saveConfig()`
+ * APPENDS the new `ResumeRecord` to `applyProfile.resumes` -- every
+ * upload adds a NEW stored resume, it never replaces a prior one the way
+ * v1's single fixed path did. This is DELIBERATELY independent of the
  * extraction result: `resumeSaved`/`resumeSaveError` report persistence
  * status without ever downgrading a successful extraction to `{ok:false}` —
  * "fetch your stuff into gigradar" happens automatically on upload, but a
@@ -622,7 +628,8 @@ export async function extractProfileFromResumeAction(formData: FormData): Promis
     skills: string[];
     warnings: string[];
     resumeSaved: boolean;
-    resumePath?: string;
+    /** resume-store-multi-resume-and-tailoring story: the FULL newly-created record (not just its id/path) -- config-client.tsx needs `label`/`uploadedAt` too, to fold this straight into `draft.applyProfile.resumes` without a second round-trip read. */
+    resume?: ResumeRecord;
     resumeSaveError?: string;
   }>
 > {
@@ -636,20 +643,28 @@ export async function extractProfileFromResumeAction(formData: FormData): Promis
     const result = await extractProfile(input, credential);
 
     let resumeSaved = false;
-    let resumePath: string | undefined;
+    let resume: ResumeRecord | undefined;
     let resumeSaveError: string | undefined;
     if (resumeUpload) {
       try {
-        const saved = saveResume(resumeUpload.data, resumeUpload.mediaType);
+        const newId = newResumeId();
+        const saved = saveResume(resumeUpload.data, resumeUpload.mediaType, newId);
         const currentApplyProfile = rawApplyProfile(readRawConfig());
         if (typeof currentApplyProfile.email !== "string" || currentApplyProfile.email.trim() === "") {
           resumeSaveError =
             'The resume file was saved, but linking it to your profile needs an email set first — enter one in "Apply profile" and save, then re-upload to finish linking it.';
         } else {
-          const saveResult = saveConfig({ applyProfile: { ...currentApplyProfile, resumePath: saved.path } });
+          const existingResumes = Array.isArray(currentApplyProfile.resumes) ? (currentApplyProfile.resumes as ResumeRecord[]) : [];
+          const newRecord: ResumeRecord = {
+            id: saved.id,
+            label: resumeUpload.fileName?.trim() || `Resume ${existingResumes.length + 1}`,
+            path: saved.path,
+            uploadedAt: new Date().toISOString(),
+          };
+          const saveResult = saveConfig({ applyProfile: { ...currentApplyProfile, resumes: [...existingResumes, newRecord] } });
           if (!saveResult.ok) throw new Error(saveResult.error);
           resumeSaved = true;
-          resumePath = saved.path;
+          resume = newRecord;
           revalidatePath("/config");
         }
       } catch (e) {
@@ -657,30 +672,36 @@ export async function extractProfileFromResumeAction(formData: FormData): Promis
       }
     }
 
-    return actionOk({ ...result, resumeSaved, resumePath, resumeSaveError });
+    return actionOk({ ...result, resumeSaved, resume, resumeSaveError });
   } catch (e) {
     return actionErr(e);
   }
 }
 
 /**
- * Removes the persisted resume: deletes the on-disk file (via
- * `deleteResume()`, idempotent even if it's already gone) and clears
- * `applyProfile.resumePath` from `config.json`. Falls back to
- * `getResumePath()`'s well-known fixed path when `resumePath` isn't set in
- * config (e.g. a prior upload's file save succeeded but its config-link
- * step didn't, per `extractProfileFromResumeAction()`'s own
- * `resumeSaveError` case above) — this action still cleans it up.
+ * Removes ONE persisted resume by `resumeId`: deletes its on-disk file (via
+ * `deleteResume()`, idempotent even if it's already gone) and drops its
+ * `ResumeRecord` from `applyProfile.resumes` in config.json -- every OTHER
+ * stored resume is left untouched (resume-store-multi-resume-and-tailoring
+ * story; v1's single-resume `removeResumeAction()` took no argument since
+ * there was only ever one to remove). Falls back to `getResumePath()`'s
+ * legacy fixed path when `resumeId` isn't found in `applyProfile.resumes`
+ * at all (e.g. a pre-migration install, or a prior upload's file save
+ * succeeded but its config-link step didn't, per
+ * `extractProfileFromResumeAction()`'s own `resumeSaveError` case above) --
+ * this action still cleans up that orphaned file, without touching
+ * `applyProfile.resumes` (there's no record referencing it to drop).
  */
-export async function removeResumeAction(): Promise<ActionResult<null>> {
+export async function removeResumeAction(resumeId: string): Promise<ActionResult<null>> {
   try {
     const currentApplyProfile = rawApplyProfile(readRawConfig());
-    const resumePath = typeof currentApplyProfile.resumePath === "string" ? currentApplyProfile.resumePath : getResumePath();
-    deleteResume(resumePath);
+    const existingResumes = Array.isArray(currentApplyProfile.resumes) ? (currentApplyProfile.resumes as ResumeRecord[]) : [];
+    const record = existingResumes.find((r) => r.id === resumeId);
+    deleteResume(record?.path ?? getResumePath());
 
-    if ("resumePath" in currentApplyProfile) {
-      const { resumePath: _drop, ...rest } = currentApplyProfile;
-      const saveResult = saveConfig({ applyProfile: rest });
+    if (record) {
+      const resumes = existingResumes.filter((r) => r.id !== resumeId);
+      const saveResult = saveConfig({ applyProfile: { ...currentApplyProfile, resumes } });
       if (!saveResult.ok) return actionErr(new Error(saveResult.error));
     }
   } catch (e) {

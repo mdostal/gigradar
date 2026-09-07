@@ -10,7 +10,7 @@ import { mergeDedupe } from "@/lib/profile-ingestion/merge";
 import { findRoleSkillOverlap } from "./profile-data-quality";
 import { KNOWN_SOURCES, SOURCES_OFFERING_GOOGLE_SSO, SOURCE_ORIGINS } from "@/lib/sources/origins";
 import { SOURCE_PRESETS, sourceConfigFromPreset } from "@/lib/sources/source-presets";
-import type { Config, EngagementType, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
+import type { Config, EngagementType, ResumeRecord, RoleAreaConfig, SourceConfig, Tier } from "@/lib/types";
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
 import { isTauri } from "@/lib/is-tauri";
 import { closeEmbeddedWebview, readEmbeddedWebviewSession, showEmbeddedWebview } from "@/lib/tauri/embedded-webview";
@@ -242,16 +242,20 @@ interface DraftApplyProfile {
   bio: string;
   rateAnchor: string;
   /**
-   * career-documents epic: NOT a form field (no text input edits this) --
-   * threaded through configToDraft()/draftToEdits() purely so the "Save
-   * config" button's own top-level-replace applyProfile write never
-   * silently drops a resumePath the resume-upload flow just set via its
-   * OWN, separate saveConfig() call. Same reasoning DraftSource.settings
-   * (a raw SettingPair[] pass-through) already protects
-   * sessionStatePath from -- applyProfile has no such generic pass-through,
-   * so this field exists specifically to close that gap.
+   * resume-store-multi-resume-and-tailoring story (was a single, non-form
+   * `resumePath?: string` before this story -- career-documents epic):
+   * NOT edited via any text input -- threaded through
+   * configToDraft()/draftToEdits() purely so the "Save config" button's
+   * own top-level-replace applyProfile write never silently drops the
+   * resumes list the upload/remove flows just changed via their OWN,
+   * separate saveConfig() calls. Same reasoning DraftSource.settings (a
+   * raw SettingPair[] pass-through) already protects sessionStatePath
+   * from -- applyProfile has no such generic pass-through, so this field
+   * exists specifically to close that gap. The UI below renders/mutates
+   * this list directly (add on upload, remove one by id) rather than a
+   * single resumePath string.
    */
-  resumePath?: string;
+  resumes: ResumeRecord[];
   /** career-documents epic, persisted-links story: portfolio/GitHub/personal-site links, editable via StringListEditor below. Generalizes linkedInUrl (kept as its own field, unchanged) into a real list. */
   links: string[];
 }
@@ -467,7 +471,7 @@ function configToDraft(config: Config): DraftConfig {
       headline: config.applyProfile?.headline ?? "",
       bio: config.applyProfile?.bio ?? "",
       rateAnchor: config.applyProfile?.rateAnchor !== undefined ? String(config.applyProfile.rateAnchor) : "",
-      resumePath: config.applyProfile?.resumePath,
+      resumes: config.applyProfile?.resumes ?? [],
       links: config.applyProfile?.links ?? [],
     },
   };
@@ -683,7 +687,7 @@ function draftToEdits(draft: DraftConfig): ConfigEdits {
     if (draft.applyProfile.rateAnchor.trim() !== "") {
       applyProfile.rateAnchor = draftNumber(draft.applyProfile.rateAnchor);
     }
-    if (draft.applyProfile.resumePath) applyProfile.resumePath = draft.applyProfile.resumePath;
+    if (draft.applyProfile.resumes.length > 0) applyProfile.resumes = draft.applyProfile.resumes;
     const links = nonBlank(draft.applyProfile.links);
     if (links.length > 0) applyProfile.links = links;
     edits.applyProfile = applyProfile;
@@ -1022,6 +1026,7 @@ type ExtractUIState =
   | { status: "success"; warnings: string[]; resumeSaved: boolean; resumeSaveError?: string }
   | { status: "error"; message: string };
 
+/** resume-store-multi-resume-and-tailoring story: keyed by ResumeRecord.id -- each stored resume's own "Remove" button has independent status, a missing entry means "idle". */
 type RemoveResumeUIState = { status: "idle" } | { status: "removing" } | { status: "error"; message: string };
 
 // ---------------------------------------------------------------------------
@@ -2127,7 +2132,10 @@ export function ConfigClient({
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [linksText, setLinksText] = useState("");
   const [extractState, setExtractState] = useState<ExtractUIState>({ status: "idle" });
-  const [removeResumeState, setRemoveResumeState] = useState<RemoveResumeUIState>({ status: "idle" });
+  // resume-store-multi-resume-and-tailoring story: one status per stored
+  // resume id (each row's own "Remove" button), same keyed-by-id pattern
+  // gmailAssignState above already uses for per-source-row status.
+  const [removeResumeState, setRemoveResumeState] = useState<Record<string, RemoveResumeUIState>>({});
 
   function handleResumeFileChange(e: ChangeEvent<HTMLInputElement>) {
     setResumeFile(e.target.files?.[0] ?? null);
@@ -2148,13 +2156,14 @@ export function ConfigClient({
     // Merge, never replace — extracted roles/skills are additive enrichment
     // of whatever's already in the draft (which may itself hold unsaved
     // hand-edits), deliberately unlike role-templates' overwrite-on-apply.
-    // resumePath is folded into draft.applyProfile too (not just shown as a
-    // status message) — this action already wrote it to config.json
-    // directly, and draft needs to reflect that NOW so a later "Save
-    // config" click (built from draft, see draftToEdits()) doesn't
-    // overwrite applyProfile with a stale, pre-upload value that drops it —
-    // same "keep draft and disk in sync after a direct write" discipline
-    // upsertSettingPair()'s own doc comment documents for Capture Login.
+    // The new resume record is APPENDED to draft.applyProfile.resumes too
+    // (not just shown as a status message) — this action already wrote it
+    // to config.json directly, and draft needs to reflect that NOW so a
+    // later "Save config" click (built from draft, see draftToEdits())
+    // doesn't overwrite applyProfile with a stale, pre-upload resumes list
+    // that drops it — same "keep draft and disk in sync after a direct
+    // write" discipline upsertSettingPair()'s own doc comment documents
+    // for Capture Login.
     setDraft((prev) => ({
       ...prev,
       profile: {
@@ -2162,7 +2171,7 @@ export function ConfigClient({
         roles: mergeDedupe(prev.profile.roles, result.data.roles),
         skills: mergeDedupe(prev.profile.skills, result.data.skills),
       },
-      applyProfile: result.data.resumePath ? { ...prev.applyProfile, resumePath: result.data.resumePath } : prev.applyProfile,
+      applyProfile: result.data.resume ? { ...prev.applyProfile, resumes: [...prev.applyProfile.resumes, result.data.resume] } : prev.applyProfile,
     }));
     setExtractState({
       status: "success",
@@ -2170,17 +2179,18 @@ export function ConfigClient({
       resumeSaved: result.data.resumeSaved,
       resumeSaveError: result.data.resumeSaveError,
     });
+    setResumeFile(null);
   }
 
-  async function handleRemoveResume() {
-    setRemoveResumeState({ status: "removing" });
-    const result = await removeResumeAction();
+  async function handleRemoveResume(resumeId: string) {
+    setRemoveResumeState((prev) => ({ ...prev, [resumeId]: { status: "removing" } }));
+    const result = await removeResumeAction(resumeId);
     if (!result.ok) {
-      setRemoveResumeState({ status: "error", message: result.error });
+      setRemoveResumeState((prev) => ({ ...prev, [resumeId]: { status: "error", message: result.error } }));
       return;
     }
-    setDraft((prev) => ({ ...prev, applyProfile: { ...prev.applyProfile, resumePath: undefined } }));
-    setRemoveResumeState({ status: "idle" });
+    setDraft((prev) => ({ ...prev, applyProfile: { ...prev.applyProfile, resumes: prev.applyProfile.resumes.filter((r) => r.id !== resumeId) } }));
+    setRemoveResumeState((prev) => ({ ...prev, [resumeId]: { status: "idle" } }));
   }
 
   // deep-dive-audit-and-testing-framework epic, clean-and-guard-profile-
@@ -2427,25 +2437,39 @@ export function ConfigClient({
               config&rdquo; below. GitHub profiles and personal portfolio/blog links work well; LinkedIn
               links are not reliably supported (bot-walled against unauthenticated fetches). Uploading a
               resume also saves it (encrypted) so gigradar can reuse it later — e.g. a real ATS-format check
-              in prep packets — without asking you to re-upload every time.
+              in prep packets, or the co-pilot's resume-vs-gig fit comparison once you have 2+ on file —
+              without asking you to re-upload every time. Each upload ADDS a new stored resume; nothing is
+              overwritten, so you can keep a general resume alongside role-specific tailored versions.
             </p>
-            {draft.applyProfile.resumePath && (
-              <div className="mt-2 flex items-center gap-2 rounded-md border border-theme-surface-border bg-theme-surface-raised px-3 py-2 text-xs text-theme-text">
-                <span role="status">Resume on file.</span>
-                <button
-                  type="button"
-                  onClick={handleRemoveResume}
-                  disabled={removeResumeState.status === "removing"}
-                  className="font-medium text-red-600 hover:underline disabled:opacity-50"
-                >
-                  {removeResumeState.status === "removing" ? "Removing…" : "Remove"}
-                </button>
-                {removeResumeState.status === "error" && (
-                  <span role="alert" className="text-red-700">
-                    {removeResumeState.message}
-                  </span>
-                )}
-              </div>
+            {draft.applyProfile.resumes.length > 0 && (
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {draft.applyProfile.resumes.map((r) => {
+                  const rowState = removeResumeState[r.id] ?? { status: "idle" as const };
+                  return (
+                    <li
+                      key={r.id}
+                      className="flex items-center gap-2 rounded-md border border-theme-surface-border bg-theme-surface-raised px-3 py-2 text-xs text-theme-text"
+                    >
+                      <span role="status" className="flex-1 truncate">
+                        {r.label} <span className="text-theme-text-dim">— uploaded {new Date(r.uploadedAt).toLocaleDateString()}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveResume(r.id)}
+                        disabled={rowState.status === "removing"}
+                        className="shrink-0 font-medium text-red-600 hover:underline disabled:opacity-50"
+                      >
+                        {rowState.status === "removing" ? "Removing…" : "Remove"}
+                      </button>
+                      {rowState.status === "error" && (
+                        <span role="alert" className="text-red-700">
+                          {rowState.message}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
             )}
             <div className="mt-2 flex flex-col gap-2">
               <label>

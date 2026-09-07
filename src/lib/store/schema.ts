@@ -145,4 +145,27 @@ CREATE TABLE IF NOT EXISTS chat_preferences (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_chat_preferences_created ON chat_preferences(created_at);
+
+-- resume-store-multi-resume-and-tailoring story. Append-only, gated
+-- resume-review suggestions -- mirrors autofire_decisions' append-only
+-- audit-log pattern above: a re-review for the same (gig, resume) pair is
+-- a NEW row, never an overwrite, preserving history of what was suggested
+-- and when. NOTHING is ever written here until the owner has EXPLICITLY
+-- approved it via the chat co-pilot's propose_resume_review tool
+-- (agent-chat-loop.ts) -- same pendingApproval propose-then-approve
+-- mechanism propose_config_edit already established; there is no
+-- "proposed but not yet approved" row in this table by design, matching
+-- this app's "assists, never auto-submits" posture (see approved_at:
+-- always set, never NULL). resume_id is NOT a foreign key -- resumes live
+-- in config.json (ApplyProfileConfig.resumes), not this database.
+CREATE TABLE IF NOT EXISTS resume_review_suggestions (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  gig_key      TEXT NOT NULL REFERENCES gigs(key),
+  resume_id    TEXT NOT NULL,
+  summary      TEXT NOT NULL,
+  suggestions  TEXT NOT NULL,     -- JSON-stringified string[]
+  approved_at  TEXT NOT NULL      -- ISO datetime -- always set, see header comment
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_resume_review_suggestions_gig_key ON resume_review_suggestions(gig_key);
 `;

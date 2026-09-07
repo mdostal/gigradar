@@ -353,6 +353,105 @@ describe("loadConfig: needs.engagementProfiles migration from the deprecated fla
   });
 });
 
+describe("loadConfig: applyProfile.resumes migration from the deprecated flat resumePath (resume-store-multi-resume-and-tailoring story)", () => {
+  const REAL_RESUME_BYTES = Buffer.from("%PDF-1.4 a real owner's real, pre-existing resume -- must never be lost");
+
+  /**
+   * Builds a REAL isolated single-resume install SHAPE (never the owner's
+   * actual live data -- this test's tmpDir/keyTmpDir are fresh temp
+   * directories, see this suite's own beforeEach) by calling the SAME
+   * production `saveResume()` (v1's old 2-arg call site, e.g. what
+   * extractProfileFromResumeAction() used to do) that a real pre-story
+   * install would have used -- an actual encrypted-at-rest file on disk,
+   * not a hand-rolled fixture -- then writes a config.json referencing it
+   * via the OLD flat `applyProfile.resumePath` field only, exactly what a
+   * real pre-existing install's config.json looked like.
+   */
+  async function seedLegacySingleResumeInstall(): Promise<{ legacyResumePath: string }> {
+    const { saveResume } = await import("../../documents/resume-store.js");
+    const { path: legacyResumePath } = saveResume(REAL_RESUME_BYTES, "application/pdf");
+    writePlaintextConfig(
+      JSON.stringify({
+        ...validConfig,
+        applyProfile: { email: "owner@example.com", resumePath: legacyResumePath },
+      }),
+    );
+    return { legacyResumePath };
+  }
+
+  it("migrates the one real, pre-existing resume into a one-entry resumes list -- no data loss, verified by decrypting the migrated record's own file", async () => {
+    const { legacyResumePath } = await seedLegacySingleResumeInstall();
+
+    const config = loadConfig();
+
+    expect(config.applyProfile?.resumes).toHaveLength(1);
+    const migrated = config.applyProfile?.resumes?.[0];
+    expect(migrated?.id).toBe("default");
+    expect(migrated?.label).toBe("Resume");
+    expect(migrated?.path).toBe(legacyResumePath);
+    expect(typeof migrated?.uploadedAt).toBe("string");
+
+    // The real, load-bearing assertion: the migrated record's `path` still
+    // resolves to the EXACT SAME real resume bytes -- decrypted via the
+    // same production loadResume(), never a re-derived/re-encrypted copy.
+    const { loadResume } = await import("../../documents/resume-store.js");
+    const loaded = loadResume(migrated!.path);
+    expect(loaded).toBeDefined();
+    expect(loaded?.mediaType).toBe("application/pdf");
+    expect(Buffer.compare(loaded!.data, REAL_RESUME_BYTES)).toBe(0);
+  });
+
+  it("the migrated resumes list round-trips through ConfigSchema validation cleanly (no validation error on a pre-existing install)", async () => {
+    await seedLegacySingleResumeInstall();
+
+    expect(() => loadConfig()).not.toThrow();
+  });
+
+  it("does nothing (passes the document through unchanged) when resumes is already present -- never double-migrates or duplicates the resume", () => {
+    const already = {
+      ...validConfig,
+      applyProfile: {
+        email: "owner@example.com",
+        resumes: [{ id: "r1", label: "My resume", path: "/some/real/path.enc", uploadedAt: "2026-01-01T00:00:00.000Z" }],
+      },
+    };
+    writePlaintextConfig(JSON.stringify(already));
+
+    const config = loadConfig();
+
+    expect(config.applyProfile?.resumes).toEqual(already.applyProfile.resumes);
+  });
+
+  it("a config.json with no applyProfile.resumePath at all (never had a resume, or already fully on the new shape with none uploaded) is untouched -- resumes stays undefined, not an empty array", () => {
+    writePlaintextConfig(JSON.stringify({ ...validConfig, applyProfile: { email: "owner@example.com" } }));
+
+    const config = loadConfig();
+
+    expect(config.applyProfile?.resumes).toBeUndefined();
+  });
+
+  it("an already-encrypted legacy-shape config.json also migrates correctly (migration runs after decryption, before validation)", async () => {
+    const { saveResume } = await import("../../documents/resume-store.js");
+    const { path: legacyResumePath } = saveResume(REAL_RESUME_BYTES, "application/pdf");
+    writeEncryptedConfig({ ...validConfig, applyProfile: { email: "owner@example.com", resumePath: legacyResumePath } });
+
+    const config = loadConfig();
+
+    expect(config.applyProfile?.resumes).toHaveLength(1);
+    expect(config.applyProfile?.resumes?.[0]?.path).toBe(legacyResumePath);
+  });
+
+  it("a resumePath referencing a file that no longer exists still migrates the REFERENCE (never throws) -- loadResume() degrades gracefully for the missing file exactly as it already did pre-migration", () => {
+    const orphanedPath = path.join(tmpDir, "gone.enc");
+    writePlaintextConfig(JSON.stringify({ ...validConfig, applyProfile: { email: "owner@example.com", resumePath: orphanedPath } }));
+
+    const config = loadConfig();
+
+    expect(config.applyProfile?.resumes).toHaveLength(1);
+    expect(config.applyProfile?.resumes?.[0]?.path).toBe(orphanedPath);
+  });
+});
+
 describe("loadConfig: missing file", () => {
   it("throws a specific, actionable error naming the expected path — not a generic fs error", () => {
     const expectedPath = getConfigPath();

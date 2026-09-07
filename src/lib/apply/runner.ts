@@ -321,6 +321,7 @@ export async function stageApplication(
   config: Config,
   credential: LlmCredential,
   storeOpts: DbOption = {},
+  resumeId?: string,
 ): Promise<ApplicationDraft> {
   if (r.tier === "red") {
     throw new Error(
@@ -335,7 +336,12 @@ export async function stageApplication(
   }
 
   const format = resolveApplicationFormat(r.gig, config);
-  const content = await generateDraft(r.gig, config.profile, config.applyProfile, credential, format);
+  // resume-store-multi-resume-and-tailoring story: `resumeId` selects which
+  // of `config.applyProfile.resumes` this draft is grounded in -- omitted
+  // falls back to generateDraft()'s own default (the first stored resume),
+  // preserving the old single-resume behavior byte-for-byte. The resume
+  // actually used (if any) rides through on `content.resumeId`.
+  const content = await generateDraft(r.gig, config.profile, config.applyProfile, credential, format, resumeId);
   saveDraft(gigKey(r.gig.sourceId, r.gig.externalId), content, storeOpts);
 
   return { gig: r.gig, content, status: "draft" };

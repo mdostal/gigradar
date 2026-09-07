@@ -207,9 +207,9 @@ describe("verifyGroupMatch: real resume file attachment (deep-memory-and-context
     delete process.env.XDG_CONFIG_HOME;
   });
 
-  it("when applyProfile.resumePath is set and loadResume() succeeds, embeds the real resume as a file content part", async () => {
-    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 fake resume for ai-verify test"), "application/pdf");
-    const applyProfileWithResume: ApplyProfileConfig = { email: "jane@example.com", resumePath };
+  it("when applyProfile.resumes has an entry and loadResume() succeeds, embeds the real resume as a file content part", async () => {
+    const { id, path } = saveResume(Buffer.from("%PDF-1.4 fake resume for ai-verify test"), "application/pdf");
+    const applyProfileWithResume: ApplyProfileConfig = { email: "jane@example.com", resumes: [{ id, label: "Resume", path, uploadedAt: new Date().toISOString() }] };
 
     await verifyGroupMatch(FINANCE_GIG, CTO_GROUP, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
 
@@ -217,16 +217,16 @@ describe("verifyGroupMatch: real resume file attachment (deep-memory-and-context
     expect(fileBlock).toBeDefined();
   });
 
-  it("when applyProfile is undefined or resumePath is unset, no file block -- unaffected", async () => {
+  it("when applyProfile is undefined or resumes is empty/unset, no file block -- unaffected", async () => {
     await verifyGroupMatch(FINANCE_GIG, CTO_GROUP, REAL_PROFILE, undefined, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
 
     expect(messageContentSentToLLM().some((b) => b.type === "file")).toBe(false);
   });
 
-  it("when resumePath is set but the file has been deleted, degrades gracefully -- no error, no file block", async () => {
-    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 to be deleted"), "application/pdf");
-    fs.unlinkSync(resumePath);
-    const applyProfileWithMissingResume: ApplyProfileConfig = { email: "jane@example.com", resumePath };
+  it("when a resume is on file but the file has been deleted, degrades gracefully -- no error, no file block", async () => {
+    const { id, path } = saveResume(Buffer.from("%PDF-1.4 to be deleted"), "application/pdf");
+    fs.unlinkSync(path);
+    const applyProfileWithMissingResume: ApplyProfileConfig = { email: "jane@example.com", resumes: [{ id, label: "Resume", path, uploadedAt: new Date().toISOString() }] };
 
     await expect(
       verifyGroupMatch(FINANCE_GIG, CTO_GROUP, REAL_PROFILE, applyProfileWithMissingResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }),

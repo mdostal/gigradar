@@ -261,10 +261,15 @@ describe("generatePrepPacket: parseabilityIssues (career-documents epic, real-pa
     },
   };
 
-  it("when applyProfile.resumePath is set and loadResume() succeeds, embeds the real resume as a file content part", async () => {
+  /** resume-store-multi-resume-and-tailoring story: wraps a saveResume() result into the ResumeRecord shape ApplyProfileConfig.resumes now holds, instead of the old flat resumePath field. */
+  function asResumeRecord({ id, path }: { id: string; path: string }, label = "Resume") {
+    return { id, label, path, uploadedAt: new Date().toISOString() };
+  }
+
+  it("when applyProfile.resumes has an entry and loadResume() succeeds, embeds the real resume as a file content part", async () => {
     const pdfBytes = Buffer.from("%PDF-1.4 fake resume for parseability test");
-    const { path: resumePath } = saveResume(pdfBytes, "application/pdf");
-    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+    const saved = saveResume(pdfBytes, "application/pdf");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(saved)] };
     mockGenerateText.mockResolvedValueOnce(fakePrepResult(PACKET_WITH_PARSEABILITY));
 
     const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
@@ -276,8 +281,8 @@ describe("generatePrepPacket: parseabilityIssues (career-documents epic, real-pa
   });
 
   it("still exactly ONE LLM call even when a resume is embedded", async () => {
-    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 another fake resume"), "application/pdf");
-    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+    const saved = saveResume(Buffer.from("%PDF-1.4 another fake resume"), "application/pdf");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(saved)] };
     mockGenerateText.mockResolvedValueOnce(fakePrepResult(PACKET_WITH_PARSEABILITY));
 
     await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
@@ -286,8 +291,8 @@ describe("generatePrepPacket: parseabilityIssues (career-documents epic, real-pa
   });
 
   it("a plain-text saved resume is embedded as a text block, not a file block", async () => {
-    const { path: resumePath } = saveResume(Buffer.from("Jane Doe -- backend engineer, plain text resume."), "text/plain");
-    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+    const saved = saveResume(Buffer.from("Jane Doe -- backend engineer, plain text resume."), "text/plain");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(saved)] };
     mockGenerateText.mockResolvedValueOnce(fakePrepResult(PACKET_WITH_PARSEABILITY));
 
     await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
@@ -298,7 +303,7 @@ describe("generatePrepPacket: parseabilityIssues (career-documents epic, real-pa
     expect(fullPrompt).toContain("Jane Doe -- backend engineer, plain text resume.");
   });
 
-  it("when applyProfile.resumePath is unset, behaves exactly as ats-navigator's own keyword-overlap-only shipped it -- no file block, parseabilityIssues empty", async () => {
+  it("when applyProfile.resumes is unset, behaves exactly as ats-navigator's own keyword-overlap-only shipped it -- no file block, parseabilityIssues empty", async () => {
     mockGenerateText.mockResolvedValueOnce(fakePrepResult(FULL_PACKET));
 
     const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
@@ -309,10 +314,10 @@ describe("generatePrepPacket: parseabilityIssues (career-documents epic, real-pa
     expect(messageContentSentToLLM().some((b) => b.type === "file")).toBe(false);
   });
 
-  it("when resumePath is set but the file has been deleted, degrades gracefully -- no error, no file block, parseabilityIssues empty", async () => {
-    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 to be deleted"), "application/pdf");
-    fs.unlinkSync(resumePath);
-    const applyProfileWithMissingResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+  it("when a resume is on file but the file has been deleted, degrades gracefully -- no error, no file block, parseabilityIssues empty", async () => {
+    const saved = saveResume(Buffer.from("%PDF-1.4 to be deleted"), "application/pdf");
+    fs.unlinkSync(saved.path);
+    const applyProfileWithMissingResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(saved)] };
     mockGenerateText.mockResolvedValueOnce(fakePrepResult(FULL_PACKET));
 
     const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfileWithMissingResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
@@ -324,12 +329,126 @@ describe("generatePrepPacket: parseabilityIssues (career-documents epic, real-pa
 
   it("never surfaces parseabilityIssues the model returned if no resume was actually attached (belt-and-suspenders)", async () => {
     // Simulates the model ignoring the "empty when no resume attached"
-    // instruction -- this call has NO resumePath, yet the mocked response
+    // instruction -- this call has NO resumes, yet the mocked response
     // still tries to claim parseabilityIssues.
     mockGenerateText.mockResolvedValueOnce(fakePrepResult(PACKET_WITH_PARSEABILITY));
 
     const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
 
     expect(result.atsScore.parseabilityIssues).toEqual([]);
+  });
+});
+
+describe("generatePrepPacket: multi-resume fit suggestion (resume-store-multi-resume-and-tailoring story)", () => {
+  let tmpDataDir: string;
+  let tmpKeyDir: string;
+
+  beforeEach(() => {
+    tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-prep-multi-resume-test-"));
+    tmpKeyDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-prep-multi-resume-test-key-"));
+    process.env.XDG_DATA_HOME = tmpDataDir;
+    process.env.XDG_CONFIG_HOME = tmpKeyDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDataDir, { recursive: true, force: true });
+    fs.rmSync(tmpKeyDir, { recursive: true, force: true });
+    delete process.env.XDG_DATA_HOME;
+    delete process.env.XDG_CONFIG_HOME;
+  });
+
+  function asResumeRecord({ id, path }: { id: string; path: string }, label: string) {
+    return { id, label, path, uploadedAt: new Date().toISOString() };
+  }
+
+  it("with 2+ resumes stored, attaches EVERY one and reports resumeRankings with real, LLM-produced reasoning, deriving bestResumeId from the highest fitScore", async () => {
+    const ctoResume = saveResume(Buffer.from("Jane Doe, 10 years as a fractional CTO"), "text/plain");
+    const sweResume = saveResume(Buffer.from("Jane Doe, backend software engineer, deep Kubernetes experience"), "text/plain");
+    const applyProfile: ApplyProfileConfig = {
+      ...REAL_APPLY_PROFILE,
+      resumes: [asResumeRecord(ctoResume, "CTO resume"), asResumeRecord(sweResume, "SWE resume")],
+    };
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        ...(() => {
+          const { atsScore, ...rest } = FULL_PACKET;
+          return { ...rest, ...atsScore };
+        })(),
+        resumeRankings: [
+          { resumeId: ctoResume.id, fitScore: 60, reasoning: "Strong leadership background but no Kubernetes mention." },
+          { resumeId: sweResume.id, fitScore: 88, reasoning: "Explicitly mentions Kubernetes, which this listing calls out repeatedly." },
+        ],
+      },
+    });
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfile, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+
+    expect(result.resumeSuggestion).toBeDefined();
+    expect(result.resumeSuggestion?.rankings).toHaveLength(2);
+    expect(result.resumeSuggestion?.rankings.find((r) => r.resumeId === sweResume.id)?.reasoning).toContain("Kubernetes");
+    expect(result.resumeSuggestion?.bestResumeId).toBe(sweResume.id);
+
+    // Every resume option was actually attached as its own labeled block.
+    const fullPrompt = textBlocksSentToLLM().join("\n---\n");
+    expect(fullPrompt).toContain(ctoResume.id);
+    expect(fullPrompt).toContain(sweResume.id);
+    expect(mockGenerateText).toHaveBeenCalledTimes(1); // still ONE LLM call, not one per resume
+  });
+
+  it("with fewer than 2 resumes, resumeSuggestion is undefined -- 'which fits best' is meaningless with 0 or 1", async () => {
+    const onlyResume = saveResume(Buffer.from("Jane Doe resume"), "text/plain");
+    const applyProfile: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(onlyResume, "Only resume")] };
+    mockGenerateText.mockResolvedValueOnce(fakePrepResult(FULL_PACKET));
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfile, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+
+    expect(result.resumeSuggestion).toBeUndefined();
+  });
+
+  it("belt-and-suspenders: a stray resumeRankings entry for an unknown resumeId is dropped, never surfaced", async () => {
+    const first = saveResume(Buffer.from("first"), "text/plain");
+    const second = saveResume(Buffer.from("second"), "text/plain");
+    const applyProfile: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(first, "First"), asResumeRecord(second, "Second")] };
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        ...(() => {
+          const { atsScore, ...rest } = FULL_PACKET;
+          return { ...rest, ...atsScore };
+        })(),
+        resumeRankings: [
+          { resumeId: first.id, fitScore: 50, reasoning: "ok" },
+          { resumeId: "hallucinated-id-not-a-real-resume", fitScore: 99, reasoning: "fabricated" },
+        ],
+      },
+    });
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfile, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+
+    expect(result.resumeSuggestion?.rankings.map((r) => r.resumeId)).toEqual([first.id]);
+    expect(result.resumeSuggestion?.bestResumeId).toBe(first.id);
+  });
+
+  it("selectedResumeId chooses which resume parseabilityIssues checks, independent of the ranking across all resumes", async () => {
+    const first = saveResume(Buffer.from("first"), "application/pdf");
+    const second = saveResume(Buffer.from("second"), "application/pdf");
+    const applyProfile: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(first, "First"), asResumeRecord(second, "Second")] };
+    mockGenerateText.mockResolvedValueOnce({
+      output: {
+        ...(() => {
+          const { atsScore, ...rest } = FULL_PACKET;
+          return { ...rest, ...atsScore, parseabilityIssues: ["Contact info is in a page header."] };
+        })(),
+        resumeRankings: [
+          { resumeId: first.id, fitScore: 40, reasoning: "a" },
+          { resumeId: second.id, fitScore: 70, reasoning: "b" },
+        ],
+      },
+    });
+
+    const result = await generatePrepPacket(REAL_GIG, REAL_PROFILE, applyProfile, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, second.id);
+
+    expect(result.atsScore.resumeChecked).toBe(true);
+    const fullPrompt = textBlocksSentToLLM().join("\n---\n");
+    expect(fullPrompt).toContain(`resumeId="${second.id}"`);
   });
 });

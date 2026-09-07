@@ -73,6 +73,7 @@ vi.mock("../../auth/oauth-providers/gmail.js", () => ({
 
 import { closeDb, getDb } from "../../store/db.js";
 import { recordScan } from "../../store/gigs.js";
+import { saveConfig } from "../../config/save.js";
 import type { Config, SourceConfig } from "../../types.js";
 import { endChatSession, MAX_TURNS, resolveApproval, resumeChatSession, sendMessage, startChatSession } from "../agent-chat-loop.js";
 import { listPreferences } from "../memory.js";
@@ -401,7 +402,7 @@ describe("write tools: propose then approve, no exceptions", () => {
     await sendMessage("w6", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "draft an application for this one", FAKE_CONFIG);
     await resolveApproval("w6", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
 
-    expect(stageApplicationMock).toHaveBeenCalledWith(expect.objectContaining({ gig: expect.objectContaining({ sourceId: "src-a" }) }), FAKE_CONFIG, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+    expect(stageApplicationMock).toHaveBeenCalledWith(expect.objectContaining({ gig: expect.objectContaining({ sourceId: "src-a" }) }), FAKE_CONFIG, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, {}, undefined);
     endChatSession("w6");
   });
 
@@ -450,6 +451,199 @@ describe("write tools: propose then approve, no exceptions", () => {
 
     expect(result).toEqual({ type: "message", text: "That gig doesn't exist." });
     endChatSession("w9");
+  });
+
+  it("generate_draft: an approved resumeId is threaded straight through to the REAL stageApplication() call", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1", tier: "green" });
+    stageApplicationMock.mockResolvedValue({});
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("generate_draft", { key, resumeId: "resume-123" }))
+      .mockResolvedValueOnce(fakeTextResponse("Draft generated."));
+
+    startChatSession("w10");
+    await sendMessage("w10", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "draft an application using my resume-123", FAKE_CONFIG);
+    await resolveApproval("w10", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
+
+    expect(stageApplicationMock).toHaveBeenCalledWith(
+      expect.objectContaining({ gig: expect.objectContaining({ sourceId: "src-a" }) }),
+      FAKE_CONFIG,
+      { kind: "api-key", provider: "anthropic", value: "fake-api-key" },
+      {},
+      "resume-123",
+    );
+    endChatSession("w10");
+  });
+
+  it("generate_prep_packet: an approved resumeId is threaded straight through to the REAL generatePrepPacket() call", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1" });
+    generatePrepPacketMock.mockResolvedValue({
+      score: 77,
+      rationale: "r",
+      topStrengths: [],
+      keyGaps: [],
+      recommendation: "Pursue",
+      predictedQuestions: [],
+      starlaStories: [],
+      resumeSuggestion: { rankings: [{ resumeId: "r2", label: "SWE resume", fitScore: 90, reasoning: "Kubernetes match" }], bestResumeId: "r2" },
+    });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("generate_prep_packet", { key, resumeId: "r1" }))
+      .mockResolvedValueOnce(fakeTextResponse("Prep packet ready."));
+
+    startChatSession("w11");
+    await sendMessage("w11", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "generate a prep packet", FAKE_CONFIG);
+    await resolveApproval("w11", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
+
+    expect(generatePrepPacketMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceId: "src-a" }),
+      FAKE_CONFIG.profile,
+      FAKE_CONFIG.applyProfile,
+      { kind: "api-key", provider: "anthropic", value: "fake-api-key" },
+      "r1",
+    );
+    endChatSession("w11");
+  });
+});
+
+describe("list_resumes: read-only, auto-executes (resume-store-multi-resume-and-tailoring story)", () => {
+  it("lists every stored resume's id/label/uploadedAt from the real config, never a resumed path or file content", async () => {
+    const resumes = [
+      { id: "r1", label: "CTO resume", path: "/does/not/matter/for/this/tool.enc", uploadedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "r2", label: "SWE resume", path: "/does/not/matter/either.enc", uploadedAt: "2026-01-02T00:00:00.000Z" },
+    ];
+    const saveResult = saveConfig({
+      profile: FAKE_CONFIG.profile,
+      groups: [
+        {
+          id: "g1",
+          label: "Group 1",
+          needs: {
+            engagementProfiles: [
+              { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 0, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+            ],
+            freshStageOnly: false,
+            remoteOnly: false,
+          },
+        },
+      ],
+      sources: FAKE_CONFIG.sources,
+      applyProfile: { email: "jane@example.com", resumes },
+    });
+    expect(saveResult.ok).toBe(true);
+
+    mockCreate.mockResolvedValueOnce(fakeToolUseResponse("list_resumes", {})).mockResolvedValueOnce(fakeTextResponse("You have 2 resumes on file."));
+
+    startChatSession("lr1");
+    const result = await sendMessage("lr1", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "what resumes do I have?", FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "You have 2 resumes on file." });
+    const secondCall = mockCreate.mock.calls[1]?.[0] as Anthropic.MessageCreateParams;
+    const toolResultText = JSON.stringify(secondCall.messages);
+    expect(toolResultText).toContain("r1");
+    expect(toolResultText).toContain("CTO resume");
+    expect(toolResultText).toContain("r2");
+    expect(toolResultText).toContain("SWE resume");
+    // The FILE PATH (a real filesystem location) is never sent to the model -- only id/label/uploadedAt.
+    expect(toolResultText).not.toContain("does/not/matter");
+    endChatSession("lr1");
+  });
+
+  it("returns an empty list, never throws, when no resumes are on file", async () => {
+    mockCreate.mockResolvedValueOnce(fakeToolUseResponse("list_resumes", {})).mockResolvedValueOnce(fakeTextResponse("You have no resumes on file yet."));
+
+    startChatSession("lr2");
+    const result = await sendMessage("lr2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "what resumes do I have?", FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "You have no resumes on file yet." });
+    endChatSession("lr2");
+  });
+});
+
+describe("propose_resume_review: propose then approve, no exceptions (resume-store-multi-resume-and-tailoring story)", () => {
+  it("produces a proposal and records NOTHING in resume_review_suggestions before approval", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1" });
+    mockCreate.mockResolvedValueOnce(
+      fakeToolUseResponse("propose_resume_review", {
+        key,
+        resumeId: "r1",
+        summary: "Add Kubernetes to close the biggest gap",
+        suggestions: ["Add 'Kubernetes' to your skills -- it appears 3 times in this listing."],
+      }),
+    );
+
+    startChatSession("rr1");
+    const result = await sendMessage("rr1", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "review my resume against this gig", FAKE_CONFIG);
+
+    expect(result).toEqual({
+      type: "proposal",
+      tool: "propose_resume_review",
+      input: {
+        key,
+        resumeId: "r1",
+        summary: "Add Kubernetes to close the biggest gap",
+        suggestions: ["Add 'Kubernetes' to your skills -- it appears 3 times in this listing."],
+      },
+      description: `Resume review for "r1" on gig "${key}": Add Kubernetes to close the biggest gap`,
+    });
+    expect(db.prepare("SELECT COUNT(*) as n FROM resume_review_suggestions").get()).toEqual({ n: 0 });
+    endChatSession("rr1");
+  });
+
+  it("resolveApproval(approve:true) writes the REAL suggestion to resume_review_suggestions, never before this point", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1" });
+    mockCreate
+      .mockResolvedValueOnce(
+        fakeToolUseResponse("propose_resume_review", {
+          key,
+          resumeId: "r1",
+          summary: "Add Kubernetes to close the biggest gap",
+          suggestions: ["Add 'Kubernetes' to your skills."],
+        }),
+      )
+      .mockResolvedValueOnce(fakeTextResponse("Noted -- recorded that feedback."));
+
+    startChatSession("rr2");
+    await sendMessage("rr2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "review my resume against this gig", FAKE_CONFIG);
+    const result = await resolveApproval("rr2", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "Noted -- recorded that feedback." });
+    const row = db.prepare("SELECT gig_key, resume_id, summary, suggestions FROM resume_review_suggestions").get() as
+      | { gig_key: string; resume_id: string; summary: string; suggestions: string }
+      | undefined;
+    expect(row).toBeDefined();
+    expect(row?.gig_key).toBe(key);
+    expect(row?.resume_id).toBe("r1");
+    expect(row?.summary).toBe("Add Kubernetes to close the biggest gap");
+    expect(JSON.parse(row!.suggestions)).toEqual(["Add 'Kubernetes' to your skills."]);
+    endChatSession("rr2");
+  });
+
+  it("resolveApproval(approve:false) never writes to resume_review_suggestions", async () => {
+    const key = seedGig({ sourceId: "src-a", externalId: "1" });
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("propose_resume_review", { key, resumeId: "r1", summary: "x", suggestions: ["y"] }))
+      .mockResolvedValueOnce(fakeTextResponse("Okay, not recording that."));
+
+    startChatSession("rr3");
+    await sendMessage("rr3", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "review my resume", FAKE_CONFIG);
+    await resolveApproval("rr3", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, false, FAKE_CONFIG);
+
+    expect(db.prepare("SELECT COUNT(*) as n FROM resume_review_suggestions").get()).toEqual({ n: 0 });
+    endChatSession("rr3");
+  });
+
+  it("a failed proposal (unknown gig key) surfaces as a tool error to the model, never throws, never writes a row", async () => {
+    mockCreate
+      .mockResolvedValueOnce(fakeToolUseResponse("propose_resume_review", { key: "does-not:exist", resumeId: "r1", summary: "x", suggestions: ["y"] }))
+      .mockResolvedValueOnce(fakeTextResponse("That gig doesn't exist."));
+
+    startChatSession("rr4");
+    await sendMessage("rr4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "review my resume", FAKE_CONFIG);
+    const result = await resolveApproval("rr4", { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, true, FAKE_CONFIG);
+
+    expect(result).toEqual({ type: "message", text: "That gig doesn't exist." });
+    expect(db.prepare("SELECT COUNT(*) as n FROM resume_review_suggestions").get()).toEqual({ n: 0 });
+    endChatSession("rr4");
   });
 });
 

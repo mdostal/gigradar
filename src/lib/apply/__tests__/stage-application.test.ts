@@ -154,7 +154,7 @@ describe("stageApplication: successful draft generation and persistence (AC7)", 
 
     const result = await stageApplication(makeMatchResult(gig, "green"), config, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, { db });
 
-    expect(mockGenerateDraft).toHaveBeenCalledWith(gig, config.profile, config.applyProfile, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "cover-letter");
+    expect(mockGenerateDraft).toHaveBeenCalledWith(gig, config.profile, config.applyProfile, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "cover-letter", undefined);
     expect(result).toEqual({ gig, content, status: "draft" });
 
     const stored = getDraft(`${gig.sourceId}:${gig.externalId}`, { db });

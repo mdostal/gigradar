@@ -228,7 +228,14 @@ export function InterviewWorkspaceClient({
             <Field label="LinkedIn" value={applyProfile?.linkedInUrl} />
             <Field label="Rate anchor" value={applyProfile?.rateAnchor != null ? `$${applyProfile.rateAnchor}` : undefined} />
             <Field label="Links" value={applyProfile?.links?.join("; ")} />
-            <Field label="Resume on file" value={applyProfile?.resumePath ? "Yes — see /config" : "No resume uploaded"} />
+            <Field
+              label="Resume(s) on file"
+              value={
+                applyProfile?.resumes && applyProfile.resumes.length > 0
+                  ? `${applyProfile.resumes.length} — see /config`
+                  : "No resume uploaded"
+              }
+            />
             {applyProfile?.bio && (
               <div className="sm:col-span-2">
                 <dt className="text-xs font-medium text-theme-text-dim">Bio</dt>

@@ -349,12 +349,12 @@ function seedBaseConfig(email = "jane@example.com") {
   });
 }
 
-describe("extractProfileFromResumeAction: persists the uploaded resume (career-documents epic)", () => {
+describe("extractProfileFromResumeAction: persists the uploaded resume, keyed/versioned (resume-store-multi-resume-and-tailoring story)", () => {
   beforeEach(() => {
     setEnvVar("ANTHROPIC_API_KEY", "test-key");
   });
 
-  it("when applyProfile.email is already set, saves the resume and records resumePath in config.json", async () => {
+  it("when applyProfile.email is already set, saves the resume and appends a ResumeRecord to applyProfile.resumes in config.json", async () => {
     expect(seedBaseConfig().ok).toBe(true);
     mockExtractProfile.mockResolvedValue(fakeExtractResult({ roles: ["Engineer"] }));
     const pdfBytes = Buffer.from("%PDF-1.4 fake pdf bytes for persistence test");
@@ -368,15 +368,53 @@ describe("extractProfileFromResumeAction: persists the uploaded resume (career-d
     if (!result.ok) throw new Error("expected ok");
     expect(result.data.resumeSaved).toBe(true);
     expect(result.data.resumeSaveError).toBeUndefined();
-    expect(result.data.resumePath).toBeDefined();
+    expect(result.data.resume).toBeDefined();
+    expect(result.data.resume?.label).toBe("resume.pdf");
 
-    const raw = readRawConfig() as { applyProfile?: { resumePath?: string; email?: string } };
-    expect(raw.applyProfile?.resumePath).toBe(result.data.resumePath);
+    const raw = readRawConfig() as { applyProfile?: { resumes?: Array<{ id: string; label: string; path: string }>; email?: string } };
+    expect(raw.applyProfile?.resumes).toHaveLength(1);
+    expect(raw.applyProfile?.resumes?.[0]).toEqual(result.data.resume);
     expect(raw.applyProfile?.email).toBe("jane@example.com");
 
-    const loaded = loadResume(result.data.resumePath!);
+    const loaded = loadResume(result.data.resume!.path);
     expect(loaded).toBeDefined();
     expect(Buffer.compare(loaded!.data, pdfBytes)).toBe(0);
+  });
+
+  it("a SECOND upload APPENDS a second ResumeRecord -- both stored, encrypted, and independently retrievable (AC2)", async () => {
+    expect(seedBaseConfig().ok).toBe(true);
+    mockExtractProfile.mockResolvedValue(fakeExtractResult());
+
+    const firstBytes = Buffer.from("%PDF-1.4 first resume");
+    const firstFormData = new FormData();
+    firstFormData.set("resumeFile", new File([firstBytes], "cto-resume.pdf", { type: "application/pdf" }));
+    const firstResult = await extractProfileFromResumeAction(firstFormData);
+    if (!firstResult.ok) throw new Error("expected ok");
+
+    const secondBytes = Buffer.from("a completely different, second resume");
+    const secondFormData = new FormData();
+    secondFormData.set("resumeFile", new File([secondBytes], "swe-resume.txt", { type: "text/plain" }));
+    const secondResult = await extractProfileFromResumeAction(secondFormData);
+    if (!secondResult.ok) throw new Error("expected ok");
+
+    expect(firstResult.data.resume?.id).not.toBe(secondResult.data.resume?.id);
+
+    const raw = readRawConfig() as { applyProfile?: { resumes?: Array<{ id: string }> } };
+    expect(raw.applyProfile?.resumes).toHaveLength(2);
+
+    // Both independently retrievable, correctly encrypted at rest, and
+    // neither upload disturbed the other's file.
+    const firstLoaded = loadResume(firstResult.data.resume!.path);
+    expect(firstLoaded).toBeDefined();
+    expect(Buffer.compare(firstLoaded!.data, firstBytes)).toBe(0);
+    const firstRaw = fs.readFileSync(firstResult.data.resume!.path, "utf8");
+    expect(firstRaw).not.toContain("first resume");
+
+    const secondLoaded = loadResume(secondResult.data.resume!.path);
+    expect(secondLoaded).toBeDefined();
+    expect(Buffer.compare(secondLoaded!.data, secondBytes)).toBe(0);
+    const secondRaw = fs.readFileSync(secondResult.data.resume!.path, "utf8");
+    expect(secondRaw).not.toContain("second resume");
   });
 
   it("when no applyProfile.email is set yet, saves the resume FILE but reports a specific, actionable resumeSaveError instead of writing config.json", async () => {
@@ -408,7 +446,7 @@ describe("extractProfileFromResumeAction: persists the uploaded resume (career-d
     expect(result.data.skills).toEqual(["Leadership"]);
   });
 
-  it("uploading only links (no resumeFile) never touches resume-store at all -- resumeSaved is false, no resumePath", async () => {
+  it("uploading only links (no resumeFile) never touches resume-store at all -- resumeSaved is false, no resume record", async () => {
     expect(seedBaseConfig().ok).toBe(true);
     mockExtractProfile.mockResolvedValue(fakeExtractResult());
     const formData = new FormData();
@@ -419,34 +457,46 @@ describe("extractProfileFromResumeAction: persists the uploaded resume (career-d
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(result.data.resumeSaved).toBe(false);
-    expect(result.data.resumePath).toBeUndefined();
+    expect(result.data.resume).toBeUndefined();
   });
 });
 
 describe("removeResumeAction", () => {
-  it("deletes the on-disk resume file and clears applyProfile.resumePath", async () => {
+  it("deletes ONE resume's on-disk file and drops just its ResumeRecord from applyProfile.resumes, leaving a DIFFERENT stored resume untouched", async () => {
     expect(seedBaseConfig().ok).toBe(true);
     setEnvVar("ANTHROPIC_API_KEY", "test-key");
     mockExtractProfile.mockResolvedValue(fakeExtractResult());
-    const file = new File([Buffer.from("a resume")], "resume.txt", { type: "text/plain" });
-    const formData = new FormData();
-    formData.set("resumeFile", file);
-    const uploadResult = await extractProfileFromResumeAction(formData);
-    if (!uploadResult.ok) throw new Error("expected ok");
-    const resumePath = uploadResult.data.resumePath!;
-    expect(loadResume(resumePath)).toBeDefined();
 
-    const result = await removeResumeAction();
+    const firstFormData = new FormData();
+    firstFormData.set("resumeFile", new File([Buffer.from("resume one")], "one.txt", { type: "text/plain" }));
+    const firstUpload = await extractProfileFromResumeAction(firstFormData);
+    if (!firstUpload.ok) throw new Error("expected ok");
+
+    const secondFormData = new FormData();
+    secondFormData.set("resumeFile", new File([Buffer.from("resume two")], "two.txt", { type: "text/plain" }));
+    const secondUpload = await extractProfileFromResumeAction(secondFormData);
+    if (!secondUpload.ok) throw new Error("expected ok");
+
+    const firstId = firstUpload.data.resume!.id;
+    const firstPath = firstUpload.data.resume!.path;
+    const secondPath = secondUpload.data.resume!.path;
+    expect(loadResume(firstPath)).toBeDefined();
+    expect(loadResume(secondPath)).toBeDefined();
+
+    const result = await removeResumeAction(firstId);
 
     expect(result.ok).toBe(true);
-    expect(loadResume(resumePath)).toBeUndefined();
-    const raw = readRawConfig() as { applyProfile?: { resumePath?: string; email?: string } };
-    expect(raw.applyProfile?.resumePath).toBeUndefined();
+    expect(loadResume(firstPath)).toBeUndefined();
+    expect(loadResume(secondPath)).toBeDefined();
+
+    const raw = readRawConfig() as { applyProfile?: { resumes?: Array<{ id: string }>; email?: string } };
+    expect(raw.applyProfile?.resumes).toHaveLength(1);
+    expect(raw.applyProfile?.resumes?.[0]?.id).toBe(secondUpload.data.resume!.id);
     expect(raw.applyProfile?.email).toBe("jane@example.com");
   });
 
-  it("is safe to call when no resume was ever saved -- no error, no config.json created", async () => {
-    const result = await removeResumeAction();
+  it("is safe to call with an unknown resumeId when no resume was ever saved -- no error, no config.json created", async () => {
+    const result = await removeResumeAction("does-not-exist");
 
     expect(result.ok).toBe(true);
     expect(fs.existsSync(getConfigPath())).toBe(false);
