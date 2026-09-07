@@ -1,0 +1,120 @@
+id: rank-bucket-ai-overlay-timeout-and-cap
+epic: usability-and-completeness-audit
+title: "Bound applyRankBucketAiOverlay()'s per-gig claude-CLI subprocess with a real timeout and a per-cycle cap (triage t-002, p1)"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Triage entry t-002 (.pHive/triage/queue.yaml, priority p1/severity
+  major). Found live on 2026-09-07 while verifying the t-001/PR #179 fix:
+  even after that fix (a 60s timeout on each SOURCE's fetch()), a real
+  scheduler cycle triggered at a real cron tick still hadn't produced a
+  "cycle complete" log line after 12+ minutes. Live process inspection
+  found the scheduler had moved PAST the source-fetching stage entirely
+  and was sequentially spawning real
+  `node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude` CLI
+  subprocesses -- a fresh PID roughly every 10-15 seconds, one after
+  another (confirmed: PID 25692 exited after ~10s, PID 26442 started
+  immediately after, then PID 27790 after that) -- for the rank-bucket AI
+  overlay feature.
+
+  Root cause, confirmed by reading the code: `src/lib/apply/runner.ts`
+  (~lines 289-295) has, inside its per-gig loop, a NESTED per-group loop
+  that calls `await applyRankBucketAiOverlay(g, group, ruleResult,
+  runOpts.credential)` (`src/lib/matching/rank-bucket-ai-overlay.ts`) for
+  EVERY group that has `rankBuckets` configured, for EVERY gig being
+  processed this cycle -- fully sequential, no concurrency, and (unlike
+  the fetch() call t-001 fixed) no timeout of its own. Each call spawns a
+  real `claude` CLI subprocess (via the claude-agent-sdk), which is
+  genuinely expensive (process startup + auth + a real network round trip
+  to Anthropic's API) -- confirmed each individual call DOES eventually
+  complete (this is NOT an infinite hang like t-001), but with enough
+  green/yellow-tier gigs across enough rankBuckets-configured groups, the
+  cumulative wall-clock cost of running these fully sequentially,
+  unbounded, can legitimately run a single scan cycle into the tens of
+  minutes -- indistinguishable from "stuck" to the owner even though
+  technically still making progress.
+
+  **The fix**:
+  1. Add a real timeout around `applyRankBucketAiOverlay()`'s own
+     claude-CLI invocation (check `rank-bucket-ai-overlay.ts`'s real
+     `generateText()`/harness call for the exact spot). On timeout, fall
+     back to the already-computed rule-based `ruleResult` (from
+     `assignRankBucket()`, computed BEFORE the AI overlay call) rather
+     than blocking further -- this matches the feature's own stated
+     design philosophy (runner.ts's own comment: "the opt-in AI overlay...
+     never a replacement for the rule-based result"), so a timeout here is
+     philosophically identical to the AI overlay simply not being
+     available, which this code already has to handle gracefully.
+  2. Add a real, justified per-cycle cap on how many
+     `applyRankBucketAiOverlay()` calls run in one cycle (mirroring
+     `AUTO_DRAFT_CAP`'s existing precedent in this same runner.ts file for
+     auto-draft-on-scan) -- gigs beyond the cap simply keep their
+     rule-based `ruleResult` for this cycle, picked up by the AI overlay
+     on a LATER cycle once they're still green/yellow and re-scanned
+     (mirrors this codebase's existing "self-heals on next scan" pattern
+     used elsewhere this session).
+  3. Consider (real design decision, not pre-decided here): does this
+     loop benefit from bounded concurrency (like fractionus.ts's own
+     `DETAIL_FETCH_CONCURRENCY = 3` precedent from earlier today) rather
+     than one-at-a-time sequential execution? Weigh real cost/complexity
+     against the timeout+cap fix alone before adding this -- a real,
+     justified decision either way, documented in this story's own
+     progress_note.
+
+  Do NOT touch: `assignRankBucket()`'s own rule-based logic (already
+  correct, untouched), the AI overlay's actual suggestion-quality logic
+  (untouched, this story is purely about bounding total time/cost), the
+  scan-pipeline-per-source-timeout fix from t-001/PR #179 (a different,
+  already-fixed stage of the pipeline).
+
+acceptance_criteria:
+  - "A real timeout is added around applyRankBucketAiOverlay()'s claude-CLI invocation -- a deliberately-hung/slow test double for the underlying LLM call no longer blocks the per-gig loop past a bounded, justified deadline."
+  - "On timeout, the gig/group's rankBucket assignment falls back to the already-computed rule-based ruleResult, never left undefined/broken."
+  - "A real, justified per-cycle cap limits how many applyRankBucketAiOverlay() calls run in one cycle -- gigs beyond the cap keep their rule-based result for that cycle, picked up by the AI overlay on a later scan."
+  - "A new regression test proves: (a) a timed-out/slow AI call falls back to the rule-based result rather than blocking, and (b) the per-cycle cap is actually enforced (more eligible gigs than the cap exist, only the capped number get real AI calls)."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/runner.ts
+      purpose: "Lines ~289-295 -- the per-gig, per-group loop calling applyRankBucketAiOverlay() with no timeout/cap today. Also see AUTO_DRAFT_CAP elsewhere in this same file as the existing per-cycle-cap precedent to mirror."
+    - path: src/lib/matching/rank-bucket-ai-overlay.ts
+      purpose: "applyRankBucketAiOverlay()'s own real claude-CLI/generateText() invocation -- the exact call site needing a timeout."
+    - path: src/lib/matching/rank-bucket.ts
+      purpose: "assignRankBucket() -- the already-computed rule-based result to fall back to on an AI-overlay timeout."
+
+design_decisions:
+  - decision: Fall back to the rule-based result on timeout rather than failing the gig/cycle.
+    rationale: "This feature is explicitly documented (runner.ts's own comment) as an opt-in OVERLAY on top of the rule-based result, never a replacement -- a timeout is philosophically identical to the AI overlay being unavailable, which this design already has to tolerate gracefully."
+  - decision: A real per-cycle cap, mirroring AUTO_DRAFT_CAP's existing precedent in the same file, rather than an unbounded loop even with a per-call timeout.
+    rationale: "Even a bounded-per-call timeout (e.g. 30s) times a large number of eligible gigs still adds up to a long cycle -- capping total calls per cycle bounds the AGGREGATE cost, and uncapped gigs self-heal on a later cycle, matching this codebase's own established 'no data loss, just deferred' pattern."
+
+risks:
+  - severity: medium
+    description: "A too-aggressive cap or timeout could make the AI overlay feature effectively useless (never actually running) if set too low; too generous and the original problem persists."
+    mitigation: "Acceptance criteria requires a real, justified value with reasoning documented in the story's own progress_note, and a regression test proving the cap is actually enforced -- reviewed with real scrutiny given this directly affects scan-cycle duration in production."
+
+steps:
+  - id: research
+    description: Confirm the exact real call site and existing timeout/cap conventions (AUTO_DRAFT_CAP, fractionus.ts's DETAIL_FETCH_CONCURRENCY) to model the fix on
+    agent: developer
+  - id: implement
+    description: Add the per-call timeout with rule-based fallback, and the per-cycle cap, to applyRankBucketAiOverlay()'s invocation loop
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Add regression tests for the timeout-fallback and cap-enforcement behavior; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify the timeout/cap values are justified and the fallback never leaves a gig's rankBucket assignment broken
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

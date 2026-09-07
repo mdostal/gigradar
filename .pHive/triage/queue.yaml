@@ -50,3 +50,61 @@ entries:
         at: "2026-09-07T18:05:00Z"
       - state: closed
         at: "2026-09-07T18:30:00Z"
+
+  - id: t-002
+    state: plan-ready
+    kind: bug
+    title: "applyRankBucketAiOverlay() spawns one real `claude` CLI subprocess per gig per group, sequentially, with no timeout or cap -- a scan cycle can legitimately take tens of minutes"
+    description: |
+      Found live on 2026-09-07 while verifying the t-001/PR #179 fix: even
+      after that fix (a real 60s timeout on each SOURCE's fetch()), a real
+      scheduler cycle triggered at the 1:30pm cron tick still hadn't
+      produced a "cycle complete" log line after 12+ minutes. Live process
+      inspection found the scheduler had moved PAST the source-fetching
+      stage entirely (the stage t-001 fixed) and was now sequentially
+      spawning real `node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude`
+      CLI subprocesses -- one after another, a fresh PID each time
+      (confirmed: PID 25692 exited after ~10s, then PID 26442 started
+      immediately after for a different gig) -- for the rank-bucket AI
+      overlay feature (`applyRankBucketAiOverlay()`,
+      src/lib/matching/rank-bucket-ai-overlay.ts, invoked from
+      src/lib/apply/runner.ts:294 inside the per-gig, per-group loop at
+      line ~291-295).
+
+      This is NOT the same bug as t-001 -- each individual subprocess DOES
+      complete (confirmed live), so this isn't an infinite hang. But the
+      loop has no concurrency (one subprocess at a time, real CLI
+      startup + auth + network round-trip cost each time -- not cheap),
+      and no visible cap on how many gigs/groups get this treatment in one
+      cycle. With enough green/yellow-tier gigs across enough
+      rankBuckets-configured groups, a single scan cycle's total wall-clock
+      time could legitimately run into the tens of minutes -- which, from
+      the owner's perspective, is indistinguishable from "gigradar is
+      stuck" even though it's technically still making progress.
+
+      Needs the same class of fix as t-001, scoped to this different stage
+      of the pipeline: a real per-call timeout on
+      applyRankBucketAiOverlay()'s own claude-CLI invocation (falling back
+      to the rule-based ruleResult -- already computed via
+      assignRankBucket() -- on timeout, matching this feature's own stated
+      "opt-in AI OVERLAY, never a replacement for the rule-based result"
+      philosophy per runner.ts's own comment), and/or a real per-cycle cap
+      on how many such calls run, and/or real concurrency instead of fully
+      sequential one-at-a-time execution.
+    reporter: owner (via session diagnosis)
+    reported_at: "2026-09-07T18:37:00Z"
+    priority: p1
+    severity: major
+    linked_epic: usability-and-completeness-audit
+    linked_story: rank-bucket-ai-overlay-timeout-and-cap
+    closed_reason: null
+    closed_at: null
+    state_history:
+      - state: inbox
+        at: "2026-09-07T18:37:00Z"
+      - state: clarified
+        at: "2026-09-07T18:38:00Z"
+      - state: prioritized
+        at: "2026-09-07T18:39:00Z"
+      - state: plan-ready
+        at: "2026-09-07T18:40:00Z"
