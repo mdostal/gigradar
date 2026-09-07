@@ -156,7 +156,7 @@ export async function runRadar(
       seenInBatch.add(key);
 
       const gateResult = primaryGroup
-        ? gate(g, primaryGroup.needs, config.profile)
+        ? gate(g, primaryGroup.needs, config.profile, primaryGroup.roleArea)
         : { gig: g, pass: false, reasons: ["no group in scope for this source"], score: 0, matchedProfiles: [] };
       const { matchedGroupIds: heuristicMatchedGroupIds, groupTiers, groupScores, groupBands, groupProfileIds } = matchGroups(g, scopedGroups, config.profile, scorePopulations);
       // ai-match-verification epic: a second, LLM-driven check, spent only

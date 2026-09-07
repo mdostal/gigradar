@@ -180,3 +180,52 @@ describe("matchGroups: customizable-tier-scoring", () => {
     expect(result.groupTiers).toEqual({ a: "green", b: "green" }); // "a" via keywords, "b" via score -- same outcome, different reasoning
   });
 });
+
+// gate-fit-check-too-strict epic (gate-uses-role-area-tier-for-fit story).
+// Real, live bug repro at the matchGroups() level (not just gate() in
+// isolation): a multi-group config where ONE group's own roleArea
+// recognizes a gig's title but the owner's free-text profile.roles/skills
+// don't literally share a phrase with it. Before this story, matchGroups()
+// called gate(gig, group.needs, profile) with NO roleArea at all, so every
+// group hard-failed on fit regardless of its own, correct roleArea tier --
+// this proves that's now fixed end-to-end, and that a group whose roleArea
+// does NOT recognize the gig still correctly fails.
+describe("matchGroups: roleArea backs the fit check end-to-end (gate-fit-check-too-strict)", () => {
+  // Deliberately no literal overlap with "Chief Technology Officer" --
+  // fitScore() must return 0 so this test actually exercises the fix
+  // rather than accidentally passing via the pre-existing phrase check.
+  const NO_LITERAL_OVERLAP_PROFILE: Profile = {
+    name: "Test User",
+    roles: ["Fractional CTO", "Strategic CTO"],
+    skills: ["Kubernetes"],
+    timezone: "UTC",
+  };
+
+  it("matches the group whose own roleArea coreTitles recognize the gig's title, even with zero profile.roles/skills phrase overlap", () => {
+    const gig = makeGig({
+      title: "Chief Technology Officer",
+      description: "Lead engineering for a healthtech hardware brand.",
+      rate: { min: 260, unit: "hour" },
+    });
+    const recognizingGroup = makeGroup({
+      id: "cto-group",
+      needs: PASSING_NEEDS,
+      roleArea: { coreTitles: ["Chief Technology Officer"], keywords: [], redKeywords: [] },
+    });
+    const unrelatedGroup = makeGroup({
+      id: "ops-group",
+      needs: PASSING_NEEDS,
+      roleArea: { coreTitles: [], keywords: [], redKeywords: ["Chief Technology Officer"] },
+    });
+
+    const result = matchGroups(gig, [recognizingGroup, unrelatedGroup], NO_LITERAL_OVERLAP_PROFILE);
+
+    // The group whose roleArea recognizes this title clears the gate...
+    expect(result.matchedGroupIds).toEqual(["cto-group"]);
+    // ...while the group that RED-tiers the same title on its own
+    // redKeywords still correctly fails -- proves the fix doesn't make
+    // gate() pass indiscriminately for every group in the same call.
+    expect(result.matchedGroupIds).not.toContain("ops-group");
+    expect(result.groupTiers).toEqual({ "cto-group": "green", "ops-group": "red" });
+  });
+});
