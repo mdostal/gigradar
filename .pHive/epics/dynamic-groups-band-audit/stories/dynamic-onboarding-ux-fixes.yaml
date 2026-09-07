@@ -1,10 +1,21 @@
 id: dynamic-onboarding-ux-fixes
 epic: dynamic-groups-band-audit
 title: One-click Add custom source + domain-neutral setup wizard placeholders
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED PR #162 (2026-09-06), via delegated subagent execution (not
+  direct main-session implementation -- per this session's own process
+  correction). Both changes built exactly as scoped: a new "+ Add custom
+  source" button (isCustom: true + a starter "url" settings pair, with
+  the URL field auto-focused via a new SettingsEditor focusValueKey/
+  onFocused prop pair) sitting alongside the untouched original "+ Add
+  source (blank)" button; setup wizard's three textarea placeholders
+  replaced with domain-neutral hints. `npm test` (1608 passed at the
+  time) and `npm run typecheck` both clean.
 
 description: |
   Two real, small UX gaps found by this epic's own audit (see

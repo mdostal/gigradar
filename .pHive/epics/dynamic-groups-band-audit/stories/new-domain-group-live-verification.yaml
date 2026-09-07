@@ -1,10 +1,38 @@
 id: new-domain-group-live-verification
 epic: dynamic-groups-band-audit
 title: "Live, isolated verification: a brand-new, unrelated-domain group (Drone Services) works end-to-end with zero code changes"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED PR #163 (2026-09-06), via delegated subagent execution. Built
+  two complete, invented GroupConfigs ("Drone Services" and "AI Data
+  Labeling") run through the REAL runRadar() pipeline
+  (src/lib/apply/__tests__/new-domain-group-live-verification.test.ts,
+  5 tests, never mocking matching functions), plus a real, documented
+  isolated curl verification (XDG_DATA_HOME/XDG_CONFIG_HOME override,
+  port 3199, owner's real data never touched).
+
+  REAL BUG FOUND AND FIXED (this is the actual proof this story existed
+  to get, not a non-event): dashboard-client.tsx's Tier and Profile
+  columns read the flat, primary-group-anchored `Gig.tier`/
+  `matchedProfileIds` on EVERY giglist page, unlike Band/RankBucket
+  (already fixed correctly by an earlier epic). Confirmed live: a drone
+  gig GREEN for "Drone Services" displayed as GREEN under the unrelated
+  "AI Data Labeling" page too (its real tier there is RED), and the
+  Profile badge leaked "drone-day-rate" onto the wrong group's page.
+  Fixed with a new per-group `Gig.matchedGroupProfileIds` field
+  (mirroring `matchedGroupBands`'s own established pattern exactly -- new
+  additive/nullable `matched_group_profile_ids` DB column, no destructive
+  migration) and `resolveDisplayTier()`/`resolveDisplayProfileIds()`
+  helpers mirroring `resolveDisplayBand()`. Verified fixed both in the
+  automated test and by re-running the live curl check.
+
+  `npm test`: 1626 passed, 3 skipped (up from 1608 pre-epic). `npm run
+  typecheck` clean. Reviewed the full diff before merging (DB schema
+  touch) -- confirmed additive-only, matches established convention.
 
 description: |
   This epic's own audit (design-discussion.md §1) confirmed by direct
