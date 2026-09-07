@@ -1,0 +1,118 @@
+id: config-add-group-discoverability-and-spike-cleanup
+epic: usability-and-completeness-audit
+title: "Investigate real 'add new group' discoverability in Config (simman finding) + delete the orphaned embedded-webview-spike page"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Two small, unrelated housekeeping/investigation items bundled since both
+  are quick, independent, low-risk.
+
+  **Part 1 -- simman finding.** A real vision-AI (`simman synthesize`) pass
+  against an isolated, realistically-seeded gigradar instance was asked to
+  "add a new tracking group for a different kind of work through the
+  Config page." Both synthesized steps tapped the SAME text ("Groups &
+  Needs" -- once from a sidebar nav label, once from what it called a
+  "card"), and the plan terminated at "the editing interface is displayed"
+  without ever locating/clicking an actual "add new group" affordance in 2
+  steps. This is inconclusive on its own (could be a genuine
+  discoverability gap in the real UI, or just a shallow 2-step exploration
+  budget) -- investigate for real: read `src/app/config/config-client.tsx`'s
+  actual group-management section, confirm whether a real "+ Add group"
+  (or equivalently-named) action exists and where it's positioned, and
+  either (a) confirm it's genuinely present and reasonably discoverable
+  (in which case this is a false alarm from a shallow vision-model
+  exploration budget -- document that finding and close it out, no code
+  change needed) or (b) find a real gap and fix it (e.g. the action exists
+  but is visually buried, mislabeled, or requires scrolling/an extra click
+  a first-time user wouldn't expect).
+
+  **Part 2 -- code-quality housekeeping.** `src/app/embedded-webview-spike/
+  page.tsx` (178 lines, added in PR #155 during the true-embedded-browser
+  epic) is a dev-only spike page -- confirmed via this session's own broad
+  code-quality audit: not linked from `nav-header.tsx`, not referenced
+  anywhere else in the codebase. Delete it (and its route directory)
+  entirely -- it served its purpose as a development spike and is now dead
+  weight.
+
+acceptance_criteria:
+  - "A real, evidence-based verdict on the add-group flow: either confirmed genuinely fine (with the exact file:line of the real 'add group' affordance cited) or a concrete fix is made to improve its discoverability."
+  - "src/app/embedded-webview-spike/ is deleted entirely; npm run build still succeeds with no dangling references."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "The real group-management UI to investigate for Part 1 -- find the actual 'add group' action and assess its real discoverability."
+    - path: src/app/embedded-webview-spike/page.tsx
+      purpose: "The orphaned spike page to delete entirely for Part 2."
+    - path: src/app/nav-header.tsx
+      purpose: "Confirms embedded-webview-spike is not linked from real navigation -- verify this before deleting, don't just trust the audit's prior claim."
+
+design_decisions:
+  - decision: Bundle these two small items into one low-complexity story rather than two separate stories.
+    rationale: "Both are quick, independent, low-risk items discovered incidentally during this epic's broader research passes -- not worth the overhead of two separate full story lifecycles."
+
+risks:
+  - severity: low
+    description: "Deleting embedded-webview-spike could break something if the audit's 'not referenced anywhere' claim was wrong."
+    mitigation: "Acceptance criteria requires re-confirming zero references (grep + a successful build) before/after deletion, not just trusting the prior audit's claim."
+
+progress_note: |
+  Part 1 -- VERDICT: false alarm from a shallow 2-step vision-model
+  exploration budget, no code change needed. A real, clearly-labeled
+  "+ Add group" action exists at
+  `src/app/config/config-client.tsx:2555-2557` (a `<button
+  onClick={handleAddGroup} disabled={!newGroupLabel.trim()}>+ Add
+  group</button>`, gated alongside the "New group name" input at line
+  2544-2554), inside the "Groups (searches)" section
+  (`activeSection === "groups"`, lines 2519-2582).
+
+  This section is not buried: `/config/groups` (config-sections.ts's
+  `groups` entry, href `/config/groups`) is reached in exactly one click
+  from either the Dashboard's "Groups & Needs" card (page.tsx) or the
+  sidebar's "Groups & Needs" link (config-sidebar.tsx), and
+  `[section]/page.tsx` renders ONLY that section's block for the route --
+  no scrolling past Profile/Sources/etc. is required. The group-name
+  input + "+ Add group" button are the first interactive controls on the
+  page after the existing-group pills, visible without scrolling.
+
+  The "type a name, then click a bordered '+ Add X' button"
+  (`captureButtonClass`) interaction is the SAME established convention
+  used everywhere else in this file for every other repeatable-list add
+  action ("+ Add setting" L1197, "+ Add profile" L1488, "+ Add rule"
+  L1652, "+ Add source (blank)"/"+ Add custom source"/"+ Add email
+  digest source" L2958-2964) -- not a one-off oddity for groups.
+
+  This matches the simman transcript exactly: both of its 2 steps landed
+  on/re-tapped the "Groups & Needs" label (dashboard card, then the now-
+  active sidebar link) and its plan terminated at "the editing interface
+  is displayed" -- i.e. it never got to a 3rd step of typing a name and
+  clicking "+ Add group". A 2-step exploration budget stopping one step
+  short of a real, present, conventionally-styled affordance is not
+  evidence of a UX gap.
+
+  Part 2: confirmed via grep across the whole repo (source, not just
+  nav-header.tsx) that nothing references `embedded-webview-spike`
+  anywhere in `src/` -- deleted `src/app/embedded-webview-spike/`
+  entirely. `npm run build` succeeds with no dangling references.
+
+steps:
+  - id: implement
+    description: Investigate the real add-group UI discoverability and fix if a genuine gap is found; delete the orphaned spike page
+    agent: developer
+  - id: test
+    description: Verify build succeeds with the spike page removed; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the add-group verdict is evidence-based (not a guess) and the spike-page deletion is safe
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

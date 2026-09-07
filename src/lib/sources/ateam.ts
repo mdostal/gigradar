@@ -291,6 +291,18 @@ export const ateamSource: Source = {
   id: "ateam",
   label: "A.Team",
   auth: "browser-session",
+  // application-format-coverage-per-source story — REAL research
+  // (a.team's own public /join marketing page + a live web search):
+  // confirms builders "apply" to matched missions and that a.team's own
+  // team "screens them" before sending a client "resumes, portfolios, and
+  // context" for the top candidates, but neither source specifies the
+  // actual per-mission SUBMISSION format (cover letter? short pitch? a
+  // form?) a builder fills in when applying. Mission Control itself is
+  // Google-SSO-gated (`auth: "browser-session"`) and this session cannot
+  // log in to observe the real apply flow directly. Genuinely
+  // undetermined — deliberately left unset (falls through to the
+  // documented "cover-letter" default) rather than guessed, per this
+  // story's own "leave it if it can't be determined" allowance.
   async fetch(cfg: SourceConfig): Promise<Gig[]> {
     const sessionBackend = sessionBackendFrom(cfg);
     const sessionStatePath = sessionBackend === "local" ? sessionStatePathFrom(cfg) : undefined;

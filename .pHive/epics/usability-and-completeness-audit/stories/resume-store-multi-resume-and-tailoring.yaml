@@ -1,0 +1,130 @@
+id: resume-store-multi-resume-and-tailoring
+epic: usability-and-completeness-audit
+title: "Multi-resume store: keyed/versioned storage, per-application resume selection, gig-fit suggestions, gated review feedback"
+status: pending
+complexity: high
+methodology: classic
+depends_on: []
+
+description: |
+  New feature, owner's own explicit ask (2026-09-07): a real store of
+  MULTIPLE resumes (not just today's single fixed-path resume), the
+  ability to tweak/version a resume for a specific application, help
+  picking/suggesting the RIGHT resume for a given position, and
+  AI-assisted review suggestions on a resume against a specific gig --
+  assists, never auto-submits, matching this app's whole posture.
+
+  **Real inventory, already researched this session (see epic
+  design-discussion.md §3 for full detail)**:
+  - `src/lib/documents/resume-store.ts` stores exactly ONE resume at a
+    fixed path (`resume.enc`, always overwritten on save, encrypted at
+    rest via the shared `vault.ts` mechanism). Its own header comment
+    already documents this as a deliberate, deferred decision.
+  - Referenced by `ApplyProfileConfig.resumePath` (`src/lib/types.ts:168`),
+    consumed by `prep.ts`'s `generatePrepPacket()` (the real, working
+    gig-vs-profile fit-scoring LLM call: topStrengths/keyGaps/
+    keywordOverlapScore).
+  - The UI today (`src/app/config/config-client.tsx`, ~line 2123) is a
+    single file-input "Extract from resume/link" flow with no concept of
+    multiple files, versions, or per-gig association anywhere in the
+    schema.
+  - The chat co-pilot's real `propose_config_edit` tool
+    (`src/lib/chat/agent-chat-loop.ts:77`) establishes the exact
+    gated-suggestion UX CONTRACT to follow for review-suggestions: propose
+    -> pause for owner approve/reject by DEFAULT -> apply, with a
+    separately-configured auto-apply escape hatch that still surfaces a
+    mandatory warning banner. This is a pattern to FOLLOW, not literally
+    reuse (that tool is hard-scoped to config.json edits) -- build a new,
+    analogous tool/schema for resume-review suggestions with the same
+    approve/reject shape.
+
+  **Build, in this order (each should leave the app in a working state)**:
+  1. Redesign resume storage as keyed/versioned rather than one fixed
+     path -- e.g. a real id/slug per resume (`resumeId`), each with its
+     own encrypted file (reuse `vault.ts`'s existing encrypt/decrypt and
+     `resume-store.ts`'s existing atomic temp-file+rename write pattern --
+     do not regress the encryption-at-rest property this data already
+     has). `ApplyProfileConfig` gains a `resumes: {id, label, path,
+     uploadedAt}[]` list (or similar -- design the real shape) rather than
+     a single `resumePath`. Keep backward compatibility for an existing
+     single-resume install (migrate the one existing resume into the new
+     list on first read, don't silently lose it).
+  2. Per-application resume selection: associate a chosen `resumeId` with
+     a specific gig/draft (a new field on `Draft` or wherever makes sense
+     given the real schema) so the owner can pick (or the app can suggest)
+     which resume applies to which application, and `generatePrepPacket()`/
+     `generateDraft()` use THAT resume instead of always the single
+     global one.
+  3. Resume-to-gig suggestion: extend `generatePrepPacket()`'s existing
+     real fit-scoring LLM call (reuse its `buildGigDataBlock()`/
+     `buildApplicantDataBlock()` pattern, don't build parallel matching
+     logic) to score EACH stored resume against a given gig and surface
+     which one fits best, with the real reasoning the LLM call already
+     produces (topStrengths/keyGaps) shown to the owner as the "why."
+  4. Review-suggestion UI: a new, `propose_config_edit`-shaped
+     gated-suggestion tool for AI feedback on a specific resume against a
+     specific gig (e.g. "consider adding X keyword," "this resume doesn't
+     mention Y the gig calls out repeatedly") -- proposed, never
+     auto-applied without explicit owner approval (matching this app's
+     "assists, never auto-submits" posture stated throughout
+     docs/ARCHITECTURE.md).
+
+  Do NOT touch: `vault.ts`'s own encryption mechanism (reuse, don't
+  modify), the core/user-layer boundary (this is inherently per-user data,
+  keep it that way -- no hardcoded personal data in src/lib/src/app), any
+  existing single-resume install's data (must migrate cleanly, never
+  silently lose the owner's real existing resume).
+
+acceptance_criteria:
+  - "An owner with today's existing single resume.enc file sees it correctly migrated into the new multi-resume model on first load -- no data loss, verified via a real migration test."
+  - "A second resume can be added, stored, and both remain independently retrievable and correctly encrypted at rest (same encryption guarantee as today's single-resume mechanism, verified not regressed)."
+  - "A specific draft/application can be associated with a specific stored resume, and generatePrepPacket()/the draft-generation path uses that resume rather than always the first/only one."
+  - "A real suggestion feature scores at least 2 stored resumes against a real gig and surfaces which one fits better with real, LLM-produced reasoning (reusing generatePrepPacket()'s existing fit-scoring call shape)."
+  - "A resume-review suggestion is proposed to the owner and requires explicit approval before anything is treated as applied -- never auto-applied silently, matching propose_config_edit's own default-pause behavior."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/documents/resume-store.ts
+      purpose: "The EXISTING single-resume storage to redesign as keyed/versioned -- reuse its encryption + atomic-write pattern, don't reinvent."
+    - path: src/lib/apply/prep.ts
+      purpose: "generatePrepPacket()'s existing real fit-scoring LLM call -- the pattern to extend for resume-to-gig suggestion, not reimplement."
+    - path: src/lib/chat/agent-chat-loop.ts
+      purpose: "Line ~77, PROPOSE_CONFIG_EDIT_TOOL -- the real, working gated-suggestion UX contract (propose/pause/approve/reject, with auto-apply-plus-warning escape hatch) to follow for review suggestions."
+    - path: src/app/config/config-client.tsx
+      purpose: "Line ~2123 -- today's single-resume upload UI, the starting point for a real multi-resume management UI."
+    - path: src/lib/types.ts
+      purpose: "ApplyProfileConfig.resumePath -- the field this story replaces with a real multi-resume shape, with migration."
+
+design_decisions:
+  - decision: Extend generatePrepPacket()'s existing fit-scoring call for resume-suggestion rather than building new matching/LLM logic.
+    rationale: "That call already does real, working gig-vs-candidate fit analysis with real reasoning output -- reusing it for gig-vs-RESUME(s) is the same problem shape, and building a second, parallel LLM-matching pathway would risk exactly the kind of silently-disagreeing duplicate logic this session's gate-fit-check-too-strict epic had to fix once already."
+  - decision: Follow propose_config_edit's approve/reject UX contract for review suggestions, without literally reusing that tool.
+    rationale: "That tool is hard-scoped to config.json edits specifically -- a resume suggestion is a different object entirely, but the SAME gated, owner-in-control shape is the right posture per this app's stated 'assists, never auto-submits' design throughout."
+
+risks:
+  - severity: medium
+    description: "Migrating an existing owner's real single resume.enc into a new multi-resume shape is a real, one-time data-model change -- getting the migration wrong could silently lose real user data."
+    mitigation: "Acceptance criteria explicitly requires a real migration test proving the existing single resume is preserved, not just new-install behavior. Verify against an isolated copy of a real single-resume install shape, never the owner's actual live data directly."
+
+steps:
+  - id: research
+    description: Confirm the real current resume-store/config schema shapes precisely before designing the migration
+    agent: developer
+  - id: implement
+    description: Build keyed/versioned multi-resume storage with migration, per-application selection, fit-suggestion extension, and the gated review-suggestion tool, in the order described
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Migration test, multi-resume encryption/retrieval test, fit-suggestion test, gated-approval test; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Careful review of the migration path (real data-loss risk) and the encryption-at-rest guarantee for the new multi-resume storage
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

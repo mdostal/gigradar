@@ -1,0 +1,168 @@
+id: scan-pipeline-per-source-timeout
+epic: usability-and-completeness-audit
+title: "Per-source fetch timeout/circuit-breaker so one hung source can't block an entire scan cycle forever (triage t-001, p0/critical)"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+progress_note: |
+  Live-confirmed root cause (2026-09-07), not guessed: read every one of
+  the 6 suspected sources' fetch() implementations
+  (src/lib/sources/{builtin,linkedin,fractionus,fractionaljobs,
+  fractionalfinders,braintrust}.ts) -- confirmed all 6 call the global
+  Node `fetch(url, { headers: {...} })` with NO `signal`/`AbortSignal`
+  anywhere in the file (grepped for "AbortSignal"/"signal:" across
+  src/lib/sources/*.ts -- zero matches outside this fix). Then ran a
+  controlled, local-only reproduction (no real network, no real gigradar
+  data): a local `net` TCP server that accepts the connection and never
+  writes a response, then called the real global `fetch()` against it with
+  the identical `{ headers: { accept: "text/html" } }` shape these
+  adapters use. Result: the fetch() promise was STILL PENDING after an 8s
+  wait window -- confirms a bare, signal-less `fetch()` can hang
+  indefinitely against a stalled/black-holed connection, exactly matching
+  the real 60+ minute production hangs (and matching the live process
+  inspection during both real hangs, which showed no child Chrome process
+  spawned -- ruling out the browser-automation sources
+  wellfound/gofractional/ateam, which all go through real Chrome and would
+  have shown up as a child process).
+
+  Fix: added `fetchWithTimeout()` in src/lib/apply/runner.ts -- a
+  `Promise.race()` between `src.fetch(...)` and a `setTimeout`-backed
+  deadline (`SOURCE_FETCH_TIMEOUT_MS = 60_000`), called at the ONE shared
+  call site in the source loop instead of touching any of the 10
+  individual adapters (matches this story's own design_decisions: fix the
+  shared boundary once, not every adapter). 60s chosen as long enough that
+  a genuinely slow-but-working browser-automation source isn't
+  false-positive-killed on an ordinary slow cycle, short enough that one
+  hang now costs at most 60s of one cycle instead of the entire cycle
+  forever. A timeout is thrown as a new, distinguishable
+  `SourceFetchTimeoutError` ("source \"X\" timed out after 60000ms") and
+  caught by the EXACT SAME catch block as a real thrown error (untouched)
+  -- same errors[] shape, same "continue to the next source" behavior, so
+  it automatically feeds src/scheduler/backoff.ts's existing
+  exponential-backoff-on-repeated-failure the same way a real thrown error
+  already does (scheduler/index.ts:516-520 treats any sourceId present in
+  runRadar()'s errors[] as a failure for backoff purposes, regardless of
+  message content -- confirmed by reading that call site, not touched).
+
+  Regression test added (src/lib/apply/__tests__/runner.test.ts): a 4th
+  test-double source ("hung-source") whose fetch() returns a Promise that
+  never resolves or rejects, placed FIRST in config.sources ahead of the
+  existing "braintrust" double. Using vitest fake timers
+  (`vi.advanceTimersByTimeAsync(60_000)`) to advance exactly the
+  documented deadline without a real 60s wall-clock wait, the test proves
+  runRadar() itself settles, "hung-source" gets a
+  `source "hung-source" timed out after 60000ms` errors[] entry
+  distinguishable from a real thrown-error case (needsVerification stays
+  undefined), and braintrust -- scanned AFTER the hung source -- still
+  produced a result that reached both the in-memory MatchResult[] and the
+  persisted store. Full suite (1690 tests) + npm run typecheck both pass.
+
+description: |
+  Triage entry t-001 (.pHive/triage/queue.yaml, priority p0/severity
+  critical). Live-confirmed twice on 2026-09-07: a manual `npm run radar`
+  run sat at 0.0% CPU with zero database writes for a full 60 minutes
+  before being killed; separately, the production
+  `com.mdostal.gigradar-scheduler` launchd process hung the identical way
+  for over an hour immediately after being restarted with that day's
+  fixes -- meaning those fixes could not reach the owner's real, live data
+  for a large fraction of the day.
+
+  Root cause, confirmed by reading the code directly:
+  `runRadar()`'s source loop (`src/lib/apply/runner.ts:88-103`) is a plain
+  sequential `for (const sc of config.sources.filter((s) => s.enabled)) {
+  ... gigs = await src.fetch(sc, config.profile, runOpts.credential); }`
+  wrapped in a try/catch that correctly handles a source that THROWS (bad
+  login, verification challenge, bad extraction recipe -- all confirmed
+  working in the real error log) -- but there is NO timeout, NO
+  `Promise.race` against a deadline, and NO `AbortController` anywhere in
+  this loop. A source whose `fetch()` promise never SETTLES at all (never
+  resolves, never rejects) blocks this `await` forever, and because the
+  loop is sequential, every source after it in `config.sources` never even
+  gets a chance to run that cycle -- the whole scan cycle silently never
+  completes.
+
+  Live process-inspection during today's second hang (no child
+  Chrome/`real-chrome-profile` process was spawned by the scheduler
+  process at the time) suggests this specific hang was NOT the
+  browser-automation path (wellfound/gofractional/ateam use real Chrome,
+  which would show up as a child process) -- more likely a plain `fetch()`
+  in one of `builtin`, `linkedin`, `fractionus`, `fractionaljobs`,
+  `fractionalfinders`, or `braintrust` with no client-side timeout at all
+  (a bare `fetch()` call with no `AbortSignal.timeout()` can hang
+  indefinitely on a stalled TCP connection, a server that accepts the
+  connection but never responds, etc.). Confirm the exact source live
+  before writing the fix, don't guess further -- add temporary logging or
+  run each source's `fetch()` individually with a wall-clock timer during
+  investigation if needed.
+
+  **The fix**: wrap each source's `fetch()` call in `runner.ts`'s loop with
+  a real timeout (e.g. `Promise.race([src.fetch(...), timeoutRejection(N
+  ms)])`, or thread an `AbortSignal.timeout(N)` into `Source.fetch()`'s own
+  contract if adapters can honor it directly -- check `src/lib/sources/
+  source.ts`'s real `Source` interface first to see which shape fits with
+  the least churn across all 10 existing adapters). A timeout should be
+  treated exactly like today's existing thrown-error path: caught, pushed
+  to `errors[]` with a clear "source X timed out after Nms" message, and
+  the loop continues to the NEXT source rather than hanging. Pick a real,
+  justified timeout value (e.g. 60s per source) -- long enough that a
+  genuinely slow-but-working browser-automation source isn't falsely
+  killed, short enough that one hang doesn't cost the owner a full missed
+  scan cycle.
+
+  Do NOT touch: the existing per-source error-handling for thrown errors
+  (already correct, leave it exactly as-is), the browser-session sources'
+  own internal retry/backoff logic (`persistent-session-self-heal`,
+  already correct for its own scope), the scheduler's own per-source
+  exponential backoff (`src/scheduler/backoff.ts`, a separate, already-
+  correct mechanism for repeated FAILURES -- this story is about hangs,
+  which currently never even reach that backoff logic because they never
+  produce a recorded failure at all).
+
+acceptance_criteria:
+  - "A real, live investigation (not a guess) confirms which specific source(s) can hang with no timeout today -- documented in this story's own progress_note with concrete evidence (e.g. a controlled reproduction, or precise process/network inspection)."
+  - "Every one of the 10 real registered sources' fetch() calls in runner.ts's loop is now bounded by a real timeout -- a deliberately-hung fetch() (test double) in ANY position of config.sources no longer blocks sources after it in the same cycle."
+  - "A timed-out source is recorded in errors[] with a clear, distinguishable message (not indistinguishable from a real thrown error) and the cycle completes normally, producing results for every OTHER source that didn't time out."
+  - "A new regression test proves a hung source's timeout doesn't block the rest of the cycle -- a test double source whose fetch() never resolves, verified the overall runRadar() call still completes within a bounded time and other sources' results are present."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/runner.ts
+      purpose: "Lines 88-103 -- the exact sequential, unbounded source loop this story fixes."
+    - path: src/lib/sources/source.ts
+      purpose: "The real Source interface/fetch() contract -- check whether a timeout is best added at the call site (runner.ts) or threaded into this interface."
+    - path: src/scheduler/backoff.ts
+      purpose: "The EXISTING, correct per-source exponential-backoff-on-repeated-failure mechanism -- a timed-out source should feed into this the same way a thrown error does (once it's recorded as a real error), not a separate, parallel mechanism."
+
+design_decisions:
+  - decision: A per-source timeout via Promise.race/AbortController at the runner.ts call site, not a rewrite of each adapter's own fetch() internals.
+    rationale: "10 real adapters exist; changing the failure-handling CONTRACT at one call site is far lower-risk than modifying every adapter's own fetch() implementation individually, and matches this codebase's own 'fix it once at the shared boundary' discipline (e.g. gate-fit-check-too-strict's own reuse-don't-reimplement decision)."
+
+risks:
+  - severity: high
+    description: "This is the actual production data-freshness mechanism -- a wrong timeout value or a bug in the timeout-handling path itself could make things WORSE (e.g. falsely killing a slow-but-working browser-automation source every cycle)."
+    mitigation: "Acceptance criteria requires live confirmation of the real hanging source before the fix, and a real regression test with a deliberately-hung test double proving the fix works without breaking normal, slow-but-successful sources. Review with the same care as the group-aware-auto-fire-trust story earlier this session."
+
+steps:
+  - id: research
+    description: Live-confirm which specific source(s) can hang with no timeout, and decide the exact call-site fix shape (Promise.race vs AbortController vs Source interface change)
+    agent: developer
+  - id: implement
+    description: Add the per-source timeout/circuit-breaker at runner.ts's source loop
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Add the hung-test-double regression test; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Careful review given this is the production data-freshness mechanism -- verify the timeout value is justified and doesn't false-positive on legitimately slow sources
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

@@ -172,6 +172,17 @@ export const SOURCE_PRESETS: SourcePreset[] = [
       loginUrl: "https://app.gun.io/sign-up/",
       allowedOrigins: ["gun.io"],
     },
+    // application-format-coverage-per-source story — REAL research
+    // against Gun.io's own published blog post ("What to cover in your
+    // cover letter", gun.io/news/2022/07/what-to-cover-in-your-cover-letter/):
+    // a Gun.io Technical Talent Advocate confirms "we have a short 3-5
+    // sentence section on every job application that serves as the cover
+    // letter". Gun.io's own term is "cover letter", but the actual
+    // structure -- one short, punchy, single free-text section, not a
+    // traditional multi-paragraph letter with a separate resume upload --
+    // matches this codebase's "why-fit" shape (see gofractional.ts) more
+    // honestly than the "cover-letter" default.
+    applicationFormat: "why-fit",
   },
   {
     id: "shiny",
