@@ -1,0 +1,14 @@
+name: gate-fit-check-too-strict
+title: "gate()'s role/skill fit check disagrees with each group's own, correctly-configured tiering -- 24 real GREEN matches silently hidden"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+
+stories:
+  - id: gate-uses-role-area-tier-for-fit
+    title: gate() accepts a group's own roleArea tier as an alternative way to satisfy the role/skill fit check
+    complexity: medium
+    depends_on: []
+
+references:
+  - path: .pHive/epics/gate-fit-check-too-strict/docs/design-discussion.md
+    relevant_excerpt: "§1 root-cause diagnosis against the owner's real data; §3 the additive, tiering.ts-reusing fix."

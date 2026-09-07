@@ -1,0 +1,109 @@
+id: gate-uses-role-area-tier-for-fit
+epic: gate-fit-check-too-strict
+title: gate() accepts a group's own roleArea tier as an alternative way to satisfy the role/skill fit check
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Real, live, high-impact bug confirmed against the owner's own real
+  (backed-up) data (see design-discussion.md §1): `gate()`
+  (`src/lib/matching/gate.ts`) hard-rejects a gig whenever its
+  `fitScore()` check finds no literal phrase overlap between
+  `Profile.roles`/`Profile.skills` (free text) and the gig's
+  title+description -- even when that SAME group's own, per-group-
+  configurable `roleArea` (coreTitles/keywords/redKeywords) already,
+  correctly tiered the gig GREEN via `matching/tiering.ts`. Measured
+  impact: 24 real GREEN-tier gigs currently sitting with empty
+  `matchedGroupIds` for exactly this reason (a real "Chief Technology
+  Officer" listing vs. the owner's own "Fractional CTO"/"Strategic CTO"
+  profile text is the concrete repro).
+
+  **The fix (see design-discussion.md §3 for full rationale):**
+  1. `gate()` (`src/lib/matching/gate.ts`) gains a new, OPTIONAL
+     `roleArea?: RoleAreaConfig` parameter (import `RoleAreaConfig` from
+     `../types.js`, matching `tiering.ts`'s own import).
+  2. The fit check (currently: `if (fit === 0) pass = false;`) becomes
+     permissive when `roleArea` is provided: reuse
+     `matching/tiering.ts`'s own EXPORTED `tier()` function directly
+     (`import { tier } from "./tiering.js"`) -- do NOT reimplement
+     keyword matching a third time. The gig should NOT hard-fail the fit
+     check when `tier(gig, roleArea).tier !== "red"` -- i.e., failing
+     fit is now: `fit === 0 && (no roleArea given OR tier(gig, roleArea).tier === "red")`.
+     Add a reason line explaining which path decided it (e.g. "role/skill
+     fit backed by this group's own role-area tier" when the roleArea
+     path is what saved it) so `MatchResult.reasons` stays genuinely
+     explainable, matching this file's own stated design goal.
+  3. `matchGroups()` (`src/lib/matching/group-match.ts`) already calls
+     `gate(gig, group.needs, profile)` once per group internally --
+     update that call site to also pass `group.roleArea`.
+  4. `apply/runner.ts`'s own separate, primary-group-only `gate()` call
+     (used for `MatchResult.matchedProfileIds`/`reasons` surfaced flat/
+     legacy in the UI -- search for `const gateResult =` in that file)
+     needs the same treatment: pass `primaryGroup?.roleArea` so the
+     flat/legacy reasons never contradict the per-group result.
+
+  Do NOT touch: rate/hours/remote/freshness checks (untouched), the
+  existing `profile.roles`/`skills` phrase-match itself (kept exactly as
+  today, this is additive), tiering.ts's own logic (reused, not
+  modified), or fractionaljobs.io's own deliberate no-rate-scraped
+  design (unrelated, already handled correctly by gate()'s existing
+  "rate not published — passing" path).
+
+acceptance_criteria:
+  - "Every existing test in src/lib/matching/__tests__/gate.test.ts still passes, completely unmodified in its own assertions -- proves this is additive, not a behavior regression for anything that used to pass OR used to correctly fail."
+  - "A new test: a gig titled 'Chief Technology Officer' (no literal profile.roles/skills overlap) with a roleArea whose coreTitles includes 'Chief Technology Officer' now PASSES gate() where it previously failed with 'no role/skill keyword match'."
+  - "A new test: a gig that is genuinely irrelevant (RED-tiered by roleArea's own redKeywords, AND no profile.roles/skills overlap) still correctly FAILS gate() -- the fix must not make gate() pass everything indiscriminately."
+  - "A new test: gate() called WITHOUT a roleArea argument at all (the old call shape) behaves byte-identically to before this story -- proves the new parameter is genuinely optional/backward compatible."
+  - "A real, end-to-end test via matchGroups() (not just gate() directly) proving a multi-group config now correctly matches this gig for the group whose roleArea recognizes it."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/matching/gate.ts
+      purpose: "fitScore()/gate() -- the exact function and check this story modifies."
+    - path: src/lib/matching/tiering.ts
+      purpose: "tier()/firstWholeWordMatch() -- the EXISTING, exported, already-tested keyword-matching logic to reuse, never reimplement. Also EMPTY_ROLE_AREA_CONFIG for the 'no roleArea configured' default shape."
+    - path: src/lib/matching/group-match.ts
+      purpose: "matchGroups()'s own internal per-group gate() call site -- needs group.roleArea threaded through."
+    - path: src/lib/apply/runner.ts
+      purpose: "the OTHER gate() call site (search 'const gateResult =') -- the flat/primary-group-only one whose reasons/matchedProfileIds are user-visible; needs primaryGroup?.roleArea threaded through for consistency."
+    - path: src/lib/matching/__tests__/gate.test.ts
+      purpose: "the full existing regression suite this story must not break -- read it before changing gate()'s signature."
+
+code_examples:
+  - title: "tiering.ts's own exported, reusable keyword-matching function -- reuse this, do not reimplement"
+    file: src/lib/matching/tiering.ts
+    snippet: |
+      export function tier(gig: Gig, config: RoleAreaConfig): TierResult { ... }
+      export const EMPTY_ROLE_AREA_CONFIG: RoleAreaConfig = { coreTitles: [], keywords: [], redKeywords: [] };
+
+design_decisions:
+  - decision: Additive OR, never a replacement of the existing profile.roles/skills check.
+    rationale: "Some owner setups may genuinely rely on profile.roles/skills as their only fit signal (e.g. no roleArea configured for a group at all, which EMPTY_ROLE_AREA_CONFIG already handles safely -- tier() on an empty roleArea always returns yellow, never green, so it correctly adds nothing in that case). Removing or weakening the existing check risks a real regression for someone else's working setup; only ADDING a new way to pass is safe."
+  - decision: Reuse tiering.ts's tier()/firstWholeWordMatch() rather than writing new matching logic in gate.ts.
+    rationale: "The whole bug is two independently-written keyword matchers silently disagreeing. Introducing a THIRD independent implementation would risk the exact same class of bug recurring later; reusing the one that's already correct and already tested is the only fix that actually closes the root cause."
+
+risks:
+  - severity: medium
+    description: "gate() is called for every gig from every source, every scan cycle, and directly feeds auto-draft/auto-fire eligibility (via matchedGroupIds) -- a subtle mistake here has broad blast radius."
+    mitigation: "The acceptance criteria explicitly require the full existing gate.test.ts suite to pass unmodified, plus new tests for both directions (newly-passing case AND still-correctly-failing case) -- this is reviewed with the same care as the group-aware-auto-fire-trust story from the prior epic before merging."
+
+steps:
+  - id: implement
+    description: Add the optional roleArea parameter to gate(), reusing tiering.ts's tier(), and thread it through both call sites
+    agent: developer
+  - id: test
+    description: Full existing gate.test.ts suite must pass unmodified; add the new tests listed in acceptance_criteria; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Careful review -- this is core matching logic touched by every gig, every scan; verify the OR-only additive property holds and nothing regresses
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
