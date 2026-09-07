@@ -1,0 +1,57 @@
+id: one-click-add-gmail-digest-source
+epic: gmail-digest-onboarding-ux
+title: One-click "Add email digest source" button, mirroring the one-click custom-source button
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Owner ask (2026-09-07): "we also need to have this crawl the emails
+  and double check there as well." The feature ALREADY EXISTS and is
+  fully built (`src/lib/sources/gmail-digest-source.ts` -- real Gmail
+  API + LLM extraction of job listings from digest emails, feeding the
+  same Gig pipeline as any other source) and IS reachable through the
+  Config UI today (a "Gmail digest" checkbox + "Connect Gmail" OAuth
+  button, `config-client.tsx` ~lines 2709-2817) -- it is simply not yet
+  configured for this owner, and reaching it requires the same 2-step
+  "+ Add source (blank)" -> manually check "Gmail digest" flow that
+  `dynamic-onboarding-ux-fixes` (PR #162) already fixed for the Custom
+  (LLM) case.
+
+  Mirror that exact fix for symmetry: add a THIRD button, "+ Add email
+  digest source", next to the existing "+ Add source (blank)" and
+  "+ Add custom source" buttons (same `flex items-center gap-4` row,
+  `config-client.tsx` ~line 2907), that appends a row with
+  `isGmailDigest: true` already set (same shape as
+  `handleAddCustomSource()`, just the Gmail-digest boolean instead of
+  isCustom) -- so the owner goes straight to naming the source and
+  clicking "Connect Gmail" instead of hunting for the checkbox.
+
+acceptance_criteria:
+  - "A new '+ Add email digest source' button appends a source row with isGmailDigest already true (no manual checkbox toggle needed)."
+  - "The existing '+ Add source (blank)' and '+ Add custom source' buttons and their behavior are completely unchanged -- this is an ADDITIONAL entry point."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "handleAddCustomSource() (~line 1777) is the exact pattern to mirror -- same shape, isGmailDigest: true instead of isCustom: true. The button row is at ~line 2907."
+
+steps:
+  - id: implement
+    description: Add the one-click Gmail-digest-source button
+    agent: developer
+  - id: test
+    description: Verify/extend test coverage; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for exact parity with handleAddCustomSource()'s own pattern
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
