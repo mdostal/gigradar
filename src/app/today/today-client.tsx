@@ -14,7 +14,8 @@ import type { MatchBand, RankBucketAssignment } from "@/lib/types";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { confirmRankBucketAction, generateDraftAction, generatePrepPacketAction, updateGigStatusAction } from "../actions";
 import { canGenerateDraft, draftButtonLabel } from "../dashboard-draft";
-import { openExternalUrl } from "@/lib/tauri/open-external";
+import { useOpenExternalLink } from "@/lib/tauri/use-open-external-link";
+import { ExternalLinkFeedbackToast } from "@/lib/tauri/external-link-feedback-toast";
 import {
   BAND_LABEL,
   distinctSources,
@@ -203,6 +204,7 @@ export function TodayClient({
   rankBucketGroupId?: string;
 }) {
   const router = useRouter();
+  const { openExternalLink, feedback: externalLinkFeedback, dismissFeedback: dismissExternalLinkFeedback } = useOpenExternalLink();
   const sources = useMemo(() => distinctSources(gigs), [gigs]);
 
   const [tier, setTier] = useState<TierFilterValue>("all");
@@ -682,7 +684,7 @@ export function TodayClient({
                             href={gig.url}
                             onClick={(e) => {
                               e.preventDefault();
-                              openExternalUrl(gig.url);
+                              openExternalLink(gig.url);
                             }}
                             className={`${styles.btn} ${styles.btnGhost}`}
                           >
@@ -706,6 +708,8 @@ export function TodayClient({
         <span>gigradar · {gigs.length} gigs tracked</span>
         <span>this view refreshes on every scan</span>
       </footer>
+
+      <ExternalLinkFeedbackToast feedback={externalLinkFeedback} onDismiss={dismissExternalLinkFeedback} />
     </div>
   );
 }
