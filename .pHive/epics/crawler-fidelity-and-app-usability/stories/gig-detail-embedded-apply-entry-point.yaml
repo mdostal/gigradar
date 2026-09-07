@@ -1,0 +1,154 @@
+id: gig-detail-embedded-apply-entry-point
+epic: crawler-fidelity-and-app-usability
+title: "Wire the existing profile-assist/embedded-webview mechanism into gig-detail-panel as a real, discoverable per-gig action"
+status: complete
+complexity: medium
+methodology: classic
+progress_note: |
+  Read profile-assist-client.tsx and actions.ts in full first, per the
+  story's own instruction. Real finding: the mechanism's ENTIRE session
+  lifecycle (manual/guided/full-auto, real-chrome and embedded-webview
+  alike) resolves its navigation target from `resolveProfileUrl(sourceId,
+  cfg)` (src/lib/sources/origins.ts's SOURCE_PROFILE_URLS, or a source's
+  own settings.profileUrl) inside assist-session.ts's
+  resolveAssistSessionContext() -- it takes a sourceId, never a url, and
+  there is no parameter anywhere in the chain (startAssistSessionAction,
+  resolveEmbeddedAssistSessionAction, startAssistSession,
+  resolveAssistSessionContext) that lets a caller override that target with
+  an arbitrary listing URL. That resolution is core assist-session logic,
+  explicitly out of scope for this wiring-only story to change.
+
+  What IS real and fully wired:
+    - gig-detail-panel.tsx now renders a real "Apply with profile assist →"
+      link next to (not replacing) the unchanged "Open original listing"
+      link, built from THIS gig's own gig.sourceId/gig.url/gig.title.
+    - It deep-links to /profile-assist?sourceId=...&gigUrl=...&gigTitle=...
+    - profile-assist/page.tsx (now an async Server Component reading
+      `searchParams`) passes sourceId through as `initialSourceId` and
+      gigUrl/gigTitle as `gigContext` to ProfileAssistClient.
+    - ProfileAssistClient pre-selects that gig's own source in the
+      Source picker (falls back to today's first-source default if the
+      id is unrecognized/absent -- zero behavior change for every
+      pre-existing entry point to this page), and renders a real banner
+      showing the gig's title with a link to the actual listing.
+    - Verified live via curl against an isolated dev server (XDG_DATA_HOME
+      pointed at a scratch dir, never the real ~/.local/share/gigradar):
+      /profile-assist?sourceId=wellfound&gigUrl=...&gigTitle=Fractional%20CFO
+      returns 200 with the gig title/url rendered in the banner; a bare
+      /profile-assist request (no params) renders zero occurrences of that
+      banner, confirming the existing entry point is unchanged.
+
+  What is NOT fully wired (honest limitation, not silently papered over):
+    - The embedded/real-chrome session itself still navigates to the
+      SOURCE's registered profile-edit URL, not to gig.url directly --
+      the owner still has to navigate to the actual listing themselves
+      once inside the session (the banner says this explicitly). Making
+      the session open the listing itself would require changing
+      resolveAssistSessionContext()/startAssistSession()'s own navigation
+      target -- real automation-logic surgery this integration-only story
+      was told not to attempt.
+    - This is therefore "smallest real integration possible" per the
+      story's own fallback clause: correct source pre-selected + gig
+      context carried through and displayed, not a fully gig-url-scoped
+      embedded session.
+depends_on: []
+
+description: |
+  Real, confirmed-by-reading-the-code gap. This session already built real,
+  working embedded-browser/profile-assist automation (the
+  `allow-embedded-webview-*`/`allow-embedded-vision-*` permissions ARE
+  already granted in `src-tauri/capabilities/default.json`;
+  `src/app/profile-assist/profile-assist-client.tsx` is a real, functioning
+  page/mechanism) -- but it is ONLY reachable as its own freestanding
+  `/profile-assist` route. `gig-detail-panel.tsx` (confirmed by grep: zero
+  hits for "ProfileAssist"/"embedded"/"Apply now" in that file) has no
+  button, link, or any other affordance connecting a specific gig the owner
+  is looking at to this existing capability. This is the owner's own
+  real-world experience: powerful backend automation exists, is completely
+  undiscoverable from the one screen (a gig's own detail view) where it
+  would actually matter, and so it reads as "not working at all" even though
+  the underlying mechanism is real and already built.
+
+  Owner's own words, verbatim, on what the split should be: "THOSE [external
+  listing links] should open external, that's fine -- but the one INSIDE
+  should be for profile assist, for the logins, etc as much embedded as
+  possible... it has its own context and logons."
+
+  **Build a real "Apply" / "Profile Assist" action inside gig-detail-panel.tsx**
+  that, for the gig currently being viewed:
+  1. Launches the existing embedded-webview mechanism (reuse
+     `profile-assist-client.tsx`'s own real, working engine and its
+     `src/app/profile-assist/actions.ts` server actions -- do NOT reimplement
+     automation logic a second time; this is an integration/wiring story) --
+     read that file in full before starting, to understand what it currently
+     needs as input (a target URL? a source id? something else?) and adapt
+     that shape to be gig-scoped rather than requiring separate manual setup.
+  2. Passes THIS gig's own real `gig.url` (and `source_id` if the mechanism
+     needs to know which source/site it's automating against) into that
+     flow, so the owner doesn't have to separately navigate away and
+     re-supply context that gigradar already has.
+  3. Keeps the plain external "Open original listing" link exactly as it is
+     conceptually (owner confirmed that's fine) -- this is an ADDITIONAL
+     action alongside it, not a replacement.
+  4. If the profile-assist mechanism genuinely cannot yet be scoped
+     per-gig without a larger redesign (verify this by actually reading its
+     current implementation rather than assuming) -- do the smallest real
+     integration that's honestly possible (e.g. deep-linking to
+     `/profile-assist?url=<gig.url>` if that page can accept a query param
+     starting point, rather than a fully custom embedded panel inline in
+     gig-detail-panel itself) and document exactly what's still not
+     integrated in the story's own progress_note, rather than silently
+     shipping a fake/non-functional button.
+
+  Do NOT touch: the underlying embedded-webview Tauri commands/Rust code, or
+  `profile-assist-client.tsx`'s own core automation logic -- this story
+  wires EXISTING capability into a new, discoverable entry point; it doesn't
+  build new automation.
+
+acceptance_criteria:
+  - "gig-detail-panel.tsx has a real, visible action (button/link) that launches the existing profile-assist/embedded-webview mechanism scoped to the specific gig being viewed -- not a generic, context-free link to /profile-assist."
+  - "The existing plain external 'Open original listing' link is unchanged in behavior/intent (still opens externally, per tauri-shell-open-external-links story) -- this is additive, not a replacement."
+  - "The story's own progress_note honestly states which parts of the integration are fully wired vs. still limited by profile-assist's current design, if any real limitation is found during implementation."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/gig-detail-panel.tsx
+      purpose: "The gig detail view this story adds the new action to -- read its current external-link section (~line 156) as the insertion point."
+    - path: src/app/profile-assist/profile-assist-client.tsx
+      purpose: "The EXISTING, already-working embedded-browser mechanism to reuse -- read this in full before designing the wiring, do not reimplement."
+    - path: src/app/profile-assist/actions.ts
+      purpose: "The existing server actions profile-assist-client.tsx calls -- understand their real input shape before adapting it to be gig-scoped."
+    - path: src-tauri/capabilities/default.json
+      purpose: "Confirms the embedded-webview/vision permissions are ALREADY granted -- no capabilities work needed here, just frontend wiring."
+
+design_decisions:
+  - decision: Reuse profile-assist's existing engine; this is an integration story, not a new-automation story.
+    rationale: "The automation already exists and works as its own page -- building a second, parallel automation path inside gig-detail-panel would duplicate real, already-tested logic and risk drifting from it."
+
+risks:
+  - severity: low
+    description: "profile-assist's current design may assume it's the only entry point (e.g. reads context from its own page state rather than accepting a gig/url as input) -- a naive wiring attempt could produce a button that looks real but silently does the wrong thing."
+    mitigation: "Acceptance criteria requires an honest progress_note if full integration isn't achievable without a larger change -- a partial, clearly-labeled integration is acceptable; a silently-broken one is not."
+
+steps:
+  - id: research
+    description: Read profile-assist-client.tsx and actions.ts in full to understand the real, current input shape and constraints
+    agent: developer
+  - id: implement
+    description: Add the gig-scoped Apply/Profile-Assist action to gig-detail-panel.tsx, reusing the existing mechanism
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Verify the new action correctly launches with this gig's real url/source context; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm this reuses existing automation rather than duplicating it, and that any real limitation found is honestly documented rather than papered over
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

@@ -340,9 +340,36 @@ function EmbeddedManualAssist({ sourceId, sources, onSourceIdChange }: { sourceI
   );
 }
 
-export function ProfileAssistClient({ sources }: { sources: { id: string; label: string }[] }) {
+/**
+ * gig-detail-embedded-apply-entry-point story. `initialSourceId`/
+ * `gigContext` are this component's gig-scoped entry point from
+ * gig-detail-panel.tsx (via page.tsx's `searchParams`) -- both optional so
+ * every existing way of reaching /profile-assist (the nav link, a bare
+ * URL) is completely unchanged.
+ *
+ * Real, honestly-documented limitation: `initialSourceId` only pre-selects
+ * the picker below -- it does not change what the session itself opens.
+ * `handleStart()`/`resolveEmbeddedAssistSessionAction()` still resolve and
+ * navigate to the SOURCE's registered profile-edit URL
+ * (assist-session.ts's `resolveProfileUrl()`), never `gigContext.url`
+ * directly -- that resolution is this app's core assist-session logic,
+ * out of scope for this wiring-only story to change. `gigContext` is
+ * therefore rendered as an informational banner (with its own link to the
+ * real listing) rather than fed into the session's own navigation.
+ */
+export function ProfileAssistClient({
+  sources,
+  initialSourceId,
+  gigContext,
+}: {
+  sources: { id: string; label: string }[];
+  initialSourceId?: string;
+  gigContext?: { url: string; title?: string };
+}) {
   const [tab, setTab] = useState<Tab>("manual");
-  const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
+  const [sourceId, setSourceId] = useState(
+    initialSourceId && sources.some((s) => s.id === initialSourceId) ? initialSourceId : sources[0]?.id ?? "",
+  );
   const [session, setSession] = useState<SessionState>({ status: "idle" });
   const [suggest, setSuggest] = useState<SuggestState>({ status: "idle" });
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
@@ -873,6 +900,21 @@ export function ProfileAssistClient({ sources }: { sources: { id: string; label:
 
   return (
     <div className="mt-6 flex flex-col gap-4">
+      {gigContext && (
+        <div className="rounded-lg border border-brand-accent/40 bg-brand-accent/5 p-3 text-sm text-slate-700">
+          <p>
+            Starting profile assist for <strong>{gigContext.title ?? "this gig"}</strong>.{" "}
+            <a href={gigContext.url} target="_blank" rel="noreferrer noopener" className="underline underline-offset-2">
+              Open the original listing ↗
+            </a>
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            The session below opens this source&apos;s own profile/login page, not this exact listing — keep the
+            listing open in another tab to reference it while you work.
+          </p>
+        </div>
+      )}
+
       <div className="flex gap-2" role="tablist" aria-label="Autonomy mode">
         {TABS.map((t) => (
           <button

@@ -29,8 +29,23 @@ export const dynamic = "force-dynamic";
  * appears (never silently hidden) — starting a session for it surfaces
  * assist-session.ts's own actionable "set settings.profileUrl" error
  * rather than pretending the option doesn't exist.
+ *
+ * gig-detail-embedded-apply-entry-point story. `searchParams` is this
+ * route's deep-link entry point from gig-detail-panel.tsx's new "Apply
+ * with profile assist" action: `sourceId` pre-selects that source in the
+ * picker below (falling back to the default first-source behavior when
+ * absent/unrecognized, so every other existing entry point to this page is
+ * unchanged), and `gigUrl`/`gigTitle` are passed straight through for
+ * ProfileAssistClient to display as context -- see that component's own
+ * comment for the real limitation this does NOT solve (the session itself
+ * still opens the source's registered profile URL, not `gigUrl` directly).
  */
-export default function ProfileAssistPage() {
+export default async function ProfileAssistPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sourceId?: string; gigUrl?: string; gigTitle?: string }>;
+}) {
+  const { sourceId, gigUrl, gigTitle } = await searchParams;
   const knownBrowserSessionSources = KNOWN_SOURCES.filter((s) => s.auth === "browser-session").map((s) => ({
     id: s.id,
     label: s.label,
@@ -58,7 +73,11 @@ export default function ProfileAssistPage() {
         LLM-assisted help filling out your profile on a job platform — a real browser window opens on your own
         desktop, you stay in control the whole time.
       </p>
-      <ProfileAssistClient sources={browserSessionSources} />
+      <ProfileAssistClient
+        sources={browserSessionSources}
+        initialSourceId={sourceId}
+        gigContext={gigUrl ? { url: gigUrl, title: gigTitle } : undefined}
+      />
     </main>
   );
 }

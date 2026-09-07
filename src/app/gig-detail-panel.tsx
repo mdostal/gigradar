@@ -19,9 +19,31 @@
 // row.
 import { useEffect } from "react";
 import type { ReactNode } from "react";
+import Link from "next/link";
 import type { StoredGig } from "@/lib/store";
 import { resolveDisplayTier } from "./dashboard-filter";
 import { formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "./dashboard-client";
+
+/**
+ * gig-detail-embedded-apply-entry-point story. Builds the deep link into
+ * the EXISTING /profile-assist mechanism (profile-assist-client.tsx),
+ * scoped to this specific gig: `sourceId` pre-selects the right source in
+ * that page's picker (instead of the owner having to know/re-pick it) and
+ * `gigUrl`/`gigTitle` let that page show which gig prompted the session.
+ *
+ * Real, documented limitation (see this story's progress_note): the
+ * embedded/real-chrome session itself still navigates to the SOURCE's
+ * registered profile-edit URL (assist-session.ts's resolveProfileUrl()),
+ * not directly to `gig.url` -- that navigation target lives inside
+ * profile-assist's own core session logic, which this wiring-only story
+ * does not touch. This link scopes *which source's* session opens and
+ * carries the gig's own context along for display; it does not yet
+ * auto-navigate the embedded browser straight to the listing itself.
+ */
+function profileAssistHref(gig: StoredGig): string {
+  const params = new URLSearchParams({ sourceId: gig.sourceId, gigUrl: gig.url, gigTitle: gig.title });
+  return `/profile-assist?${params.toString()}`;
+}
 
 export function GigDetailPanel({
   gig,
@@ -152,14 +174,23 @@ export function GigDetailPanel({
             </div>
           </dl>
 
-          <a
-            href={gig.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="mt-4 inline-block text-sm font-medium text-theme-text underline underline-offset-2 hover:no-underline"
-          >
-            Open original listing ↗
-          </a>
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1">
+            <a
+              href={gig.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-sm font-medium text-theme-text underline underline-offset-2 hover:no-underline"
+            >
+              Open original listing ↗
+            </a>
+            {/* Additive, not a replacement -- see the "Open original listing" link above, unchanged. Launches the existing profile-assist/embedded-webview mechanism (src/app/profile-assist/), pre-scoped to this gig's own source and url. */}
+            <Link
+              href={profileAssistHref(gig)}
+              className="text-sm font-medium text-theme-accent underline underline-offset-2 hover:no-underline"
+            >
+              Apply with profile assist →
+            </Link>
+          </div>
 
           {gig.description ? (
             <div className="mt-4 whitespace-pre-wrap rounded-md border border-theme-surface-border bg-theme-surface-raised/40 p-3 text-sm text-theme-text">
