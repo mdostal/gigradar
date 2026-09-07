@@ -1,0 +1,128 @@
+id: external-link-click-silent-failure
+epic: real-usability-verification-and-fixes
+title: "Clicking a gig's external-link title produces zero visible result in the real running app -- root-cause the silent failure and add real error feedback"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  CONFIRMED REAL BUG via a live `simman` vision-AI click-through of the
+  actual running packaged app (not code-reading, not an isolated
+  instance): clicking a gig's title in the real `/gigs` dashboard produces
+  NO visible change at all -- the vision model's own verification
+  explicitly failed ("No gig detail page or modal is displayed; the
+  screenshot shows a dashboard summary") and no new browser process
+  spawned under the current user afterward. On `/drafts`, the equivalent
+  "open original posting" affordance could not even be located by the
+  vision model within a reasonable click budget (it mistook a chat icon
+  for it) -- a related but possibly separate discoverability issue, see
+  step 3 below.
+
+  This directly contradicts an EARLIER static check today that confirmed
+  the code (`openExternalUrl()`, `src/lib/tauri/open-external.ts`) and the
+  Tauri `shell:allow-open` capability were both correctly present and
+  compiled into the real running binary (`strings
+  /Applications/gigradar.app/.../app | grep allow-open` hit). Code-correct
+  and capability-granted is NOT the same as working at runtime -- this
+  story exists specifically because that gap is real.
+
+  **Real, plausible root cause worth investigating first** (confirm, don't
+  assume): `dashboard-client.tsx`'s onClick handler
+  (`onClick={(e) => { e.preventDefault(); openExternalUrl(row.original.url);
+  }}`) calls `openExternalUrl()` WITHOUT awaiting or catching its returned
+  promise. If `openExternalUrl()` throws or rejects for any reason (the
+  dynamic `import("@tauri-apps/plugin-shell")` failing to resolve in the
+  real bundled production build, the plugin's `open()` call itself
+  rejecting for some real reason, etc.), that becomes a silent, invisible
+  unhandled promise rejection -- exactly matching the observed symptom
+  (nothing happens, no error, no navigation). Every call site that uses
+  `openExternalUrl()` (`dashboard-client.tsx`, `gig-detail-panel.tsx`,
+  `today/today-client.tsx`, `drafts/drafts-client.tsx`,
+  `interview-workspace-client.tsx`) has this same fire-and-forget shape --
+  check them all.
+
+  **Investigation required** (real, live -- this is exactly the kind of
+  claim that must be verified against the actual behavior, not assumed):
+  1. Confirm whether `@tauri-apps/plugin-shell`'s dynamic import or its
+     `open()` call is actually throwing in the real packaged app. Since
+     this session cannot open a real browser/devtools window, find another
+     real way to capture the actual error: e.g., temporarily wire a
+     visible error state into `openExternalUrl()`'s callers (this is also
+     part of the real fix, see below), rebuild, relaunch the real app, and
+     click a real gig title to see what error (if any) now surfaces; or
+     check whether Tauri's own stdout/stderr (the app's log file, if one
+     exists -- check `docs/ARCHITECTURE.md` for where packaged-app logs
+     land) captured anything at the moment of the failed click.
+  2. Check whether `next.config.js`/the build config correctly bundles
+     `@tauri-apps/plugin-shell` for the client -- compare against how
+     OTHER working Tauri-only features (e.g. `update-notifier.tsx`'s
+     version/channel readout, `embedded-webview.ts`'s profile-assist
+     session, both of which reportedly work) import their own
+     Tauri-only packages, and check for any real difference.
+  3. After fixing the root cause, re-verify the Drafts page's own
+     "open original posting" affordance specifically -- if the vision
+     model still can't locate it even once the underlying click actually
+     works, that's a real, separate discoverability/labeling problem
+     (distinguish it from a chat icon or other nearby control) worth
+     flagging in this story's own progress_note as a follow-up, not
+     silently folded into "fixed."
+
+  **The fix, once root-caused**: (a) fix whatever is actually causing the
+  silent failure, and (b) regardless of root cause, add REAL, visible
+  error feedback to every `openExternalUrl()` call site -- if opening the
+  real posting fails for any reason, the user must see an actual error
+  message, never silence. This directly matches the owner's own broader
+  complaint this session ("buttons that run SOMETHING but give no
+  feedback") -- a link that silently fails is exactly that failure mode.
+
+  Do NOT touch: the `shell:allow-open` capability grant itself (already
+  correct, confirmed compiled into the binary), the `isTauri()` detection
+  logic (already correct, shared by multiple already-working features).
+
+acceptance_criteria:
+  - "The real root cause of the silent click failure is identified with real evidence (not a guess) -- documented in this story's own progress_note."
+  - "After the fix, a REAL rebuild-and-relaunch of the actual packaged app followed by a real simman click-through of a gig title in /gigs confirms (via simman's own visionVerify, not just a native-act pass) that the real OS browser actually opens -- this exact reproduction (simman synthesize against the real running app) is the bar, not just an automated test passing."
+  - "Every openExternalUrl() call site (dashboard-client.tsx, gig-detail-panel.tsx, today-client.tsx, drafts-client.tsx, interview-workspace-client.tsx) surfaces a real, visible error to the user if the open ever fails, instead of failing silently."
+  - "The Drafts page's own external-link affordance is separately re-verified via simman post-fix; if it's still not discoverable, that's documented as a known follow-up in the progress_note rather than silently claimed fixed."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/tauri/open-external.ts
+      purpose: "openExternalUrl() -- the function whose real runtime failure this story must root-cause."
+    - path: src/app/dashboard-client.tsx
+      purpose: "The exact fire-and-forget onClick call site that reproduced the bug in this story's own live simman verification."
+    - path: src/app/config/tauri-version-readout.tsx
+      purpose: "An ALREADY-WORKING Tauri-only feature (per user reports) -- compare its own import/bundling shape against open-external.ts's for any real difference."
+
+design_decisions:
+  - decision: Add visible error feedback to every call site regardless of the specific root cause found.
+    rationale: "A link that can fail silently is a real, recurring risk even after this specific root cause is fixed -- matches the owner's own broader 'give me feedback when something happens' demand this session, and prevents this exact class of invisible failure from recurring for a different reason later."
+
+risks:
+  - severity: high
+    description: "This is the single most concrete, owner-verified-broken feature in this whole session's work -- getting the fix wrong (or claiming it's fixed without the same live simman re-verification) would repeat exactly the failure mode that triggered this entire epic."
+    mitigation: "Acceptance criteria explicitly requires a REAL post-fix simman re-run against the REAL rebuilt app with visionVerify passing, not a native-act-only pass and not just an automated test."
+
+steps:
+  - id: research
+    description: Root-cause the real silent failure with live evidence (not a guess) against the actual running app
+    agent: developer
+  - id: implement
+    description: Fix the root cause and add real, visible error feedback to every openExternalUrl() call site
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Add regression tests for the error-feedback behavior; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify the fix is confirmed via a real post-fix simman re-run against the rebuilt real app, not just automated tests
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

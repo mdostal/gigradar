@@ -1,0 +1,89 @@
+id: resume-management-discoverable-from-dashboard
+epic: real-usability-verification-and-fixes
+title: "Resume management (shipped today, PR #181) is not discoverable anywhere on the real Config Dashboard -- the exact 'disconnected capability' pattern flagged earlier this session"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  CONFIRMED REAL GAP via a live `simman` vision-AI exploration of the
+  actual running Config Dashboard (not code-reading): a 10-step
+  synthesized exploration across every real Config Dashboard card
+  (Profile, Sources, Groups & Needs, Match Quality, Rank Buckets,
+  Schedule, Automation, Appearance) concluded, with the vision model's own
+  verification passing against the real screenshot, that "no explicit
+  resume management found on the Config page." This is despite the
+  multi-resume store (`resume-store-multi-resume-and-tailoring` story,
+  PR #181) having genuinely merged into `dev` and being live in the
+  currently-running app.
+
+  Root cause, confirmed by reading the real code: the resume
+  upload/management UI lives inside the "Profile" section's own detail
+  page (`config-client.tsx`, ~lines 2100-2170), but
+  `config-sections.ts`'s Dashboard-card summary definition for "Profile"
+  (~lines 58-73) only surfaces Name/Roles/Rate anchor/Home base/Timezone
+  -- nothing about resumes at all. A user glancing at the Config
+  Dashboard (which is exactly what the owner and this story's own
+  simman run both did) has zero indication resume management exists
+  anywhere, and would have to already know to click into "Profile" and
+  then find the resume section within that page unprompted. This is the
+  EXACT SAME "real capability exists, completely undiscoverable from
+  where it matters" failure mode already found and fixed once this
+  session for `gig-detail-embedded-apply-entry-point` (PR #174) --
+  recurring here for a different feature.
+
+  **The fix**: add a real, visible resume-count summary row to the
+  Profile section's Dashboard card definition in `config-sections.ts` --
+  e.g. "Resumes: N on file" (or "No resume on file yet" when empty) --
+  so a user scanning the Config Dashboard sees, without clicking in, that
+  resume management exists and roughly what state it's in. Also confirm
+  (read the real Profile section's page layout) that the resume UI within
+  that section itself is positioned reasonably close to the top, not
+  buried far down a long page after unrelated fields -- if it's needlessly
+  far down, move it up; if it's already reasonably placed, leave it and
+  just fix the missing Dashboard-card summary.
+
+  Do NOT touch: the resume-store data model/storage/actions themselves
+  (`resume-store.ts`, `config-client.tsx`'s upload/remove handlers --
+  already correct, shipped today), any other Dashboard card's own summary
+  definition.
+
+acceptance_criteria:
+  - "The Config Dashboard's Profile card summary shows a real resume count/status, visible without clicking into the section."
+  - "Real post-fix verification against the ACTUAL running app: rebuild, relaunch the real packaged app (backup first per standing procedure), and confirm via curl/DOM evidence (or a real simman re-run) that the Dashboard's Profile card now surfaces resume status. A re-run of this story's own triggering simman goal ('explore Config and find resume management') should now succeed with vision-verified confirmation, not just a code change."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-sections.ts
+      purpose: "The Profile card's Dashboard summary definition (~lines 58-73) -- add a resume-count row here."
+    - path: src/app/config/config-client.tsx
+      purpose: "~lines 2100-2170 -- the real, already-working resume upload/management UI within the Profile section, to confirm its position within that page."
+
+design_decisions:
+  - decision: Fix via a Dashboard-card summary addition, not a new top-level nav item.
+    rationale: "Resume management is genuinely part of the applicant's own profile data, same conceptual home as Name/Roles/Rate anchor already shown there -- a summary row matches this Dashboard's own existing convention (every other card already shows a live-data summary, e.g. 'Configured: N', 'Groups: N') rather than introducing a new navigation pattern."
+
+risks:
+  - severity: low
+    description: "Low blast radius -- a summary-row addition to an existing card."
+    mitigation: "Acceptance criteria requires real post-rebuild verification against the actual running app, matching this epic's own standing discipline."
+
+steps:
+  - id: implement
+    description: Add a real resume-count summary row to the Profile Dashboard card; confirm the resume UI's own position within the Profile section page
+    agent: developer
+  - id: test
+    description: Add/extend a test covering the new summary row; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify the fix is confirmed against the real running app, not just an automated test
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
