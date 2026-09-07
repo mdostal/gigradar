@@ -50,7 +50,7 @@ import path from "node:path";
 import { type ActionResult, actionErr, actionOk } from "../actions/result.js";
 import { decrypt, encrypt, getOrCreateKey, isEncryptedEnvelope, VaultTamperError } from "../security/vault.js";
 import type { Config } from "../types.js";
-import { getConfigPath, migrateFlatNeedsRoleAreaToGroups, migrateNeedsEngagementProfiles } from "./load.js";
+import { getConfigPath, migrateApplyProfileResumes, migrateFlatNeedsRoleAreaToGroups, migrateNeedsEngagementProfiles } from "./load.js";
 import { ConfigSchema } from "./schema.js";
 
 /**
@@ -199,14 +199,14 @@ function readRawConfigDocument(configPath: string): RawConfigRead {
   }
 
   // Same read-time-only shape migrations load.ts's loadConfig() applies —
-  // see migrateNeedsEngagementProfiles()'s and
-  // migrateFlatNeedsRoleAreaToGroups()'s own doc comments. Needed here too:
+  // see migrateNeedsEngagementProfiles()'s, migrateFlatNeedsRoleAreaToGroups()'s,
+  // and migrateApplyProfileResumes()'s own doc comments. Needed here too:
   // this document feeds BOTH the config UI's initial read (readRawConfig())
   // AND saveConfig()'s own currentRaw merge base, and a caller that saves
-  // partial edits (omitting `groups`/`needs` entirely, relying on the merge
-  // to keep the existing section) would otherwise re-validate the OLD flat
-  // shape and fail.
-  const migrated = migrateFlatNeedsRoleAreaToGroups(migrateNeedsEngagementProfiles(parsed)) as Record<string, unknown>;
+  // partial edits (omitting `groups`/`needs`/`applyProfile` entirely,
+  // relying on the merge to keep the existing section) would otherwise
+  // re-validate the OLD flat shape and fail.
+  const migrated = migrateApplyProfileResumes(migrateFlatNeedsRoleAreaToGroups(migrateNeedsEngagementProfiles(parsed))) as Record<string, unknown>;
 
   return { document: migrated, wasLegacyPlaintext: !wasEncrypted, rawBytes: raw };
 }

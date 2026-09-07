@@ -250,9 +250,14 @@ describe("generateDraft: real resume file attachment (deep-memory-and-context ep
     delete process.env.XDG_CONFIG_HOME;
   });
 
-  it("when applyProfile.resumePath is set and loadResume() succeeds, embeds the real resume as a file content part", async () => {
-    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 fake resume for draft test"), "application/pdf");
-    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+  /** resume-store-multi-resume-and-tailoring story: wraps a saveResume() result into the ResumeRecord shape ApplyProfileConfig.resumes now holds, instead of the old flat resumePath field. */
+  function asResumeRecord({ id, path }: { id: string; path: string }) {
+    return { id, label: "Resume", path, uploadedAt: new Date().toISOString() };
+  }
+
+  it("when applyProfile.resumes has an entry and loadResume() succeeds, embeds the real resume as a file content part", async () => {
+    const saved = saveResume(Buffer.from("%PDF-1.4 fake resume for draft test"), "application/pdf");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(saved)] };
 
     await generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
 
@@ -261,8 +266,8 @@ describe("generateDraft: real resume file attachment (deep-memory-and-context ep
   });
 
   it("a plain-text saved resume is embedded as a text block, not a file block", async () => {
-    const { path: resumePath } = saveResume(Buffer.from("Jane Doe -- backend engineer, plain text resume."), "text/plain");
-    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+    const saved = saveResume(Buffer.from("Jane Doe -- backend engineer, plain text resume."), "text/plain");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(saved)] };
 
     await generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
 
@@ -273,29 +278,57 @@ describe("generateDraft: real resume file attachment (deep-memory-and-context ep
   });
 
   it("still exactly ONE LLM call even when a resume is embedded", async () => {
-    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 another fake resume"), "application/pdf");
-    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+    const saved = saveResume(Buffer.from("%PDF-1.4 another fake resume"), "application/pdf");
+    const applyProfileWithResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(saved)] };
 
     await generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
   });
 
-  it("when applyProfile.resumePath is unset, behaves exactly as before this epic -- no file block", async () => {
+  it("when applyProfile.resumes is unset, behaves exactly as before this epic -- no file block", async () => {
     await generateDraft(REAL_GIG, REAL_PROFILE, REAL_APPLY_PROFILE, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
 
     expect(messageContentSentToLLM().some((b) => b.type === "file")).toBe(false);
   });
 
-  it("when resumePath is set but the file has been deleted, degrades gracefully -- no error, no file block", async () => {
-    const { path: resumePath } = saveResume(Buffer.from("%PDF-1.4 to be deleted"), "application/pdf");
-    fs.unlinkSync(resumePath);
-    const applyProfileWithMissingResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumePath };
+  it("when a resume is on file but the file has been deleted, degrades gracefully -- no error, no file block", async () => {
+    const saved = saveResume(Buffer.from("%PDF-1.4 to be deleted"), "application/pdf");
+    fs.unlinkSync(saved.path);
+    const applyProfileWithMissingResume: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(saved)] };
 
     await expect(
       generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithMissingResume, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }),
     ).resolves.toBeDefined();
     expect(messageContentSentToLLM().some((b) => b.type === "file")).toBe(false);
+  });
+
+  it("resumeId selects a SPECIFIC resume when 2+ are stored -- generateDraft() uses that one, not always the first", async () => {
+    const first = saveResume(Buffer.from("%PDF-1.4 first resume, generic"), "application/pdf");
+    const second = saveResume(Buffer.from("second resume, tailored for this gig, mentions Kubernetes"), "text/plain");
+    const applyProfileWithTwoResumes: ApplyProfileConfig = {
+      ...REAL_APPLY_PROFILE,
+      resumes: [asResumeRecord(first), { ...asResumeRecord(second), label: "Tailored resume" }],
+    };
+
+    const content = await generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithTwoResumes, { kind: "api-key", provider: "anthropic", value: "fake-api-key" }, "cover-letter", second.id);
+
+    expect(content.resumeId).toBe(second.id);
+    const fullPrompt = messageContentSentToLLM()
+      .filter((b): b is TextPart => b.type === "text")
+      .map((b) => b.text)
+      .join("\n---\n");
+    expect(fullPrompt).toContain("Kubernetes");
+  });
+
+  it("no resumeId given, with 2+ resumes stored, falls back to the FIRST one -- byte-identical to the old single-resume default", async () => {
+    const first = saveResume(Buffer.from("first resume"), "text/plain");
+    const second = saveResume(Buffer.from("second resume"), "text/plain");
+    const applyProfileWithTwoResumes: ApplyProfileConfig = { ...REAL_APPLY_PROFILE, resumes: [asResumeRecord(first), asResumeRecord(second)] };
+
+    const content = await generateDraft(REAL_GIG, REAL_PROFILE, applyProfileWithTwoResumes, { kind: "api-key", provider: "anthropic", value: "fake-api-key" });
+
+    expect(content.resumeId).toBe(first.id);
   });
 });
 

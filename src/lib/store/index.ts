@@ -18,6 +18,8 @@ export {
   setDraftStatus,
 } from "./drafts.js";
 export { getInterviewPrep, listInterviewPrep, saveInterviewPrep } from "./prep.js";
+export { listResumeReviewSuggestions, saveResumeReviewSuggestion } from "./resume-reviews.js";
+export type { ResumeReviewSuggestion } from "./resume-reviews.js";
 export {
   deleteChatSessionHistory,
   listChatPreferences,

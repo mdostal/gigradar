@@ -147,6 +147,30 @@ export type TierScoringMode =
   | { kind: "percentile"; greenPercentile: number; yellowPercentile: number };
 
 /**
+ * resume-store-multi-resume-and-tailoring story (usability-and-
+ * completeness-audit epic). One stored, encrypted-at-rest resume file --
+ * `ApplyProfileConfig.resumes` is a LIST of these, replacing the old
+ * single fixed `resumePath` field (a pre-existing single-resume
+ * config.json migrates its one resume into a one-entry list on read, see
+ * `config/load.ts`'s `migrateApplyProfileResumes()`). `id` is a stable,
+ * generated slug (see `documents/resume-store.ts`'s `newResumeId()`) --
+ * referenced by `DraftContent.resumeId` and by the chat co-pilot's
+ * `propose_resume_review` tool, never re-derived from `label` (which the
+ * user can freely rename). `path` points at that resume's OWN encrypted
+ * file (`documents/resume-store.ts`'s `saveResume()`/`loadResume()`) --
+ * same "path in config, real bytes on disk" convention `resumePath` used,
+ * just one per resume instead of one total.
+ */
+export interface ResumeRecord {
+  id: string;
+  /** User-facing name, e.g. "CTO resume" or "SWE resume (2026)" -- defaults to the uploaded filename when the user doesn't rename it. */
+  label: string;
+  path: string;
+  /** ISO datetime this resume was uploaded/added. */
+  uploadedAt: string;
+}
+
+/**
  * Apply-specific fields a real application form needs that `Profile`
  * doesn't hold today — email, phone, LinkedIn, a short headline/bio, and a
  * single rate figure to anchor when a form asks for one. Optional on
@@ -164,8 +188,19 @@ export interface ApplyProfileConfig {
   bio?: string;
   /** The single number to anchor when a form asks for a rate. */
   rateAnchor?: number;
-  /** career-documents epic: a path reference to an encrypted-at-rest resume file (see src/lib/documents/resume-store.ts). Omitted = no resume on file, not an error. */
-  resumePath?: string;
+  /**
+   * resume-store-multi-resume-and-tailoring story: every stored resume,
+   * keyed/versioned rather than the old single fixed `resumePath` (now
+   * removed from this interface -- see `ResumeRecord`'s own doc comment
+   * for the migration path). Omitted/empty = no resume on file, not an
+   * error, same as the old field's semantics. Callers that need "the"
+   * resume for a request with no explicit selection (e.g. a draft with no
+   * `resumeId` chosen yet) use `documents/resume-store.ts`'s
+   * `pickResume(resumes, resumeId)`, which falls back to the first entry
+   * -- preserving today's single-resume behavior byte-for-byte for an
+   * install that only ever has one.
+   */
+  resumes?: ResumeRecord[];
   /** career-documents epic, persisted-links story: portfolio/GitHub/personal-site links -- generalizes linkedInUrl (kept unchanged) into a real list. Read by buildApplicantDataBlock() so every LLM call site (generateDraft, generatePrepPacket) picks it up automatically. */
   links?: string[];
 }
@@ -670,6 +705,16 @@ export interface DraftContent {
    * everything.
    */
   format?: DraftFormat;
+  /**
+   * resume-store-multi-resume-and-tailoring story. Which `ResumeRecord.id`
+   * (from `ApplyProfileConfig.resumes`) `generateDraft()` actually used for
+   * this draft -- undefined means either no resume was on file at all, or
+   * (legacy drafts predating this field) the resume selection was never
+   * tracked. Lets the review UI show "drafted using: <label>" and lets a
+   * regeneration re-select the SAME resume by default instead of silently
+   * falling back to the first one.
+   */
+  resumeId?: string;
 }
 
 /**

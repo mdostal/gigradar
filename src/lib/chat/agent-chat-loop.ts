@@ -47,6 +47,7 @@ import { SOURCE_PRESETS, sourceConfigFromPreset } from "../sources/source-preset
 import { computeStatusStrip } from "../status/status-strip.js";
 import { getGig, listGigs, setStatus } from "../store/gigs.js";
 import { saveInterviewPrep } from "../store/prep.js";
+import { saveResumeReviewSuggestion } from "../store/resume-reviews.js";
 import type { GigFilter, GigStatus, StoredGig } from "../store/types.js";
 import { readRawConfig, saveConfig } from "../config/save.js";
 import type { ConfigEdits } from "../config/save.js";
@@ -76,6 +77,9 @@ const ADD_SOURCE_TOOL = "add_source";
 // chat-copilot-self-tuning epic.
 const PROPOSE_CONFIG_EDIT_TOOL = "propose_config_edit";
 const NOTE_PREFERENCE_TOOL = "note_preference";
+// resume-store-multi-resume-and-tailoring story.
+const LIST_RESUMES_TOOL = "list_resumes";
+const PROPOSE_RESUME_REVIEW_TOOL = "propose_resume_review";
 
 /** Every tool NOT in this set is read-only and auto-executes; every tool IN this set is approval-gated, no exceptions (except propose_config_edit specifically, when Config.chatAutoApproveConfigEdits is true -- see runTurnLoop()). note_preference is DELIBERATELY excluded -- a memory note is never a config.json/behavior change, owner's own ruling (design-discussion.md §6, decision point 2). */
 const WRITE_TOOLS = new Set([
@@ -90,6 +94,7 @@ const WRITE_TOOLS = new Set([
   DISCONNECT_GMAIL_TOOL,
   ADD_SOURCE_TOOL,
   PROPOSE_CONFIG_EDIT_TOOL,
+  PROPOSE_RESUME_REVIEW_TOOL,
 ]);
 
 const GIG_STATUS_VALUES = ["new", "applied", "interview", "archived", "ignored"] as const;
@@ -140,20 +145,35 @@ const CHAT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: GENERATE_DRAFT_TOOL,
-    description: "Propose generating a drafted application (cover message) for a green/yellow-tier gig. Requires explicit user approval before it runs.",
+    description:
+      "Propose generating a drafted application (cover message) for a green/yellow-tier gig. Requires explicit user approval before it runs.",
     input_schema: {
       type: "object",
-      properties: { key: { type: "string", description: "The opaque key from a prior list_gigs result." } },
+      properties: {
+        key: { type: "string", description: "The opaque key from a prior list_gigs result." },
+        resumeId: {
+          type: "string",
+          description:
+            "Optional: which stored resume (from a prior list_resumes result) to ground this draft in. Omitted uses the first stored resume (or none, if the owner has none on file) -- pick this deliberately when generate_prep_packet's resumeRankings suggested a specific one fits this gig best.",
+        },
+      },
       required: ["key"],
       additionalProperties: false,
     },
   },
   {
     name: GENERATE_PREP_PACKET_TOOL,
-    description: "Propose generating a fit/gap analysis + interview prep packet for a gig, any tier. Requires explicit user approval before it runs.",
+    description:
+      "Propose generating a fit/gap analysis + interview prep packet for a gig, any tier. When the owner has 2+ resumes on file, this ALSO scores every one of them against the gig and reports which fits best (resumeRankings/resumeSuggestion). Requires explicit user approval before it runs.",
     input_schema: {
       type: "object",
-      properties: { key: { type: "string", description: "The opaque key from a prior list_gigs result." } },
+      properties: {
+        key: { type: "string", description: "The opaque key from a prior list_gigs result." },
+        resumeId: {
+          type: "string",
+          description: "Optional: which stored resume (from a prior list_resumes result) the packet's parseabilityIssues check targets. Omitted uses the first stored resume.",
+        },
+      },
       required: ["key"],
       additionalProperties: false,
     },
@@ -220,6 +240,12 @@ const CHAT_TOOLS: Anthropic.Tool[] = [
     input_schema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
+    name: LIST_RESUMES_TOOL,
+    description:
+      "List every stored resume (id, label, uploadedAt) on the owner's apply profile. Read-only -- runs immediately, no approval needed. Call this before generate_draft/generate_prep_packet/propose_resume_review when you need a real resumeId to reference.",
+    input_schema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
     name: ADD_SOURCE_TOOL,
     description:
       "Propose adding a new source. Either presetId (from a prior list_source_presets result) alone, OR sourceId + url (+ optional hint) for a platform with no preset. Requires explicit user approval before it runs.",
@@ -257,6 +283,26 @@ const CHAT_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["summary", "edits", "reason"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: PROPOSE_RESUME_REVIEW_TOOL,
+    description:
+      "Propose real, specific review feedback on ONE stored resume against ONE specific gig -- e.g. \"consider adding Kubernetes -- the listing mentions it 3 times\" or \"this resume doesn't mention the SOC2 experience the listing calls out repeatedly\". Ground this in a REAL generate_prep_packet result for the same gig (its keyGaps/missingKeywords/resumeTweaks/parseabilityIssues), never a generic guess. Requires explicit user approval before the suggestion is recorded -- never applied/recorded silently.",
+    input_schema: {
+      type: "object",
+      properties: {
+        key: { type: "string", description: "The opaque gig key (from a prior list_gigs result) this review is about." },
+        resumeId: { type: "string", description: "Which stored resume (from a prior list_resumes result) this review is about." },
+        summary: { type: "string", description: "One human-readable line naming the overall verdict, shown verbatim on the approval card." },
+        suggestions: {
+          type: "array",
+          items: { type: "string" },
+          description: "Concrete, specific suggestions -- each naming a real gap/keyword/formatting issue and what to do about it, never generic advice.",
+        },
+      },
+      required: ["key", "resumeId", "summary", "suggestions"],
       additionalProperties: false,
     },
   },
@@ -456,6 +502,19 @@ async function executeReadOnlyTool(toolUse: Anthropic.ToolUseBlock, entry: LoopE
     return { message: toolResultMessage(toolUse.id, JSON.stringify(summary)) };
   }
 
+  if (toolUse.name === LIST_RESUMES_TOOL) {
+    // Reads the RAW, non-secret-resolving document (readRawConfig()) --
+    // same discipline get_status_summary above already follows -- never
+    // loadConfig(), which resolves "env:" references this doesn't need.
+    // migrateApplyProfileResumes() (config/load.ts) already ran inside
+    // readRawConfig() itself, so a pre-existing single-resume install's
+    // one resume shows up here too, not just brand-new multi-resume ones.
+    const rawConfig = readRawConfig();
+    const applyProfile = rawConfig.applyProfile as { resumes?: Array<{ id: string; label: string; uploadedAt: string }> } | undefined;
+    const resumes = (applyProfile?.resumes ?? []).map((r) => ({ id: r.id, label: r.label, uploadedAt: r.uploadedAt }));
+    return { message: toolResultMessage(toolUse.id, JSON.stringify(resumes)) };
+  }
+
   if (toolUse.name === TAKE_SCREENSHOT_TOOL) {
     const active = entry.activeCapture;
     if (!active) {
@@ -521,6 +580,8 @@ function describeProposal(tool: string, input: Record<string, unknown>): string 
       return input.presetId ? `Add source from the "${input.presetId}" preset` : `Add source "${input.sourceId}" (${input.url})`;
     case PROPOSE_CONFIG_EDIT_TOOL:
       return String(input.summary ?? "");
+    case PROPOSE_RESUME_REVIEW_TOOL:
+      return `Resume review for "${input.resumeId}" on gig "${input.key}": ${String(input.summary ?? "")}`;
     default:
       return tool;
   }
@@ -583,7 +644,8 @@ async function executeWriteTool(
     const gig = getGig(key);
     if (!gig) throw new Error(`generate_draft: no gig found with key "${key}".`);
     const matchResult: MatchResult = { gig, pass: true, reasons: [], score: 1, tier: gig.tier, matchedProfiles: gig.matchedProfileIds ?? [] };
-    await stageApplication(matchResult, config, credential);
+    const resumeId = typeof input.resumeId === "string" ? input.resumeId : undefined;
+    await stageApplication(matchResult, config, credential, {}, resumeId);
     return `Generated a draft for "${key}". Review it on /drafts.`;
   }
 
@@ -591,9 +653,13 @@ async function executeWriteTool(
     const key = String(input.key ?? "");
     const gig = getGig(key);
     if (!gig) throw new Error(`generate_prep_packet: no gig found with key "${key}".`);
-    const content = await generatePrepPacket(gig, config.profile, config.applyProfile, credential);
+    const resumeId = typeof input.resumeId === "string" ? input.resumeId : undefined;
+    const content = await generatePrepPacket(gig, config.profile, config.applyProfile, credential, resumeId);
     saveInterviewPrep(key, content);
-    return `Generated a prep packet for "${key}": fit score ${content.score}/100. ${content.recommendation}`;
+    const suggestionNote = content.resumeSuggestion
+      ? ` Best-fit resume: "${content.resumeSuggestion.bestResumeId}".`
+      : "";
+    return `Generated a prep packet for "${key}": fit score ${content.score}/100. ${content.recommendation}${suggestionNote}`;
   }
 
   if (tool === RUN_SCAN_TOOL) {
@@ -716,6 +782,23 @@ async function executeWriteTool(
     const reason = String(input.reason ?? "");
     if (reason) recordPreference(reason, sessionId);
     return `Applied: ${String(input.summary ?? "")}`;
+  }
+
+  if (tool === PROPOSE_RESUME_REVIEW_TOOL) {
+    const key = String(input.key ?? "");
+    const gig = getGig(key);
+    if (!gig) throw new Error(`propose_resume_review: no gig found with key "${key}".`);
+    const resumeId = String(input.resumeId ?? "");
+    const summary = String(input.summary ?? "");
+    const suggestions = Array.isArray(input.suggestions) ? input.suggestions.map((s) => String(s)) : [];
+    // Nothing is written until THIS point -- executeWriteTool only ever
+    // runs on explicit owner approval (resolveApproval(approve:true)) or
+    // the (never applicable to this tool -- it's not propose_config_edit)
+    // auto-approve escape hatch, matching this app's "assists, never
+    // auto-submits" posture. See store/resume-reviews.ts's own header
+    // comment for why this is a fresh INSERT, never an upsert.
+    saveResumeReviewSuggestion(key, resumeId, summary, suggestions);
+    return `Recorded resume review feedback for "${resumeId}" on "${key}": ${summary}`;
   }
 
   throw new Error(`${MODULE_PREFIX}: unrecognized write tool "${tool}".`);

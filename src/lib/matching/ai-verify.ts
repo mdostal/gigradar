@@ -33,7 +33,7 @@ import { z } from "zod";
 import type { ApplyProfileConfig, Gig, GroupConfig, Profile } from "../types.js";
 import { createAiSdkModel, generateHarnessObject, toHarnessContentBlocks } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
-import { loadResume } from "../documents/resume-store.js";
+import { loadResume, pickResume } from "../documents/resume-store.js";
 import { buildResumeContentBlock } from "../profile-ingestion/extract.js";
 
 const VERIFY_TOOL_NAME = "verify_role_match";
@@ -126,7 +126,14 @@ export async function verifyGroupMatch(
   applyProfile: ApplyProfileConfig | undefined,
   credential: LlmCredential,
 ): Promise<AiVerifyResult> {
-  const resumeFile = applyProfile?.resumePath ? loadResume(applyProfile.resumePath) : undefined;
+  // resume-store-multi-resume-and-tailoring story: this stays a role-type
+  // judgment with no per-application resume selection of its own (see this
+  // function's doc comment) -- pickResume() with no resumeId falls back to
+  // the FIRST stored resume, byte-identical to this call's old
+  // single-resumePath behavior for an install with (or that only ever had)
+  // one resume.
+  const selectedResume = pickResume(applyProfile?.resumes);
+  const resumeFile = selectedResume ? loadResume(selectedResume.path) : undefined;
   const resumeBlock = resumeFile
     ? buildResumeContentBlock(
         resumeFile.mediaType === "application/pdf"

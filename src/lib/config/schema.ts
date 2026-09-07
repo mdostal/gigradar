@@ -150,6 +150,17 @@ export const GroupConfigSchema = z.object({
  * `Config` (see ConfigSchema below), same "omitted = not configured, not an
  * error" pattern as `RoleAreaConfigSchema`/`schedule`.
  */
+/**
+ * Mirrors `ResumeRecord` in src/lib/types.ts (resume-store-multi-resume-
+ * and-tailoring story).
+ */
+export const ResumeRecordSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  path: z.string().min(1),
+  uploadedAt: z.string(),
+});
+
 export const ApplyProfileConfigSchema = z.object({
   email: z.string(),
   phone: z.string().optional(),
@@ -157,8 +168,8 @@ export const ApplyProfileConfigSchema = z.object({
   headline: z.string().optional(),
   bio: z.string().optional(),
   rateAnchor: z.number().optional(),
-  /** career-documents epic, resume-store story: a path reference to an encrypted-at-rest resume file (resume-store.ts's getResumePath()), same "path in config, real bytes on disk" convention as SourceConfig.settings.sessionStatePath. Omitted = no resume on file, not an error. */
-  resumePath: z.string().optional(),
+  /** resume-store-multi-resume-and-tailoring story: replaces the old single `resumePath` field with a keyed/versioned list -- see ResumeRecord's own doc comment in types.ts. A pre-existing config.json with the old flat `resumePath` field is migrated into a one-entry list on read (config/load.ts's migrateApplyProfileResumes()) before this schema ever sees it. */
+  resumes: z.array(ResumeRecordSchema).optional(),
   /** career-documents epic, persisted-links story: portfolio/GitHub/personal-site links, generalizing linkedInUrl (kept unchanged). */
   links: z.array(z.string()).optional(),
 });

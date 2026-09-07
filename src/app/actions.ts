@@ -178,7 +178,7 @@ const MISSING_API_KEY_ERROR =
  * stageApplication() (pointing at /config)" in the dashboard UI, never a
  * generic failure message.
  */
-export async function generateDraftAction(key: string): Promise<ActionResult<{ gigKey: string }>> {
+export async function generateDraftAction(key: string, resumeId?: string): Promise<ActionResult<{ gigKey: string }>> {
   const gig = getGig(key);
   if (!gig) {
     return actionErr(new Error(`gigradar apply: no gig found for key "${key}".`));
@@ -208,7 +208,12 @@ export async function generateDraftAction(key: string): Promise<ActionResult<{ g
   };
 
   try {
-    await stageApplication(matchResult, parsedConfig.data, credential);
+    // resume-store-multi-resume-and-tailoring story: `resumeId` (optional
+    // -- a specific stored resume the caller wants THIS draft grounded
+    // in) is threaded straight through to stageApplication()/
+    // generateDraft(), which fall back to the first stored resume when
+    // omitted, byte-identical to the old single-resume default.
+    await stageApplication(matchResult, parsedConfig.data, credential, {}, resumeId);
   } catch (e) {
     return actionErr(e);
   }
@@ -238,7 +243,7 @@ export async function generateDraftAction(key: string): Promise<ActionResult<{ g
  * `updateGigStatusAction`'s best-effort auto-prep call below already does
  * its own regardless of whether generation succeeded.
  */
-async function runPrepPacketGeneration(key: string): Promise<ActionResult<PrepPacketContent>> {
+async function runPrepPacketGeneration(key: string, resumeId?: string): Promise<ActionResult<PrepPacketContent>> {
   const gig = getGig(key);
   if (!gig) {
     return actionErr(new Error(`gigradar career-crm: no gig found for key "${key}".`));
@@ -260,7 +265,13 @@ async function runPrepPacketGeneration(key: string): Promise<ActionResult<PrepPa
 
   let content: PrepPacketContent;
   try {
-    content = await generatePrepPacket(gig, parsedConfig.data.profile, parsedConfig.data.applyProfile, credential);
+    // resume-store-multi-resume-and-tailoring story: `resumeId` (optional)
+    // selects which stored resume the packet's parseabilityIssues check
+    // targets -- omitted falls back to the first stored resume. When 2+
+    // resumes are on file, the SAME call also scores every one of them
+    // against this gig (see PrepPacketContent.resumeSuggestion), regardless
+    // of `resumeId`.
+    content = await generatePrepPacket(gig, parsedConfig.data.profile, parsedConfig.data.applyProfile, credential, resumeId);
   } catch (e) {
     return actionErr(e);
   }
@@ -269,8 +280,8 @@ async function runPrepPacketGeneration(key: string): Promise<ActionResult<PrepPa
   return actionOk(content);
 }
 
-export async function generatePrepPacketAction(key: string): Promise<ActionResult<PrepPacketContent>> {
-  const result = await runPrepPacketGeneration(key);
+export async function generatePrepPacketAction(key: string, resumeId?: string): Promise<ActionResult<PrepPacketContent>> {
+  const result = await runPrepPacketGeneration(key, resumeId);
   if (result.ok) revalidatePath("/");
   return result;
 }

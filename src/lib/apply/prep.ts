@@ -31,7 +31,7 @@
 // design_decisions in the story YAML.
 import { type FilePart, NoOutputGeneratedError, Output, type TextPart, generateText } from "ai";
 import { z } from "zod";
-import { loadResume } from "../documents/resume-store.js";
+import { loadResume, pickResume } from "../documents/resume-store.js";
 import { buildResumeContentBlock } from "../profile-ingestion/extract.js";
 import type { ApplyProfileConfig, Gig, Profile } from "../types.js";
 import { createAiSdkModel, generateHarnessObject, toHarnessContentBlocks } from "../config/llm-client.js";
@@ -39,6 +39,9 @@ import type { LlmCredential } from "../config/env-store.js";
 import { buildApplicantDataBlock, buildGigDataBlock } from "./draft.js";
 
 const PREP_TOOL_NAME = "report_prep_packet";
+
+/** Only attach a per-resume ranking request when this many (or more) resumes are actually on file -- "which fits best" is meaningless with zero or one. */
+const MIN_RESUMES_FOR_RANKING = 2;
 
 const PrepResultSchema = z.object({
   score: z.number().describe("Overall fit score, 1-100."),
@@ -56,6 +59,21 @@ const PrepResultSchema = z.object({
     .array(z.string())
     .describe(
       "ONLY when a real resume file/document was actually attached to this request: specific, observable format/structure problems that would trip up an automated ATS parser (multi-column layout, tables, text embedded in images, contact info in a header/footer, non-standard section headings) -- each naming the SPECIFIC problem, never vague. If NO resume file was attached, this MUST be an empty array -- never guess or fabricate issues about a resume you cannot see.",
+    ),
+  // resume-store-multi-resume-and-tailoring story: extends this SAME
+  // fit-scoring call (never a second, parallel LLM call) to also compare
+  // every stored resume against this gig, when 2+ are on file -- see
+  // this file's header comment for why that reuse matters.
+  resumeRankings: z
+    .array(
+      z.object({
+        resumeId: z.string().describe("The exact resumeId this ranking is for, copied verbatim from that resume option's own labeled block below."),
+        fitScore: z.number().describe("1-100: how well THIS SPECIFIC resume (not the applicant's profile in general) presents a fit for this gig, grounded in what's actually in that resume file."),
+        reasoning: z.string().describe("One or two sentences of real, specific reasoning for this resume's fitScore -- what in THIS resume helps or hurts for THIS gig."),
+      }),
+    )
+    .describe(
+      `ONLY when 2 or more resume options were actually attached to this request (each in its own labeled block below): one entry per attached resume, covering EVERY attached resumeId exactly once. If fewer than 2 resume options were attached, this MUST be an empty array.`,
     ),
 });
 
@@ -80,7 +98,7 @@ export interface AtsScore {
   matchedKeywords: string[];
   missingKeywords: string[];
   resumeTweaks: string[];
-  /** career-documents epic: empty when no resume is on file (applyProfile.resumePath unset) -- never fabricated, only ever populated when a real resume file was actually read. */
+  /** career-documents epic: empty when no resume is on file (applyProfile.resumes empty/unset) -- never fabricated, only ever populated when a real resume file was actually read. */
   parseabilityIssues: string[];
   /**
    * True only when a real resume file was actually read and embedded in
@@ -101,6 +119,20 @@ export interface PrepPacketContent {
   predictedQuestions: string[];
   starlaStories: string[];
   atsScore: AtsScore;
+  /**
+   * resume-store-multi-resume-and-tailoring story. Real, LLM-produced
+   * per-resume fit comparison -- present ONLY when `applyProfile.resumes`
+   * held 2+ entries at generation time (undefined otherwise, never an
+   * empty/placeholder object). `bestResumeId` is picked HERE in code (the
+   * highest `fitScore` among `rankings`), never asked of the model
+   * directly -- deterministic given the model's own real per-resume
+   * scores, rather than a second judgment call that could disagree with
+   * them.
+   */
+  resumeSuggestion?: {
+    rankings: Array<{ resumeId: string; label: string; fitScore: number; reasoning: string }>;
+    bestResumeId: string;
+  };
 }
 
 /**
@@ -111,6 +143,19 @@ export interface PrepPacketContent {
  * resolve it themselves via `resolveLlmCredential()`, however is
  * appropriate for their own calling context.
  *
+ * resume-store-multi-resume-and-tailoring story: `selectedResumeId`
+ * chooses WHICH stored resume `parseabilityIssues` checks (via
+ * `documents/resume-store.ts`'s `pickResume()` -- omitted falls back to
+ * the first stored resume, byte-identical to the old single-resume
+ * behavior). Independently of that selection, when `applyProfile.resumes`
+ * holds 2+ entries, EVERY one of them is attached (each its own labeled
+ * content block) and this SAME call also asks the model to rank each
+ * against this gig -- see `PrepResultSchema.resumeRankings` and
+ * `PrepPacketContent.resumeSuggestion` above. This reuses the existing
+ * fit-scoring call/schema/data-block builders rather than a second,
+ * parallel matching mechanism -- see this file's header comment and the
+ * story's own design_decisions.
+ *
  * Throws a specific error if the model's response doesn't include the
  * expected structured output, or if the underlying API call itself fails —
  * never silently returns a partial/placeholder packet.
@@ -120,13 +165,23 @@ export async function generatePrepPacket(
   profile: Profile,
   applyProfile: ApplyProfileConfig | undefined,
   credential: LlmCredential,
+  selectedResumeId?: string,
 ): Promise<PrepPacketContent> {
   // career-documents epic, real-parseability-check story: loadResume()
   // returns undefined gracefully (missing/never-uploaded/deleted file),
   // never throws for that case -- this call degrades to the keyword-overlap-
   // only behavior ats-navigator already shipped, exactly as before this
   // story existed.
-  const resumeFile = applyProfile?.resumePath ? loadResume(applyProfile.resumePath) : undefined;
+  const allResumes = applyProfile?.resumes ?? [];
+  const selectedResume = pickResume(allResumes, selectedResumeId);
+  // resume-store-multi-resume-and-tailoring story: when 2+ resumes are on
+  // file, EVERY one is attached below as its own labeled "resume option"
+  // block (including the selected one) so the model can genuinely compare
+  // them -- so the single generic resumeBlock below is only built for the
+  // 0-or-1-resume case, never a redundant SECOND copy of the same file the
+  // selected resume's own option block already carries.
+  const hasMultipleResumes = allResumes.length >= MIN_RESUMES_FOR_RANKING;
+  const resumeFile = !hasMultipleResumes && selectedResume ? loadResume(selectedResume.path) : undefined;
   const resumeBlock = resumeFile
     ? buildResumeContentBlock(
         resumeFile.mediaType === "application/pdf"
@@ -134,6 +189,27 @@ export async function generatePrepPacket(
           : { resumeText: resumeFile.data.toString("utf8") },
       )
     : undefined;
+
+  const loadedResumeIds = new Set<string>();
+  const resumeOptionBlocks: Array<TextPart | FilePart> = !hasMultipleResumes
+    ? []
+    : allResumes.flatMap((record) => {
+        const file = loadResume(record.path);
+        if (!file) return [];
+        loadedResumeIds.add(record.id);
+        const block = buildResumeContentBlock(
+          file.mediaType === "application/pdf" ? { resumeFile: { data: file.data, mediaType: "application/pdf" } } : { resumeText: file.data.toString("utf8") },
+        );
+        // block is never actually undefined here -- the ternary above always passes resumeFile or resumeText.
+        return [{ type: "text" as const, text: `Resume option -- resumeId="${record.id}", label="${record.label}":` }, block as TextPart | FilePart];
+      });
+  // The primary resume's own file (if it loaded successfully) drives
+  // parseabilityIssues in the multi-resume case -- named explicitly so the
+  // model knows which OPTION block that check applies to, since there's no
+  // separate single resumeBlock to point at here. Reuses whether that
+  // resume's id made it into `loadedResumeIds` above rather than a second,
+  // redundant loadResume()/decrypt() of the same file.
+  const hasParseabilityTarget = hasMultipleResumes ? selectedResume !== undefined && loadedResumeIds.has(selectedResume.id) : resumeBlock !== undefined;
 
   const contentBlocks: Array<TextPart | FilePart> = [
     {
@@ -150,13 +226,22 @@ export async function generatePrepPacket(
         "emphasizes that the applicant's tracked skills/roles do not mention), and resumeTweaks -- concrete, " +
         "mechanical actions to close that gap (e.g. \"add 'Kubernetes' to your skills -- it appears 3 times in " +
         "this listing\"), each one naming a specific missingKeywords entry, never generic advice. " +
-        (resumeBlock
-          ? "A real resume file is attached below -- ALSO report parseabilityIssues: specific, observable ATS " +
+        (hasParseabilityTarget
+          ? "A real resume file is attached below" +
+            (hasMultipleResumes ? ` (the resume option with resumeId="${selectedResume?.id}")` : "") +
+            " -- ALSO report parseabilityIssues: specific, observable ATS " +
             "parsing problems in its ACTUAL format (multi-column layout, tables, text embedded in images, contact " +
             "info in a header/footer, non-standard section headings). Only report what you can genuinely observe " +
-            "in the attached file, never a generic list."
+            "in that attached file, never a generic list."
           : "No resume file is attached to this request -- parseabilityIssues MUST be an empty array; never " +
             "guess or fabricate a format issue for a resume you cannot see.") +
+        (resumeOptionBlocks.length > 0
+          ? " Several resume OPTIONS are ALSO attached below, each in its own \"Resume option\" block naming its " +
+            "resumeId/label -- ALSO report resumeRankings: one entry per attached resumeId (copied verbatim), each " +
+            "with its own fitScore (1-100) and short reasoning grounded in what's ACTUALLY in that specific resume " +
+            "file, so the applicant can see which one best fits this gig."
+          : " No resume options are attached for a multi-resume comparison this time -- resumeRankings MUST be an " +
+            "empty array.") +
         " CRITICAL: never invent, embellish, or assume experience, skills, requirements, or figures that are not " +
         "explicitly present in the data below. A gap, question, or keyword claim must be grounded in what's " +
         "actually stated, not an assumption about what a listing like this usually asks.",
@@ -164,6 +249,7 @@ export async function generatePrepPacket(
     { type: "text", text: buildApplicantDataBlock(profile, applyProfile ?? { email: "" }) },
     { type: "text", text: buildGigDataBlock(gig) },
     ...(resumeBlock ? [{ type: "text" as const, text: "The applicant's real, current resume file follows:" }, resumeBlock] : []),
+    ...resumeOptionBlocks,
     { type: "text", text: `Now report the complete result via the ${PREP_TOOL_NAME} structured output.` },
   ];
 
@@ -206,8 +292,26 @@ export async function generatePrepPacket(
       // Belt-and-suspenders: even if the model ignores the "empty when no
       // resume attached" instruction, never surface fabricated issues when
       // this call genuinely had no resume block to look at.
-      parseabilityIssues: resumeBlock ? parsed.parseabilityIssues : [],
-      resumeChecked: resumeBlock !== undefined,
+      parseabilityIssues: hasParseabilityTarget ? parsed.parseabilityIssues : [],
+      resumeChecked: hasParseabilityTarget,
     },
+    // resume-store-multi-resume-and-tailoring story: same belt-and-
+    // suspenders posture as parseabilityIssues above -- never surface a
+    // fabricated ranking (or a stray one referencing an unknown resumeId)
+    // when this call genuinely didn't attach 2+ resume options.
+    ...(() => {
+      if (!hasMultipleResumes) return {};
+      const rankings = parsed.resumeRankings
+        .filter((r) => allResumes.some((record) => record.id === r.resumeId))
+        .map((r) => ({
+          resumeId: r.resumeId,
+          label: allResumes.find((record) => record.id === r.resumeId)?.label ?? r.resumeId,
+          fitScore: r.fitScore,
+          reasoning: r.reasoning,
+        }));
+      if (rankings.length === 0) return {};
+      const bestResumeId = rankings.reduce((a, b) => (b.fitScore > a.fitScore ? b : a)).resumeId;
+      return { resumeSuggestion: { rankings, bestResumeId } };
+    })(),
   };
 }

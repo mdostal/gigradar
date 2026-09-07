@@ -274,6 +274,59 @@ export function migrateFlatNeedsRoleAreaToGroups(parsed: unknown): unknown {
 }
 
 /**
+ * resume-store-multi-resume-and-tailoring story. Backfills
+ * `applyProfile.resumes` from the deprecated single flat
+ * `applyProfile.resumePath` field when the new field is absent --
+ * read-time-only, same convention as `migrateNeedsEngagementProfiles()`/
+ * `migrateFlatNeedsRoleAreaToGroups()` above (runs on the PARSED-but-not-
+ * yet-validated JS object, before `ApplyProfileConfigSchema` — which no
+ * longer has a `resumePath` field at all — ever sees it; never writes to
+ * disk itself). This is the ONLY thing standing between an owner's real,
+ * already-uploaded resume and total data loss the moment this story's
+ * schema change ships: `resumePath` is dropped from `ApplyProfileConfig`,
+ * so a config.json written before this story exists would otherwise fail
+ * validation outright (a required-shape mismatch, not silently ignored --
+ * `resumes` has no default) the very next time gigradar starts.
+ *
+ * The synthesized record's `id` is the fixed slug `"default"` (there's
+ * only ever one resume to migrate, so no id-collision risk) and its
+ * `label` is a generic "Resume" (there's no historical per-resume label to
+ * recover, same "no attempt to guess a name" posture
+ * `migrateFlatNeedsRoleAreaToGroups()`'s own doc comment documents for its
+ * synthesized group). `uploadedAt` prefers the file's own on-disk mtime
+ * (the closest real signal to when it was actually saved) and falls back
+ * to the current time only when the file is missing/unreadable (e.g. a
+ * `resumePath` that survived in config.json after its file was deleted
+ * out-of-band) -- migrating the REFERENCE forward either way, since
+ * `loadResume()` already degrades gracefully (returns `undefined`, never
+ * throws) for a resume record whose file turns out to be gone.
+ *
+ * `resumePath` itself is left in place harmlessly (zod strips unknown
+ * keys, same as every other migrated-away flat field in this file) -- a
+ * subsequent config save naturally drops it since the config UI's draft no
+ * longer round-trips it.
+ */
+export function migrateApplyProfileResumes(parsed: unknown): unknown {
+  if (typeof parsed !== "object" || parsed === null) return parsed;
+  const doc = parsed as Record<string, unknown>;
+  if (typeof doc.applyProfile !== "object" || doc.applyProfile === null) return parsed;
+  const applyProfile = doc.applyProfile as Record<string, unknown>;
+  if ("resumes" in applyProfile) return parsed;
+  const resumePath = applyProfile.resumePath;
+  if (typeof resumePath !== "string" || resumePath.trim() === "") return parsed;
+
+  let uploadedAt: string;
+  try {
+    uploadedAt = fs.statSync(resumePath).mtime.toISOString();
+  } catch {
+    uploadedAt = new Date().toISOString();
+  }
+
+  const resumes = [{ id: "default", label: "Resume", path: resumePath, uploadedAt }];
+  return { ...doc, applyProfile: { ...applyProfile, resumes } };
+}
+
+/**
  * Reads, decrypts (if needed), parses, and validates config.json from the
  * XDG data directory. Synchronous by design (not deferred) — this matches
  * the primary caller (src/lib/apply/runner.ts, invoked via tsx) and
@@ -360,7 +413,7 @@ export function loadConfig(): Config {
     migrateConfigToEncryptedAtomically(configPath, raw);
   }
 
-  const migrated = migrateFlatNeedsRoleAreaToGroups(migrateNeedsEngagementProfiles(parsed));
+  const migrated = migrateApplyProfileResumes(migrateFlatNeedsRoleAreaToGroups(migrateNeedsEngagementProfiles(parsed)));
 
   const result = ConfigSchema.safeParse(migrated);
   if (!result.success) {

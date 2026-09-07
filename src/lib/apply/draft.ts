@@ -34,7 +34,7 @@ import type { ApplyProfileConfig, Config, DraftContent, DraftFormat, Gig, Profil
 import { createAiSdkModel, generateHarnessObject, toHarnessContentBlocks } from "../config/llm-client.js";
 import type { LlmCredential } from "../config/env-store.js";
 import { getSource } from "../sources/source.js";
-import { loadResume } from "../documents/resume-store.js";
+import { loadResume, pickResume } from "../documents/resume-store.js";
 import { buildResumeContentBlock } from "../profile-ingestion/extract.js";
 
 const DRAFT_TOOL_NAME = "draft_application";
@@ -172,14 +172,23 @@ const FORMAT_INSTRUCTIONS: Record<DraftFormat, string> = {
  * above).
  *
  * deep-memory-and-context epic: also attaches the applicant's real resume
- * file when one is on file (`applyProfile.resumePath`), via the SAME
- * `loadResume()`/`buildResumeContentBlock()` mechanism `prep.ts`'s
- * `generatePrepPacket()` already established — never a second, duplicated
- * resume-loading implementation. Previously this draft was grounded ONLY
- * in `Profile`'s shallow `{roles, skills, ...}` fields; a resume file
- * carries real, specific work history/achievements no structured field
- * captures. Degrades gracefully (no resume attached) exactly like
- * `prep.ts` does when `resumePath` is unset or the file is missing.
+ * file when one is on file, via the SAME `loadResume()`/
+ * `buildResumeContentBlock()` mechanism `prep.ts`'s `generatePrepPacket()`
+ * already established — never a second, duplicated resume-loading
+ * implementation. Previously this draft was grounded ONLY in `Profile`'s
+ * shallow `{roles, skills, ...}` fields; a resume file carries real,
+ * specific work history/achievements no structured field captures.
+ * Degrades gracefully (no resume attached) exactly like `prep.ts` does
+ * when no resume is on file or the selected one's file is missing.
+ *
+ * resume-store-multi-resume-and-tailoring story: `resumeId` selects WHICH
+ * of `applyProfile.resumes` to use (via `documents/resume-store.ts`'s
+ * `pickResume()`) — omitted falls back to the first stored resume,
+ * preserving the old single-resume behavior byte-for-byte for an install
+ * that only ever has one. The resume actually resolved (if any) is stamped
+ * onto the returned `DraftContent.resumeId`, so a caller always knows
+ * exactly which stored resume a given draft was grounded in, even when it
+ * fell back to the default.
  *
  * `credential` is used to construct the model HERE, inside this function
  * call, and nowhere else — see this file's header comment. Callers (e.g.
@@ -196,8 +205,10 @@ export async function generateDraft(
   applyProfile: ApplyProfileConfig,
   credential: LlmCredential,
   format: DraftFormat = "cover-letter",
+  resumeId?: string,
 ): Promise<DraftContent> {
-  const resumeFile = applyProfile.resumePath ? loadResume(applyProfile.resumePath) : undefined;
+  const selectedResume = pickResume(applyProfile.resumes, resumeId);
+  const resumeFile = selectedResume ? loadResume(selectedResume.path) : undefined;
   const resumeBlock = resumeFile
     ? buildResumeContentBlock(
         resumeFile.mediaType === "application/pdf"
@@ -225,7 +236,7 @@ export async function generateDraft(
 
   if (credential.kind === "claude-code-harness") {
     const result = await generateHarnessObject(DraftResultSchema, toHarnessContentBlocks(contentBlocks));
-    return { ...result, format };
+    return { ...result, format, resumeId: selectedResume?.id };
   }
 
   const model = createAiSdkModel(credential);
@@ -237,7 +248,7 @@ export async function generateDraft(
   });
 
   try {
-    return { ...result.output, format };
+    return { ...result.output, format, resumeId: selectedResume?.id };
   } catch (e) {
     if (e instanceof NoOutputGeneratedError) {
       throw new Error("gigradar apply: the model's response did not include the expected structured draft result.");
