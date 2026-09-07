@@ -45,7 +45,7 @@ import { resolveLlmCredential } from "../lib/config/env-store.js";
 import { readRawConfig } from "../lib/config/save.js";
 import { computeStatusStrip } from "../lib/status/status-strip.js";
 import { getGig, listGigs, setStatus } from "../lib/store/gigs.js";
-import type { GigFilter, GigStatus } from "../lib/store/types.js";
+import type { GigFilter, GigStatus, StoredGig } from "../lib/store/types.js";
 import type { Tier } from "../lib/types.js";
 
 // Registers every built-in source's side-effecting registerSource() call —
@@ -140,6 +140,23 @@ export interface ListGigsArgs {
 }
 
 /**
+ * remaining-cross-group-tier-leaks story. Mirrors
+ * src/app/dashboard-filter.ts's resolveDisplayTier() byte-for-byte (a
+ * `groupId`-scoped lookup falls back to "yellow" -- tiering.ts's own "no
+ * match -> surfaced for review, never a hard reject" convention -- never
+ * an unrelated group's flat/primary tier; no `groupId` returns the flat
+ * `tier` unchanged, its legacy pre-multi-group meaning). Reimplemented
+ * locally rather than imported: that module is src/app-only and this file
+ * deliberately never imports from src/app (see this file's header comment
+ * — the exact same reasoning `search`'s reimplementation below already
+ * follows for dashboard-filter.ts's search semantics).
+ */
+function resolveDisplayTier(gig: Pick<StoredGig, "tier" | "matchedGroupTiers">, groupId: string | undefined): Tier | undefined {
+  if (groupId) return gig.matchedGroupTiers?.[groupId] ?? "yellow";
+  return gig.tier;
+}
+
+/**
  * Wraps listGigs() (src/lib/store/gigs.ts). `status` is passed straight
  * through to listGigs()'s own GigFilter (server-side, in the SQL WHERE
  * clause) since that's a filter the store already supports natively.
@@ -153,6 +170,13 @@ export interface ListGigsArgs {
  * reimplemented rather than imported, since importing it would be exactly
  * the src/mcp -> src/app sideways dependency this story avoided for
  * status-strip.ts (grill finding H2).
+ *
+ * `tier` filters against THIS group's own tier (resolveDisplayTier() above)
+ * when `groupId` is also given, not the flat/primary-group `gig.tier` --
+ * real bug this closes: `list_gigs({ groupId: "b", tier: "green" })`
+ * previously could return a gig that's green for group A (the flat tier)
+ * but red/yellow for group B, exactly the cross-group leak PR #163 fixed
+ * for the dashboard's own Tier column.
  */
 export async function handleListGigs(args: ListGigsArgs): Promise<CallToolResult> {
   try {
@@ -160,7 +184,7 @@ export async function handleListGigs(args: ListGigsArgs): Promise<CallToolResult
     if (args.status) filter.status = args.status;
     if (args.groupId) filter.groupId = args.groupId;
     let gigs = listGigs(filter);
-    if (args.tier) gigs = gigs.filter((g) => g.tier === args.tier);
+    if (args.tier) gigs = gigs.filter((g) => resolveDisplayTier(g, args.groupId) === args.tier);
     const term = args.search?.trim().toLowerCase();
     if (term) gigs = gigs.filter((g) => `${g.title} ${g.company ?? ""}`.toLowerCase().includes(term));
     return toolOk(gigs);

@@ -79,6 +79,17 @@ export function InterviewWorkspaceClient({
   const [isGeneratingPrep, startPrepTransition] = useTransition();
   const [isGeneratingDraft, startDraftTransition] = useTransition();
 
+  // remaining-cross-group-tier-leaks story: this is deliberately NOT
+  // switched to resolveDisplayTier(gig, groupId) like dashboard-client.tsx's
+  // Tier column (PR #163) / gig-detail-panel.tsx's badge. This route
+  // (`/gigs/[key]/interview`, interview-data.ts's loadInterviewWorkspaceData())
+  // has no `groupId` concept anywhere in its path -- there is no
+  // `/[group]/gigs/[key]/interview` route, and the ONLY link to this page
+  // (dashboard-client.tsx's renderPrepSection()) always points at this same
+  // unscoped URL regardless of which group's giglist it was clicked from.
+  // It's legitimately group-agnostic, the same way `/drafts` is (no
+  // group-scoped equivalent route or link exists for either) -- not an
+  // overlooked case of the PR #163 bug.
   const tierStyle = gig.tier ? TIER_BADGE_STYLE[gig.tier] : TIER_BADGE_FALLBACK_STYLE;
 
   function handleGeneratePrep() {
