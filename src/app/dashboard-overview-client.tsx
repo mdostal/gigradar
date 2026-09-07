@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { StoredDraft, StoredGig } from "@/lib/store";
-import { isWithinSeenWindow } from "./dashboard-filter";
+import { isWithinSeenWindow, resolveDisplayTier } from "./dashboard-filter";
 import { computeDiscoveredByDay, computeRunRate } from "./metrics-calc";
 import { BarChart } from "./metrics/metrics-client";
 import {
@@ -32,10 +32,19 @@ const TILE_LABEL: Record<TileId, string> = {
   trackedTotal: "Tracked total",
 };
 
-function computeTileValue(id: TileId, gigs: readonly StoredGig[]): number {
+// new-domain-group-live-verification story / remaining-cross-group-tier-leaks
+// story. `groupId` mirrors resolveDisplayTier()'s own contract
+// (dashboard-filter.ts) -- on a scoped Dashboard (`/[group]`) the
+// "readyToAct" tile must count THIS group's own green gigs, never the
+// flat/primary-group tier a gig happens to carry (the same leak PR #163
+// fixed for the giglist's Tier column). Exported (like dashboard-client.tsx's
+// signalStrength()) so this stays directly unit-testable -- this repo has no
+// React Testing Library dependency (see dashboard-client.test.ts's own
+// convention: assert on extracted pure data, not rendered DOM).
+export function computeTileValue(id: TileId, gigs: readonly StoredGig[], groupId: string | undefined): number {
   switch (id) {
     case "readyToAct":
-      return gigs.filter((g) => g.status === "new" && g.tier === "green").length;
+      return gigs.filter((g) => g.status === "new" && resolveDisplayTier(g, groupId) === "green").length;
     case "newSignals":
       return gigs.filter((g) => g.status === "new").length;
     case "inPlay":
@@ -53,12 +62,15 @@ export function DashboardOverviewClient({
   drafts,
   now,
   gigsHref = "/gigs",
+  groupId,
 }: {
   gigs: StoredGig[];
   drafts: StoredDraft[];
   now: number;
   /** multi-group-architecture epic: the per-group Dashboard ([group]/page.tsx) passes `/${groupId}/gigs` — /today and /metrics have no group-scoped equivalent yet, so those two links always point at the unscoped route regardless of `gigsHref`. */
   gigsHref?: string;
+  /** remaining-cross-group-tier-leaks story. The `/[group]` route's own group id -- passed straight through to resolveDisplayTier() so the overview tiles/"Today" list show THAT group's own tier, mirroring dashboard-client.tsx's Tier column (PR #163). Omitted on the unscoped `/` Dashboard, matching resolveDisplayTier()'s own "no groupId -> flat tier" contract. */
+  groupId?: string;
 }) {
   const [visibleTiles, setVisibleTiles] = useState<readonly TileId[]>(DEFAULT_VISIBLE_TILES);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -93,8 +105,11 @@ export function DashboardOverviewClient({
   // isWithinSeenWindow("24h") definition of "today" (dashboard-filter.ts)
   // rather than a second, potentially-inconsistent one.
   const todaysSignals = useMemo(
-    () => gigs.filter((g) => g.status === "new" && g.tier !== "red" && isWithinSeenWindow(g.firstSeen, "24h", now)).sort((a, b) => new Date(b.firstSeen).getTime() - new Date(a.firstSeen).getTime()),
-    [gigs, now],
+    () =>
+      gigs
+        .filter((g) => g.status === "new" && resolveDisplayTier(g, groupId) !== "red" && isWithinSeenWindow(g.firstSeen, "24h", now))
+        .sort((a, b) => new Date(b.firstSeen).getTime() - new Date(a.firstSeen).getTime()),
+    [gigs, now, groupId],
   );
   const topToday = todaysSignals.slice(0, 5);
 
@@ -129,7 +144,7 @@ export function DashboardOverviewClient({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {ALL_TILE_IDS.filter((id) => visibleTiles.includes(id)).map((id) => (
             <div key={id} className="rounded-lg border border-theme-surface-border bg-theme-surface p-4">
-              <div className="font-theme-mono text-2xl font-bold tabular-nums text-theme-text">{computeTileValue(id, gigs)}</div>
+              <div className="font-theme-mono text-2xl font-bold tabular-nums text-theme-text">{computeTileValue(id, gigs, groupId)}</div>
               <div className="mt-1 text-xs text-theme-text-dim">{TILE_LABEL[id]}</div>
             </div>
           ))}

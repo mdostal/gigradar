@@ -28,7 +28,7 @@ export default async function GroupHomePage({ params }: { params: Promise<{ grou
     <main className="mx-auto max-w-[88rem] p-6">
       <SonarSweepHeader status={status} lastScanIso={lastScanIso} now={now} sweepAction={sweepNowAction} />
       <h1 className="font-theme-heading mt-4 text-2xl font-bold tracking-tight text-theme-text">{groupLabel}</h1>
-      <DashboardOverviewClient gigs={gigs} drafts={drafts} now={now} gigsHref={`/${groupId}/gigs`} />
+      <DashboardOverviewClient gigs={gigs} drafts={drafts} now={now} gigsHref={`/${groupId}/gigs`} groupId={groupId} />
     </main>
   );
 }

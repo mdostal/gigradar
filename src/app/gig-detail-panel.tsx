@@ -20,6 +20,7 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import type { StoredGig } from "@/lib/store";
+import { resolveDisplayTier } from "./dashboard-filter";
 import { formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "./dashboard-client";
 
 export function GigDetailPanel({
@@ -33,6 +34,7 @@ export function GigDetailPanel({
   statusChangeSection,
   draftSection,
   prepSection,
+  groupId,
 }: {
   gig: StoredGig;
   position: { index: number; total: number };
@@ -44,6 +46,8 @@ export function GigDetailPanel({
   statusChangeSection: ReactNode;
   draftSection: ReactNode;
   prepSection: ReactNode;
+  /** remaining-cross-group-tier-leaks story. The `/[group]/gigs` route's own group id, threaded straight through from DashboardClient's own `groupId` prop -- resolveDisplayTier() uses it so the panel's tier badge shows THAT group's own verdict, mirroring dashboard-client.tsx's Tier column (PR #163) instead of the flat/primary-group `gig.tier`. Omitted on the unscoped `/gigs` giglist. */
+  groupId?: string;
 }) {
   // Escape closes; Left/Right steps Prev/Next -- the natural "flip through
   // a stack of listings" keys, matching the owner's own "go through the
@@ -65,7 +69,8 @@ export function GigDetailPanel({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose, onPrev, onNext]);
 
-  const tierStyle = gig.tier ? TIER_BADGE_STYLE[gig.tier] : TIER_BADGE_FALLBACK_STYLE;
+  const displayTier = resolveDisplayTier(gig, groupId);
+  const tierStyle = displayTier ? TIER_BADGE_STYLE[displayTier] : TIER_BADGE_FALLBACK_STYLE;
 
   return (
     <div className="fixed inset-0 z-20 flex justify-end">
@@ -84,7 +89,7 @@ export function GigDetailPanel({
                 className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-current/30"
                 style={tierStyle}
               >
-                {gig.tier ?? "unrated"}
+                {displayTier ?? "unrated"}
               </span>
               <span className="text-xs text-theme-text-dim">{gig.sourceId}</span>
               <span className="text-xs text-theme-text-dim">·</span>

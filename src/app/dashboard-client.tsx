@@ -1428,6 +1428,7 @@ export function DashboardClient({
           onNext={handleNext}
           canPrev={selectedIndex > 0}
           canNext={selectedIndex >= 0 && selectedIndex < rows.length - 1}
+          groupId={groupId}
           statusChangeSection={
             <>
               <select

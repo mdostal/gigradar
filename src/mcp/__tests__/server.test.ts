@@ -240,6 +240,63 @@ describe("list_gigs", () => {
       await close();
     }
   });
+
+  it("remaining-cross-group-tier-leaks story: given BOTH groupId and tier, filters against THAT group's own tier (matchedGroupTiers), not the flat/primary-group tier -- the real leak this closes", async () => {
+    recordScan([
+      {
+        sourceId: "braintrust",
+        gigs: [
+          // Flat tier ("green", group A's own verdict) says green, but this
+          // gig is red for group B -- list_gigs({ groupId: "B", tier: "green" })
+          // must NOT return it.
+          {
+            ...makeGig({ sourceId: "braintrust", externalId: "1", title: "Leaky Gig" }),
+            tier: "green",
+            matchedGroupIds: ["A", "B"],
+            matchedGroupTiers: { A: "green", B: "red" },
+          },
+          // Flat tier says red (group A's own verdict), but this gig is
+          // genuinely green for group B -- it MUST be returned.
+          {
+            ...makeGig({ sourceId: "braintrust", externalId: "2", title: "Genuine Gig" }),
+            tier: "red",
+            matchedGroupIds: ["A", "B"],
+            matchedGroupTiers: { A: "red", B: "green" },
+          },
+        ],
+      },
+    ]);
+
+    const { client, close } = await connectedClient();
+    try {
+      const result = await client.callTool({ name: "list_gigs", arguments: { groupId: "B", tier: "green" } });
+      const gigs = parseJsonResult(result) as { key: string }[];
+      expect(gigs.map((g) => g.key)).toEqual(["braintrust:2"]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("a tier filter with NO groupId still filters against the flat/primary-group tier -- legacy, byte-identical behavior", async () => {
+    recordScan([
+      {
+        sourceId: "braintrust",
+        gigs: [
+          { ...makeGig({ sourceId: "braintrust", externalId: "1", title: "Green Gig" }), tier: "green", matchedGroupTiers: { A: "red" } },
+          { ...makeGig({ sourceId: "braintrust", externalId: "2", title: "Red Gig" }), tier: "red", matchedGroupTiers: { A: "green" } },
+        ],
+      },
+    ]);
+
+    const { client, close } = await connectedClient();
+    try {
+      const result = await client.callTool({ name: "list_gigs", arguments: { tier: "green" } });
+      const gigs = parseJsonResult(result) as { key: string }[];
+      expect(gigs.map((g) => g.key)).toEqual(["braintrust:1"]);
+    } finally {
+      await close();
+    }
+  });
 });
 
 describe("get_gig", () => {
