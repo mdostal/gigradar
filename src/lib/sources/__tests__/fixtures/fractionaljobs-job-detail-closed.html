@@ -1,0 +1,36 @@
+<!--
+  STRUCTURALLY-DERIVED, not a live capture -- flagged honestly, same
+  discipline as wellfound-next-data.json's own labeling. This story's live
+  research (2026-09-07) fetched all 40 real listings currently on
+  FractionalJobs' own live homepage and found EVERY one of them in the
+  "open" (not-closed) state per the real signal confirmed in
+  fractionaljobs-job-detail-open.html's own comment -- i.e. no genuinely
+  closed FractionalJobs listing was reachable to capture live during this
+  research window (unlike Fractionus, this board appears to promptly
+  remove filled listings from its own live root page).
+
+  This fixture is therefore fractionaljobs-job-detail-open.html's own real,
+  live-fetched markup with EXACTLY ONE edit: the "This Role is Closed"
+  block's class attribute has `w-condition-invisible` removed, to represent
+  the real, confirmed-live CMS conditional-visibility mechanism actually
+  firing for a listing whose real status IS closed (see that fixture's own
+  comment for how this toggle was verified against multiple real pages).
+  Every other byte is the real, unmodified fetch.
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>CFO Advisor | Fractional Jobs</title>
+    <link href="https://www.fractionaljobs.io/jobs/cfo-advisor-at-a-saas-for-accounting-firms" rel="canonical" />
+  </head>
+  <body>
+    <div class="home-jobs_hiring-block-jobs w-condition-invisible"><h2 class="heading-style-h4">How Syndicated Job Posts Work</h2><div class="home-jobs_hiring-list job-page"><div>This job was not posted directly to Fractional Jobs. It's syndicated from another platform</div><div>To apply, view the application and follow their guidelines</div><div>Please let them know that Fractional Jobs sent you!</div></div></div><div class="home-jobs_hiring-block-jobs"><h2 class="heading-style-h4">This Role is Closed</h2><div class="home-jobs_hiring-list job-page"><div>This company has already made a successful hire.</div><div>Fractional jobs get filled quickly. To get alerted when new fractional jobs go live, subscribe to our alerts.</div></div></div>
+    <div class="content12_metatag-list">
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Weekly Commitment</h2></div><div>1 - 2 hrs</div></div>
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Compensation Range</h2></div><div>$200 - $250 / hr</div></div>
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Company Stage</h2></div><div>Early-stage VC</div></div>
+      <div class="content12_metatag-item"><div class="margin-bottom margin-xxsmall"><h2 class="text-size-medium">Industry</h2></div><div>B2B SaaS</div></div>
+    </div>
+  </body>
+</html>
