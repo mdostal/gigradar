@@ -1,0 +1,80 @@
+id: dynamic-onboarding-ux-fixes
+epic: dynamic-groups-band-audit
+title: One-click Add custom source + domain-neutral setup wizard placeholders
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Two real, small UX gaps found by this epic's own audit (see
+  design-discussion.md §2) — both on the surface a brand-new,
+  unrelated-domain user (e.g. someone starting a drone-services or
+  AI-labeling group) touches FIRST, so they matter more than their size
+  suggests for the "works for anyone, any domain" bar.
+
+  1. `config-client.tsx`'s only way to add a custom (LLM-driven,
+     any-site) source today is "+ Add source (blank)" (an empty row)
+     followed by manually checking "Custom (LLM)". Add a real, explicit
+     "+ Add custom source" button next to the existing "+ Add source
+     (blank)" one that appends a row with `isCustom: true` already set
+     (mirroring `handleAddSourceFromPreset()`'s own shape, just for the
+     custom-source case instead of a known preset) — same underlying
+     `SettingsEditor`/"Test extraction now" mechanism, just reachable in
+     one click instead of two. Do NOT redesign the mechanism itself or
+     add a dedicated multi-field wizard — that's explicitly out of scope
+     (design-discussion.md §4).
+  2. `setup-wizard-client.tsx`'s core-titles/keywords/red-keywords
+     textarea placeholders (lines ~319/321/323) use fractional-exec
+     examples ("fractional cto"/"staff engineer"/"recruiter"). Replace
+     with genuinely domain-neutral placeholder text that doesn't
+     presuppose any particular industry (e.g. a bracketed instruction
+     like "e.g. a title you'd take immediately" rather than a real
+     example title) — the point is the textarea being empty free text
+     should not visually suggest "this tool is for fractional execs" to
+     a first-time user in an unrelated field.
+
+acceptance_criteria:
+  - "A new '+ Add custom source' button on the Config page's Sources section appends a source row with isCustom already true (no manual checkbox toggle needed) and focuses/highlights the URL settings field so the next action is obvious."
+  - "The existing '+ Add source (blank)' button and its behavior are unchanged -- this is an ADDITIONAL entry point, not a replacement."
+  - "Setup wizard's core-titles/keywords/red-keywords placeholders no longer contain any fractional-exec-specific example text (fractional cto/staff engineer/recruiter or similar)."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "handleAddSourceFromPreset() (~line 1737) is the pattern to mirror for the new one-click custom-source button; the '+ Add source (blank)' button is at ~line 2867; the isCustom checkbox toggle it currently requires is at ~line 2632."
+    - path: src/app/setup/setup-wizard-client.tsx
+      purpose: "Step 3 section (~lines 311-327) holds the three textareas whose placeholders need to change."
+
+code_examples:
+  - title: "The existing blank-source add pattern to add a custom-source sibling next to"
+    file: src/app/config/config-client.tsx
+    snippet: |
+      onClick={() =>
+        setDraft({ ...draft, sources: [...draft.sources, { id: "", enabled: true, isCustom: false, isGmailDigest: false, settings: [] }] })
+      }
+      // "+ Add source (blank)" -- mirror this but with isCustom: true
+
+steps:
+  - id: implement
+    description: Add the one-click custom-source button and neutralize the setup-wizard placeholders
+    agent: developer
+  - id: test
+    description: Add/verify test coverage for the new button's behavior; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for convention compliance and that the existing blank-add path is untouched
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
+
+risks:
+  - severity: low
+    description: "A new button could accidentally duplicate or diverge from the existing blank-add row shape over time."
+    mitigation: "Reuse the exact same draft.sources array-append pattern, differing only in the isCustom initial value -- verified by the review step."
