@@ -144,14 +144,37 @@ function DraftCard({ item, checked, onToggleChecked }: { item: DraftListItem; ch
 
       {/* drafts-gig-context-surfacing story: always visible, not gated
           behind approval status — the whole point is having this BEFORE
-          deciding approve/reject on a handful of near-identical drafts. */}
+          deciding approve/reject on a handful of near-identical drafts.
+
+          drafts-page-group-context story: `item.matchedGroups` is only ever
+          non-empty with 2+ groups configured (see
+          resolveDraftMatchedGroups(), drafts-filter.ts) — a single-group
+          install always falls through to the original flat tier badge
+          below, byte-identical to before this story. With 2+ groups, each
+          group this gig actually matched gets its OWN labeled badge with
+          its OWN tier, instead of one ambiguous flat/primary badge that can
+          disagree with the group that actually triggered this draft. */}
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
-        <span
-          className="inline-flex rounded-full px-2 py-0.5 font-medium ring-1 ring-inset ring-current/30"
-          style={item.gigTier ? TIER_BADGE_STYLE[item.gigTier] : TIER_BADGE_FALLBACK_STYLE}
-        >
-          {item.gigTier ?? "unrated"}
-        </span>
+        {item.matchedGroups.length > 0 ? (
+          item.matchedGroups.map((group) => (
+            <span
+              key={group.id}
+              title={group.label}
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ring-1 ring-inset ring-current/30"
+              style={group.tier ? TIER_BADGE_STYLE[group.tier] : TIER_BADGE_FALLBACK_STYLE}
+            >
+              <span className="max-w-[10rem] truncate">{group.label}</span>
+              <span>{group.tier ?? "unrated"}</span>
+            </span>
+          ))
+        ) : (
+          <span
+            className="inline-flex rounded-full px-2 py-0.5 font-medium ring-1 ring-inset ring-current/30"
+            style={item.gigTier ? TIER_BADGE_STYLE[item.gigTier] : TIER_BADGE_FALLBACK_STYLE}
+          >
+            {item.gigTier ?? "unrated"}
+          </span>
+        )}
         <span className="font-mono text-slate-500">{formatRate(item.gigRate)}</span>
         <span className="rounded border border-slate-200 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-slate-500">
           {sourceLabel(item.gigSourceId)}
