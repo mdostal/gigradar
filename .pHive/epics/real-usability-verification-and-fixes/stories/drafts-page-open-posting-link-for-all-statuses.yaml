@@ -1,9 +1,68 @@
 id: drafts-page-open-posting-link-for-all-statuses
 epic: real-usability-verification-and-fixes
 title: "Drafts page 'Open the real job listing' link should show for a draft in any status, not just approved/submitted"
-status: pending
+status: complete
 complexity: low
 methodology: classic
+
+progress_note: |
+  SHIPPED, PR #188 (https://github.com/mdostal/gigradar/pull/188), not yet
+  merged -- branch feat/drafts-page-open-posting-link-for-all-statuses
+  pushed to origin, PR opened into dev, left unmerged per process.
+
+  Investigation (git blame/history on drafts-client.tsx, as this story
+  required before changing anything): the `showApprovedView` status gate
+  traces back to e8f8cc3, the ORIGINAL draft-review-ui implementation
+  (assisted-apply-drafting epic) -- its commit message describes "once
+  approved: the real gig URL, a copy-ready draft, and a 'Mark submitted'
+  action" as one bundled block. No commit, anywhere in the file's history,
+  ever mentions a stale-listing concern or any other deliberate reason to
+  withhold the URL specifically pre-approval. This is the exact same
+  oversight shape fa9404c ("fix: surface rate/tier/source on every draft
+  card, not hidden behind approval", #124) already found and fixed once
+  for rate/tier/source data -- confirmed: no real reason held, this was an
+  artifact of the original two-phase (edit-while-draft / act-once-approved)
+  structure, not a safeguard. Removed the restriction.
+
+  Fix: split the link out of the `showApprovedView` block into its own,
+  unconditional render (right after the "Generated/Approved/Submitted"
+  timestamp line, before the draft-vs-read-only branch) so it shows for
+  status draft/approved/rejected/submitted alike. Copy-ready draft and
+  "Mark submitted" remain gated to approved/submitted only -- untouched,
+  per the story's explicit scope. Still wired through the real
+  useOpenExternalLink()/ExternalLinkFeedbackToast mechanism from PR #187
+  (external-link-click-silent-failure) -- no fire-and-forget click
+  reintroduced.
+
+  Tests: added src/app/drafts/__tests__/drafts-client.test.ts (5 new
+  tests) using this repo's established no-RTL convention
+  (renderToStaticMarkup()+createElement() on the exported DraftsClient,
+  matching today-client.test.ts's own precedent) -- covers the link
+  appearing for all 4 statuses (draft/approved/rejected/submitted) and a
+  regression guard that copy-ready-draft/Mark submitted stay gated to
+  approved/submitted only. npm test: 130 files, 1776 passed, 3 skipped
+  (pre-existing, unrelated). npm run typecheck: clean.
+
+  REAL post-fix verification against the actual running app (not just
+  tests): built the real production bundle (`next build`), started it
+  (`next start`) against an ISOLATED XDG_DATA_HOME data directory
+  (/tmp, never touched the real ~/.local/share/gigradar), seeded via the
+  real recordScan()+saveDraft() store functions with one real gig + one
+  draft in status='draft' -- matching the owner's actual real data shape
+  (17 real drafts, all status='draft'). Curled the real served
+  http://127.0.0.1:4791/drafts page (HTTP 200) and confirmed the rendered
+  HTML contains the "draft" status badge immediately followed by
+  `<a href="https://example-real-employer.test/careers/fractional-cto-001"
+  class="text-sm font-medium text-blue-700 hover:underline">Open the real
+  job listing ↗</a>` -- the link genuinely renders for a draft-status
+  entry in the real running app, not just in a unit test. Server process
+  killed and the isolated verify data dir removed afterward.
+
+  Work done in an isolated git worktree outside the main repo tree
+  (/tmp/gigradar-worktrees/drafts-open-posting-link) branched off
+  origin/dev, per this epic's standing process. No conflicts with dev at
+  push time (branch was a clean fast-forward, one commit ahead). PR left
+  open/unmerged for owner review, as instructed.
 depends_on: []
 
 description: |
