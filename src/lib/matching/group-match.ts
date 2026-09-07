@@ -45,6 +45,16 @@ export interface GroupMatchResult {
    * falling back to the documented default when unset.
    */
   groupBands: Record<string, MatchBand>;
+  /**
+   * new-domain-group-live-verification story. Every evaluated group's OWN
+   * `matchedProfiles` (gate.ts's own per-group result), independent of
+   * pass/fail — same per-group shape as groupTiers/groupScores/groupBands
+   * above. Real, live-verified gap this closes: the flat, primary-group-
+   * anchored `Gig.matchedProfileIds` (runner.ts) was the ONLY source a
+   * non-primary group's own giglist page had for "which profile did this
+   * gig clear," so it displayed the WRONG group's own profile id there.
+   */
+  groupProfileIds: Record<string, string[]>;
 }
 
 /**
@@ -70,10 +80,12 @@ export function matchGroups(
   const groupTiers: Record<string, Tier> = {};
   const groupScores: Record<string, number> = {};
   const groupBands: Record<string, MatchBand> = {};
+  const groupProfileIds: Record<string, string[]> = {};
   for (const group of groups) {
     const gateResult = gate(gig, group.needs, profile);
     if (gateResult.pass) matchedGroupIds.push(group.id);
     groupScores[group.id] = gateResult.score;
+    groupProfileIds[group.id] = gateResult.matchedProfiles;
 
     const mode = group.tierScoring ?? { kind: "keyword" as const };
     groupTiers[group.id] =
@@ -83,5 +95,5 @@ export function matchGroups(
 
     groupBands[group.id] = computeMatchBand(gig, group.needs.engagementProfiles, resolveNearBandTolerancePct(group)).band;
   }
-  return { matchedGroupIds, groupTiers, groupScores, groupBands };
+  return { matchedGroupIds, groupTiers, groupScores, groupBands, groupProfileIds };
 }

@@ -63,6 +63,54 @@ export function resolveDisplayBand(gig: Pick<StoredGig, "matchBand" | "matchedGr
 }
 
 /**
+ * new-domain-group-live-verification story. The tier to DISPLAY/FILTER/
+ * SORT a gig by -- mirrors resolveDisplayBand()'s exact scoped-lookup
+ * contract. Real, live-verified bug this closes: dashboard-client.tsx's
+ * Tier column previously rendered the flat `tier` field unconditionally,
+ * which is anchored to the PRIMARY (first-in-scope) group only
+ * (runner.ts) -- so viewing a NON-primary group's own giglist page
+ * (`/[group]/gigs`) showed that OTHER group's tier, sometimes the exact
+ * opposite verdict (confirmed live: a drone-inspection gig tiered GREEN
+ * for "Drone Services" displayed as GREEN under an unrelated "AI Data
+ * Labeling" group's own giglist too, where its real tier is RED).
+ *
+ * On a scoped view (`groupId` given), a gig with no entry for THIS group
+ * falls back to "yellow" -- tiering.ts's own "no match -> surfaced for
+ * review, never a hard reject" convention (`EMPTY_ROLE_AREA_CONFIG`),
+ * never an unrelated group's own flat/primary tier. On an unscoped view
+ * (`/gigs`, `/today` -- no groupId), returns the flat `tier` unchanged --
+ * legacy, pre-multi-group meaning, byte-identical to before this function
+ * existed -- or `undefined` for a gig that predates the tiering feature
+ * entirely (compareTierRank()'s "untiered sorts last" case).
+ */
+export function resolveDisplayTier(gig: Pick<StoredGig, "tier" | "matchedGroupTiers">, groupId?: string): Tier | undefined {
+  if (groupId) return gig.matchedGroupTiers?.[groupId] ?? "yellow";
+  return gig.tier;
+}
+
+/**
+ * new-domain-group-live-verification story. The engagement-profile ids to
+ * DISPLAY for a gig -- same real bug class as resolveDisplayTier() above,
+ * on the "Profile" column: the flat `matchedProfileIds` is anchored to
+ * the PRIMARY group only, so a non-primary group's own giglist page was
+ * rendering that OTHER group's own profile id as a raw, meaningless
+ * string badge (confirmed live: "drone-day-rate" -- Drone Services' own
+ * profile id -- rendered on a gig's row under AI Data Labeling's own
+ * giglist page).
+ *
+ * On a scoped view (`groupId` given), that group's own real matched
+ * profile ids -- `[]` (never the flat field) when this group has no
+ * entry, e.g. this gig never cleared any of THIS group's profiles. On an
+ * unscoped view (no groupId), returns the flat `matchedProfileIds`
+ * unchanged -- legacy, pre-multi-group meaning, byte-identical to before
+ * this function existed.
+ */
+export function resolveDisplayProfileIds(gig: Pick<StoredGig, "matchedProfileIds" | "matchedGroupProfileIds">, groupId?: string): string[] {
+  if (groupId) return gig.matchedGroupProfileIds?.[groupId] ?? [];
+  return gig.matchedProfileIds ?? [];
+}
+
+/**
  * `filter !== "all"` drills down to exactly one band, bypassing
  * `hideOutOfBand` entirely -- explicitly asking to see "Out-of-band" must
  * always show it, never a dead end. `filter === "all"` is the default

@@ -24,13 +24,15 @@ import {
   distinctSources,
   isWithinSeenWindow,
   resolveDisplayBand,
+  resolveDisplayProfileIds,
   resolveDisplayRankBucket,
+  resolveDisplayTier,
   SEEN_WINDOW_OPTIONS,
   shortProfileLabel,
   type SeenWindow,
 } from "./dashboard-filter";
 import type { MatchBand } from "@/lib/types";
-import { compareByField, type SortField } from "./dashboard-sort";
+import { compareByField, compareTierRank, type SortField } from "./dashboard-sort";
 import { GigDetailPanel } from "./gig-detail-panel";
 import { ContextualChatTrigger } from "./contextual-chat/contextual-chat-trigger";
 
@@ -905,9 +907,16 @@ export function DashboardClient({
     {
       id: "tier",
       header: "Tier",
-      accessorFn: (g) => g.tier ?? "",
+      // new-domain-group-live-verification story, real live-verified fix:
+      // this used to read the flat `g.tier` unconditionally, which is
+      // anchored to the PRIMARY (first-in-scope) group only (runner.ts) --
+      // so a non-primary group's own giglist page (`/[group]/gigs`) showed
+      // that OTHER group's tier, sometimes the exact opposite verdict. See
+      // resolveDisplayTier()'s own doc comment for the live-confirmed
+      // repro.
+      accessorFn: (g) => resolveDisplayTier(g, groupId) ?? "",
       cell: ({ row }) => {
-        const tier = row.original.tier;
+        const tier = resolveDisplayTier(row.original, groupId);
         // Tier (matching/tiering.ts) is a role-AREA classifier only — title/
         // description keyword matching, completely independent of whether
         // this gig actually cleared any of your engagement-type/rate
@@ -916,8 +925,10 @@ export function DashboardClient({
         // live: "Software Engineer II" reqs tiering green purely off a
         // broad keyword like "agentic" appearing in the description) — this
         // marker is what makes that visible instead of green silently
-        // implying "matches what you'd accept."
-        const clearedAProfile = (row.original.matchedProfileIds?.length ?? 0) > 0;
+        // implying "matches what you'd accept." Resolved the same
+        // group-scoped way as `tier` above (resolveDisplayProfileIds()) —
+        // same real bug this story fixed for the Profile column itself.
+        const clearedAProfile = resolveDisplayProfileIds(row.original, groupId).length > 0;
         // customizable-tier-scoring epic: the real, persisted match score
         // behind this tier (title attribute only -- no layout change) —
         // visible regardless of which tierScoring mode actually produced
@@ -961,8 +972,8 @@ export function DashboardClient({
           </span>
         );
       },
-      sortingFn: sortingFnFor("tier"),
-      filterFn: (row, _id, value) => !value || row.original.tier === value,
+      sortingFn: (rowA, rowB) => compareTierRank(resolveDisplayTier(rowA.original, groupId), resolveDisplayTier(rowB.original, groupId), "asc"),
+      filterFn: (row, _id, value) => !value || resolveDisplayTier(row.original, groupId) === value,
       meta: { filterKind: "select", selectOptions: ["green", "yellow", "red"] },
     },
     {
@@ -1050,9 +1061,17 @@ export function DashboardClient({
       // axis from Tier (role-area only, matching/tiering.ts — see that
       // column's own comment). Sorts by profile count so multi-match gigs
       // group together; ties keep their existing relative order.
-      accessorFn: (g) => g.matchedProfileIds?.length ?? 0,
+      //
+      // new-domain-group-live-verification story, real live-verified fix:
+      // this used to read the flat `matchedProfileIds` unconditionally,
+      // anchored to the PRIMARY group only -- a non-primary group's own
+      // giglist page rendered that OTHER group's own profile id as a raw,
+      // meaningless string badge (confirmed live: Drone Services' own
+      // "drone-day-rate" id showing up on AI Data Labeling's own giglist).
+      // See resolveDisplayProfileIds()'s own doc comment.
+      accessorFn: (g) => resolveDisplayProfileIds(g, groupId).length,
       cell: ({ row }) => {
-        const ids = row.original.matchedProfileIds ?? [];
+        const ids = resolveDisplayProfileIds(row.original, groupId);
         if (ids.length === 0) return <span className="text-theme-text-dim">—</span>;
         return (
           <span className="flex flex-wrap gap-1">
@@ -1074,7 +1093,7 @@ export function DashboardClient({
       filterFn: (row, _id, value) => {
         const checked = value as ReadonlySet<string> | undefined;
         if (!checked) return true;
-        const ids = row.original.matchedProfileIds ?? [];
+        const ids = resolveDisplayProfileIds(row.original, groupId);
         if (ids.length === 0) return checked.has(NO_PROFILE_MATCH);
         return ids.some((id) => checked.has(id));
       },

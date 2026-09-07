@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredGig } from "@/lib/store";
-import { sortGigs } from "../dashboard-sort";
+import { compareTierRank, sortGigs } from "../dashboard-sort";
 
 function makeGig(overrides: Partial<StoredGig> & { key: string }): StoredGig {
   return {
@@ -133,5 +133,39 @@ describe("sortGigs", () => {
     ];
     const result = sortGigs(gigs, { field: "tier", direction: "asc" });
     expect(result.map((g) => g.key)).toEqual(["1", "2", "3"]);
+  });
+});
+
+// new-domain-group-live-verification story. Standalone coverage for the
+// exact ranking logic compareByField("tier", ...) above delegates to --
+// dashboard-client.tsx's Tier column needs this directly (not via
+// compareByField, which only ever sees the flat StoredGig.tier) to sort by
+// dashboard-filter.ts's resolveDisplayTier(gig, groupId) instead, the real
+// fix for a non-primary group's giglist page sorting/displaying the WRONG
+// group's tier.
+describe("compareTierRank", () => {
+  it("ascending: green < yellow < red", () => {
+    expect(compareTierRank("green", "yellow", "asc")).toBeLessThan(0);
+    expect(compareTierRank("yellow", "red", "asc")).toBeLessThan(0);
+    expect(compareTierRank("green", "red", "asc")).toBeLessThan(0);
+  });
+
+  it("descending reverses green/yellow/red", () => {
+    expect(compareTierRank("green", "yellow", "desc")).toBeGreaterThan(0);
+  });
+
+  it("undefined (untiered) always sorts last, regardless of direction", () => {
+    expect(compareTierRank(undefined, "red", "asc")).toBeGreaterThan(0);
+    expect(compareTierRank("red", undefined, "asc")).toBeLessThan(0);
+    expect(compareTierRank(undefined, "red", "desc")).toBeGreaterThan(0);
+    expect(compareTierRank("red", undefined, "desc")).toBeLessThan(0);
+  });
+
+  it("both undefined is a tie", () => {
+    expect(compareTierRank(undefined, undefined, "asc")).toBe(0);
+  });
+
+  it("equal tiers are a tie", () => {
+    expect(compareTierRank("green", "green", "asc")).toBe(0);
   });
 });

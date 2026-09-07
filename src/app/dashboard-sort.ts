@@ -5,6 +5,7 @@
 // dashboard-client.tsx for how sort state (field + direction) is wired to
 // clickable column headers.
 import type { StoredGig } from "@/lib/store";
+import type { Tier } from "@/lib/types";
 
 export const SORT_FIELDS = [
   "source",
@@ -32,8 +33,25 @@ export interface SortState {
 // (Gig.tier is optional) sorts last in both directions — deliberately never
 // mixed in among ranked tiers, same "never guess" spirit as
 // dashboard-client.tsx's TIER_BADGE_FALLBACK.
-const TIER_RANK: Record<string, number> = { green: 0, yellow: 1, red: 2 };
-const UNTIERED_RANK = 3;
+const TIER_RANK: Record<Tier, number> = { green: 0, yellow: 1, red: 2 };
+
+/**
+ * Same green<yellow<red, untiered-last ranking `compareByField("tier", ...)`
+ * uses internally, exposed standalone (new-domain-group-live-verification
+ * story) for a caller that already has two resolved `Tier | undefined`
+ * values in hand rather than two full `StoredGig`s to pass `compareByField`
+ * directly -- e.g. dashboard-client.tsx's Tier column, which must sort by
+ * dashboard-filter.ts's `resolveDisplayTier(gig, groupId)` (the group
+ * actually being VIEWED) rather than the flat, primary-group-anchored
+ * `StoredGig.tier` `compareByField` reads.
+ */
+export function compareTierRank(a: Tier | undefined, b: Tier | undefined, direction: SortDirection): number {
+  const sign = direction === "asc" ? 1 : -1;
+  if (a === undefined && b === undefined) return 0;
+  if (a === undefined) return 1;
+  if (b === undefined) return -1;
+  return sign * (TIER_RANK[a] - TIER_RANK[b]);
+}
 
 // ALL_STATUSES' own declared order (dashboard-client.tsx) — a lifecycle
 // order (new -> applied -> interview -> archived/ignored), not alphabetical.
@@ -71,19 +89,11 @@ export function compareByField(field: SortField, direction: SortDirection, a: St
       return sign * a.title.localeCompare(b.title);
     case "company":
       return compareNullable(a.company, b.company, direction, (x, y) => x.localeCompare(y));
-    case "tier": {
-      // Untiered gigs sort last regardless of direction -- same
-      // direction-independent-missing-value invariant as compareNullable
-      // below, just expressed via TIER_RANK's lookup miss instead of
-      // null/undefined (Gig.tier is a plain optional string union, not
-      // null-typed).
-      const aUntiered = !(a.tier != null && a.tier in TIER_RANK);
-      const bUntiered = !(b.tier != null && b.tier in TIER_RANK);
-      if (aUntiered && bUntiered) return 0;
-      if (aUntiered) return 1;
-      if (bUntiered) return -1;
-      return sign * ((TIER_RANK[a.tier as string] ?? UNTIERED_RANK) - (TIER_RANK[b.tier as string] ?? UNTIERED_RANK));
-    }
+    case "tier":
+      // Untiered gigs sort last regardless of direction -- see
+      // compareTierRank()'s own doc comment. `direction` (not `sign`) is
+      // passed through since compareTierRank applies its own sign.
+      return compareTierRank(a.tier, b.tier, direction);
     case "status":
       return (
         sign *

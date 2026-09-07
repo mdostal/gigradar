@@ -120,6 +120,12 @@ function openConnection(dbPath: string, busyTimeoutMs: number): DatabaseSyncType
   // nullable-column pattern as matched_group_bands/match_band above.
   ensureColumn(db, "gigs", "matched_rank_buckets", "TEXT");
   ensureColumn(db, "gigs", "rank_bucket", "TEXT");
+  // new-domain-group-live-verification story: same additive, nullable-
+  // column pattern as matched_group_bands above -- see types.ts's
+  // Gig.matchedGroupProfileIds doc comment for the real bug this closes
+  // (a non-primary group's giglist page had no per-group source for
+  // "which profile did this gig clear," only the primary group's own).
+  ensureColumn(db, "gigs", "matched_group_profile_ids", "TEXT");
   ensureDraftsSubmittingStatus(db);
   return db;
 }

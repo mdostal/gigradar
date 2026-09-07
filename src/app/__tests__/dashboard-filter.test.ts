@@ -6,7 +6,9 @@ import {
   passesBandFilter,
   passesRankBucketFilter,
   resolveDisplayBand,
+  resolveDisplayProfileIds,
   resolveDisplayRankBucket,
+  resolveDisplayTier,
   shortProfileLabel,
 } from "../dashboard-filter";
 
@@ -128,6 +130,65 @@ describe("resolveDisplayBand", () => {
     const gig = makeGig({ key: "1" });
     expect(resolveDisplayBand(gig)).toBe("in-band");
     expect(resolveDisplayBand(gig, "any-group")).toBe("in-band");
+  });
+});
+
+// new-domain-group-live-verification story. Real, live-verified bug this
+// closes: dashboard-client.tsx's Tier column previously read the flat
+// `tier` field unconditionally on every giglist page -- confirmed live
+// against an isolated two-group instance, a gig that tiers GREEN for
+// "Drone Services" (its primary group) displayed as GREEN under an
+// unrelated "AI Data Labeling" group's own giglist page too, where its
+// real tier is RED.
+describe("resolveDisplayTier", () => {
+  it("returns the specific group's own tier on a scoped view", () => {
+    const gig = makeGig({ key: "1", matchedGroupTiers: { a: "green", b: "red" } });
+    expect(resolveDisplayTier(gig, "a")).toBe("green");
+    expect(resolveDisplayTier(gig, "b")).toBe("red");
+  });
+
+  it("never falls back to the flat tier on a scoped view when that specific group has no entry -- that's an unrelated group's own verdict, not this one's", () => {
+    const gig = makeGig({ key: "1", tier: "green", matchedGroupTiers: { other: "red" } });
+    expect(resolveDisplayTier(gig, "not-in-map")).toBe("yellow"); // tiering.ts's own "no match -> surfaced for review" default, never "green" (the unrelated flat/primary tier)
+  });
+
+  it("on an unscoped view (no groupId), returns the flat tier unchanged -- legacy, pre-multi-group meaning", () => {
+    const gig = makeGig({ key: "1", tier: "red", matchedGroupTiers: { a: "green" } });
+    expect(resolveDisplayTier(gig)).toBe("red");
+  });
+
+  it("returns undefined for a gig with no tier data at all (predates the tiering feature) -- compareTierRank's own untiered-sorts-last case", () => {
+    const gig = makeGig({ key: "1" });
+    expect(resolveDisplayTier(gig)).toBeUndefined();
+  });
+});
+
+// new-domain-group-live-verification story. Same real bug class as
+// resolveDisplayTier() above, on the "Profile" column: confirmed live, a
+// gig's row under an unrelated group's own giglist page rendered THAT
+// OTHER group's own engagement-profile id ("drone-day-rate") as a raw,
+// meaningless string badge.
+describe("resolveDisplayProfileIds", () => {
+  it("returns the specific group's own matched profile ids on a scoped view", () => {
+    const gig = makeGig({ key: "1", matchedGroupProfileIds: { a: ["p1", "p2"], b: ["p3"] } });
+    expect(resolveDisplayProfileIds(gig, "a")).toEqual(["p1", "p2"]);
+    expect(resolveDisplayProfileIds(gig, "b")).toEqual(["p3"]);
+  });
+
+  it("never falls back to the flat matchedProfileIds on a scoped view when that specific group has no entry -- that's an unrelated group's own matched profile, not this one's", () => {
+    const gig = makeGig({ key: "1", matchedProfileIds: ["drone-day-rate"], matchedGroupProfileIds: { other: ["drone-day-rate"] } });
+    expect(resolveDisplayProfileIds(gig, "not-in-map")).toEqual([]);
+  });
+
+  it("on an unscoped view (no groupId), returns the flat matchedProfileIds unchanged -- legacy, pre-multi-group meaning", () => {
+    const gig = makeGig({ key: "1", matchedProfileIds: ["p1"], matchedGroupProfileIds: { a: ["p2"] } });
+    expect(resolveDisplayProfileIds(gig)).toEqual(["p1"]);
+  });
+
+  it("returns an empty array for a gig with no profile-match data at all", () => {
+    const gig = makeGig({ key: "1" });
+    expect(resolveDisplayProfileIds(gig, "any-group")).toEqual([]);
+    expect(resolveDisplayProfileIds(gig)).toEqual([]);
   });
 });
 

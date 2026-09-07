@@ -39,6 +39,7 @@ interface GigRow {
   matched_group_scores: string | null;
   matched_group_bands: string | null;
   match_band: string | null;
+  matched_group_profile_ids: string | null;
   matched_rank_buckets: string | null;
   rank_bucket: string | null;
   status: string;
@@ -82,6 +83,7 @@ function toStoredGig(row: GigRow): StoredGig {
     matchedGroupScores: row.matched_group_scores !== null ? JSON.parse(row.matched_group_scores) : undefined,
     matchedGroupBands: row.matched_group_bands !== null ? JSON.parse(row.matched_group_bands) : undefined,
     matchBand: (row.match_band as Gig["matchBand"] | null) ?? undefined,
+    matchedGroupProfileIds: row.matched_group_profile_ids !== null ? JSON.parse(row.matched_group_profile_ids) : undefined,
     matchedRankBuckets: row.matched_rank_buckets !== null ? JSON.parse(row.matched_rank_buckets) : undefined,
     rankBucket: row.rank_bucket !== null ? JSON.parse(row.rank_bucket) : undefined,
     status: row.status as GigStatus,
@@ -162,6 +164,7 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     matched_group_scores: gig.matchedGroupScores === undefined ? null : JSON.stringify(gig.matchedGroupScores),
     matched_group_bands: gig.matchedGroupBands === undefined ? null : JSON.stringify(gig.matchedGroupBands),
     match_band: gig.matchBand ?? null,
+    matched_group_profile_ids: gig.matchedGroupProfileIds === undefined ? null : JSON.stringify(gig.matchedGroupProfileIds),
     matched_rank_buckets: mergedRankBuckets === undefined ? null : JSON.stringify(mergedRankBuckets),
     rank_bucket: gig.rankBucket === undefined ? null : JSON.stringify(gig.rankBucket),
     now,
@@ -173,12 +176,12 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
          key, source_id, external_id, title, company, url, rate_min, rate_max, rate_unit,
          weekly_hours, remote, contract_to_hire, employment_type, stage, posted_at, description, raw, tier,
          matched_profile_ids, matched_group_ids, matched_group_tiers, ai_flags, match_score, matched_group_scores,
-         matched_group_bands, match_band, matched_rank_buckets, rank_bucket, status, first_seen, last_seen, unavailable_since, reappeared_at
+         matched_group_bands, match_band, matched_group_profile_ids, matched_rank_buckets, rank_bucket, status, first_seen, last_seen, unavailable_since, reappeared_at
        ) VALUES (
          :key, :source_id, :external_id, :title, :company, :url, :rate_min, :rate_max, :rate_unit,
          :weekly_hours, :remote, :contract_to_hire, :employment_type, :stage, :posted_at, :description, :raw, :tier,
          :matched_profile_ids, :matched_group_ids, :matched_group_tiers, :ai_flags, :match_score, :matched_group_scores,
-         :matched_group_bands, :match_band, :matched_rank_buckets, :rank_bucket, 'new', :now, :now, NULL, NULL
+         :matched_group_bands, :match_band, :matched_group_profile_ids, :matched_rank_buckets, :rank_bucket, 'new', :now, :now, NULL, NULL
        )`,
     ).run(params);
     return { key, inserted: true, reappeared: false };
@@ -203,6 +206,7 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
        matched_group_scores = :matched_group_scores,
        matched_group_bands = :matched_group_bands,
        match_band = :match_band,
+       matched_group_profile_ids = :matched_group_profile_ids,
        matched_rank_buckets = :matched_rank_buckets,
        rank_bucket = :rank_bucket,
        last_seen = :now,
@@ -233,6 +237,7 @@ function upsertOne(db: DatabaseSync, gig: Gig, now: string): UpsertOneResult {
     matched_group_scores: params.matched_group_scores,
     matched_group_bands: params.matched_group_bands,
     match_band: params.match_band,
+    matched_group_profile_ids: params.matched_group_profile_ids,
     matched_rank_buckets: params.matched_rank_buckets,
     rank_bucket: params.rank_bucket,
     now: params.now,
