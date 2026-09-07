@@ -1,6 +1,6 @@
-import type { Config, DraftContent, Gig, MatchResult, RankBucketAssignment } from "../types.js";
+import type { Config, DraftContent, Gig, MatchResult, RankBucketAssignment, SourceConfig } from "../types.js";
 import { resolveLlmCredential, type LlmCredential } from "../config/env-store.js";
-import { getSource } from "../sources/source.js";
+import { getSource, type Source } from "../sources/source.js";
 import { VerificationChallengeError } from "../sources/verification-challenge.js";
 import { customLlmSource } from "../sources/custom-llm-source.js";
 import { gmailDigestSource } from "../sources/gmail-digest-source.js";
@@ -16,6 +16,66 @@ import { gigKey, listGroupScores, recordScan, saveDraft } from "../store/index.j
 import type { DbOption, RecordScanOptions, SourceScanBatch } from "../store/index.js";
 import { loadConfig } from "../config/load.js";
 import { generateDraft, resolveApplicationFormat } from "./draft.js";
+
+/**
+ * scan-pipeline-per-source-timeout story (usability-and-completeness-audit
+ * epic, triage t-001, p0/critical): the per-source budget every
+ * `src.fetch()` call in the loop below is raced against. Live-confirmed
+ * root cause (see this story's progress_note): NONE of the plain-`fetch()`
+ * sources (`builtin`, `linkedin`, `fractionus`, `fractionaljobs`,
+ * `fractionalfinders`, `braintrust`) pass an `AbortSignal` to `fetch()` —
+ * a controlled local reproduction (a TCP server that accepts the
+ * connection and never responds) proved a bare Node `fetch()` with no
+ * signal simply never settles, matching the real 60+ minute production
+ * hangs exactly (no child Chrome process was ever spawned during either
+ * hang, ruling out the browser-automation sources).
+ *
+ * 60s: long enough that a genuinely slow browser-automation source
+ * (wellfound/gofractional/ateam — real page loads, login flows, bot-
+ * detection waits) isn't false-positive-killed on an ordinary slow cycle,
+ * short enough that one hung source costs at most 60s of one scan cycle
+ * instead of blocking every source after it forever. Deliberately a
+ * `Promise.race` at THIS call site (not threaded into every adapter's own
+ * `fetch()` via `AbortSignal`) per this story's own design_decisions: one
+ * shared boundary fix across all 10 registered sources, zero changes to
+ * any individual adapter.
+ */
+const SOURCE_FETCH_TIMEOUT_MS = 60_000;
+
+/** Thrown by {@link fetchWithTimeout} when `SOURCE_FETCH_TIMEOUT_MS` elapses before `src.fetch()` settles — distinguishable from a real thrown error (never confused with e.g. a bad-login `Error` in the catch block below) by its own `name` and a message that always contains "timed out after". */
+export class SourceFetchTimeoutError extends Error {
+  constructor(sourceId: string, timeoutMs: number) {
+    super(`source "${sourceId}" timed out after ${timeoutMs}ms`);
+    this.name = "SourceFetchTimeoutError";
+  }
+}
+
+/**
+ * Races `src.fetch()` against a deadline so a source whose promise never
+ * settles (never resolves, never rejects) can't block the sequential loop
+ * in `runRadar()` forever. The timeout's own `setTimeout` handle is always
+ * cleared in `finally` — including on the timeout-wins branch, where the
+ * still-pending `src.fetch()` promise is simply abandoned (never awaited
+ * again) rather than cancelled; nothing here assumes adapters support
+ * cancellation. Exported for this story's own regression test.
+ */
+export async function fetchWithTimeout(
+  src: Pick<Source, "id" | "fetch">,
+  cfg: SourceConfig,
+  profile: Config["profile"],
+  credential: LlmCredential | undefined,
+  timeoutMs: number = SOURCE_FETCH_TIMEOUT_MS,
+): Promise<Gig[]> {
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new SourceFetchTimeoutError(src.id, timeoutMs)), timeoutMs);
+  });
+  try {
+    return await Promise.race([src.fetch(cfg, profile, credential), deadline]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
 
 /**
  * One radar run: for every enabled source, fetch -> gate -> tier -> collect,
@@ -100,11 +160,21 @@ export async function runRadar(
     if (!src) { errors.push({ sourceId: sc.id, message: "no such registered source" }); continue; }
     let gigs: Gig[] = [];
     try {
-      gigs = await src.fetch(sc, config.profile, runOpts.credential);
+      // scan-pipeline-per-source-timeout story: raced against a 60s
+      // deadline (see fetchWithTimeout's own doc comment above) so a
+      // source whose fetch() never settles can't block every source after
+      // it in this loop forever — see this story's progress_note for the
+      // live-confirmed hang this fixes.
+      gigs = await fetchWithTimeout(src, sc, config.profile, runOpts.credential);
     } catch (e) {
       // A source that needs login throws — report it, don't fake zero results.
       // Crucially: do NOT push a batch for it either, so recordScan can tell
       // "errored" apart from "ran, found zero" (see store/gigs.ts recordScan doc).
+      // A SourceFetchTimeoutError lands here too (thrown by the deadline
+      // race, not by src.fetch() itself) and is handled identically to a
+      // real thrown error — same errors[] entry shape, same "continue to
+      // the next source" behavior, same downstream backoff.ts treatment —
+      // just with its own distinguishable "timed out after Nms" message.
       if (e instanceof VerificationChallengeError) {
         errors.push({ sourceId: sc.id, message: e.message, needsVerification: true, blockedUrl: e.url });
       } else {

@@ -1,0 +1,102 @@
+id: application-format-coverage-per-source
+epic: usability-and-completeness-audit
+title: "Audit each of the 8 uncovered source adapters' real application flow and set honest Source.applicationFormat values"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Real, precise root cause found via dedicated research this session (see
+  epic design-discussion.md §2): the owner's complaint that every draft
+  looks like a cover letter is a pure DATA-COVERAGE bug, not a resolution-
+  logic bug and not a display-layer bug. `resolveApplicationFormat()`
+  (`src/lib/apply/draft.ts:129`) is correctly wired into the one real
+  draft-creation path and correctly falls through to each source's own
+  static `Source.applicationFormat` default -- but of gigradar's 10 real
+  source adapters, only `gofractional.ts` (`"why-fit"`) and `linkedin.ts`
+  (`"form-fields"`) actually set one. The other 8 --
+  `fractionus.ts`, `fractionaljobs.ts`, `builtin.ts`, `wellfound.ts`,
+  `braintrust.ts`, `ateam.ts`, `fractionalfinders.ts`, and the
+  custom-recipe `gun-io` source -- have none, so every draft from them
+  silently defaults to `"cover-letter"`. `builtin` and `fractionus` are the
+  ONLY two sources that have ever actually produced a real draft (8 and 4
+  respectively) -- which is exactly why the owner has only ever seen
+  cover-letter-shaped drafts.
+
+  A live `simman` vision-AI pass independently confirmed the DISPLAY side
+  already works correctly when `format` is set right (a seeded
+  `"form-fields"` draft rendered genuinely differentiated, format-aware
+  copy) -- so this story is purely about filling in the missing
+  per-source data, not touching `resolveApplicationFormat()`,
+  `stageApplication()`, or the drafts UI at all.
+
+  **The fix**: for each of the 8 uncovered sources, do REAL research (visit
+  the actual site's real application flow -- or if that requires a login
+  this session can't perform, research from the site's own public
+  documentation/marketing copy about how applications work there) to
+  determine which of the real `DraftFormat` values
+  (`"proposal"` | `"why-fit"` | `"form-fields"` | `"cover-letter"`, see
+  `src/lib/types.ts` for the authoritative enum) honestly fits that
+  platform's real application mechanism, then set
+  `Source.applicationFormat` on each adapter accordingly. Do NOT guess
+  blindly -- if a source's real application flow genuinely can't be
+  determined without a login this session can't perform, it's acceptable
+  to leave that ONE source's default as `"cover-letter"` (today's existing,
+  documented fallback) as long as that's a deliberate, researched decision
+  and not silently skipped -- document which sources were confirmed vs.
+  left as the honest fallback, in this story's own progress_note.
+
+  Do NOT touch: `resolveApplicationFormat()`'s own precedence logic (SourceConfig
+  override > Source static default > "cover-letter" fallback -- already
+  correct), the drafts display layer (already correct per the simman
+  finding), any other source's already-correct `applicationFormat`
+  (gofractional, linkedin -- untouched).
+
+acceptance_criteria:
+  - "Each of the 8 uncovered sources (fractionus, fractionaljobs, builtin, wellfound, braintrust, ateam, fractionalfinders, gun-io) has a real, researched applicationFormat value set OR an explicit, documented reason it was left at the cover-letter default."
+  - "The story's progress_note lists each of the 8 sources with its real, researched application-flow finding and the format value chosen (or the honest reason for the fallback) -- no source is silently skipped without explanation."
+  - "A new test proves each updated source's Source.applicationFormat matches the researched value, and that resolveApplicationFormat() correctly surfaces it end-to-end for a real gig from that source."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/apply/draft.ts
+      purpose: "resolveApplicationFormat() at line ~129 -- confirm this is untouched; the fix is purely in each source adapter's own static default."
+    - path: src/lib/sources/gofractional.ts
+      purpose: "Line ~292 -- the real, working example of a source with applicationFormat: 'why-fit' set -- the pattern to replicate."
+    - path: src/lib/sources/linkedin.ts
+      purpose: "Line ~185 -- the real, working example with applicationFormat: 'form-fields' set."
+    - path: src/lib/types.ts
+      purpose: "The authoritative DraftFormat enum -- the only valid values to choose from."
+
+design_decisions:
+  - decision: Research each source's real application mechanism before setting a value, rather than guessing from source-type stereotypes.
+    rationale: "A wrong guess here would just replace one wrong default with a different, still-wrong one -- the whole point of this story is honesty about what each platform actually requires, matching this codebase's repeatedly-stated 'never fabricate' discipline (see fractionaljobs.ts's own compensation-range parser as a recent example of the same discipline)."
+
+risks:
+  - severity: low
+    description: "A wrong applicationFormat assignment produces a subtly-misleading draft rather than a crash -- low blast radius but still a real, user-visible incorrectness."
+    mitigation: "Acceptance criteria requires a documented, evidenced reason for every source's chosen value, reviewable against the real site/documentation cited."
+
+steps:
+  - id: research
+    description: Research each of the 8 uncovered sources' real application mechanism
+    agent: developer
+  - id: implement
+    description: Set Source.applicationFormat on each adapter per the research findings
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Add per-source applicationFormat regression tests; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify each format choice is genuinely evidenced, not guessed
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
