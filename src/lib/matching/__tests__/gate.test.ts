@@ -278,7 +278,7 @@ describe("gate: roleArea as an alternative way to satisfy the role/skill fit che
     expect(result.reasons.some((r) => r.includes("no role/skill keyword match"))).toBe(true);
   });
 
-  it("a roleArea that tiers YELLOW (no coreTitles/keywords/redKeywords hit at all) still saves the gig -- 'no match' is never a hard reject in tiering.ts, and gate() must not re-introduce one via this path", () => {
+  it("a roleArea that tiers YELLOW (e.g. an empty/unconfigured one -- no coreTitles/keywords/redKeywords at all) does NOT save the gig -- tier() returns YELLOW just as readily for 'no roleArea keywords configured' as for a genuinely unrecognized gig, so treating YELLOW as a pass here would rubber-stamp every gig for any group that hasn't filled in roleArea keywords, silently defeating the fit check entirely. Only an ACTIVE, POSITIVE 'green' match may save it.", () => {
     const gig = makeGig({
       title: "Chief Technology Officer",
       rate: { min: 260, unit: "hour" },
@@ -287,7 +287,7 @@ describe("gate: roleArea as an alternative way to satisfy the role/skill fit che
 
     const result = gate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), NO_LITERAL_OVERLAP_PROFILE, EMPTY_ROLE_AREA);
 
-    expect(result.pass).toBe(true);
-    expect(result.reasons.some((r) => r.includes("role-area tier (yellow)"))).toBe(true);
+    expect(result.pass).toBe(false);
+    expect(result.reasons.some((r) => r.includes("no role/skill keyword match"))).toBe(true);
   });
 });

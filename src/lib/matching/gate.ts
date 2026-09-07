@@ -27,8 +27,16 @@ import { tier } from "./tiering.js";
  * `RoleAreaConfig` (matching/tiering.ts) as a second, independent way to
  * clear the SAME check: fit only hard-fails when the phrase-overlap check
  * ALSO finds nothing AND (no roleArea was given OR that roleArea's own
- * tier() call comes back "red"). This is purely additive — an OR against
- * the existing check — so nothing that passed before can newly fail; see
+ * tier() call doesn't come back "green"). Deliberately NOT `!== "red"` —
+ * tier() returns YELLOW for a group with no roleArea keywords configured
+ * at all (EMPTY_ROLE_AREA_CONFIG) just as readily as for a genuinely
+ * unrecognized gig, so treating YELLOW as a pass here would rubber-stamp
+ * every gig for any group that hasn't filled in roleArea keywords,
+ * silently defeating the fit check for that group. Requiring an ACTIVE,
+ * POSITIVE "green" match (a real coreTitles/keywords hit) keeps this
+ * purely additive — an OR against the existing check — so nothing that
+ * passed before can newly fail, and a group with no roleArea configured
+ * gets byte-identical old behavior (no escape hatch at all); see
  * design-discussion.md in gate-fit-check-too-strict for the full
  * root-cause writeup.
  *
@@ -73,8 +81,8 @@ export function gate(gig: Gig, needs: Needs, profile: Profile, roleArea?: RoleAr
     ok(`role/skill fit (${Math.round(fit * 100)}%)`);
   } else {
     const roleAreaTier = roleArea ? tier(gig, roleArea) : undefined;
-    if (roleAreaTier && roleAreaTier.tier !== "red") {
-      ok(`role/skill fit backed by this group's own role-area tier (${roleAreaTier.tier})`);
+    if (roleAreaTier && roleAreaTier.tier === "green") {
+      ok(`role/skill fit backed by this group's own role-area tier (green)`);
     } else {
       fail("no role/skill keyword match");
     }
