@@ -397,6 +397,17 @@ export const fractionusSource: Source = {
   id: "fractionus",
   label: "Fractionus",
   auth: "none",
+  // application-format-coverage-per-source story — REAL research, live
+  // `curl` against several real `/jobs/<slug>` detail pages: each carries
+  // its own `apply-url` attribute pointing to a DIFFERENT external
+  // destination depending on where THAT listing came from — a Greenhouse
+  // ATS posting (`mongodb.com/careers/job/?gh_jid=...`) for one, a raw
+  // LinkedIn job-view link for another. Fractionus is a pure aggregator: it
+  // has no application mechanism of its own, so there is no single honest
+  // per-source `applicationFormat` — it genuinely varies gig-by-gig with
+  // the destination site. Deliberately left unset (falls through to the
+  // documented "cover-letter" default) rather than guessed, per this
+  // story's own "leave it if it can't be determined" allowance.
   async fetch(_cfg: SourceConfig): Promise<Gig[]> {
     const html = await fetchJobsHtml();
     const cards = splitJobCards(html);

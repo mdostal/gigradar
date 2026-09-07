@@ -202,6 +202,21 @@ export const fractionalFindersSource: Source = {
   id: "fractionalfinders",
   label: "FractionalFinders",
   auth: "none",
+  // application-format-coverage-per-source story — REAL research, live
+  // `curl` against every real `/jobs/<slug>` detail page listed at the time:
+  // the "Application Process"/"How to Apply" section genuinely varies
+  // listing-by-listing — one explicitly says "Applicants should send a
+  // cover letter and resume to: hiring@..." (a real cover-letter flow),
+  // another routes candidates to "the Apply link on the job posting" of an
+  // external recruiting agency's own site, another lists "Shortlisted
+  // candidates will be asked to answer two questions" (form-fields-shaped),
+  // and another is just a named recruiter contact with no described format
+  // at all. FractionalFinders is effectively an aggregator of
+  // independently-run hiring processes, not one platform with a single
+  // real mechanism. Deliberately left unset (falls through to the
+  // documented "cover-letter" default, which is also the single
+  // most-observed real shape) rather than guessed, per this story's own
+  // "leave it if it can't be determined" allowance.
   async fetch(_cfg: SourceConfig): Promise<Gig[]> {
     const html = await fetchJobsHtml();
     const cards = splitJobCards(html);
