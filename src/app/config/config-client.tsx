@@ -1818,6 +1818,22 @@ export function ConfigClient({
     });
   }
 
+  // "+ Add email digest source" (one-click-add-gmail-digest-source story) --
+  // the identical one-click sibling for the Gmail-digest path: same
+  // array-append shape as handleAddCustomSource() above, but with
+  // isGmailDigest already true (and no starter settings pair, matching what
+  // the "Gmail digest" checkbox's own onChange does when toggled on by
+  // hand -- digestSenders/clientId/clientSecret all have their own
+  // defaults or are supplied via the "Connect Gmail" OAuth flow below), so
+  // the owner goes straight to naming the source and clicking "Connect
+  // Gmail" instead of first discovering and checking the checkbox.
+  function handleAddGmailDigestSource() {
+    setDraft({
+      ...draft,
+      sources: [...draft.sources, { id: "", enabled: true, isCustom: false, isGmailDigest: true, settings: [] }],
+    });
+  }
+
   // Session-capture state, keyed by source row index — deliberately separate
   // from `draft`/`isPending` above: capture actions are independent,
   // per-row, user-driven flows that don't submit the whole form. See the
@@ -2943,6 +2959,9 @@ export function ConfigClient({
             </button>
             <button type="button" onClick={handleAddCustomSource} className="self-start text-sm font-medium text-theme-text-dim hover:underline">
               + Add custom source
+            </button>
+            <button type="button" onClick={handleAddGmailDigestSource} className="self-start text-sm font-medium text-theme-text-dim hover:underline">
+              + Add email digest source
             </button>
           </div>
         </div>
