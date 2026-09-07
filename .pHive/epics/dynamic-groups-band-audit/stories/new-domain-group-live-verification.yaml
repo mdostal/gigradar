@@ -1,0 +1,107 @@
+id: new-domain-group-live-verification
+epic: dynamic-groups-band-audit
+title: "Live, isolated verification: a brand-new, unrelated-domain group (Drone Services) works end-to-end with zero code changes"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  This epic's own audit (design-discussion.md §1) confirmed by direct
+  code reading that the matching/rank-bucket/band engine and group
+  creation flow are already fully config-driven -- no hardcoded
+  fractional-exec assumptions found. Code-reading proves the MECHANISM
+  is generic; it does not prove a genuinely new-domain group actually
+  behaves correctly end-to-end at runtime. This story is the real proof.
+
+  Build a REAL, PERMANENT regression test (not a one-off manual session)
+  that constructs a complete, invented `GroupConfig` for an
+  unrelated domain the codebase has never seen before -- "Drone
+  Services" (drone piloting/inspection/mapping contract work) is the
+  concrete example, but pick whatever keeps the test realistic. Give it:
+  - its own `roleArea`/`needs` (drone-relevant titles/skills, nothing
+    borrowed from the fractional-exec templates)
+  - its own rate bands (a plausible day-rate/hourly range for
+    commercial drone contract work, NOT reusing any of the owner's
+    existing A/B/C tier numbers)
+  - its own rank buckets (owner-named, e.g. "FAA Part 107 Certified" /
+    "Needs Certification", with real criteria)
+  - its own tier keywords (coreTitles/keywords/redKeywords that would
+    correctly GREEN a real drone-inspection gig and RED a same-named
+    generic aerial-photography-hobbyist listing)
+
+  Feed a handful of realistic, hand-written fake `Gig` records through
+  the REAL pipeline (tiering, rank-bucket assignment, band scoring,
+  giglist filtering) with this group's config, and assert the results
+  are correct for THIS group's own criteria -- not the owner's existing
+  ones. Follow the same "construct a real Config + run the real
+  pipeline" pattern `auto-draft-tier-scoring.test.ts` already
+  establishes, rather than mocking the matching functions.
+
+  Additionally (a real, one-time, curl-only live check, not a
+  substitute for the automated test above): spin up an isolated dev
+  instance (`XDG_DATA_HOME` override to a throwaway temp dir --
+  NEVER the owner's real `~/.local/share/gigradar` data) with a
+  config.json containing this same Drone Services group alongside a
+  second, differently-shaped invented group (to catch any
+  two-groups-interacting bug), and curl `/config`, `/config/rank-buckets`,
+  `/config/match-quality`, `/[group]/gigs` to confirm the real server
+  renders this brand-new group correctly with zero code changes needed.
+  Document the exact commands + results in this story's own
+  progress_note. Never open a real browser; never use Playwright.
+
+  If either the automated test or the live curl check surfaces a REAL
+  bug (not just a documentation gap), fix it as part of this story and
+  extend the automated test to cover the fix, per this epic's own
+  design-discussion.md commitment: "any real failure found here is a bug
+  to fix, not a note."
+
+acceptance_criteria:
+  - "A new, real integration test constructs a complete Drone Services (or equivalent unrelated-domain) GroupConfig with its own bands/keywords/rank-buckets, runs real Gig fixtures through the actual tiering/rank-bucket/band pipeline, and asserts correct GREEN/YELLOW/RED, band, and rank-bucket results for that group's own criteria."
+  - "A second, differently-shaped invented group is also covered (either in the same test file or the curl check) so a two-groups-interacting bug isn't missed."
+  - "A real, documented curl-only verification against an isolated (XDG_DATA_HOME-overridden) dev instance confirms /config, /config/rank-buckets, /config/match-quality, and the new group's own giglist route all render it correctly -- commands and output captured in this story's progress_note."
+  - "Any real bug the verification surfaces is fixed, with the automated test extended to cover it -- not just noted."
+  - "The owner's real ~/.local/share/gigradar data is never read from or written to at any point in this story."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/scheduler/__tests__/auto-draft-tier-scoring.test.ts
+      purpose: "The established pattern to follow: construct a real Config, run the real pipeline (not mocks), assert real results -- reuse this shape for the new group's own test file."
+    - path: src/lib/matching/tiering.ts
+      purpose: "The real tier-scoring function this story's fixtures must run through."
+    - path: src/lib/matching/rank-bucket.ts
+      purpose: "The real rank-bucket assignment function this story's fixtures must run through."
+    - path: src/lib/matching/match-band.ts
+      purpose: "The real rate-band scoring function this story's fixtures must run through."
+    - path: src/lib/types.ts
+      purpose: "GroupConfig's real shape (~lines 227-297) for constructing the invented group's config correctly."
+
+design_decisions:
+  - decision: A permanent automated regression test is the primary deliverable, not a one-off manual verification session.
+    rationale: "A manual curl session proves the codebase works TODAY; a real test proves it keeps working. The owner's ask is about ongoing confidence as he adds real new groups, not a single point-in-time check."
+  - decision: The isolated live curl check is still done, in addition to the automated test, not instead of it.
+    rationale: "The automated test exercises the matching/scoring functions directly; the live check exercises the actual settings pages/routes end-to-end (schema validation, page rendering, route resolution) which the unit-level test doesn't reach."
+
+steps:
+  - id: implement
+    description: Write the invented-domain GroupConfig fixtures + the real integration test running them through the actual pipeline
+    agent: developer
+  - id: test
+    description: Run the new test plus the full suite; perform the isolated live curl verification and document results
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Review for real pipeline usage (no mocked matching functions), and that no real user data was touched
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
+
+risks:
+  - severity: medium
+    description: "A live curl check against an isolated dev instance could accidentally collide with the owner's real running app (port 3000) if the isolation is done wrong."
+    mitigation: "Use a distinct GIGRADAR_PORT + XDG_DATA_HOME override, exactly matching this session's own established isolated-verification methodology from every prior epic; check for the real app's process/port before starting."
