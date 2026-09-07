@@ -112,7 +112,7 @@ entries:
         at: "2026-09-07T18:55:00Z"
 
   - id: t-004
-    state: plan-ready
+    state: closed
     kind: bug
     title: "Drafts page has no visible 'open original posting' link for any draft still in status='draft' (the real, current state of all 17 of the owner's real drafts)"
     description: |
@@ -132,8 +132,8 @@ entries:
     severity: moderate
     linked_epic: real-usability-verification-and-fixes
     linked_story: drafts-page-open-posting-link-for-all-statuses
-    closed_reason: null
-    closed_at: null
+    closed_reason: "shipped in PR #188 -- git history confirmed the status gate was an oversight (never a deliberate stale-listing safeguard), link now unconditional across all draft statuses, real post-fix verification confirmed it renders for a real status='draft' entry"
+    closed_at: "2026-09-07T22:20:00Z"
     state_history:
       - state: inbox
         at: "2026-09-07T21:55:00Z"
@@ -143,6 +143,8 @@ entries:
         at: "2026-09-07T21:57:00Z"
       - state: plan-ready
         at: "2026-09-07T21:58:00Z"
+      - state: closed
+        at: "2026-09-07T22:20:00Z"
 
   - id: t-003
     state: closed

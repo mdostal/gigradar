@@ -36,7 +36,8 @@ stories:
     title: "Drafts page 'Open the real job listing' link should show for a draft in any status, not just approved/submitted"
     complexity: low
     depends_on: []
-    status: in_progress
+    status: complete
+    shipped_pr: 188
 
 references:
   - path: .pHive/epics/real-usability-verification-and-fixes/docs/design-discussion.md
