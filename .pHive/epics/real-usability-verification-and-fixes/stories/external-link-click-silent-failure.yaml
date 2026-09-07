@@ -1,10 +1,142 @@
 id: external-link-click-silent-failure
 epic: real-usability-verification-and-fixes
 title: "Clicking a gig's external-link title produces zero visible result in the real running app -- root-cause the silent failure and add real error feedback"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Shipped as PR #187 (feat/external-link-click-silent-failure -> dev, real
+  merge commit incorporating one concurrent origin/dev commit -- #186/
+  resume-count-on-config-dashboard -- no file overlap, no conflicts).
+
+  REAL ROOT CAUSE, with real evidence (not a guess):
+
+  1. Every openExternalUrl() call site (dashboard-client.tsx,
+     gig-detail-panel.tsx, today-client.tsx, drafts-client.tsx,
+     interview-workspace-client.tsx) fired the returned promise inside its
+     onClick with neither an await nor a .catch() -- confirmed by direct
+     code read, exactly matching the story's own hypothesis. This is a
+     REAL defect regardless of what makes the underlying open() call fail:
+     any rejection (Tauri-branch or the window.open() browser-mode
+     fallback) became a silent, invisible unhandled promise rejection.
+     Fixed for every one of the 5 call sites via a new shared
+     useOpenExternalLink() hook (src/lib/tauri/use-open-external-link.ts)
+     + ExternalLinkFeedbackToast (src/lib/tauri/external-link-feedback-toast.tsx)
+     that shows a real success or error message on the page every time.
+
+  2. Deep-dived the Tauri-specific path itself for a second, more specific
+     defect: read tauri-plugin-shell 2.3.5's actual Rust source
+     (~/.cargo/registry/.../tauri-plugin-shell-2.3.5/src/{lib,scope,open,commands}.rs).
+     The `shell:allow-open` capability, the tauri.conf.json open-scope
+     regex ("https?://.+", auto-anchored to ^...$ by the plugin), and the
+     webpack client bundling of @tauri-apps/plugin-shell (confirmed present
+     in the built .next/static/chunks output, correctly chunk-split by
+     webpack -- not a bare npm specifier fetched over the network) all
+     check out correctly for real https:// job-posting URLs. The one
+     concrete, real finding: tauri-plugin-shell's `open` command has
+     carried `#[deprecated(since = "2.1.0", note = "Use tauri-plugin-opener
+     instead")]` since before this app's pinned 2.3.5 -- still fully
+     functional (confirmed by reading its implementation, which just calls
+     the `open` crate's `that_detached()`), not a demonstrated cause of
+     this bug, but flagged here as a real follow-up worth a future
+     migration story.
+
+  3. Root-caused (separately) why simman's own vision check can structurally
+     never observe "a new OS browser window opened": read simman's actual
+     engine source (flow-runner.mjs) -- verify() only ever calls
+     page.screenshot() on the SAME Playwright page object tracked for the
+     whole scenario; it never listens for new-page/popup events, so a
+     genuinely successful window.open() (a new tab) or a genuinely
+     successful native shell-open (a separate OS app) are BOTH invisible
+     to its screenshot regardless of success. Proved the window.open()
+     browser-mode fallback path itself already works correctly end-to-end
+     via a real network-loopback test (seeded a sandboxed gig pointing at
+     a local Python http.server probe; clicking it produced a real logged
+     GET request on the probe from the newly-opened tab) -- so the ORIGINAL
+     live simman finding's "nothing visible happened" was consistent with
+     either a genuine failure OR this tooling blind spot; the fix's new
+     in-page toast is what makes success/failure genuinely
+     vision-verifiable going forward (see acceptance-criteria evidence
+     below).
+
+  4. Found and worked around a REAL, separate, environment-specific build
+     bug while doing the required real rebuild-and-relaunch: building the
+     packaged .app from a git worktree NESTED inside the main repo tree
+     (.worktrees/<name>/, as this session's own initial worktree was)
+     causes Next's multi-lockfile workspace-root auto-detection to select
+     the outer repo root, which makes the standalone server output land at
+     resources/server/.worktrees/<name>/server.js instead of
+     resources/server/server.js -- the Rust sidecar spawn code
+     (src-tauri/src/lib.rs) hardcodes the latter path, so the bundled Node
+     sidecar never starts and the real packaged app silently fails to
+     become ready within its 30s timeout (window never appears, and in a
+     release build tauri-plugin-log is never initialized -- gated behind
+     `cfg!(debug_assertions)` in lib.rs's own setup() -- so this failure is
+     ALSO completely silent in a real release build; had to run the
+     app's own executable directly from a terminal to see the plain
+     eprintln! timeout message at all). This is a real hazard for
+     anyone building this app from a nested worktree, but is a tooling
+     artifact of this session's OWN test setup, not a gigradar product
+     defect reachable via the app's normal packaged-release build process
+     (a normal checkout has one lockfile) -- not fixed in product code,
+     just worked around by rebuilding from a worktree outside the repo
+     tree, and worth a note for future Hive sessions building the real app
+     from a nested .worktrees/ location.
+
+  REAL POST-FIX VERIFICATION EVIDENCE:
+
+  - Full backup taken first: ~/gigradar-backups/gigradar-data-backup-<ts>.tar.gz,
+    verified to contain config.json and gigs.db before touching
+    /Applications/gigradar.app.
+  - Real rebuild (npx tauri build --target aarch64-apple-darwin, reusing
+    the shared src-tauri/target Cargo cache) from a worktree outside the
+    repo tree, real ad-hoc codesign verified (`codesign --verify --deep
+    --strict` clean, matching the documented macos-adhoc-codesign
+    convention), app.old rotated, xattr -cr applied, relaunched.
+  - Sidecar/health verified: real Node sidecar bound its resolved port
+    (58123 this run), curl 200 on /gigs, /config, /drafts; real gig count
+    intact (2042 gigs tracked, per /metrics -- no data loss/corruption).
+  - Real simman click-through of the SAME real gig used in this story's
+    own original bug report ("Full Stack Software Engineer III - Network
+    Perimeter & CDN") against the rebuilt, relaunched real app:
+    `visionVerify: true` (was `false` before the fix), reasoning quoted
+    directly from simman's own report: "A confirmation message 'Opened in
+    your default browser. Dismiss' is visible on the page." This is the
+    real, live, vision-confirmed evidence the acceptance criteria
+    requires -- not just a native-act pass.
+  - Honest methodology caveat: simman drives its own separate Playwright
+    browser pointed at the app's HTTP endpoint (confirmed by reading its
+    own source and by this story's original bug-report scenario files'
+    baseUrl, which pointed at the SAME real sidecar port) -- so
+    isTauri() is false in every simman-driven click, meaning simman can
+    only ever exercise/verify the window.open() browser-mode fallback
+    branch, never the true @tauri-apps/plugin-shell branch a human
+    clicking the REAL native window goes through. Both branches now go
+    through the exact same fixed openExternalLink()/toast wiring, so this
+    is not a gap in the FIX, but it does mean the specific Tauri-branch
+    root cause the owner's own mouse click hit could not be independently
+    re-triggered/re-verified in this autonomous session -- flagged
+    honestly rather than overclaimed.
+
+  DRAFTS PAGE DISCOVERABILITY (acceptance criterion 4): re-verified via
+  simman against the real, current /drafts data. The "Open the real job
+  listing" link only renders when a draft's status is approved/submitted
+  (drafts-client.tsx's showApprovedView). The owner's real current data
+  has 17 drafts, ALL still status "draft" -- so that link is not present
+  ANYWHERE on the real /drafts page today. A real simman click on the 💬
+  contextual-chat icon (the same element the original bug report's own
+  scenario mistook for the link) correctly did nothing chat-related to
+  the external link, confirming the link genuinely isn't there to find,
+  not just hard to see. This is a REAL, currently-active, separate
+  discoverability gap -- documented here as a known follow-up per this
+  story's own acceptance criteria, NOT silently folded into "fixed."
+  Recommended real fix for a future story: show the link regardless of
+  approval status (readable at any stage, not just after approval).
+
+  Real packaged app left running normally afterward (not quit); backup
+  and the rotated .app.old remain on disk as the established safety net.
 
 description: |
   CONFIRMED REAL BUG via a live `simman` vision-AI click-through of the
