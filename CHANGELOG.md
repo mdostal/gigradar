@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-09-07
+
+### Fixed
+
+- Clicking a gig's title to open the real posting could silently do
+  nothing in the desktop app, with no error and no explanation. It now
+  either opens your browser or, if it genuinely can't, tells you why —
+  never a silent no-op.
+- The "Analyze" button on Today's Picks fetched a real fit score but
+  never displayed it on that card — you had to already know to look
+  further down the page. It now shows right where you clicked it.
+- The "Last sweep" status could say a scan finished when it had
+  actually only partially completed (some sources errored or timed
+  out). It now honestly distinguishes "up to date" from "partially
+  updated — N source(s) didn't complete."
+- The Drafts page's "Open the real job listing" link only appeared
+  once a draft was approved — meaning it was missing for every draft
+  still awaiting your review, which is most of them. It now shows for
+  a draft in any status.
+- Resume management (added last release) had no visible entry point on
+  the Config Dashboard. The Profile card now shows how many resumes
+  you have on file.
+
 ## [0.45.0] - 2026-09-07
 
 ### Fixed
