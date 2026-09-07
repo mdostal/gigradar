@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getGig, getInterviewPrep, saveInterviewPrep, setRankBucket, setStatus } from "@/lib/store";
+import { getGig, getInterviewPrep, recordScanCycle, saveInterviewPrep, setRankBucket, setStatus } from "@/lib/store";
 import type { GigStatus } from "@/lib/store";
 import { actionErr, actionOk, type ActionResult } from "@/lib/actions/result";
 import { runRadar, stageApplication } from "@/lib/apply/runner";
@@ -384,6 +384,18 @@ export async function sweepNowAction(): Promise<ActionResult<SweepResult>> {
 
   try {
     const { passed, errors, newlyInsertedKeys } = await runRadar(config, {}, { credential: resolveLlmCredential() });
+    // status-strip-reflects-cycle-completion story: a manual "Sweep now"
+    // is a real, complete cycle across every enabled source exactly like
+    // the scheduler's own scheduled cycle (src/scheduler/index.ts's
+    // runCycle()) -- unlike that path there's no BackoffTracker here (a
+    // manual sweep always attempts every enabled source), so
+    // incompleteSourceIds is just runRadar()'s own real errors[], with no
+    // backoff-skip concept to add. See store/scan-cycles.ts's own doc
+    // comment for what this signal feeds.
+    recordScanCycle({
+      sourcesTotal: config.sources.filter((s) => s.enabled).length,
+      incompleteSourceIds: errors.map((e) => e.sourceId),
+    });
     revalidatePath("/");
     revalidatePath("/gigs");
     return actionOk({

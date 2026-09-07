@@ -1,10 +1,90 @@
 id: status-strip-reflects-cycle-completion
 epic: real-usability-verification-and-fixes
 title: "Dashboard freshness status should reflect actual scan-cycle completion, not just the most recent per-gig touch"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  Shipped as PR #185 (feat/status-strip-reflects-cycle-completion -> dev,
+  merge commit incorporating a concurrent origin/dev commit --
+  #184/today-picks-analyze-feedback -- no file overlap, no conflicts).
+
+  Real fix: added a new `scan_cycles` table + src/lib/store/scan-cycles.ts
+  (recordScanCycle()/getLastScanCycle()), an append-only, one-row-per-cycle
+  record of the REAL signal the scheduler already computes every cycle --
+  which enabled sources errored (runRadar()'s own errors[]) or were
+  skipped for backoff (src/scheduler/index.ts's own skippedSourceIds) --
+  against the full enabled-source count. Wired into BOTH
+  src/scheduler/index.ts's runCycle() (right after logCycleSummary()) and
+  the manual "Sweep now" Server Action (src/app/actions.ts's
+  sweepNowAction()), so a manual sweep gets the same real signal as a
+  scheduled cycle. Never re-derives cycle health from gig timestamps --
+  strictly surfaces the exact errored/skipped sets those two call sites
+  already computed for backoff-tracking/issue-raising, per this story's
+  own design_decisions.
+
+  src/lib/status/status-strip.ts's computeStatusStrip() now takes this
+  signal (`lastCycle`, an optional 4th param -- backward compatible, all
+  3 existing call sites updated to pass it) and adds
+  computeCycleCompleteness() + two new StatusStripView fields
+  (cycleStatus: "full"|"partial"|"unknown", incompleteSourceCount).
+  lastScanLabel now renders three honest states instead of one
+  undifferentiated MAX(lastSeen) timestamp: "Last scan: up to date (2
+  hours ago)" (last recorded cycle had zero incomplete sources), "Last
+  scan: partially updated (2 hours ago) — N source(s) didn't complete"
+  (last recorded cycle had real errors/timeouts/backoff-skips), or the
+  old bare "Last scan: 2 hours ago" fallback when no scan_cycles row has
+  EVER been recorded (an install predating this signal) -- deliberately
+  NEVER "up to date" with zero real evidence, per this story's own
+  explicit "do not fabricate a falsely-reassuring full state" concern.
+
+  CRITICAL finding during implementation: status.lastScanLabel itself was
+  NEVER actually rendered anywhere in the app -- the real visible "Last
+  sweep" widget (src/app/sonar-sweep-header.tsx) computed its own local,
+  client-ticking label from a separately-threaded lastScanIso, ignoring
+  status.lastScanLabel entirely (dead field, only ever consumed by the
+  MCP get_status_summary tool and the chat co-pilot's own status-summary
+  tool call). Fixed the REAL gap, not just the JSON-only one: threaded
+  status.cycleStatus/incompleteSourceCount into that component's ticking
+  label too (amber warn styling reused from sourcesLabel/profileLabel's
+  own existing convention), and also updated the MCP tool + chat co-pilot
+  call site to pass the real getLastScanCycle() signal through, so every
+  consumer of computeStatusStrip() is now honest, not just the one no one
+  was looking at.
+
+  Tests (both directions, per acceptance criteria): status-strip.test.ts
+  (computeCycleCompleteness unit tests + computeStatusStrip integration
+  tests for unknown/full/partial, including singular "1 source" vs plural
+  "N sources" and the never-run-overrides-everything case),
+  scan-cycles.test.ts (round-trip persistence, append-only history, most-
+  recent-wins ordering), and a new scheduler describe block in
+  src/scheduler/__tests__/index.test.ts proving recordScanCycle() is
+  called with the REAL errored/skipped source ids in 4 scenarios (full
+  success, real error, backoff-skip, and multi-cycle append-only
+  history). Full suite: 128 files / 1763 passed / 3 skipped (pre-existing
+  skips, unrelated). `npm run typecheck` clean.
+
+  REAL post-fix verification against the actual running app (not just
+  unit tests in isolation, per this story's explicit epic-level
+  requirement): ran `npm run build && npm run start` (the real production
+  server, not dev mode) against TWO isolated XDG_DATA_HOME directories
+  (never ~/.local/share/gigradar), each seeded via the real
+  recordScan()/recordScanCycle() store functions through a temporary tsx
+  script (deleted before commit -- not part of the shipped diff):
+    - Full-cycle scenario (incompleteSourceIds: []): curled the real
+      served "/" page, grepped the "Last sweep" DOM node --
+      rendered "12 seconds ago (up to date)" in the default (non-warn)
+      text color.
+    - Partial-cycle scenario (incompleteSourceIds: ["gofractional",
+      "ateam"]): same page, rendered "9 seconds ago — 2 sources
+      incomplete" with `text-amber-600` warn styling applied.
+  Both servers were started/curled/killed cleanly (pkill by port), no
+  live browser window ever opened, no Playwright used, no interaction
+  with the real user data directory. This is the level of evidence the
+  epic's own header comment demanded: real DOM text differing correctly
+  between two real, constructed cycle-completion scenarios.
 
 description: |
   Confirmed real structural gap via direct code read + real data query

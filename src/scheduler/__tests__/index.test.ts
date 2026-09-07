@@ -881,3 +881,111 @@ describe("startScheduler: runCycle raises an issue per source error (notificatio
     expect(exitFn).not.toHaveBeenCalled(); // no fatal error boundary fired
   });
 });
+
+describe("startScheduler: runCycle persists the real per-cycle completion signal (status-strip-reflects-cycle-completion story)", () => {
+  // Own isolated db setup, same reasoning as the "raises an issue per
+  // source error" describe block above -- recordScanCycle() hits the real
+  // store via a bare getDb() call.
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-scheduler-scan-cycles-test-"));
+    vi.stubEnv("GIGRADAR_DB_PATH", path.join(tmpDir, "gigs.db"));
+    const { closeDb } = await import("../../lib/store/db.js");
+    closeDb();
+  });
+
+  afterEach(async () => {
+    const { closeDb } = await import("../../lib/store/db.js");
+    closeDb();
+    vi.unstubAllEnvs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const twoSourceConfig = () =>
+    makeConfig({
+      schedule: "*/1 * * * * *",
+      sources: [
+        { id: "braintrust", enabled: true },
+        { id: "gofractional", enabled: true },
+      ],
+    });
+
+  it("a fully-successful cycle records incompleteSourceIds: [] against the full enabled-source count -- the real 'full' completion signal status-strip.ts's computeStatusStrip() needs to honestly render 'up to date'", async () => {
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => emptyResult());
+    const config = twoSourceConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    const { getLastScanCycle } = await import("../../lib/store/scan-cycles.js");
+    expect(getLastScanCycle()).toMatchObject({ sourcesTotal: 2, incompleteSourceIds: [] });
+  });
+
+  it("a cycle with a REAL runRadarFn() source error records that source id as incomplete -- the real 'partial' completion signal status-strip.ts needs to honestly render 'N source(s) didn't complete'", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => ({
+      results: [],
+      passed: [],
+      errors: [{ sourceId: "gofractional", message: "Cloudflare interstitial" }],
+      newlyInsertedKeys: [],
+    }));
+    const config = twoSourceConfig();
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn() });
+    await (handle.getJob() as Cron).trigger();
+
+    const { getLastScanCycle } = await import("../../lib/store/scan-cycles.js");
+    expect(getLastScanCycle()).toMatchObject({ sourcesTotal: 2, incompleteSourceIds: ["gofractional"] });
+  });
+
+  it("a source currently in an active backoff window (skipped, never attempted this cycle) ALSO counts as incomplete -- its data genuinely did not refresh this cycle either way, exactly the distinction the owner needs", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let call = 0;
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => {
+      call += 1;
+      return {
+        results: [],
+        passed: [],
+        errors: call === 1 ? [{ sourceId: "gofractional", message: "network blip" }] : [],
+        newlyInsertedKeys: [],
+      };
+    });
+    const config = twoSourceConfig();
+    const fixedNow = () => 1_000_000; // never advances -- gofractional's backoff window (set on cycle 1's failure) is still active for cycle 2
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn(), now: fixedNow });
+    await (handle.getJob() as Cron).trigger(); // cycle 1: gofractional errors, enters backoff
+    await (handle.getJob() as Cron).trigger(); // cycle 2: gofractional skipped (still in backoff) -- buildCycleConfig() excludes it, runRadarFn never sees/errors it this time
+
+    const { getLastScanCycle } = await import("../../lib/store/scan-cycles.js");
+    expect(getLastScanCycle()).toMatchObject({ sourcesTotal: 2, incompleteSourceIds: ["gofractional"] });
+  });
+
+  it("append-only: every cycle gets its own row, not an update-in-place -- getLastScanCycle() reflects the LATEST cycle after a run of several", async () => {
+    let call = 0;
+    const runRadarFn = vi.fn(async (): Promise<RunRadarResult> => {
+      call += 1;
+      return {
+        results: [],
+        passed: [],
+        errors: call === 1 ? [{ sourceId: "gofractional", message: "transient" }] : [],
+        newlyInsertedKeys: [],
+      };
+    });
+    const config = twoSourceConfig();
+    let nowMs = 0;
+    const nowFn = () => (nowMs += 60 * 60 * 1000); // jump an hour between cycles so gofractional clears backoff and is attempted again
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn, exitFn: vi.fn(), now: nowFn });
+    await (handle.getJob() as Cron).trigger(); // cycle 1: partial (gofractional errors)
+    await (handle.getJob() as Cron).trigger(); // cycle 2: full (gofractional recovers)
+
+    const { getLastScanCycle } = await import("../../lib/store/scan-cycles.js");
+    expect(getLastScanCycle()).toMatchObject({ sourcesTotal: 2, incompleteSourceIds: [] });
+
+    const { getDb } = await import("../../lib/store/db.js");
+    const rows = getDb().prepare("SELECT COUNT(*) AS n FROM scan_cycles").get() as { n: number };
+    expect(rows.n).toBe(2);
+  });
+});

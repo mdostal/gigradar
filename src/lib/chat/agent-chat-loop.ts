@@ -47,6 +47,7 @@ import { SOURCE_PRESETS, sourceConfigFromPreset } from "../sources/source-preset
 import { computeStatusStrip } from "../status/status-strip.js";
 import { getGig, listGigs, setStatus } from "../store/gigs.js";
 import { saveInterviewPrep } from "../store/prep.js";
+import { getLastScanCycle } from "../store/scan-cycles.js";
 import { saveResumeReviewSuggestion } from "../store/resume-reviews.js";
 import type { GigFilter, GigStatus, StoredGig } from "../store/types.js";
 import { readRawConfig, saveConfig } from "../config/save.js";
@@ -498,7 +499,11 @@ async function executeReadOnlyTool(toolUse: Anthropic.ToolUseBlock, entry: LoopE
   if (toolUse.name === GET_STATUS_SUMMARY_TOOL) {
     const gigs = listGigs();
     const rawConfig = readRawConfig();
-    const summary = computeStatusStrip(gigs, rawConfig);
+    // status-strip-reflects-cycle-completion story: same real per-cycle
+    // completion signal dashboard-data.ts/mcp/server.ts now feed
+    // computeStatusStrip() -- see status-strip.ts's own doc comment.
+    const lastCycle = getLastScanCycle();
+    const summary = computeStatusStrip(gigs, rawConfig, Date.now(), lastCycle ?? null);
     return { message: toolResultMessage(toolUse.id, JSON.stringify(summary)) };
   }
 
