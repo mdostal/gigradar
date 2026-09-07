@@ -189,10 +189,15 @@ const TierSchema = z.enum(["green", "yellow", "red"]);
  * match that story's own design decision — a rule that could "graduate" at
  * 0 approvals or fire unboundedly per day defeats the whole point of a
  * trust threshold.
+ *
+ * `groupId` (group-aware-auto-fire-trust story) is `.optional()` — omitted
+ * means "any group," byte-identical to every rule configured before this
+ * field existed. See `AutoFireRuleConfig`'s own doc comment in types.ts.
  */
 export const AutoFireRuleConfigSchema = z.object({
   sourceId: z.string().min(1),
   tier: TierSchema,
+  groupId: z.string().min(1).optional(),
   enabled: z.boolean(),
   minApprovals: z.number().int().min(1),
   dailyCap: z.number().int().min(1),
