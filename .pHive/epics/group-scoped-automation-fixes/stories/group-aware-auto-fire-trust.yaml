@@ -1,10 +1,27 @@
 id: group-aware-auto-fire-trust
 epic: group-scoped-automation-fixes
 title: Auto-fire rules can be scoped to a specific group (optional, backward-compatible)
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: [group-aware-auto-draft-and-notify]
+
+progress_note: |
+  SHIPPED PR #167 (2026-09-06), via delegated subagent -- the highest-
+  risk story in this epic (real-world submission automation), reviewed
+  with extra care before merging. AutoFireRuleConfig.groupId is now
+  optional (undefined = any group, backward compatible). Precedence
+  decision for a gig matching multiple groups with applicable rules:
+  walk config.groups in declared order, preferring an ENABLED rule over
+  a disabled one on an earlier group (so disabling one group's rule can
+  never silently block a different, already-graduated group's rule).
+  approvedCount()/isGraduated() scope to rule.groupId specifically (not
+  the candidate group), which is what keeps every pre-existing,
+  unscoped rule's graduation count byte-identical -- verified both by
+  direct code review and a dedicated regression test. Daily fire cap
+  stays source-wide/unscoped, a deliberate, documented choice. 39/39
+  autofire tests pass; npm test (1647 passed) and npm run typecheck
+  both clean.
 
 description: |
   Real gap found by this epic's own research: `AutoFireRuleConfig`

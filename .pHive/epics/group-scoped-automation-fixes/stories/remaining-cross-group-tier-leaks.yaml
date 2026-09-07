@@ -1,10 +1,22 @@
 id: remaining-cross-group-tier-leaks
 epic: group-scoped-automation-fixes
 title: Fix remaining flat-tier display leaks (overview tiles, gig detail panel, interview workspace, MCP list_gigs)
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED PR #165 (2026-09-06), via delegated subagent. All 4 call sites
+  fixed: dashboard-overview-client.tsx's tiles (new groupId prop,
+  computeTileValue() exported+tested), gig-detail-panel.tsx's badge
+  (groupId threaded from dashboard-client.tsx), and MCP's
+  handleListGigs() (a local resolveDisplayTier() mirror, since src/mcp
+  never imports src/app). interview-workspace-client.tsx was correctly
+  identified as legitimately group-agnostic (no /[group]/gigs/[key]/
+  interview route exists) and left unchanged with a documenting
+  comment, rather than forcing a fix that didn't fit. npm test (1634
+  passed at the time) and npm run typecheck both clean.
 
 description: |
   PR #163 fixed dashboard-client.tsx's Tier/Profile columns to use

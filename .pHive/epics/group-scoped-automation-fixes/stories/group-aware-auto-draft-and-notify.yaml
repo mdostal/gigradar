@@ -1,10 +1,21 @@
 id: group-aware-auto-draft-and-notify
 epic: group-scoped-automation-fixes
 title: Auto-draft and notify-on-green-match consider ANY in-scope group, not just the primary one
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED PR #166 (2026-09-06), via delegated subagent. Added
+  isGreenInBandForAnyGroup()/isGreenForAnyGroup() helpers reading
+  Gig.matchedGroupTiers/matchedGroupBands; runAutoDraft()/
+  runNotifyOnGreenMatch() eligibility filters widened accordingly. No
+  schema change needed -- the per-group data already existed. A real,
+  intentional behavior change (more gigs become eligible for anyone
+  running multiple groups), called out explicitly in the PR. 3 new
+  real-pipeline tests. npm test (1629 passed at the time) and npm run
+  typecheck both clean.
 
 description: |
   Real, significant gap found by this epic's own research: `runAutoDraft()`
