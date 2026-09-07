@@ -1,7 +1,7 @@
 id: resume-store-multi-resume-and-tailoring
 epic: usability-and-completeness-audit
 title: "Multi-resume store: keyed/versioned storage, per-application resume selection, gig-fit suggestions, gated review feedback"
-status: pending
+status: complete
 complexity: high
 methodology: classic
 depends_on: []
@@ -128,3 +128,100 @@ steps:
     description: Commit, branch off dev, PR into dev
     agent: developer
     depends_on: [review]
+
+progress_note: |
+  SHIPPED. PR: https://github.com/mdostal/gigradar/pull/181 (branch
+  feat/resume-store-multi-resume-and-tailoring, merged origin/dev in via a
+  real merge commit -- 3 sibling stories landed on dev while this one was
+  in flight, #178/#179/#180 -- auto-merged cleanly, re-ran npm test +
+  npm run typecheck against the merged tree afterward, both clean).
+
+  **Migration path (the highest-stakes part of this story)**:
+  `src/lib/documents/resume-store.ts` is redesigned from one fixed
+  `resume.enc` path into keyed storage -- each resume gets its own
+  generated `resumeId` and its own encrypted file under
+  `<data dir>/resumes/<resumeId>.enc` (`getResumeFilePath()`), still using
+  vault.ts's unmodified encrypt()/decrypt() and the exact same
+  atomic-temp-file+rename write discipline the old single-resume
+  `saveResume()` used -- `getResumePath()` (the OLD fixed path) is kept
+  ONLY so the migration can recognize a pre-existing install, nothing new
+  ever writes there again.
+
+  `ApplyProfileConfig.resumePath` is removed from the type/schema entirely
+  and replaced with `resumes: ResumeRecord[]`
+  (`{id, label, path, uploadedAt}`) -- a genuinely BREAKING shape change,
+  so `config/load.ts`'s new `migrateApplyProfileResumes()` (chained into
+  both `loadConfig()` and `save.ts`'s raw read path, same read-time-only
+  convention as this file's existing `migrateNeedsEngagementProfiles()`/
+  `migrateFlatNeedsRoleAreaToGroups()`) backfills a one-entry `resumes`
+  list from the old flat `resumePath` field the FIRST time either read
+  path sees it. Verified with a REAL migration test
+  (`src/lib/config/__tests__/load.test.ts`, new
+  "applyProfile.resumes migration..." describe block): seeds an actual
+  single-resume install SHAPE by calling the real, unmodified
+  `saveResume()` production function against an isolated temp
+  XDG_DATA_HOME (never the owner's real `~/.local/share/gigradar`), then
+  asserts `loadConfig()`'s migrated record still decrypts, byte-for-byte,
+  to the exact original resume content -- plus coverage for
+  already-encrypted legacy configs, an orphaned/deleted-file resumePath
+  (migrates the reference without throwing), and "never double-migrates
+  when resumes is already present."
+
+  **Encryption-at-rest verification**: `resume-store.test.ts` was rewritten
+  (not just patched) to prove the keyed redesign preserves every guarantee
+  v1 had -- mode 0600, no stray .tmp-* files, on-disk bytes never contain
+  the real content, AND (new) that two independently-saved resumes each
+  get their OWN file and neither's plaintext leaks into the other's
+  ciphertext. `pickResume(resumes, resumeId?)` (new helper) is unit-tested
+  directly: no-resumeId falls back to the first entry (byte-identical to
+  the old single-resume default), an unmatched resumeId returns undefined
+  rather than silently substituting a different resume.
+
+  **Per-application selection**: `DraftContent.resumeId` (new field)
+  records which stored resume `generateDraft()` actually used;
+  `stageApplication()`/`generateDraftAction()` accept an optional
+  `resumeId` threaded straight through. `generatePrepPacket()` gained a
+  `selectedResumeId` param for the same reason.
+
+  **Fit-suggestion**: extended (not duplicated) `generatePrepPacket()`'s
+  existing structured-output schema with `resumeRankings` -- when 2+
+  resumes are on file, every one is attached as its own labeled content
+  block in the SAME call, and the model ranks each with real reasoning;
+  `PrepPacketContent.resumeSuggestion.bestResumeId` is picked
+  deterministically in code from the model's own per-resume scores (never
+  a second LLM judgment). Tested with a real 2-resume mocked-LLM ranking
+  (`prep.test.ts`), plus a belt-and-suspenders test proving a
+  hallucinated/unknown resumeId in the model's response is dropped, never
+  surfaced.
+
+  **Gated review-suggestion tool**: `agent-chat-loop.ts` gained
+  `list_resumes` (read-only), `resumeId` params on the existing
+  `generate_draft`/`generate_prep_packet` tools, and a new
+  `propose_resume_review` tool -- reusing the EXACT existing generic
+  pendingApproval propose/pause/approve/reject mechanism
+  `propose_config_edit` already established (confirmed the chat UI's
+  proposal-card rendering, `chat-conversation.tsx`, is fully generic/
+  tool-agnostic, so zero UI changes were needed for the new tool). Nothing
+  is written to the new `resume_review_suggestions` table (append-only,
+  mirrors `autofire_decisions`' pattern) until the owner calls
+  `resolveApproval(approve:true)` -- verified directly against a real
+  SQLite connection in `agent-chat-loop.test.ts` (propose leaves the table
+  empty; reject leaves it empty; only approve writes a row; a failed
+  proposal never writes).
+
+  **UI**: `config-client.tsx`'s single-resume upload block is replaced
+  with a real list (each stored resume independently removable);
+  `actions.ts`'s `extractProfileFromResumeAction`/`removeResumeAction` now
+  append/remove one `ResumeRecord` rather than overwrite/clear a single
+  field.
+
+  **Explicitly scoped out** (flagged, not silently dropped): no dashboard
+  UI resume-picker dropdown on the "Generate draft"/"Generate prep packet"
+  buttons yet -- the real mechanism (optional `resumeId` param) is fully
+  wired end-to-end through `generateDraftAction()`/
+  `generatePrepPacketAction()` and the chat co-pilot, just not a visual
+  control on `/` yet. A natural, small follow-up.
+
+  npm test: 1730 passed, 3 skipped (pre-existing skips, unrelated).
+  npm run typecheck: clean. Both re-verified after merging in the 3
+  sibling PRs that landed on dev during this story's execution.
