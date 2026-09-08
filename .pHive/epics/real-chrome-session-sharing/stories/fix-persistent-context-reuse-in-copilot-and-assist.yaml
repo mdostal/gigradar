@@ -1,0 +1,108 @@
+id: fix-persistent-context-reuse-in-copilot-and-assist
+epic: real-chrome-session-sharing
+title: "Apply session-capture.ts's proven persistent-context-reuse fix to verification-copilot-session.ts and assist-session.ts"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+progress_note: |
+  SHIPPED. Root cause: session-capture.ts's startCapture() was fixed on
+  2026-08-30 (ateam-session-lifetime-blocker story) to reuse the persistent
+  Chrome profile's own real default context (`browser.contexts()[0]`)
+  instead of `browser.newContext()`, because newContext() always creates a
+  fresh, isolated context that discards the profile's real cookies even
+  when the profile itself is shared. That fix was never propagated to
+  verification-copilot-session.ts's openCopilotSession() or
+  assist-session.ts's startAssistSession() -- both still called
+  `browser.newContext({storageState})` unconditionally, silently discarding
+  the owner's real Google session on every single use (the owner's own
+  live complaint: forced to recapture/re-login 3 times in one day, same
+  Google account each time).
+
+  Fix: both functions now check `realChrome.persistent` and reuse
+  `browser.contexts()[0]` when it exists, seeding it via a NEW shared
+  helper, `applyStorageStateToContext()` (src/lib/auth/browser-session.ts).
+  This helper does more than session-capture.ts's own narrower
+  addCookies()-only seed: it injects BOTH cookies (context.addCookies())
+  AND localStorage-held origins (navigate-then-page.evaluate(), since
+  Playwright's BrowserContext has no bulk API to inject localStorage into
+  an EXISTING context) -- necessary here because verification-copilot-
+  session.ts/assist-session.ts replay a source's own FULL previously-
+  captured session (which may legitimately depend on localStorage-held
+  auth state for some SPA-style sources), not just a cookie-based Google
+  SSO seed. session-capture.ts's own seed path was also switched to call
+  this same shared helper (behaviorally identical for its cookie-only
+  Google SSO case, but now one shared implementation instead of a second,
+  divergent copy).
+
+  Also fixed, exposed by this change: session-capture.ts's getCapturePage()
+  derived the live page via `entry.context.pages()[0]` -- correct only when
+  each capture has its own private context. Once a context can be genuinely
+  SHARED (this epic's other story, cross-module-real-chrome-registry),
+  `pages()[0]` could return a different capture's page entirely, or
+  incorrectly report "no open page" if this capture's own page isn't first
+  in the shared list. Fixed by tracking `page: Page` explicitly on
+  CaptureEntry (verification-copilot-session.ts's CopilotSessionEntry and
+  assist-session.ts's AssistSessionEntry already tracked their page
+  explicitly, so needed no equivalent fix) and having getCapturePage()
+  return it directly, checking `page.isClosed()` instead of an empty
+  pages() array.
+
+  Verification: npm test (1793 passed, 3 skipped, 0 failed -- new/updated
+  coverage in session-capture.test.ts, verification-copilot-session.test.ts,
+  assist-session.test.ts) and npm run typecheck (clean).
+
+  No live end-to-end human-login verification was performed here (this
+  code path requires a real Google account interactively completing a real
+  OAuth flow in a real spawned Chrome window) -- same posture as this
+  codebase's other real-chrome session stories (e.g.
+  google-sso-session-persistence, oauth-session-capture-v2 epic): the
+  owner's own real use is the verification that actually matters here, left
+  open deliberately rather than faked.
+
+description: |
+  See epic.yaml's root_cause for full detail. Fix verification-copilot-
+  session.ts's openCopilotSession() and assist-session.ts's
+  startAssistSession() to reuse the persistent profile's own real default
+  context (matching session-capture.ts's already-proven fix) instead of
+  browser.newContext({storageState}), which always discards it.
+
+acceptance_criteria:
+  - "verification-copilot-session.ts and assist-session.ts both reuse browser.contexts()[0] when the acquired real-chrome handle is persistent, seeding it via a shared helper rather than browser.newContext()."
+  - "The shared seeding helper injects both cookies and localStorage-held origins, not cookies only."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-capture.ts
+      purpose: "The already-fixed reference implementation this story's fix matches."
+    - path: src/lib/auth/verification-copilot-session.ts
+      purpose: "openCopilotSession() -- the fix target for the Issues page's 'Open browser to help clear it' flow."
+    - path: src/lib/auth/assist-session.ts
+      purpose: "startAssistSession() -- the fix target for profile-assist sessions."
+    - path: src/lib/auth/browser-session.ts
+      purpose: "New applyStorageStateToContext() shared helper."
+
+risks:
+  - severity: medium
+    description: "Touches real login/credential-session code paths used for the owner's actual daily use."
+    mitigation: "Reuses the exact pattern already proven live in session-capture.ts rather than inventing a new mechanism; full test suite + typecheck clean; production logic reviewed by a second pass before merge."
+
+steps:
+  - id: implement
+    description: Apply the persistent-context-reuse fix to both files via a shared helper
+    agent: developer
+  - id: test
+    description: Update/extend tests; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify no regression to the existing session-capture.ts behavior
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

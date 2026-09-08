@@ -1,0 +1,108 @@
+id: cross-module-real-chrome-registry
+epic: real-chrome-session-sharing
+title: "Add a refcounted, cross-module registry so concurrent real-chrome flows share one live browser instead of spawning competing instances"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: [fix-persistent-context-reuse-in-copilot-and-assist]
+
+progress_note: |
+  SHIPPED. Root cause: session-capture.ts, verification-copilot-session.ts,
+  and assist-session.ts each independently called spawnRealChrome(), with
+  ZERO cross-module coordination -- the only cross-module signal was
+  Chrome's own SingletonLock file on the shared persistent profile
+  directory (real-chrome.ts's isProfileLocked()). If a second real-chrome
+  consumer (any of the three modules, any sourceId) called
+  spawnRealChrome() while a first was still live, it would see the profile
+  locked and silently fall back to a fresh, DISPOSABLE, completely separate
+  Chrome process/profile -- the owner's own literal complaint: "it can get
+  multiple browsers and multiple instances open at once rather than shared
+  login and one thing at a time."
+
+  Fix: real-chrome.ts gained a new, globalThis-pinned (same HMR-survival
+  idiom as every other in-memory session map in this codebase) refcounted
+  registry: acquireRealChrome() reuses the currently-live shared persistent
+  {browser, handle} pair (incrementing its refcount) if one exists and is
+  still connected, otherwise spawns fresh via the EXISTING (unchanged)
+  spawnRealChrome()+attachToRealChrome() and registers it if persistent.
+  releaseRealChrome(browser, handle) decrements the refcount and only
+  actually closes the browser + real Chrome process once every acquirer has
+  released it -- a disposable (non-persistent) handle is never registered
+  as shared and is closed immediately, unchanged from before this story. A
+  belt-and-suspenders "disconnected" listener registered once per shared
+  entry clears the registry immediately if the human closes the real Chrome
+  window directly, rather than waiting for the next acquire's
+  isConnected() check to notice.
+
+  All three consumer modules were switched from
+  spawnRealChrome()+attachToRealChrome()+direct browser.close()/
+  closeRealChrome() to acquireRealChrome()/releaseRealChrome() -- their own
+  disconnectedListener cleanup paths (fired when the real browser already
+  died) still call closeRealChrome() directly, since refcounting is moot
+  once the browser is already gone.
+
+  Net effect: two genuinely concurrent real-chrome flows (e.g. one issue's
+  "Open browser to help clear it" while a different issue's Capture Login
+  is still open, or a profile-assist session starting while either of the
+  other two is active) now share ONE real window/process with the SAME
+  already-authenticated Google session, opening their own tab in it, rather
+  than each getting its own separate, unauthenticated browser instance.
+
+  Verification: npm test (1793 passed, 3 skipped, 0 failed -- new coverage
+  in real-chrome.test.ts directly exercising acquire/release reuse,
+  refcounting, disposable-handle non-sharing, dead-shared-browser
+  detection, and attach-failure cleanup) and npm run typecheck (clean).
+
+  No live end-to-end human-login verification was performed (same
+  deliberate posture as the sibling story in this epic) -- the owner's own
+  real day-to-day use of Capture Login / "Open browser to help clear it" /
+  profile-assist across multiple issues is the real verification this
+  needs, left open rather than faked.
+
+description: |
+  See epic.yaml's root_cause for full detail. Add real cross-module
+  coordination so a second concurrent real-chrome request reuses the SAME
+  already-live persistent browser (a new tab in it) instead of silently
+  degrading to a disposable, unshared instance.
+
+acceptance_criteria:
+  - "A second acquireRealChrome() call while a persistent session is live reuses the same browser/handle -- no second spawn/attach."
+  - "releaseRealChrome() only actually closes the browser once every acquirer has released it."
+  - "A disposable handle is never registered as shared and closes immediately on release."
+  - "If the shared browser disconnects, the next acquireRealChrome() call spawns fresh rather than reusing a dead reference."
+  - "All three real-chrome consumer modules (session-capture.ts, verification-copilot-session.ts, assist-session.ts) use acquireRealChrome()/releaseRealChrome() instead of the old direct spawn/attach/close calls."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/real-chrome.ts
+      purpose: "New acquireRealChrome()/releaseRealChrome() refcounted registry, built on top of the existing (unchanged) spawnRealChrome()/attachToRealChrome()/closeRealChrome()."
+    - path: src/lib/auth/session-capture.ts
+      purpose: "Switched to acquireRealChrome()/releaseRealChrome(); CaptureEntry now tracks its own page explicitly (see the sibling story)."
+    - path: src/lib/auth/verification-copilot-session.ts
+      purpose: "Switched to acquireRealChrome()/releaseRealChrome()."
+    - path: src/lib/auth/assist-session.ts
+      purpose: "Switched to acquireRealChrome()/releaseRealChrome()."
+
+risks:
+  - severity: medium
+    description: "Shared-browser lifecycle bugs (e.g. a refcount leak, or closing a browser another flow still needs) would be disruptive since this is the app's real login mechanism."
+    mitigation: "Refcounting is centralized in one small, directly-tested module (real-chrome.ts) rather than duplicated per consumer; each consumer's own idle-timeout/disconnect/finish/cancel path now goes through the same releaseRealChrome() call, so there is exactly one place this logic can go wrong."
+
+steps:
+  - id: implement
+    description: Add the refcounted acquire/release registry to real-chrome.ts; migrate all three consumers
+    agent: developer
+  - id: test
+    description: Add direct real-chrome.test.ts coverage for acquire/release/refcount/reuse/dead-browser behavior; update the three consumers' own tests; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify no refcount leak or premature-close risk across the three consumers' own cleanup paths (idle timeout, disconnect, finish/cancel/end)
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

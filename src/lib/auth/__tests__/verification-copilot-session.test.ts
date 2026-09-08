@@ -22,11 +22,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const spawnRealChromeMock = vi.fn();
 const attachToRealChromeMock = vi.fn();
 const closeRealChromeMock = vi.fn();
+// real-chrome-session-sharing epic, cross-module-real-chrome-registry story:
+// openCopilotSession() now calls acquireRealChrome()/releaseRealChrome()
+// instead of spawnRealChrome()/attachToRealChrome() directly. The DEFAULT
+// mock implementations below (reset in beforeEach) trampoline through the
+// already-mocked spawnRealChrome()/attachToRealChrome()/closeRealChrome()
+// so every existing test that configures THOSE mocks keeps working
+// unmodified -- the real refcounted sharing/reuse behavior acquireRealChrome()
+// itself adds is exercised against the REAL real-chrome.ts in
+// real-chrome.test.ts, not re-mocked here.
+const acquireRealChromeMock = vi.fn();
+const releaseRealChromeMock = vi.fn();
 
 vi.mock("../real-chrome.js", () => ({
   spawnRealChrome: (...args: unknown[]) => spawnRealChromeMock(...args),
   attachToRealChrome: (...args: unknown[]) => attachToRealChromeMock(...args),
   closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
+  acquireRealChrome: (...args: unknown[]) => acquireRealChromeMock(...args),
+  releaseRealChrome: (...args: unknown[]) => releaseRealChromeMock(...args),
 }));
 
 // product-review-followups epic: openCopilotSession() now fires a real
@@ -36,9 +49,18 @@ vi.mock("../../notify/desktop.js", () => ({ sendDesktopNotification: vi.fn(async
 
 const readStorageStateFileMock = vi.fn();
 const filterStorageStateToAllowlistMock = vi.fn();
+// real-chrome-session-sharing epic, fix-persistent-context-reuse-in-copilot-
+// and-assist story: openCopilotSession() now also imports
+// applyStorageStateToContext() from this module -- mocked here too (even
+// though no test below currently drives FAKE_REAL_CHROME_HANDLE.persistent
+// to `true`, so this branch isn't exercised yet) so this mock factory stays
+// a faithful, complete stand-in for browser-session.js's actual exports
+// rather than silently missing one.
+const applyStorageStateToContextMock = vi.fn().mockResolvedValue(undefined);
 vi.mock("../browser-session.js", () => ({
   readStorageStateFile: (...args: unknown[]) => readStorageStateFileMock(...args),
   filterStorageStateToAllowlist: (...args: unknown[]) => filterStorageStateToAllowlistMock(...args),
+  applyStorageStateToContext: (...args: unknown[]) => applyStorageStateToContextMock(...args),
 }));
 
 const FAKE_REAL_CHROME_HANDLE = { process: { kill: vi.fn() }, cdpPort: 54733, userDataDir: "/fake/tmp/gigradar-real-chrome" };
@@ -95,8 +117,18 @@ beforeEach(async () => {
   spawnRealChromeMock.mockReset();
   attachToRealChromeMock.mockReset();
   closeRealChromeMock.mockReset();
+  acquireRealChromeMock.mockReset().mockImplementation(async () => {
+    const handle = await spawnRealChromeMock();
+    const browser = await attachToRealChromeMock(handle.cdpPort);
+    return { handle, browser };
+  });
+  releaseRealChromeMock.mockReset().mockImplementation(async (browser: { close: () => Promise<void> }, handle: unknown) => {
+    await browser.close();
+    closeRealChromeMock(handle);
+  });
   readStorageStateFileMock.mockReset().mockReturnValue(FAKE_STORAGE_STATE);
   filterStorageStateToAllowlistMock.mockReset().mockReturnValue(FAKE_STORAGE_STATE);
+  applyStorageStateToContextMock.mockReset().mockResolvedValue(undefined);
   vi.mocked((await import("../../notify/desktop.js")).sendDesktopNotification).mockClear();
 });
 
@@ -135,7 +167,12 @@ describe("openCopilotSession / getCopilotPage / closeCopilotSession: happy path"
     await closeCopilotSession(info.sessionId);
     expect(browser.close).toHaveBeenCalledTimes(1);
     expect(browser.off).toHaveBeenCalledWith("disconnected", expect.any(Function));
-    expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
+    // real-chrome-session-sharing epic, cross-module-real-chrome-registry
+    // story: closeCopilotSession() releases via releaseRealChrome() now --
+    // real-chrome.ts's own tests cover whether that actually tears down the
+    // underlying connection (a shared session might stay open for another
+    // concurrent acquirer), not this module.
+    expect(releaseRealChromeMock).toHaveBeenCalledWith(browser, FAKE_REAL_CHROME_HANDLE);
   });
 
   it("fires a desktop notification once the browser window is genuinely open (product-review-followups epic)", async () => {
@@ -206,6 +243,7 @@ describe("idle timeout", () => {
     await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS + 1000);
 
     expect(browser.close).toHaveBeenCalledTimes(1);
+    expect(releaseRealChromeMock).toHaveBeenCalledWith(browser, FAKE_REAL_CHROME_HANDLE);
     expect(() => getCopilotPage(info.sessionId)).toThrow(/not found or expired/);
   });
 

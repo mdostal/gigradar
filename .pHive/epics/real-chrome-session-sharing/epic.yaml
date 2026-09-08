@@ -1,6 +1,6 @@
 id: real-chrome-session-sharing
 title: "Fix real-Chrome login sessions to genuinely share the persistent Google login and stop spawning competing browser instances"
-status: in-progress
+status: complete
 created_at: "2026-09-07T21:20:00Z"
 
 trigger: |
@@ -45,7 +45,7 @@ goal: |
 
 stories:
   - id: fix-persistent-context-reuse-in-copilot-and-assist
-    status: pending
+    status: complete
   - id: cross-module-real-chrome-registry
-    status: pending
+    status: complete
     depends_on: [fix-persistent-context-reuse-in-copilot-and-assist]

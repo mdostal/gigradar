@@ -37,11 +37,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const spawnRealChromeMock = vi.fn();
 const attachToRealChromeMock = vi.fn();
 const closeRealChromeMock = vi.fn();
+// real-chrome-session-sharing epic, cross-module-real-chrome-registry story:
+// session-capture.ts now calls acquireRealChrome()/releaseRealChrome()
+// instead of spawnRealChrome()/attachToRealChrome() directly. The DEFAULT
+// mock implementations below (reset in beforeEach) simply trampoline
+// through the already-mocked spawnRealChrome()/attachToRealChrome()/
+// closeRealChrome() so every existing test that configures THOSE mocks'
+// return values/rejections keeps working unmodified -- acquireRealChrome()
+// itself, and the real refcounted sharing/reuse behavior it adds, is
+// exercised directly against the REAL real-chrome.ts in real-chrome.test.ts,
+// not re-mocked here.
+const acquireRealChromeMock = vi.fn();
+const releaseRealChromeMock = vi.fn();
 
 vi.mock("../real-chrome.js", () => ({
   spawnRealChrome: (...args: unknown[]) => spawnRealChromeMock(...args),
   attachToRealChrome: (...args: unknown[]) => attachToRealChromeMock(...args),
   closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
+  acquireRealChrome: (...args: unknown[]) => acquireRealChromeMock(...args),
+  releaseRealChrome: (...args: unknown[]) => releaseRealChromeMock(...args),
 }));
 
 // product-review-followups epic: startCapture() now fires a real desktop
@@ -69,10 +83,18 @@ const LOGIN_URL = "https://www.gofractional.com/login";
 let tmpDataDir: string;
 let tmpKeyDir: string;
 
-/** A fake Page: goto() resolves by default. */
+/**
+ * A fake Page: goto() resolves by default. isClosed() defaults to `false` --
+ * real-chrome-session-sharing epic, cross-module-real-chrome-registry story:
+ * getCapturePage() now checks `entry.page.isClosed()` directly (see that
+ * function's own doc comment for why -- `context.pages()[0]` stopped being
+ * reliable once a context can be genuinely shared across concurrent
+ * captures/sessions) rather than falling back on an empty `pages()` array.
+ */
 function createFakePage(overrides: Record<string, unknown> = {}) {
   return {
     goto: vi.fn().mockResolvedValue(undefined),
+    isClosed: vi.fn().mockReturnValue(false),
     ...overrides,
   };
 }
@@ -86,7 +108,12 @@ function createFakeContext(page: unknown, storageStateResult: unknown) {
     close: vi.fn().mockResolvedValue(undefined),
     // google-sso-session-persistence story: startCapture()'s seed-injection
     // path calls this on an EXISTING (persistent-profile) context, since its
-    // storageState can't be set via a constructor option after the fact.
+    // storageState can't be set via a constructor option after the fact --
+    // as of the real-chrome-session-sharing epic, indirectly via
+    // browser-session.ts's applyStorageStateToContext() (a thin, REAL, never
+    // mocked in this suite, function that itself calls context.addCookies()
+    // for the cookies portion of a StorageState — see that function's own
+    // doc comment).
     addCookies: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -170,6 +197,15 @@ beforeEach(async () => {
   spawnRealChromeMock.mockReset();
   attachToRealChromeMock.mockReset();
   closeRealChromeMock.mockReset();
+  acquireRealChromeMock.mockReset().mockImplementation(async () => {
+    const handle = await spawnRealChromeMock();
+    const browser = await attachToRealChromeMock(handle.cdpPort);
+    return { handle, browser };
+  });
+  releaseRealChromeMock.mockReset().mockImplementation(async (browser: { close: () => Promise<void> }, handle: unknown) => {
+    await browser.close();
+    closeRealChromeMock(handle);
+  });
   vi.mocked((await import("../../notify/desktop.js")).sendDesktopNotification).mockClear();
 });
 
@@ -256,10 +292,13 @@ describe("startCapture / finishCapture: happy path", () => {
     expect(browser.off).toHaveBeenCalledWith("disconnected", expect.any(Function));
     expect(browser.removeAllListeners).not.toHaveBeenCalled();
 
-    // The real, independently-spawned Chrome process + its temp
-    // --user-data-dir are torn down alongside the Playwright CDP connection
-    // — see real-chrome.ts's closeRealChrome().
-    expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
+    // The browser+handle pair acquired via acquireRealChrome() is released
+    // via releaseRealChrome() — real-chrome-session-sharing epic,
+    // cross-module-real-chrome-registry story: releaseRealChrome() itself
+    // (real-chrome.test.ts) owns deciding whether that actually tears down
+    // the underlying Playwright connection + real Chrome process (shared
+    // sessions stay open for other concurrent acquirers), not this module.
+    expect(releaseRealChromeMock).toHaveBeenCalledWith(browser, FAKE_REAL_CHROME_HANDLE);
   });
 
   it("launches a FRESH context — no storageState passed into newContext() — when the profile is NOT persistent", async () => {
@@ -327,7 +366,7 @@ describe("startCapture / finishCapture: happy path", () => {
       expect(browser.newContext).toHaveBeenCalledWith({ storageState: { cookies: [GOOGLE_COOKIE], origins: [] } });
     });
 
-    it("injects a seed into an EXISTING persistent-profile context via addCookies(), filtered to Google-only origins -- never newContext()", async () => {
+    it("injects a seed into an EXISTING persistent-profile context via browser-session.ts's applyStorageStateToContext() (never mocked here — a real, thin function exercised against this fake context), filtered to Google-only origins -- never newContext()", async () => {
       const page = createFakePage({});
       const existingContext = createFakeContext(page, GOOD_STORAGE_STATE);
       const browser = createFakeBrowser("unused", [existingContext]);
@@ -337,6 +376,11 @@ describe("startCapture / finishCapture: happy path", () => {
       await startCapture(SOURCE_ID, LOGIN_URL, undefined, SEED);
 
       expect(browser.newContext).not.toHaveBeenCalled();
+      // SEED's origins array is empty (a Google SSO seed is cookie-only in
+      // practice — see applyStorageStateToContext()'s own doc comment), so
+      // the REAL applyStorageStateToContext() takes only its addCookies()
+      // branch here, never its origins/localStorage loop (context.newPage()
+      // is never called for seeding).
       expect(existingContext.addCookies).toHaveBeenCalledTimes(1);
       expect(existingContext.addCookies).toHaveBeenCalledWith([GOOGLE_COOKIE]);
     });
@@ -364,19 +408,27 @@ describe("startCapture / finishCapture: happy path", () => {
     expect(sendDesktopNotification).toHaveBeenCalledWith(expect.objectContaining({ body: expect.stringContaining(SOURCE_ID) }));
   });
 
-  it("propagates a spawnRealChrome() failure (e.g. real Chrome not installed) and never attempts to attach", async () => {
+  it("propagates an acquireRealChrome() failure (e.g. real Chrome not installed, surfaced through the default mock's spawnRealChrome() trampoline) and never attempts to attach", async () => {
     spawnRealChromeMock.mockRejectedValue(new Error("gigradar real-chrome: Google Chrome not found"));
 
     await expect(startCapture(SOURCE_ID, LOGIN_URL)).rejects.toThrow(/Google Chrome not found/);
     expect(attachToRealChromeMock).not.toHaveBeenCalled();
   });
 
-  it("closes the spawned real Chrome if attaching over CDP fails", async () => {
-    spawnRealChromeMock.mockResolvedValue(FAKE_REAL_CHROME_HANDLE);
-    attachToRealChromeMock.mockRejectedValue(new Error("simulated connectOverCDP failure"));
+  // real-chrome-session-sharing epic, cross-module-real-chrome-registry
+  // story: the "spawn succeeded but attaching over CDP failed" cleanup
+  // (calling closeRealChrome() on the just-spawned handle) now happens
+  // INSIDE acquireRealChrome() itself, in real-chrome.ts — not in this
+  // module anymore. That specific cleanup behavior is covered directly
+  // against the real real-chrome.ts in real-chrome.test.ts ("cleans up ...
+  // if attachToRealChrome() throws after spawnRealChrome() already
+  // succeeded"). This module's own responsibility is narrower: propagate
+  // whatever error acquireRealChrome() rejects with, wrapped in its own
+  // actionable message, and never proceed to open a context.
+  it("propagates an acquireRealChrome() failure and never proceeds to open a context", async () => {
+    acquireRealChromeMock.mockRejectedValue(new Error("simulated acquireRealChrome() failure"));
 
-    await expect(startCapture(SOURCE_ID, LOGIN_URL)).rejects.toThrow(/failed to attach to the spawned Chrome/);
-    expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
+    await expect(startCapture(SOURCE_ID, LOGIN_URL)).rejects.toThrow(/failed to acquire a real Chrome browser.*simulated acquireRealChrome\(\) failure/);
   });
 });
 
@@ -444,6 +496,10 @@ describe("idle timeout: closes the browser and evicts the entry after IDLE_TIMEO
     await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS);
 
     expect(browser.close).toHaveBeenCalledTimes(1);
+    // real-chrome-session-sharing epic: the idle timeout's cleanup path now
+    // goes through releaseRealChrome() (safeCloseBrowser()), same as every
+    // other exit path in this module.
+    expect(releaseRealChromeMock).toHaveBeenCalledWith(browser, FAKE_REAL_CHROME_HANDLE);
     await expect(finishCapture(captureId)).rejects.toThrow(/not found or already expired/);
 
     // Same regression guard as finishCapture/cancelCapture above: the idle
@@ -585,6 +641,7 @@ describe("cancelCapture", () => {
     await cancelCapture(captureId);
 
     expect(browser.close).toHaveBeenCalledTimes(1);
+    expect(releaseRealChromeMock).toHaveBeenCalledWith(browser, FAKE_REAL_CHROME_HANDLE);
     expect(fs.existsSync(sessionFilePath(SOURCE_ID))).toBe(false);
     await expect(finishCapture(captureId)).rejects.toThrow(/not found or already expired/);
 
@@ -618,11 +675,12 @@ describe("cancelCapture", () => {
 });
 
 describe("no debug capture, ever: launch()/newContext() calls carry no tracing/HAR/video/console-logging options", () => {
-  it("acquires the browser via spawnRealChrome()/attachToRealChrome() — never playwright.chromium.launch() directly", async () => {
+  it("acquires the browser via acquireRealChrome() (which spawns+attaches via spawnRealChrome()/attachToRealChrome() under the hood) — never playwright.chromium.launch() directly", async () => {
     setUpFakeBrowserChain(GOOD_STORAGE_STATE);
 
     await startCapture(SOURCE_ID, LOGIN_URL);
 
+    expect(acquireRealChromeMock).toHaveBeenCalledTimes(1);
     expect(spawnRealChromeMock).toHaveBeenCalledTimes(1);
     expect(spawnRealChromeMock).toHaveBeenCalledWith();
     expect(attachToRealChromeMock).toHaveBeenCalledTimes(1);

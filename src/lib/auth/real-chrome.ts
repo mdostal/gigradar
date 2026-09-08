@@ -311,6 +311,130 @@ export function closeRealChrome(handle: RealChromeHandle): void {
 }
 
 // -----------------------------------------------------------------------
+// real-chrome-session-sharing epic, cross-module-real-chrome-registry
+// story. THE OTHER HALF of the owner's real, live complaint ("it can get
+// multiple browsers and multiple instances open at once rather than shared
+// login and one thing at a time"): session-capture.ts,
+// verification-copilot-session.ts, and assist-session.ts each independently
+// call spawnRealChrome(), and the ONLY cross-module coordination was
+// Chrome's own SingletonLock file on the shared profile directory
+// (isProfileLocked() above). If a second real-chrome consumer (any of the
+// three modules, for any sourceId) called spawnRealChrome() while a first
+// was still live, it would see the profile locked and silently fall back
+// to a fresh, DISPOSABLE, completely separate Chrome process/profile —
+// exactly the "multiple browsers, multiple instances, no shared login"
+// symptom, since a disposable profile shares nothing with the persistent
+// one.
+//
+// acquireRealChrome()/releaseRealChrome() below are a thin, REFCOUNTED
+// layer on top of spawnRealChrome()/attachToRealChrome()/closeRealChrome()
+// (none of which change) — GLOBALTHIS-PINNED, same HMR-survival reasoning
+// as every other in-memory session map in this codebase (see
+// session-capture.ts's file-header comment for the canonical explanation).
+// A second concurrent acquireRealChrome() call, while a first persistent
+// session is still live, gets back the SAME already-attached Browser
+// connection (refCount incremented) instead of spawning a competing
+// process — the caller then opens its OWN page/tab in that shared browser
+// for its own specific flow, so two genuinely concurrent flows (e.g. one
+// issue's "Open browser to help clear it" while a different issue's
+// Capture Login is still open) share ONE real window with multiple tabs,
+// not two separate windows with two separate logins. releaseRealChrome()
+// only actually closes the browser once every acquirer has released it.
+//
+// A DISPOSABLE handle (spawnRealChrome() itself already fell back because
+// the persistent profile was locked by something this registry doesn't
+// track — e.g. a genuinely external, non-gigradar Chrome instance holding
+// that exact profile dir, an edge case real-chrome.ts's own header comment
+// already accepts as a v1 risk) is never registered here — it's a one-off,
+// closed directly by its own sole caller, unchanged from today's behavior.
+// -----------------------------------------------------------------------
+
+interface SharedPersistentEntry {
+  handle: RealChromeHandle;
+  browser: Browser;
+  refCount: number;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberate untyped globalThis cast; see session-capture.ts's file header for why this exact idiom is required.
+const sharedState: { current: SharedPersistentEntry | null } = ((globalThis as any).__gigradarSharedRealChrome ??= {
+  current: null,
+});
+
+/**
+ * Acquires a real Chrome browser connection: reuses the currently-live
+ * shared persistent session (incrementing its refcount) if one exists and
+ * is still connected, otherwise spawns a fresh one via spawnRealChrome() +
+ * attachToRealChrome() exactly as every existing call site already did.
+ * Every caller MUST pair this with exactly one releaseRealChrome() call
+ * (never call closeRealChrome()/browser.close() directly on a handle
+ * acquired this way — see releaseRealChrome()'s own doc comment).
+ */
+export async function acquireRealChrome(): Promise<{ handle: RealChromeHandle; browser: Browser }> {
+  const existing = sharedState.current;
+  if (existing) {
+    if (existing.browser.isConnected()) {
+      existing.refCount += 1;
+      return { handle: existing.handle, browser: existing.browser };
+    }
+    // Stale — the shared browser disconnected without going through
+    // releaseRealChrome() (e.g. the human closed the real Chrome window
+    // directly rather than clicking "Finish"/"Cancel"/"I'm done" in the
+    // app). Drop it so the spawn below replaces it with a fresh one.
+    sharedState.current = null;
+  }
+
+  const handle = await spawnRealChrome();
+  let browser: Browser;
+  try {
+    browser = await attachToRealChrome(handle.cdpPort);
+  } catch (e) {
+    closeRealChrome(handle);
+    throw e;
+  }
+
+  if (handle.persistent) {
+    sharedState.current = { handle, browser, refCount: 1 };
+    // Belt-and-suspenders: if the human closes this window directly, clear
+    // the shared registry entry immediately rather than waiting for the
+    // NEXT acquireRealChrome() call's isConnected() check to notice — a
+    // NAMED listener (never removeAllListeners, per session-capture.ts's
+    // CaptureEntry.disconnectedListener doc comment) that coexists fine
+    // with each individual consumer's OWN disconnect listener.
+    browser.on("disconnected", () => {
+      if (sharedState.current?.browser === browser) sharedState.current = null;
+    });
+  }
+
+  return { handle, browser };
+}
+
+/**
+ * Releases a browser+handle pair acquired via acquireRealChrome(). If it's
+ * the currently-shared persistent session, decrements its refcount and only
+ * actually closes the browser + real Chrome process once every acquirer has
+ * released it (refcount reaches zero) — a still-in-use shared session stays
+ * open for whichever other flow(s) are still using it. A disposable
+ * (non-shared) handle is closed immediately, same as before this registry
+ * existed. Safe to call more than once for the same handle (idempotent,
+ * same posture as closeRealChrome() itself).
+ */
+export async function releaseRealChrome(browser: Browser, handle: RealChromeHandle): Promise<void> {
+  const existing = sharedState.current;
+  if (existing && existing.handle === handle) {
+    existing.refCount -= 1;
+    if (existing.refCount > 0) return; // still in use elsewhere — leave the shared browser open
+    sharedState.current = null;
+  }
+
+  try {
+    await browser.close();
+  } catch {
+    // already closed/closing — nothing more to do.
+  }
+  closeRealChrome(handle);
+}
+
+// -----------------------------------------------------------------------
 // embedded-browser-and-guided-session epic: window-management helpers, used
 // so a real, headed Chrome window never sits there flashing/stealing focus
 // on the owner's desktop for the duration of an unattended scan or a

@@ -32,8 +32,8 @@
 // safety-critical and must never fork.
 import crypto from "node:crypto";
 import type { Browser, BrowserContext, Page } from "playwright";
-import { filterStorageStateToAllowlist, readStorageStateFile, type StorageState } from "./browser-session.js";
-import { attachToRealChrome, closeRealChrome, positionChromeWindowSideBySide, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
+import { applyStorageStateToContext, filterStorageStateToAllowlist, readStorageStateFile, type StorageState } from "./browser-session.js";
+import { acquireRealChrome, closeRealChrome, positionChromeWindowSideBySide, releaseRealChrome, type RealChromeHandle } from "./real-chrome.js";
 import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
 import { resolveEnvString } from "../config/load.js";
 import { sendDesktopNotification } from "../notify/desktop.js";
@@ -66,14 +66,16 @@ interface AssistSessionEntry {
 const sessions: Map<string, AssistSessionEntry> = ((globalThis as any).__gigradarAssistSessions ??=
   new Map<string, AssistSessionEntry>());
 
-/** Closes both halves of a session's browser resources -- Playwright's CDP connection (`browser`) AND the real, independently-spawned Chrome process + its temp --user-data-dir (`realChrome`, via real-chrome.ts's closeRealChrome()) -- same helper session-capture.ts uses, for the same reason (a cleanup path may race the user closing the window directly). */
+/**
+ * Releases a session's browser resources via real-chrome.ts's
+ * releaseRealChrome() -- real-chrome-session-sharing epic,
+ * cross-module-real-chrome-registry story: only actually closes the real
+ * browser once every other acquirer (session-capture.ts's Capture Login,
+ * verification-copilot-session.ts, or another assist session) sharing the
+ * same persistent Chrome has also released it.
+ */
 async function safeCloseBrowser(browser: Browser, realChrome: RealChromeHandle): Promise<void> {
-  try {
-    await browser.close();
-  } catch {
-    // already closed/closing -- nothing more to do.
-  }
-  closeRealChrome(realChrome);
+  await releaseRealChrome(browser, realChrome);
 }
 
 function scheduleIdleTimeout(sessionId: string): ReturnType<typeof setTimeout> {
@@ -82,8 +84,7 @@ function scheduleIdleTimeout(sessionId: string): ReturnType<typeof setTimeout> {
     if (!entry) return; // already ended
     sessions.delete(sessionId);
     entry.browser.off("disconnected", entry.disconnectedListener);
-    void entry.browser.close().catch(() => {});
-    closeRealChrome(entry.realChrome);
+    void safeCloseBrowser(entry.browser, entry.realChrome);
   }, IDLE_TIMEOUT_MS);
 }
 
@@ -194,22 +195,37 @@ export async function startAssistSession(
 
   const { profileUrl, scopedStorageState } = await resolveAssistSessionContext(sourceId, storageStatePathSetting, sessionBackend, cfg);
 
-  const realChrome = await spawnRealChrome();
-
+  // real-chrome-session-sharing epic, cross-module-real-chrome-registry
+  // story: reuses an already-live shared persistent browser (from THIS or
+  // either of the other two real-chrome consumer modules) instead of
+  // unconditionally spawning a new, competing Chrome process/profile — see
+  // real-chrome.ts's acquireRealChrome() doc comment.
+  let realChrome: RealChromeHandle;
   let browser: Browser;
   try {
-    browser = await attachToRealChrome(realChrome.cdpPort);
+    ({ handle: realChrome, browser } = await acquireRealChrome());
   } catch (e) {
-    closeRealChrome(realChrome);
     throw new Error(
-      `${MODULE_PREFIX}: failed to attach to the spawned Chrome for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
+      `${MODULE_PREFIX}: failed to acquire a real Chrome browser for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
     );
   }
 
   let context: BrowserContext;
   let page: Page;
   try {
-    context = await browser.newContext({ storageState: scopedStorageState });
+    // real-chrome-session-sharing epic, fix-persistent-context-reuse-in-
+    // copilot-and-assist story. Same fix as verification-copilot-
+    // session.ts's identical change — see that file's own doc comment.
+    // `browser.newContext({storageState})` always discards the persistent
+    // profile's own real Google/SSO session; reuse `browser.contexts()[0]`
+    // when persistent and seed it via applyStorageStateToContext() instead.
+    const existingContext = realChrome.persistent ? browser.contexts()[0] : undefined;
+    if (existingContext) {
+      context = existingContext;
+      await applyStorageStateToContext(context, scopedStorageState);
+    } else {
+      context = await browser.newContext({ storageState: scopedStorageState });
+    }
     page = await context.newPage();
     await page.goto(profileUrl);
   } catch (e) {

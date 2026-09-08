@@ -337,6 +337,156 @@ describe("closeRealChrome", () => {
   });
 });
 
+describe("acquireRealChrome / releaseRealChrome (real-chrome-session-sharing epic, cross-module-real-chrome-registry story)", () => {
+  // Isolate the module-level (globalThis-pinned) shared-session registry
+  // between tests -- see real-chrome.ts's own doc comment for why it's
+  // pinned to globalThis (HMR survival) rather than a plain module-level
+  // binding. This file never calls vi.resetModules(), so "../real-chrome.js"
+  // is imported exactly once for the whole file and its `sharedState`
+  // binding keeps pointing at the SAME in-memory object for every test below
+  // -- `delete`-ing the globalThis property would only stop a FUTURE fresh
+  // import from finding it, not clear what the already-imported module still
+  // holds. Mutating `.current` back to null on the existing object (rather
+  // than deleting/replacing the property) is what actually resets it for
+  // the next test -- a belt-and-suspenders backstop for any test below that
+  // doesn't itself fully release what it acquired.
+  afterEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only reach into the same deliberate globalThis cast real-chrome.ts itself uses.
+    const shared = (globalThis as any).__gigradarSharedRealChrome;
+    if (shared) shared.current = null;
+  });
+
+  /** A minimal real-EventEmitter-shaped fake Browser -- same "on() actually tracks handlers" discipline session-capture.test.ts's own createFakeBrowser() uses, since acquireRealChrome() registers a REAL "disconnected" listener on the browser it gets back from attachToRealChrome(), and one test below needs to actually fire it. */
+  function createFakeBrowser() {
+    const listeners = new Map<string, Set<() => void>>();
+    const browser = {
+      connected: true,
+      isConnected: vi.fn(() => browser.connected),
+      close: vi.fn(async () => {
+        browser.connected = false;
+      }),
+      on: vi.fn((event: string, handler: () => void) => {
+        if (!listeners.has(event)) listeners.set(event, new Set());
+        listeners.get(event)!.add(handler);
+      }),
+      contexts: vi.fn(() => []),
+      simulateDisconnect() {
+        browser.connected = false;
+        for (const handler of listeners.get("disconnected") ?? []) handler();
+      },
+    };
+    return browser;
+  }
+
+  it("a second acquireRealChrome() call while a persistent session is still live reuses the SAME browser/handle -- no second spawn/attach -- and increments the refcount (observed via how many releases it takes to actually close it)", async () => {
+    spawnMock.mockReturnValue(createFakeChildProcess());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    const fakeBrowser = createFakeBrowser();
+    connectOverCDPMock.mockResolvedValue(fakeBrowser);
+
+    const { acquireRealChrome, releaseRealChrome } = await import("../real-chrome.js");
+
+    const first = await acquireRealChrome();
+    const second = await acquireRealChrome();
+
+    expect(second.browser).toBe(first.browser);
+    expect(second.handle).toBe(first.handle);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(connectOverCDPMock).toHaveBeenCalledTimes(1);
+
+    // Refcount is 2 -- releasing once must not close it (see the next test
+    // for that assertion in isolation); releasing a second time must.
+    await releaseRealChrome(first.browser, first.handle);
+    expect(fakeBrowser.close).not.toHaveBeenCalled();
+    await releaseRealChrome(second.browser, second.handle);
+    expect(fakeBrowser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("releaseRealChrome() does NOT close the browser while another acquirer still holds it -- only once every acquirer has released", async () => {
+    spawnMock.mockReturnValue(createFakeChildProcess());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    const fakeBrowser = createFakeBrowser();
+    connectOverCDPMock.mockResolvedValue(fakeBrowser);
+
+    const { acquireRealChrome, releaseRealChrome } = await import("../real-chrome.js");
+
+    const first = await acquireRealChrome();
+    const second = await acquireRealChrome();
+    const third = await acquireRealChrome();
+
+    await releaseRealChrome(first.browser, first.handle);
+    await releaseRealChrome(second.browser, second.handle);
+    expect(fakeBrowser.close).not.toHaveBeenCalled(); // one acquirer (third) still holds it
+
+    await releaseRealChrome(third.browser, third.handle);
+    expect(fakeBrowser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("a disposable (non-persistent) handle is never registered as shared -- releaseRealChrome() closes it immediately, without waiting on or disturbing any concurrent persistent session's refcount", async () => {
+    // Simulate a persistent profile already locked by something OUTSIDE
+    // this registry's own tracking (real-chrome.ts's own accepted v1 risk
+    // -- see acquireRealChrome()'s header comment) by spawning one handle
+    // directly (bypassing acquireRealChrome() entirely, so the shared
+    // registry never learns about it) and dropping a live SingletonLock
+    // next to it, exactly like the existing "falls back to a fresh,
+    // disposable temp dir" spawnRealChrome() test above does.
+    spawnMock.mockReturnValue(createFakeChildProcess());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    const { spawnRealChrome: realSpawn, closeRealChrome: realClose } = await import("../real-chrome.js");
+    const externallyHeldPersistent = await realSpawn();
+    fs.symlinkSync(`test-host-${process.pid}`, path.join(externallyHeldPersistent.userDataDir, "SingletonLock"));
+
+    const fakeDisposableBrowser = createFakeBrowser();
+    connectOverCDPMock.mockResolvedValueOnce(fakeDisposableBrowser);
+
+    const { acquireRealChrome, releaseRealChrome } = await import("../real-chrome.js");
+    const acquired = await acquireRealChrome();
+
+    expect(acquired.handle.persistent).toBe(false);
+
+    await releaseRealChrome(acquired.browser, acquired.handle);
+    expect(fakeDisposableBrowser.close).toHaveBeenCalledTimes(1); // closed immediately -- never deferred on a refcount
+    expect(fs.existsSync(acquired.handle.userDataDir)).toBe(false); // its one-shot temp dir was removed too
+
+    realClose(externallyHeldPersistent);
+  });
+
+  it("if the shared browser disconnects (e.g. the human closed the real Chrome window directly), a subsequent acquireRealChrome() call spawns fresh rather than reusing the dead reference", async () => {
+    spawnMock.mockReturnValue(createFakeChildProcess());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    const firstBrowser = createFakeBrowser();
+    const secondBrowser = createFakeBrowser();
+    connectOverCDPMock.mockResolvedValueOnce(firstBrowser).mockResolvedValueOnce(secondBrowser);
+
+    const { acquireRealChrome } = await import("../real-chrome.js");
+
+    const first = await acquireRealChrome();
+    firstBrowser.simulateDisconnect(); // fires the SAME "disconnected" listener acquireRealChrome() itself registered
+
+    const second = await acquireRealChrome();
+
+    expect(second.browser).toBe(secondBrowser);
+    expect(second.browser).not.toBe(first.browser);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(connectOverCDPMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("cleans up (calls closeRealChrome -- process.kill() + the pkill belt-and-suspenders sweep) if attachToRealChrome() throws after spawnRealChrome() already succeeded", async () => {
+    const child = createFakeChildProcess();
+    spawnMock.mockReturnValue(child);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    connectOverCDPMock.mockRejectedValue(new Error("simulated connectOverCDP failure"));
+
+    const { acquireRealChrome } = await import("../real-chrome.js");
+
+    await expect(acquireRealChrome()).rejects.toThrow(/simulated connectOverCDP failure/);
+
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    const expectedUserDataDir = path.join(xdgDataHomeDir, "gigradar", "real-chrome-profile");
+    expect(spawnSyncMock).toHaveBeenCalledWith("pkill", ["-f", `--user-data-dir=${expectedUserDataDir}`], { stdio: "ignore" });
+  });
+});
+
 describe("minimizeChromeWindow / positionChromeWindowSideBySide (embedded-browser-and-guided-session epic)", () => {
   // Real bug, found and fixed live 2026-09-03: these used to address
   // Chrome's own shared `window 1 of application "Google Chrome"`, which
