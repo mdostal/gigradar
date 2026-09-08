@@ -385,6 +385,20 @@
   line-height: 1.25;
   text-wrap: balance;
 }
+/* today-page-gig-detail-panel story. The direct external-link affordance
+   kept on the Picks card / Full Roster row itself (not solely reachable
+   through the GigDetailPanel modal) -- deliberately small/quiet since the
+   card/row's own click already opens the richer modal, this is just the
+   fast path straight to the original posting. */
+.externalLinkIcon {
+  font-size: 0.8em;
+  font-weight: 400;
+  color: var(--accent);
+  text-decoration: none;
+}
+.externalLinkIcon:hover {
+  text-decoration: underline;
+}
 .pickCompany {
   font-size: 12.5px;
   color: var(--muted);
