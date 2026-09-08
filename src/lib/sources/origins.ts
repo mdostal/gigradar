@@ -151,6 +151,11 @@ export const KNOWN_SOURCES: readonly { id: string; label: string; auth: "none" |
   // and requires no authentication at all — auth:"none", same as
   // builtin.ts/braintrust.ts.
   { id: "linkedin", label: "LinkedIn", auth: "none" },
+  // Owner's own direction (2026-09-08): src/lib/sources/axialsearch.ts,
+  // auth:"none" — confirmed live via a bare curl with zero special
+  // headers returning the exact same server-rendered HTML, and /jobs is
+  // not in axialsearch.com's robots.txt Disallow list.
+  { id: "axialsearch", label: "Axial Search", auth: "none" },
 ];
 
 /**
