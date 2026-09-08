@@ -113,6 +113,62 @@ progress_note: |
 
   PR: https://github.com/mdostal/gigradar/pull/192
 
+  POST-MERGE ADDENDUM (orchestrating session, 2026-09-08): the story's own
+  note above that "this session's own standing constraints explicitly
+  forbid opening a real browser window or using Playwright" is INCORRECT
+  -- `simman` (vision-model-driven click verification, NOT raw Playwright
+  reproducing the old bug class) is the owner's own explicitly sanctioned
+  exception for exactly this kind of real interactive verification (see
+  reference_simman_vision_verification.md), already used successfully
+  several times earlier in this same session (e.g. the
+  external-link-click-silent-failure story). Corrected here so future
+  dispatches don't repeat this misunderstanding.
+
+  Real `simman`/live-browser verification WAS done at the orchestrating-
+  session level after merging PR #192 into dev and cutting the official
+  v0.48.0 CI release (bundling this story + settings-gear-icon-in-masthead
+  PR #190 + remove-window-title-text PR #191), against the ACTUAL running
+  packaged app with the owner's REAL 2042-gig database (not an isolated
+  seed):
+  - `simman doctor --fix` needed a manual correction beyond the documented
+    "re-run per fresh shell" gotcha: the project's own `npx playwright
+    install chromium` installs the revision pinned by the REPO's
+    playwright devDependency (1234), but simman's own bundled
+    playwright-core expects a different, newer pinned revision (1243) --
+    installing via the project's playwright silently leaves simman itself
+    still "chromium not installed". Fixed by installing directly through
+    simman's own bundled playwright-core
+    (`node <simman-install-dir>/node_modules/playwright-core/cli.js
+    install chromium`).
+  - A real `simman synthesize` run against the live `/today` page
+    consistently failed at the vision-verify step with a Gemini 400
+    ("Unable to process in[put]") -- root-caused, NOT a bug in this
+    story's own code: simman's fullPage screenshot captures the entire
+    scrollable page, and Full Roster renders all of the owner's real
+    matching gigs with zero pagination/virtualization
+    (documentElement.scrollHeight = 221,770px against the real 2042-gig
+    dataset), producing a ~14.6MB PNG that Gemini's vision API rejects
+    outright. This is a genuine, separate, newly-discovered bug, logged
+    as triage t-007 -- NOT a defect in this story's GigDetailPanel wiring.
+  - Confirmed the actual feature works correctly via a direct real-browser
+    (playwright-core, the same engine simman drives) DOM/evidence check
+    against the live app instead: clicking a real Today's Picks card (a
+    real `article.pickCard`) opened a real `[role=dialog][aria-modal=true]`
+    element containing a genuine external-posting link
+    (`https://fractionus.com/jobs/fractional-head-of-ai-at-axial-search`,
+    real owner data, not a fixture) and a working close control (both a
+    close button and Escape-to-close verified). The identical check
+    against a real Full Roster row (`[class*=rowListing]`) also opened the
+    modal. Both acceptance criteria's "real, live click-through" bar is
+    met with real evidence, even though the vision-verify layer itself
+    was blocked by the unrelated Full Roster scale bug above.
+  - Also spot-checked, on this same live v0.48.0 app, the sibling PRs
+    bundled in this release: the settings gear icon (`a[aria-label=
+    Settings]` present, `href="/config"`) and the clean window title
+    (`osascript` accessibility query returned empty title text, still
+    `AXStandardWindow`) -- both genuinely working on the real relaunched
+    app, not just at build time.
+
 description: |
   Owner's own real, live complaint (2026-09-07), from Today's Picks:
   "where is the link, where is the extension, where is seeing it? a modal,

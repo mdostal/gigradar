@@ -1,4 +1,52 @@
 entries:
+  - id: t-007
+    state: clarified
+    kind: bug
+    title: "Today page's Full Roster renders all gigs unpaginated/unvirtualized -- real DOM scrollHeight of 221,770px against the owner's live 2042-gig dataset"
+    description: |
+      Discovered live 2026-09-07 while doing real post-release simman
+      verification of the consistent-gig-detail-access epic's
+      today-page-gig-detail-panel story (PR #192) against the actual
+      running v0.48.0 app with the owner's real 2042-gig database. A
+      simman vision-verify step against /today consistently failed with
+      "google 400: Unable to process in[put]" -- root-caused (NOT a bug in
+      PR #192's own logic) to simman's fullPage screenshot: with the
+      owner's real gig count, /today's Full Roster section renders every
+      matching gig as a DOM row with zero pagination/virtualization/
+      windowing, making document.documentElement.scrollHeight a genuinely
+      real 221,770px and the resulting fullPage PNG ~14.6MB -- large enough
+      that Gemini's vision API rejects it outright.
+
+      This is a real, independent finding, not a simman tooling problem:
+      any UI/vision tooling aside, rendering 2000+ full row DOMs
+      unconditionally on every /today load is itself a real performance
+      and scale concern for exactly the kind of large, healthy, real
+      gig database this app is supposed to reward (more sources/sweeps =
+      more real gigs = a proportionally worse Full Roster render). Confirmed
+      via a direct Playwright DOM/evidence check (not vision) that the
+      underlying feature itself (GigDetailPanel opening from a Picks card
+      or a Full Roster row, real external-link href present) works
+      correctly regardless -- this is purely about Full Roster's own
+      render-everything-unbounded structure.
+
+      Needs real design/plan: likely windowed/virtualized rendering
+      (react-window or similar) or real pagination/infinite-scroll for
+      Full Roster, sized to the owner's actual real gig volume, not a
+      guess at a page size.
+    reporter: "session self-diagnosis during v0.48.0 post-release simman verification"
+    reported_at: "2026-09-08T01:20:00Z"
+    priority: p2
+    severity: moderate
+    linked_epic: null
+    linked_story: null
+    closed_reason: null
+    closed_at: null
+    state_history:
+      - state: inbox
+        at: "2026-09-08T01:20:00Z"
+      - state: clarified
+        at: "2026-09-08T01:21:00Z"
+
   - id: t-005
     state: clarified
     kind: feature
