@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-09-07
+
+### Changed
+
+- The GIGRADAR status bar (sources, profile, last sweep, "Sweep now") is
+  now the top of every page, with the navigation menu underneath it —
+  previously it only appeared on the Dashboard, below the nav.
+
 ## [0.46.0] - 2026-09-07
 
 ### Fixed
