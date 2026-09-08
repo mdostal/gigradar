@@ -111,7 +111,7 @@ progress_note: |
     - Server and isolated data dir torn down after verification; the
       throwaway seed script was never committed.
 
-  PR: https://github.com/mdostal/gigradar/pull/PLACEHOLDER
+  PR: https://github.com/mdostal/gigradar/pull/192
 
 description: |
   Owner's own real, live complaint (2026-09-07), from Today's Picks:
