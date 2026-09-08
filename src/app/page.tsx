@@ -1,6 +1,4 @@
-import { SonarSweepHeader } from "./sonar-sweep-header";
 import { DashboardOverviewClient } from "./dashboard-overview-client";
-import { sweepNowAction } from "./actions";
 import { loadDashboardData } from "./dashboard-data";
 import { listDrafts } from "@/lib/store";
 
@@ -18,13 +16,16 @@ export const dynamic = "force-dynamic";
 // (relocate-giglist-to-all-gigs). See dashboard-overview-client.tsx for
 // the glance-tiles/Today/metrics-teaser composition itself.
 export default function HomePage() {
-  const { gigs, status, lastScanIso } = loadDashboardData();
+  // sonar-sweep-header-global-masthead story: SonarSweepHeader itself now
+  // renders once, globally, from layout.tsx -- rendering it here too would
+  // duplicate it on this exact route. `status`/`lastScanIso` are no longer
+  // destructured since nothing on this page needs them anymore.
+  const { gigs } = loadDashboardData();
   const drafts = listDrafts();
   const now = Date.now();
 
   return (
     <main className="mx-auto max-w-[88rem] p-6">
-      <SonarSweepHeader status={status} lastScanIso={lastScanIso} now={now} sweepAction={sweepNowAction} />
       <DashboardOverviewClient gigs={gigs} drafts={drafts} now={now} />
     </main>
   );

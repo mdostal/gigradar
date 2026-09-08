@@ -422,6 +422,23 @@ export function listGigs(filter: GigFilter = {}, opts: DbOption = {}): StoredGig
 }
 
 /**
+ * sonar-sweep-header-global-masthead story (header-layout-cleanup epic).
+ * The real SQL `MAX(last_seen)` aggregate across every stored gig -- the
+ * same value `computeLastScanIso(listGigs())` would produce, but without
+ * fetching a single row's content. Added because the sonar-sweep masthead
+ * is moving into `layout.tsx` (rendered on EVERY route, not just the
+ * Dashboard); `listGigs()`'s full row fetch (2000+ real rows for the
+ * owner) is real, avoidable work when only this one aggregate is needed.
+ * `null` when the table is empty (no gig has ever been scanned), matching
+ * `computeLastScanIso()`'s own empty-list contract.
+ */
+export function getLastSeenMax(opts: DbOption = {}): string | null {
+  const db = opts.db ?? getDb();
+  const row = db.prepare("SELECT MAX(last_seen) AS max_last_seen FROM gigs").get() as { max_last_seen: string | null };
+  return row.max_last_seen;
+}
+
+/**
  * customizable-tier-scoring epic. Every currently-stored `matchScore` for
  * `status: "new"` gigs matching `groupId` — "how does this gig compare to
  * everything you still need to decide on," not every gig ever seen. This

@@ -6,8 +6,11 @@ import { resolveAppIcon } from "@/lib/app-icons";
 import { readRawConfig } from "@/lib/config/save";
 import { listIssues } from "@/lib/notify/issues";
 import { resolveUiTheme } from "@/lib/ui-theme";
+import { sweepNowAction } from "./actions";
+import { loadSonarSweepStatus } from "./dashboard-data";
 import { issuesBadgeInfo } from "./issues-badge";
 import { NavHeader } from "./nav-header";
+import { SonarSweepHeader } from "./sonar-sweep-header";
 import { UpdateNotifier } from "./update-notifier";
 
 /**
@@ -90,6 +93,22 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const icon = resolveAppIcon(typeof raw.appIcon === "string" ? raw.appIcon : undefined);
   const theme = resolveUiTheme(raw.uiTheme);
   const groups = extractGroupSummaries(raw);
+  // sonar-sweep-header-global-masthead story (header-layout-cleanup epic).
+  // The owner's own confirmed direction: the branded sonar-sweep masthead
+  // is the literal top of every page, with NavHeader's tabs + Groups row
+  // rendering below it -- a page's own content (where SonarSweepHeader used
+  // to render, e.g. src/app/page.tsx) can never appear ABOVE this shared
+  // layout's UI, so it has to live here instead. `loadSonarSweepStatus()`
+  // (dashboard-data.ts) is a lightweight, aggregate-only read (a real SQL
+  // MAX(last_seen) plus the same cheap config/source-count reads
+  // computeStatusStrip() already did) -- NEVER loadDashboardData()'s
+  // listGigs()-based path, which would otherwise run a full gig-table scan
+  // (2000+ real rows for the owner) on every single route, not just once on
+  // the Dashboard. `now` is computed once, server-side, for the same
+  // hydration-mismatch reason every other SonarSweepHeader call site already
+  // documents (see sonar-sweep-header.tsx's own header comment).
+  const { status, lastScanIso } = loadSonarSweepStatus();
+  const now = Date.now();
   return (
     <html
       lang="en"
@@ -97,6 +116,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       className={`${signalDeckHeadingFont.variable} ${signalDeckBodyFont.variable} ${signalDeckMonoFont.variable} ${signalDeskBodyFont.variable} ${signalDeskMonoFont.variable}`}
     >
       <body className="theme-body min-h-screen antialiased">
+        <div className="mx-auto max-w-[88rem] px-6 pt-6">
+          <SonarSweepHeader status={status} lastScanIso={lastScanIso} now={now} sweepAction={sweepNowAction} />
+        </div>
         <NavHeader issuesBadge={issuesBadgeInfo(openIssues)} iconSrc={icon.path} groups={groups} />
         {children}
         <UpdateNotifier />
