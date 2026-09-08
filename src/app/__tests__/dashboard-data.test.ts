@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, recordScan } from "@/lib/store";
 import { saveConfig } from "@/lib/config/save";
-import { extractEngagementProfiles, extractEngagementProfileSummaries, extractRankBucketLabels, loadDashboardData, resolveGroupLabel, resolveHideOutOfBandDefault } from "../dashboard-data";
+import { extractEngagementProfiles, extractEngagementProfileSummaries, extractRankBucketLabels, loadDashboardData, loadSonarSweepStatus, resolveGroupLabel, resolveHideOutOfBandDefault } from "../dashboard-data";
 
 // Same isolation pattern as actions.test.ts: a fresh temp-file DB per test
 // (GIGRADAR_DB_PATH) plus an isolated XDG_DATA_HOME for config.json, so this
@@ -219,6 +219,51 @@ describe("loadDashboardData", () => {
 
       expect(data.profileMismatchByGigKey[key]).toBeUndefined();
     });
+  });
+});
+
+// sonar-sweep-header-global-masthead story (header-layout-cleanup epic).
+describe("loadSonarSweepStatus", () => {
+  it("returns 'Last scan: never run' and a null lastScanIso when no gig has ever been scanned", () => {
+    saveConfig(baseConfig());
+
+    const data = loadSonarSweepStatus();
+
+    expect(data.lastScanIso).toBeNull();
+    expect(data.status.lastScanLabel).toBe("Last scan: never run");
+  });
+
+  it("produces the SAME status/lastScanIso loadDashboardData() would, without needing the full gig rows", () => {
+    saveConfig(baseConfig());
+    recordScan([
+      {
+        sourceId: "src-a",
+        gigs: [
+          { sourceId: "src-a", externalId: "1", title: "In group 1", url: "https://example.test/1", matchedGroupIds: ["g1"] },
+          { sourceId: "src-a", externalId: "2", title: "In group 2", url: "https://example.test/2", matchedGroupIds: ["g2"] },
+        ],
+      },
+    ]);
+
+    const full = loadDashboardData();
+    const lightweight = loadSonarSweepStatus();
+
+    expect(lightweight.lastScanIso).toBe(full.lastScanIso);
+    expect(lightweight.status).toEqual(full.status);
+  });
+
+  it("reflects the real MAX(last_seen) across every group, not just the primary/first one", () => {
+    saveConfig(baseConfig());
+    recordScan([{ sourceId: "src-a", gigs: [{ sourceId: "src-a", externalId: "1", title: "g1 gig", url: "https://example.test/1", matchedGroupIds: ["g1"] }] }], {
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    recordScan([{ sourceId: "src-a", gigs: [{ sourceId: "src-a", externalId: "2", title: "g2 gig", url: "https://example.test/2", matchedGroupIds: ["g2"] }] }], {
+      now: "2026-01-05T00:00:00.000Z",
+    });
+
+    const data = loadSonarSweepStatus();
+
+    expect(data.lastScanIso).toBe("2026-01-05T00:00:00.000Z");
   });
 });
 

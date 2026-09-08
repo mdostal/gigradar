@@ -1,8 +1,6 @@
 import { readRawConfig } from "@/lib/config/save";
 import { DashboardClient } from "../dashboard-client";
 import { SyncStatusDropdown } from "../sync-status-dropdown";
-import { SonarSweepHeader } from "../sonar-sweep-header";
-import { sweepNowAction } from "../actions";
 import { SYNC_STATUS_SOURCES } from "../sync-status-registry";
 import { extractRankBucketLabels, loadDashboardData, resolveHideOutOfBandDefault, resolvePrimaryGroupId } from "../dashboard-data";
 
@@ -30,12 +28,11 @@ export const dynamic = "force-dynamic";
 // dashboard-data.ts's loadDashboardData(), called here with no groupId
 // (every gig, byte-identical to this page's own pre-relocation behavior).
 export default function AllGigsPage() {
-  const { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey } = loadDashboardData();
-  // Computed once, server-side — see sonar-sweep-header.tsx's own header
-  // comment on why (a client component calling Date.now() itself during
-  // render would produce a hydration-mismatch, the exact bug metrics/
-  // page.tsx already hit and documented once).
-  const now = Date.now();
+  // sonar-sweep-header-global-masthead story: SonarSweepHeader renders
+  // once, globally, from layout.tsx now -- see that file's own header
+  // comment. `status`/`lastScanIso` are no longer destructured since
+  // nothing on this page needs them anymore.
+  const { gigs, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey } = loadDashboardData();
   const rawConfig = readRawConfig();
   // rate-band-match-quality epic: the primary group's own real setting,
   // same anchoring convention every other unscoped-route default uses.
@@ -47,9 +44,7 @@ export default function AllGigsPage() {
 
   return (
     <main className="mx-auto max-w-[88rem] p-6">
-      <SonarSweepHeader status={status} lastScanIso={lastScanIso} now={now} sweepAction={sweepNowAction} />
-
-      <div className="mt-4 flex flex-wrap items-baseline justify-between gap-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="font-theme-heading text-2xl font-bold tracking-tight text-theme-text">All Gigs</h1>
         <p className="font-theme-mono text-sm text-theme-text-dim">
           {gigs.length} gig{gigs.length === 1 ? "" : "s"} tracked

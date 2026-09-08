@@ -5,7 +5,7 @@
 // to drift out of sync. `groupId` omitted/undefined means "every group"
 // (today's pre-Slice-3 behavior, unchanged).
 import { readRawConfig } from "@/lib/config/save";
-import { getLastScanCycle, listDrafts, listGigs, listInterviewPrep } from "@/lib/store";
+import { getLastScanCycle, getLastSeenMax, listDrafts, listGigs, listInterviewPrep } from "@/lib/store";
 import type { StoredGig } from "@/lib/store";
 import type { PrepPacketContent } from "@/lib/apply/prep";
 import { computeLastScanIso, computeStatusStrip, type StatusStripView } from "@/lib/status/status-strip";
@@ -221,4 +221,42 @@ export function loadDashboardData(groupId?: string): DashboardData {
   }
 
   return { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey };
+}
+
+export interface SonarSweepStatusData {
+  status: StatusStripView;
+  /** Same MAX(gig.lastSeen) value computeLastScanIso(listGigs()) would produce -- see getLastSeenMax()'s own doc comment (src/lib/store/gigs.ts). */
+  lastScanIso: string | null;
+}
+
+/**
+ * sonar-sweep-header-global-masthead story (header-layout-cleanup epic).
+ * The lightweight, aggregate-only equivalent of the `status`/`lastScanIso`
+ * slice of `loadDashboardData()` above -- `computeStatusStrip()`/
+ * `computeLastScanIso()` never actually needed the full gig rows
+ * `listGigs()` fetches, only a `MAX(lastSeen)` aggregate (`getLastSeenMax()`)
+ * plus the lightweight config/source-count reads `computeStatusStrip()`
+ * already does internally. Used by `layout.tsx`, which renders the
+ * sonar-sweep masthead on EVERY route (not just the Dashboard-shaped routes
+ * that already pay for `listGigs()` to render their own gig table/tiles) --
+ * reusing `loadDashboardData()` here would turn a full 2000+-row table scan
+ * into a per-page-load cost across the whole app. `loadDashboardData()`
+ * itself is UNCHANGED and still what the Dashboard/`/gigs`/`/today`-shaped
+ * routes use for their own gig-table needs; this is a separate, narrower
+ * read for the masthead alone.
+ *
+ * Feeds `computeStatusStrip()` a single-element (or empty) `gigs`-shaped
+ * array carrying just the aggregate `lastSeen` value, rather than changing
+ * that function's own signature -- `computeLastScanIso()` applied to a
+ * one-item list simply returns that item's `lastSeen`, so this produces the
+ * byte-identical `StatusStripView`/`lastScanIso` `loadDashboardData()` would
+ * have, without ever touching a full row.
+ */
+export function loadSonarSweepStatus(): SonarSweepStatusData {
+  const lastScanIso = getLastSeenMax();
+  const rawConfig = readRawConfig();
+  const lastCycle = getLastScanCycle();
+  const gigsForStatus = lastScanIso === null ? [] : [{ lastSeen: lastScanIso }];
+  const status = computeStatusStrip(gigsForStatus, rawConfig, Date.now(), lastCycle ?? null);
+  return { status, lastScanIso };
 }

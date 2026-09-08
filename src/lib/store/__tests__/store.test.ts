@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Gig } from "../../types.js";
 import { closeDb, getDb } from "../db.js";
-import { getGig, listGigs, listGroupScores, recordScan, setOutcome, setStatus } from "../gigs.js";
+import { getGig, getLastSeenMax, listGigs, listGroupScores, recordScan, setOutcome, setStatus } from "../gigs.js";
 import type { DatabaseSync } from "node:sqlite";
 
 // All tests use a fresh temp-file db per test (never :memory: for the whole
@@ -420,6 +420,27 @@ describe("listGroupScores (customizable-tier-scoring epic)", () => {
     );
 
     expect(listGroupScores("a", { db })).toEqual([]);
+  });
+});
+
+describe("getLastSeenMax (sonar-sweep-header-global-masthead story)", () => {
+  it("returns null when the gigs table is empty", () => {
+    expect(getLastSeenMax({ db })).toBeNull();
+  });
+
+  it("returns the real MAX(last_seen) across every stored gig, matching computeLastScanIso(listGigs())'s own value", () => {
+    recordScan([{ sourceId: "src-a", gigs: [makeGig({ sourceId: "src-a", externalId: "1" })] }], { db, now: "2026-01-01T00:00:00.000Z" });
+    recordScan([{ sourceId: "src-b", gigs: [makeGig({ sourceId: "src-b", externalId: "1" })] }], { db, now: "2026-01-03T00:00:00.000Z" });
+    recordScan([{ sourceId: "src-a", gigs: [makeGig({ sourceId: "src-a", externalId: "2" })] }], { db, now: "2026-01-02T00:00:00.000Z" });
+
+    expect(getLastSeenMax({ db })).toBe("2026-01-03T00:00:00.000Z");
+  });
+
+  it("reflects a re-scanned gig's bumped last_seen, not just the oldest first_seen", () => {
+    recordScan([{ sourceId: "src-a", gigs: [makeGig({ sourceId: "src-a", externalId: "1" })] }], { db, now: "2026-01-01T00:00:00.000Z" });
+    recordScan([{ sourceId: "src-a", gigs: [makeGig({ sourceId: "src-a", externalId: "1" })] }], { db, now: "2026-01-05T00:00:00.000Z" });
+
+    expect(getLastSeenMax({ db })).toBe("2026-01-05T00:00:00.000Z");
   });
 });
 
