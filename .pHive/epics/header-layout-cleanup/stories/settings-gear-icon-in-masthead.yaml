@@ -1,10 +1,62 @@
 id: settings-gear-icon-in-masthead
 epic: header-layout-cleanup
 title: "Add a settings gear icon button in the top-right of the masthead"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED, PR #190 (https://github.com/mdostal/gigradar/pull/190), branch
+  feat/settings-gear-icon-in-masthead, open into dev, not yet merged.
+
+  Implementation (src/app/sonar-sweep-header.tsx): added a `GearIcon()`
+  component -- a plain inline gear SVG matching `ScopeIcon`'s own
+  inline-SVG convention in the same file (no icon-library dependency
+  added) -- wrapped in a `next/link` `<Link href={SETTINGS_GEAR_HREF}>`
+  (`SETTINGS_GEAR_HREF = "/config"`, exported as a named constant) placed
+  in the right-hand Instruments row, right after the existing "Sweep now"
+  button. `nav-header.tsx`'s existing "Setup"/"Config" nav tabs, and every
+  other existing SonarSweepHeader element (ScopeIcon, Instruments, Sweep
+  now button), are completely untouched -- purely additive, per the
+  owner's explicit deferral of the Setup/Config nav-tab consolidation
+  decision.
+
+  Test: added src/app/__tests__/sonar-sweep-header.test.ts asserting
+  SETTINGS_GEAR_HREF === "/config" -- SonarSweepHeader is a "use client"
+  component with hooks and this repo has no React Testing Library/jsdom
+  setup, so (matching nav-header.test.ts's own established convention for
+  the same constraint) the assertable contract is pulled into a plain
+  exported constant instead of rendering the DOM.
+
+  npm test: 1783 passed, 3 skipped, 0 failed. npm run typecheck: clean.
+  Both re-verified clean after merging origin/dev (one intervening docs
+  commit, no conflicts, real merge commit -- no rebase/force-push).
+
+  REAL post-fix verification against the actual running app (no browser,
+  no Playwright, per standing constraints): ran `npm run build`
+  (succeeded) then `next start` on an isolated port against an isolated
+  `XDG_DATA_HOME` temp dir (never the real ~/.local/share/gigradar).
+  Curled `/`, `/config`, and `/gigs` -- all 200. Extracted the actual
+  rendered anchor from each response body; identical on all three routes:
+
+    <a aria-label="Settings" title="Settings" class="flex items-center
+    rounded-md border border-theme-surface-border bg-theme-surface p-1.5
+    text-theme-text-faint transition-colors hover:bg-theme-surface-raised
+    hover:text-theme-text" href="/config">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+      stroke="currentColor" stroke-width="1.75" stroke-linecap="round"
+      stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 13a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1
+        1-2.83..."></path>
+      </svg>
+    </a>
+
+  Also confirmed via grep on the same response bodies that `>Setup<` and
+  `>Config<` (the existing nav-header.tsx tabs) are still present,
+  unchanged, on the same pages. Server was shut down cleanly after
+  verification; no data written to any real user data directory.
 
 description: |
   Owner's own explicit direction (2026-09-07): a settings gear icon should
