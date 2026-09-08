@@ -471,10 +471,13 @@ describe("withBrowserSession: origin-scoping is applied BEFORE the browser conte
 // tests assert the headed/persistent-real-chrome tiers are never even
 // ATTEMPTED (not just that a window closes quickly), which is the actual
 // guarantee this story exists to make.
-describe("withBrowserSession: attended:false never opens a headed browser (true-embedded-browser epic)", () => {
-  it("when headless auth fails, re-throws immediately -- never attempts the headed (tier 2) launch at all", async () => {
+describe("withBrowserSession: attended:false never opens a headed browser, but DOES retry headlessly via real-chrome (real-chrome-unattended-self-heal story)", () => {
+  it("when headless auth fails, never attempts the HEADED (tier 2) launch at all -- only the headless real-chrome retry", async () => {
     const storageStatePath = writeFixtureCopy();
     setUpFakeBrowserChain({});
+    // Default spawnRealChromeMock rejection (see top-of-file beforeEach)
+    // makes the headless real-chrome retry fail too -- this test only
+    // cares that tier 2's HEADED launch was never attempted.
 
     await expect(
       withBrowserSession(
@@ -488,14 +491,16 @@ describe("withBrowserSession: attended:false never opens a headed browser (true-
         },
         async () => "unreachable",
       ),
-    ).rejects.toThrow(/gigradar browser-session: session expired\/invalid for source "test-source"/);
+    ).rejects.toThrow(/gigradar browser-session: session for source "test-source".*is invalid, and the headless persistent-real-chrome retry ALSO failed/s);
 
-    // Headless (tier 1) ran exactly once; the headed retry never fired.
+    // Headless (tier 1) ran exactly once via launchScopedChromium(); the
+    // HEADED retry (tier 2, also launchScopedChromium but headless:false)
+    // never fired -- only one launchServer call total.
     expect(launchServerMock).toHaveBeenCalledTimes(1);
     expect(launchServerMock).toHaveBeenCalledWith({ headless: true, channel: "chrome" });
   });
 
-  it("when headless auth fails, never attempts the persistent-real-chrome (tier 3) fallback either", async () => {
+  it("when headless auth fails, DOES attempt the persistent-real-chrome retry -- HEADLESSLY, never a visible window (the real fix for the owner's own repeated real complaint: re-running Capture Login alone can never help when this tier was previously unreachable)", async () => {
     const storageStatePath = writeFixtureCopy();
     setUpFakeBrowserChain({});
 
@@ -513,10 +518,13 @@ describe("withBrowserSession: attended:false never opens a headed browser (true-
       ),
     ).rejects.toThrow();
 
-    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+    // Reached (and, per the default rejection, failed) -- but reached,
+    // unlike this codebase's prior, real behavior.
+    expect(spawnRealChromeMock).toHaveBeenCalledTimes(1);
+    expect(spawnRealChromeMock).toHaveBeenCalledWith({ persistent: true, headless: true });
   });
 
-  it("re-throws the SAME VerificationChallengeError tier 1 produced -- runner.ts's instanceof routing (\"Needs human verification\") still works unchanged", async () => {
+  it("re-throws the SAME VerificationChallengeError tier 1 produced when the headless real-chrome retry ALSO fails -- runner.ts's instanceof routing (\"Needs human verification\") still works unchanged", async () => {
     const storageStatePath = writeFixtureCopy();
     setUpFakeBrowserChain({ title: vi.fn().mockResolvedValue("Just a moment... | Cloudflare") });
     const isAuthenticated = vi.fn();
@@ -536,7 +544,43 @@ describe("withBrowserSession: attended:false never opens a headed browser (true-
     ).rejects.toThrow(VerificationChallengeError);
 
     expect(isAuthenticated).not.toHaveBeenCalled();
-    expect(spawnRealChromeMock).not.toHaveBeenCalled();
+    // The headless real-chrome retry WAS attempted (and, per the default
+    // rejection, failed) -- its own failure is swallowed in favor of
+    // re-throwing tier 1's original, already-actionable
+    // VerificationChallengeError, per withBrowserSession()'s own doc
+    // comment.
+    expect(spawnRealChromeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("when the headless real-chrome retry SUCCEEDS, returns its result and refreshes the storageState snapshot -- the actual self-heal now genuinely reachable for an unattended caller", async () => {
+    const storageStatePath = writeFixtureCopy();
+    setUpFakeBrowserChain({});
+    const freshCookie = { name: "session", value: "brand-new-cookie-from-headless-real-chrome", domain: "app.targetsource.example", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" as const };
+    setUpFakeRealChromeChain({}, { cookies: [freshCookie], origins: [] });
+
+    const result = await withBrowserSession(
+      {
+        sourceId: "test-source",
+        storageStatePathSetting: storageStatePath,
+        allowedOrigins: TARGET_ALLOWLIST,
+        url: "https://app.targetsource.example/jobs",
+        attended: false,
+        isAuthenticated: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true), // tier 1 fails, headless real-chrome retry succeeds
+      },
+      async () => "recovered-headlessly",
+    );
+
+    expect(result).toBe("recovered-headlessly");
+    expect(spawnRealChromeMock).toHaveBeenCalledWith({ persistent: true, headless: true });
+    // Never a visible window: minimizeChromeWindow() is only ever called
+    // for the ATTENDED, headed path -- an unattended, headless retry has
+    // no window to minimize.
+    expect(minimizeChromeWindowMock).not.toHaveBeenCalled();
+    // The refreshed storageState was written back so tier 1 is self-healed
+    // for the NEXT unattended call.
+    const refreshed: StorageState = JSON.parse(decrypt(fs.readFileSync(storageStatePath, "utf8")));
+    expect(refreshed.cookies).toHaveLength(1);
+    expect(refreshed.cookies[0]?.value).toBe("brand-new-cookie-from-headless-real-chrome");
   });
 
   it("when headless auth SUCCEEDS, behaves identically to attended:true -- attended only changes what happens on FAILURE", async () => {
@@ -1323,7 +1367,7 @@ describe("withBrowserSession: self-healing persistent-real-chrome fallback (owne
     );
 
     expect(result).toBe("recovered-via-real-chrome");
-    expect(spawnRealChromeMock).toHaveBeenCalledWith({ persistent: true });
+    expect(spawnRealChromeMock).toHaveBeenCalledWith({ persistent: true, headless: false });
     expect(attachToRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE.cdpPort);
     expect(realChromeBrowser.newContext).not.toHaveBeenCalled(); // must reuse contexts()[0], never a fresh isolated context
     expect(realChromeContext.newPage).toHaveBeenCalledTimes(1);

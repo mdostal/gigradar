@@ -213,6 +213,46 @@ describe("spawnRealChrome: happy path, persistent profile (the default)", () => 
   });
 });
 
+describe("spawnRealChrome: headless (real-chrome-unattended-self-heal story)", () => {
+  it("adds --headless=new (Chrome's modern headless mode) when headless:true, on top of the same real, non-fingerprinted spawn -- never the old, detectable --headless", async () => {
+    spawnMock.mockReturnValue(createFakeChildProcess());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+    const { spawnRealChrome, closeRealChrome } = await import("../real-chrome.js");
+    const handle = await spawnRealChrome({ headless: true });
+
+    const [, args] = spawnMock.mock.calls[0] as [string, string[]];
+    expect(args).toContain("--headless=new");
+    expect(args).not.toContain("--headless");
+    // Still the exact same real-Chrome spawn otherwise -- no
+    // `--enable-automation`/automation flag ever added, headless or not.
+    expect(args).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^--remote-debugging-port=\d+$/),
+        expect.stringMatching(/^--user-data-dir=.+$/),
+        "--no-first-run",
+        "--no-default-browser-check",
+      ]),
+    );
+    expect(args.some((a) => a.includes("enable-automation"))).toBe(false);
+
+    closeRealChrome(handle);
+  });
+
+  it("omits --headless=new by default (headless option omitted) -- unchanged, real, visible-window behavior for every existing attended caller", async () => {
+    spawnMock.mockReturnValue(createFakeChildProcess());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+    const { spawnRealChrome, closeRealChrome } = await import("../real-chrome.js");
+    const handle = await spawnRealChrome();
+
+    const [, args] = spawnMock.mock.calls[0] as [string, string[]];
+    expect(args.some((a) => a.startsWith("--headless"))).toBe(false);
+
+    closeRealChrome(handle);
+  });
+});
+
 describe("spawnRealChrome: persistent: false (opt out)", () => {
   it("creates a FRESH, isolated temp --user-data-dir per call -- never the persistent profile", async () => {
     spawnMock.mockReturnValue(createFakeChildProcess());

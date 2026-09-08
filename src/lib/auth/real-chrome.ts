@@ -176,6 +176,24 @@ export interface SpawnRealChromeOptions {
    * one-shot, disposable profile instead.
    */
   persistent?: boolean;
+  /**
+   * real-chrome-unattended-self-heal story (real-chrome-session-sharing
+   * epic follow-up). Default `false` (a real, visible window — today's
+   * original, only behavior). `true` adds `--headless=new` to the spawn
+   * args -- Chrome's modern headless mode, distinct from the old
+   * `--headless` this project has never used. Still the SAME real,
+   * directly-spawned Chrome binary with NONE of `chromium.launch()`'s
+   * automation flags (`--enable-automation`, `navigator.webdriver=true`)
+   * -- this file's own header comment already identifies THOSE flags,
+   * not headless-ness itself, as what Google's (and by the same
+   * mechanism, Cloudflare's) bot detection actually keys on. Lets an
+   * UNATTENDED caller (browser-session.ts's withBrowserSession(),
+   * `attended: false`) reach this real, non-fingerprinted Chrome without
+   * ever popping a visible window -- see that module's own doc comment
+   * for why unattended callers were previously unable to reach this tier
+   * at all.
+   */
+  headless?: boolean;
 }
 
 /** Resolves the real Chrome binary path for the current platform, or throws a specific, actionable error -- never a silent fallback. See this file's header comment. */
@@ -251,6 +269,7 @@ export async function spawnRealChrome(opts: SpawnRealChromeOptions = {}): Promis
       `--user-data-dir=${userDataDir}`,
       "--no-first-run",
       "--no-default-browser-check",
+      ...(opts.headless ? ["--headless=new"] : []),
     ],
     { stdio: "ignore" },
   );

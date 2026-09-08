@@ -1,0 +1,58 @@
+id: real-chrome-unattended-self-heal
+title: "Let unattended scans/reconciliation actually reach the real-Chrome self-heal tier, headlessly -- it was previously 100% dead code in production"
+status: complete
+created_at: "2026-09-08T17:00:00Z"
+
+trigger: |
+  Owner's own real, justifiably furious complaint (2026-09-08): "you have
+  had me re-login to both of these MANY TIMES over the last 2 days and
+  haven't gotten the data right once -- how about you actually save and
+  work on fixing this shit rather than continually telling me it works
+  while it obviously doesn't." Follows a real investigation into "why
+  aren't fractionus/fractionaljobs/etc coming up" and "I need my
+  gofractional applied list to show up" that traced to GoFractional
+  hitting a live Cloudflare verification challenge (open Issue,
+  2026-09-08T05:03) and a.team's session expiring (open Issue,
+  2026-09-08T05:33) -- both requiring the owner to repeatedly re-run
+  Capture Login with zero lasting effect.
+
+root_cause: |
+  `src/lib/auth/browser-session.ts`'s `withBrowserSession()` already had a
+  real, documented, well-built self-healing mechanism
+  (`acquireViaPersistentRealChrome()`, "tier 3") specifically built
+  (2026-09-01, persistent-session-fix story) to survive exactly this
+  failure mode: replay a captured session into the SAME real, non-
+  fingerprinted Chrome that originally captured it (avoiding the
+  automation flags `chromium.launch()` injects, which is what triggers
+  Google's/Cloudflare's bot detection in the first place -- confirmed by
+  real-chrome.ts's own header comment).
+
+  REAL BUG, confirmed by direct code read: tier 2 (headed retry) and tier
+  3 (the actual real-Chrome self-heal) were BOTH gated behind
+  `options.attended === true`. Every real call site in this entire
+  codebase -- every scan (`runner.ts`'s adapters, including
+  `gofractional.ts`'s own `fetch()`) and every status-reconciliation call
+  (`gofractional-status.ts`, `wellfound-status.ts`) -- passes `attended:
+  false` (confirmed via `BrowserSessionOptions.attended`'s own doc
+  comment: "every scan/reconciliation call site today"). This means tier
+  3, the ONE mechanism that could actually survive a Cloudflare challenge,
+  was UNREACHABLE by any real caller in production. A fresh Capture Login
+  produced a genuinely valid session every time, but the very next
+  automated scan replayed it into the SAME automation-fingerprinted
+  Chromium tier 1 had just failed with -- Cloudflare rejected it again
+  almost immediately, `withBrowserSession()` re-threw tier 1's failure
+  without ever trying the real fix, and the cycle repeated indefinitely
+  regardless of how many times the owner re-logged in. "Re-login" could
+  never have worked, because the code path built to make a fresh login
+  actually STICK was dead.
+
+goal: |
+  Unattended callers reach the real, non-fingerprinted Chrome self-heal
+  tier too -- HEADLESSLY (real Chrome supports `--headless=new` without
+  the automation flags that trigger detection), so the
+  unattended-scans-never-open-a-window rule is still honored, while the
+  actual fix finally gets a chance to run.
+
+stories:
+  - id: unattended-headless-real-chrome-retry
+    status: complete
