@@ -1,6 +1,6 @@
 entries:
   - id: t-008
-    state: prioritized
+    state: closed
     kind: bug
     title: "Verification-copilot and profile-assist real-Chrome sessions discard the persistent Google login every time -- forces a full re-login on every use, and concurrent sessions spawn separate, unshared Chrome instances"
     description: |
@@ -63,10 +63,10 @@ entries:
     reported_at: "2026-09-07T21:15:00Z"
     priority: p1
     severity: major
-    linked_epic: null
-    linked_story: null
-    closed_reason: null
-    closed_at: null
+    linked_epic: real-chrome-session-sharing
+    linked_story: cross-module-real-chrome-registry
+    closed_reason: "shipped in PR #194 (also PR #193's unrelated nav-logo fix from the same session) -- verification-copilot-session.ts and assist-session.ts now reuse the persistent Chrome profile's real context (matching session-capture.ts's already-proven fix) instead of discarding it; all three real-chrome consumers now share one live browser via a new refcounted acquire/release registry instead of spawning competing instances on concurrent use. Live end-to-end human-login verification deliberately left to the owner's own real use."
+    closed_at: "2026-09-08T02:48:00Z"
     state_history:
       - state: inbox
         at: "2026-09-07T21:15:00Z"
@@ -74,6 +74,10 @@ entries:
         at: "2026-09-07T21:16:00Z"
       - state: prioritized
         at: "2026-09-07T21:17:00Z"
+      - state: plan-ready
+        at: "2026-09-07T21:20:00Z"
+      - state: closed
+        at: "2026-09-08T02:48:00Z"
 
   - id: t-007
     state: clarified
