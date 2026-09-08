@@ -1,0 +1,116 @@
+id: sonar-sweep-header-global-masthead
+epic: header-layout-cleanup
+title: "Move SonarSweepHeader into the root layout, above NavHeader, on every page -- with a lightweight status-only data path"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Owner's own explicit, confirmed direction (2026-09-07, from real
+  screenshots + a clarifying question): the "GIGRADAR" branded sonar-sweep
+  bar (logo, tagline, Sources/Profile/Last Sweep instruments, "Sweep now")
+  should become the literal top of the app -- with the nav menu
+  (Dashboard/All Gigs/Today/Metrics/Drafts/Profile assist/Chat/Issues/
+  Setup/Config tabs + the Groups filter row) rendering BELOW it, on every
+  page, not just the Dashboard.
+
+  Real, confirmed current structure (read directly from the code, not
+  assumed): `src/app/layout.tsx` (a Server Component, wraps every route)
+  renders `NavHeader` (`src/app/nav-header.tsx`) unconditionally. `src/app/
+  page.tsx` (the Dashboard route ONLY) separately renders `SonarSweepHeader`
+  (`src/app/sonar-sweep-header.tsx`) as its own page content, which
+  necessarily renders AFTER (below) whatever the layout itself rendered --
+  a page's content can never appear "above" its own parent layout's UI.
+  This means simply reordering JSX inside page.tsx cannot achieve what the
+  owner wants: `SonarSweepHeader` must move INTO `layout.tsx`, above where
+  `NavHeader` renders, to appear above the nav menu on every page.
+
+  **A real, separate cost concern this move surfaces**: `SonarSweepHeader`
+  currently gets its `status`/`lastScanIso` data from `loadDashboardData()`
+  (`src/app/dashboard-data.ts`), which calls `listGigs()` -- a full scan of
+  every stored gig (2000+ real rows for the owner) -- just to compute a
+  status strip that only actually needs a `MAX(lastSeen)` aggregate and a
+  handful of config/source counts. Making this a GLOBAL, every-page
+  masthead means this expensive full-table load would otherwise run on
+  EVERY route (Dashboard, All Gigs, Today, Drafts, Config, etc.), not just
+  once on the Dashboard -- a real, avoidable performance regression.
+
+  **The fix**:
+  1. Extract a lightweight, status-only data path that produces exactly
+     what `computeStatusStrip()`/`computeLastScanIso()` need (a real SQL
+     `MAX(last_seen)` aggregate query + the existing lightweight config/
+     source-count reads `computeStatusStrip()` already does internally --
+     check `src/lib/store/`'s real query functions for the right primitive,
+     or add one if none exists -- never `listGigs()`'s full row fetch just
+     for this). `getLastScanCycle()` (already lightweight, one row) stays
+     as-is.
+  2. Move `SonarSweepHeader`'s render into `layout.tsx`, positioned above
+     where `NavHeader` renders, using this new lightweight data path
+     (layout.tsx already does real data reads today -- `readRawConfig()`,
+     `listIssues()` -- so a real DB/config read at this level is an
+     established pattern, not a new risk category).
+  3. Remove `SonarSweepHeader`'s now-redundant render from `page.tsx` (the
+     Dashboard route) -- it must not render twice.
+  4. `sweepNowAction` (the "Sweep now" button's server action) needs to
+     keep working identically from its new global position -- confirm it
+     doesn't depend on anything Dashboard-page-specific.
+
+  Do NOT touch: `NavHeader`'s own internals (unchanged, just repositioned
+  relative to), `SonarSweepHeader`'s own internal markup/animation (the
+  `ScopeIcon` sweep animation, Instruments, etc. -- untouched, this is a
+  structural move, not a visual redesign), `DashboardOverviewClient` (the
+  Dashboard's own remaining content after `SonarSweepHeader` is removed
+  from its render).
+
+acceptance_criteria:
+  - "SonarSweepHeader renders above NavHeader's nav tabs + Groups filter row, on EVERY route (Dashboard, /gigs, /today, /drafts, /config, etc.), not just the Dashboard."
+  - "SonarSweepHeader no longer renders twice on the Dashboard route (removed from page.tsx's own render once it's in layout.tsx)."
+  - "The new global masthead does NOT call listGigs() (or any other full-table-scan read) on every page load -- verified by reading the real implementation, not just by it 'seeming fast.'"
+  - "The 'Sweep now' button still works identically from its new global position -- a real click triggers a real scan (or, per this session's standing constraints, verified via curl/DOM evidence of the server action wiring, not a live browser click)."
+  - "Real post-fix verification against the ACTUAL running app: rebuild, relaunch the real packaged app (backup first per standing procedure), and confirm via curl/DOM evidence (or simman) that the masthead appears above the nav menu on at least 3 different real routes, not just the Dashboard."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/layout.tsx
+      purpose: "The root layout -- SonarSweepHeader's new home, positioned above NavHeader's render. Already does real data reads (readRawConfig(), listIssues()) -- established precedent for this kind of layout-level read."
+    - path: src/app/page.tsx
+      purpose: "The Dashboard route -- remove SonarSweepHeader's render from here once it's global."
+    - path: src/app/dashboard-data.ts
+      purpose: "loadDashboardData()'s current listGigs()-based status computation -- the expensive path to avoid replicating at the layout level; extract or add a lightweight equivalent."
+    - path: src/lib/status/status-strip.ts
+      purpose: "computeStatusStrip()/computeLastScanIso()'s real input requirements -- confirm exactly what data shape is needed to design the lightweight query."
+    - path: src/app/nav-header.tsx
+      purpose: "The nav menu component this masthead now renders above -- read, do not modify."
+
+design_decisions:
+  - decision: Add a lightweight, aggregate-only data path rather than reusing loadDashboardData()'s full listGigs() call at the layout level.
+    rationale: "A full gig-table scan on every single page load (not just the Dashboard) would be a real, measurable performance regression for an owner with 2000+ real stored gigs -- the status strip never needed more than a MAX(lastSeen) aggregate and lightweight config/source counts in the first place."
+
+risks:
+  - severity: medium
+    description: "layout.tsx wraps every route -- a mistake here affects the ENTIRE app, not one page. A performance regression (full table scan on every route) would be a real, broad regression."
+    mitigation: "Acceptance criteria explicitly requires confirming (by reading the implementation, not assuming) that no full-table-scan read happens at the layout level, plus real post-rebuild verification across multiple real routes."
+
+steps:
+  - id: research
+    description: Confirm computeStatusStrip()'s real minimal data requirements and find/design the lightweight aggregate query to replace listGigs() for this purpose
+    agent: developer
+  - id: implement
+    description: Move SonarSweepHeader into layout.tsx above NavHeader using the new lightweight data path; remove the redundant render from page.tsx
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Add/extend tests covering the lightweight status query and the layout-level render; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify no full-table-scan read was introduced at the layout level, and the masthead genuinely appears on multiple real routes
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

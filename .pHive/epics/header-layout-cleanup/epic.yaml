@@ -1,0 +1,12 @@
+name: header-layout-cleanup
+title: "Promote the GIGRADAR sonar-sweep masthead above the nav menu, globally, per the owner's own confirmed reordering"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+
+stories:
+  - id: sonar-sweep-header-global-masthead
+    title: "Move SonarSweepHeader into the root layout, above NavHeader, on every page -- with a lightweight status-only data path"
+    complexity: medium
+    depends_on: []
+
+references: []
