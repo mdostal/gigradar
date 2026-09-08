@@ -5,7 +5,7 @@
 // Deck) -- ships the verified, bug-free Daily Shortlist concept's IA
 // "as is" per the owner's own words, reusing the SAME real data/actions
 // dashboard-client.tsx already uses (never a second, parallel data model).
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fraunces, IBM_Plex_Mono, Libre_Franklin } from "next/font/google";
@@ -31,7 +31,35 @@ import {
 } from "../dashboard-filter";
 import { ALL_STATUSES, formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL } from "../dashboard-client";
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
+import { GigDetailPanel } from "../gig-detail-panel";
 import styles from "./today.module.css";
+
+/**
+ * consistent-gig-detail-access epic, today-page-gig-detail-panel story.
+ * Owner's own real complaint from Today's Picks: "where is the link, where
+ * is the extension, where is seeing it? a modal, SOMETHING!" -- Today's
+ * Picks and Full Roster are two SEPARATE lists (unlike dashboard-client.tsx,
+ * which has exactly one `rows` array to page through), so a single
+ * `selectedGigKey` isn't enough to know which list Prev/Next should walk --
+ * this resolves the gig/index/total the SAME way dashboard-client.tsx's own
+ * `selectedIndex`/`selectedGig` derivation does (lines ~1239-1248 there),
+ * except parameterized by which list the click came from. Exported as a
+ * pure function (this repo's own established convention for testing
+ * extracted logic without a React Testing Library/jsdom dependency -- see
+ * dashboard-client.test.ts's signalStrength()/resolveProfileMismatchTooltip()
+ * header comments) rather than inlined, so the "which list, right position"
+ * logic is covered by a real unit test independent of full-tree rendering.
+ */
+export function resolveGigDetailSelection(
+  selectedKey: string | null,
+  selectedSource: "picks" | "roster",
+  picks: StoredGig[],
+  rosterFlat: StoredGig[],
+): { gig: StoredGig | null; index: number; total: number; list: StoredGig[] } {
+  const list = selectedSource === "picks" ? picks : rosterFlat;
+  const index = selectedKey == null ? -1 : list.findIndex((g) => g.key === selectedKey);
+  return { gig: index >= 0 ? (list[index] ?? null) : null, index, total: list.length, list };
+}
 
 type TierFilterValue = "all" | "green" | "yellow" | "red";
 
@@ -218,6 +246,17 @@ export function TodayClient({
   const [search, setSearch] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
+  // today-page-gig-detail-panel story. Mirrors dashboard-client.tsx's own
+  // `selectedGigKey` (tracked by KEY, not index, for the exact same reason
+  // documented there: a status change made from inside the panel can move
+  // the gig out of whichever list is currently active). `selectedGigSource`
+  // additionally records WHICH of the two lists the click came from --
+  // Today's Picks and Full Roster are separate lists here (unlike
+  // dashboard-client.tsx's single `rows`), so Prev/Next needs to know which
+  // one to walk.
+  const [selectedGigKey, setSelectedGigKey] = useState<string | null>(null);
+  const [selectedGigSource, setSelectedGigSource] = useState<"picks" | "roster">("roster");
+
   const [statusErrorByKey, setStatusErrorByKey] = useState<Record<string, string>>({});
   const [, startStatusTransition] = useTransition();
   const [flashKey, setFlashKey] = useState<string | null>(null);
@@ -269,6 +308,42 @@ export function TodayClient({
     for (const g of visible) byStatus.get(g.status)?.push(g);
     return ALL_STATUSES.map((s) => ({ status: s, gigs: byStatus.get(s) ?? [] })).filter((group) => group.gigs.length > 0);
   }, [visible]);
+
+  // The flat, in-render-order list of Full Roster rows -- the SAME order
+  // the rows below actually render in (grouped by status, original order
+  // within each group), so Prev/Next inside the panel steps through
+  // exactly what's visually adjacent on the page.
+  const rosterFlat = useMemo(() => grouped.flatMap((g) => g.gigs), [grouped]);
+
+  const { gig: selectedGig, index: selectedIndex, total: selectedTotal, list: selectedList } = resolveGigDetailSelection(
+    selectedGigKey,
+    selectedGigSource,
+    picks,
+    rosterFlat,
+  );
+
+  // Auto-close when the selected gig falls out of whichever list it came
+  // from (filter change, or a status change made from inside the panel
+  // itself moved it) -- same rationale as dashboard-client.tsx's identical
+  // effect.
+  useEffect(() => {
+    if (selectedGigKey != null && selectedIndex === -1) setSelectedGigKey(null);
+  }, [selectedGigKey, selectedIndex]);
+
+  function handleSelectGig(key: string, listSource: "picks" | "roster") {
+    setSelectedGigSource(listSource);
+    setSelectedGigKey(key);
+  }
+
+  function handlePrevGig() {
+    const prev = selectedIndex > 0 ? selectedList[selectedIndex - 1] : undefined;
+    if (prev) setSelectedGigKey(prev.key);
+  }
+
+  function handleNextGig() {
+    const next = selectedIndex >= 0 && selectedIndex < selectedList.length - 1 ? selectedList[selectedIndex + 1] : undefined;
+    if (next) setSelectedGigKey(next.key);
+  }
 
   function resetFilters() {
     setTier("all");
@@ -480,10 +555,42 @@ export function TodayClient({
           </h2>
           <div className={styles.picksGrid}>
             {picks.map((gig) => (
-              <article key={gig.key} className={styles.pickCard}>
+              <article
+                key={gig.key}
+                className={styles.pickCard}
+                // today-page-gig-detail-panel story. Clicking the card (or
+                // its title, which lives inside it -- see gig-detail-panel.tsx's
+                // header comment on why the panel itself is the reusable
+                // piece) opens the real, shared GigDetailPanel modal --
+                // same guard convention the Full Roster row below already
+                // uses for its own click-to-expand, so clicks on an actual
+                // control (button/select/link) inside the card are never
+                // swallowed by this handler.
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest("select, button, a, input")) return;
+                  handleSelectGig(gig.key, "picks");
+                }}
+              >
                 <div className={styles.pickTop}>
                   <div>
-                    <div className={styles.pickTitle}>{gig.title}</div>
+                    <div className={styles.pickTitle}>
+                      {gig.title}{" "}
+                      {/* Direct external-link affordance on the card itself, not solely
+                          reachable through the modal -- tauri-shell-open-external-links
+                          story's own mechanism, same as gig-detail-panel.tsx's "Open
+                          original listing" link and the Full Roster row's own link below. */}
+                      <a
+                        href={gig.url}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          openExternalLink(gig.url);
+                        }}
+                        aria-label={`Open original listing for ${gig.title}`}
+                        className={styles.externalLinkIcon}
+                      >
+                        ↗
+                      </a>
+                    </div>
                     <CompanyLine company={gig.company} cls={styles.pickCompany} />
                   </div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -566,9 +673,19 @@ export function TodayClient({
                   <div key={gig.key}>
                     <div
                       className={`${styles.row} ${isOpen ? styles.rowOpen : ""}`}
+                      // today-page-gig-detail-panel story. Clicking the row
+                      // (or its title) now opens the real, shared
+                      // GigDetailPanel modal -- the owner's own complaint
+                      // was specifically the LACK of a modal here, so this
+                      // replaces the row's previous primary click target
+                      // (which only toggled the inline teaser below). The
+                      // inline teaser is independently preserved via its own
+                      // dedicated expand/collapse chevron button further
+                      // down (still guarded out of this handler, same as
+                      // every other button/select/link/input in the row).
                       onClick={(e) => {
                         if ((e.target as HTMLElement).closest("select, button, a, input")) return;
-                        setExpandedKey(isOpen ? null : gig.key);
+                        handleSelectGig(gig.key, "roster");
                       }}
                     >
                       <div className={styles.rowListing}>
@@ -582,6 +699,21 @@ export function TodayClient({
                             bucketLabels={rankBucketLabels}
                           />
                           <span className={styles.rowTitle}>{gig.title}</span>
+                          {/* Direct external-link affordance on the row itself, not solely
+                              reachable through the modal -- matches the Picks card's own
+                              identical link above and dashboard-client.tsx's title-link
+                              precedent. */}
+                          <a
+                            href={gig.url}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              openExternalLink(gig.url);
+                            }}
+                            aria-label={`Open original listing for ${gig.title}`}
+                            className={styles.externalLinkIcon}
+                          >
+                            ↗
+                          </a>
                         </div>
                         <div>
                           <CompanyLine company={gig.company} cls={styles.rowCompany} /> <ProfileChips ids={gig.matchedProfileIds} profiles={engagementProfiles} />
@@ -708,6 +840,82 @@ export function TodayClient({
         <span>gigradar · {gigs.length} gigs tracked</span>
         <span>this view refreshes on every scan</span>
       </footer>
+
+      {/*
+        today-page-gig-detail-panel story. The SAME shared GigDetailPanel
+        dashboard-client.tsx already mounts (src/app/gig-detail-panel.tsx,
+        untouched here) -- mounted a second, independent time for Today's
+        page. statusChangeSection/draftSection/prepSection reuse THIS
+        component's own existing handleStatusChange/handleGenerateDraft/
+        handleGeneratePrep/prepByKey/PrepSummary (the today-picks-analyze-
+        feedback story's fix) rather than dashboard-client.tsx's separate
+        renderDraftSection()/renderPrepSection() helpers, which have
+        different data wiring specific to that page.
+      */}
+      {selectedGig && (
+        <GigDetailPanel
+          gig={selectedGig}
+          position={{ index: selectedIndex, total: selectedTotal }}
+          onClose={() => setSelectedGigKey(null)}
+          onPrev={handlePrevGig}
+          onNext={handleNextGig}
+          canPrev={selectedIndex > 0}
+          canNext={selectedIndex >= 0 && selectedIndex < selectedTotal - 1}
+          groupId={rankBucketGroupId}
+          statusChangeSection={
+            <>
+              <select
+                value={selectedGig.status}
+                onChange={(e) => handleStatusChange(selectedGig.key, e.target.value as GigStatus)}
+                aria-label={`Change status for ${selectedGig.title}`}
+                className={styles.tbSelect}
+              >
+                {ALL_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {STATUS_LABEL[s]}
+                  </option>
+                ))}
+              </select>
+              {statusErrorByKey[selectedGig.key] && <p className={styles.detailError}>{statusErrorByKey[selectedGig.key]}</p>}
+            </>
+          }
+          draftSection={
+            canGenerateDraft(selectedGig.tier) ? (
+              <>
+                <button
+                  type="button"
+                  disabled={generatingDraftKeys.has(selectedGig.key)}
+                  onClick={() => handleGenerateDraft(selectedGig.key)}
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                >
+                  {generatingDraftKeys.has(selectedGig.key) ? "Generating…" : draftButtonLabel(draftedGigKeys.has(selectedGig.key))}
+                </button>
+                {draftErrorByKey[selectedGig.key] && <p className={styles.detailError}>{draftErrorByKey[selectedGig.key]}</p>}
+              </>
+            ) : null
+          }
+          prepSection={
+            selectedGig.status === "interview" ? (
+              <Link href={`/gigs/${encodeURIComponent(selectedGig.key)}/interview`} className={`${styles.btn} ${styles.btnPrimary}`}>
+                Open interview workspace →
+              </Link>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={generatingPrepKeys.has(selectedGig.key)}
+                  onClick={() => handleGeneratePrep(selectedGig.key)}
+                  className={styles.btn}
+                >
+                  {generatingPrepKeys.has(selectedGig.key) ? "Analyzing…" : "Analyze"}
+                </button>
+                {prepErrorByKey[selectedGig.key] && <p className={styles.detailError}>{prepErrorByKey[selectedGig.key]}</p>}
+                {prepByKey[selectedGig.key] && <PrepSummary prep={prepByKey[selectedGig.key]!} />}
+              </>
+            )
+          }
+        />
+      )}
 
       <ExternalLinkFeedbackToast feedback={externalLinkFeedback} onDismiss={dismissExternalLinkFeedback} />
     </div>

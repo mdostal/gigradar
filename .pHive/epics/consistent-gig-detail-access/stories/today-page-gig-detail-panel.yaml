@@ -1,10 +1,117 @@
 id: today-page-gig-detail-panel
 epic: consistent-gig-detail-access
 title: "Mount GigDetailPanel in today-client.tsx for Today's Picks and Full Roster, matching dashboard-client.tsx's own proven pattern"
-status: pending
+status: complete
 complexity: medium
 methodology: classic
 depends_on: []
+
+progress_note: |
+  SHIPPED. Mounted the existing, untouched `GigDetailPanel`
+  (src/app/gig-detail-panel.tsx) into src/app/today/today-client.tsx for
+  BOTH Today's Picks cards and Full Roster rows, following
+  dashboard-client.tsx's own proven `selectedGigKey` pattern.
+
+  Real research before implementing (per the story's own instruction to
+  independently confirm Full Roster, not assume it matches Picks): Full
+  Roster rows already had their OWN click-to-expand accordion behavior
+  (`expandedKey`/`isOpen`, toggled by the row's own onClick, with a
+  dedicated chevron button) plus an existing "View listing ↗" external
+  link buried inside that expanded teaser -- genuinely different from the
+  Picks cards, which had neither the accordion nor any link at all. Adapted
+  rather than copied: the row's PRIMARY click now opens the real
+  GigDetailPanel modal (replacing its old click-to-expand-accordion
+  target, since the owner's actual complaint was specifically the missing
+  modal); the accordion/teaser is independently preserved via its own
+  still-present dedicated chevron button (unaffected, still guarded out of
+  the row's new onClick the same way every button/select/link/input in the
+  row always was).
+
+  Implementation:
+  - `selectedGigKey`/`selectedGigSource` state (`"picks" | "roster"`) plus
+    an exported pure helper, `resolveGigDetailSelection(key, source, picks,
+    rosterFlat)`, that resolves {gig, index, total, list} -- Today's Picks
+    and Full Roster are two SEPARATE lists (unlike dashboard-client.tsx's
+    single `rows`), so this is the one place that decides which list
+    Prev/Next walks. Exported and unit-tested the same way this file's own
+    `PrepSummary` already is (this repo has no React Testing Library/jsdom
+    -- see today-client.test.ts's own header comment) -- 5 new tests added
+    in src/app/today/__tests__/today-client.test.ts, all passing.
+  - Picks card `<article>` and Full Roster `<div className={row}>` each
+    got an onClick guarded the same way Full Roster's row already was
+    (`closest("select, button, a, input")` skips real controls) that calls
+    `handleSelectGig(gig.key, "picks" | "roster")` -- so clicking the card/
+    row (or its title, which lives inside and isn't itself an excluded
+    element) opens the modal.
+  - Added a small, always-visible "↗" external-link anchor (new
+    `.externalLinkIcon` CSS class) directly on both the Picks card title
+    and the Full Roster row title line, using the SAME `openExternalLink()`
+    hook already used elsewhere on this page -- a real, direct
+    external-posting affordance that does not require opening the modal
+    first (acceptance criterion 3), on both surfaces.
+  - `statusChangeSection`/`draftSection`/`prepSection` reuse
+    today-client.tsx's OWN existing `handleStatusChange`/
+    `handleGenerateDraft`/`handleGeneratePrep`/`prepByKey`/
+    `generatingDraftKeys`/`generatingPrepKeys`/error-by-key state and the
+    shared `PrepSummary` component (today-picks-analyze-feedback story) --
+    NOT dashboard-client.tsx's separate `renderDraftSection()`/
+    `renderPrepSection()` helpers, per the story's explicit instruction.
+  - `groupId` passed as `rankBucketGroupId` (Today's own existing prop,
+    the config-order primary group's id already threaded through this
+    file for the rank-bucket control).
+  - Did not touch gig-detail-panel.tsx's own internals or
+    dashboard-client.tsx's own existing GigDetailPanel usage.
+
+  Verification (real, not simulated):
+  - `npm test`: 130 test files / 1787 tests passed, 0 failures (5 new).
+  - `npm run typecheck`: clean, 0 errors.
+  - Real post-fix verification against the ACTUAL app, in a fully isolated
+    environment (temp `XDG_DATA_HOME`, never the real
+    `~/.local/share/gigradar`): seeded 3 real gigs (one green/new -> Picks
+    pool, two others -> Full Roster) via the REAL `recordScan()` store
+    function (the same one the actual scan pipeline calls) from a
+    throwaway, uncommitted script, then ran the real `npm run build` +
+    `next start` against that isolated data dir and curled the real served
+    `/today` page:
+    - HTTP 200; all 3 seeded gigs' real titles appear in the rendered HTML.
+    - The new `aria-label="Open original listing for <real title>"`
+      external-link anchors are present in the SSR HTML for all 3 gigs
+      (both the Picks card and both Full Roster rows), each with the real
+      seeded `href` -- confirms the direct external-link affordance is
+      genuinely wired to real data, not just present in source.
+    - `.next/app-build-manifest.json` confirms `/today/page`'s own client
+      bundle includes chunk `456-*.js`, and that chunk contains
+      gig-detail-panel.tsx's own real markup (`role:"dialog"`,
+      `aria-modal`, "Apply with profile assist") -- proves GigDetailPanel
+      is genuinely bundled into the Today page, not merely imported and
+      dead-code-eliminated.
+    - The Today-page-specific chunk
+      (`app/today/page-*.js`) contains "Change status for" (the reused
+      `handleStatusChange` aria-label), "Open original listing for" and
+      "externalLinkIcon" (the new direct-link affordance), "Open interview
+      workspace" (the reused prepSection interview link), and the literal
+      strings `"picks"`/`"roster"` (the `handleSelectGig` source
+      arguments) -- consistent with the actual implementation, not
+      stripped by minification/tree-shaking.
+    - A curl-only check can't literally click a button, so click-handler
+      correctness (the `closest("select, button, a, input")` guard on both
+      the Picks `<article>` and the Full Roster row, `handleSelectGig`
+      wiring both call sites to the correct `"picks"`/`"roster"` source)
+      was additionally confirmed by directly re-reading the shipped
+      source, per the story's own instruction for exactly this gap.
+    - `simman` (selectorless vision-cursor web testing) was NOT used for a
+      real interactive click-through: `simman doctor` confirms it drives a
+      real Playwright-managed Chromium browser (`playwright chromium: not
+      installed`, `npx playwright install chromium` as the fix) -- this
+      session's own standing constraints explicitly forbid opening a real
+      browser window or using Playwright for this epic, which supersedes
+      the story's own "if simman is available/working, use it" fallback.
+      It was also independently not ready in this environment regardless
+      (missing chromium + no vision API key configured).
+    - Server and isolated data dir torn down after verification; the
+      throwaway seed script was never committed.
+
+  PR: https://github.com/mdostal/gigradar/pull/192
 
 description: |
   Owner's own real, live complaint (2026-09-07), from Today's Picks:
