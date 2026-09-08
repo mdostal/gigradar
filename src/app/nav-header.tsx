@@ -67,12 +67,9 @@ const BADGE_COLOR_CLASS: Record<IssuesBadgeInfo["color"], string> = {
  */
 export function NavHeader({
   issuesBadge = null,
-  iconSrc,
   groups = [],
 }: {
   issuesBadge?: IssuesBadgeInfo | null;
-  /** Public path of the current `Config.appIcon` pick (`icon-picker` story) — layout.tsx resolves this server-side via resolveAppIcon(), so it's always a valid path, never undefined in practice. Optional only so tests can render NavHeader standalone without wiring it. */
-  iconSrc?: string;
   /**
    * multi-group-architecture epic, Slice 3. Every configured group's
    * `{id, label}` — layout.tsx resolves this server-side via
@@ -87,19 +84,14 @@ export function NavHeader({
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-10 border-b border-brand-border bg-brand-bg/95 backdrop-blur supports-[backdrop-filter]:bg-brand-bg/90">
+      {/* header-layout-cleanup epic: the icon+"gigradar" logo lockup that
+          used to sit here is removed -- owner's own direction is that the
+          app icon identifies the app (dock/Finder icon, tray icon, and the
+          browser-tab favicon via layout.tsx's `icons: { icon: icon.path }`
+          metadata), not a second, redundant in-page copy of it. "/"
+          already resolves to the Dashboard nav link below, so no separate
+          home link is needed either. */}
       <nav className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
-        <Link href="/" className="flex items-center gap-2 text-sm font-bold tracking-tight text-brand-text">
-          {iconSrc && (
-            <img
-              src={iconSrc}
-              alt=""
-              width={22}
-              height={22}
-              className="rounded-md shadow-[0_0_10px_1px_rgba(52,211,153,0.35)]"
-            />
-          )}
-          gigradar
-        </Link>
         <div className="flex items-center gap-1">
           {NAV_LINKS.map((link) => {
             const active = pathname === link.href;

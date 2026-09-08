@@ -90,7 +90,6 @@ export function extractGroupSummaries(rawConfig: Record<string, unknown>): { id:
 export default function RootLayout({ children }: { children: ReactNode }) {
   const openIssues = listIssues({ open: true });
   const raw = readRawConfig();
-  const icon = resolveAppIcon(typeof raw.appIcon === "string" ? raw.appIcon : undefined);
   const theme = resolveUiTheme(raw.uiTheme);
   const groups = extractGroupSummaries(raw);
   // sonar-sweep-header-global-masthead story (header-layout-cleanup epic).
@@ -119,7 +118,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <div className="mx-auto max-w-[88rem] px-6 pt-6">
           <SonarSweepHeader status={status} lastScanIso={lastScanIso} now={now} sweepAction={sweepNowAction} />
         </div>
-        <NavHeader issuesBadge={issuesBadgeInfo(openIssues)} iconSrc={icon.path} groups={groups} />
+        <NavHeader issuesBadge={issuesBadgeInfo(openIssues)} groups={groups} />
         {children}
         <UpdateNotifier />
       </body>
