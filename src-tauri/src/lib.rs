@@ -343,15 +343,37 @@ pub fn run() {
                 match wait_for_server_ready(server_port) {
                     Ok(()) => {
                         let url = format!("http://{SERVER_HOST}:{server_port}");
-                        WebviewWindowBuilder::new(
+                        let mut window_builder = WebviewWindowBuilder::new(
                             &app_handle,
                             "main",
                             WebviewUrl::External(url.parse().expect("gigradar: invalid server URL")),
                         )
-                        .title("gigradar")
-                        .inner_size(1280.0, 860.0)
-                        .build()
-                        .expect("gigradar: failed to create the main window");
+                        .title("")
+                        .inner_size(1280.0, 860.0);
+
+                        // header-layout-cleanup epic, remove-window-title-text
+                        // story: owner's own direction, from a real
+                        // screenshot -- no "gigradar" text next to the
+                        // traffic-light buttons; the app's own dock/Finder
+                        // icon already identifies it. An empty `.title("")`
+                        // alone leaves no visible text, but `hidden_title`
+                        // is the real, purpose-built macOS API for this
+                        // (confirmed by reading the installed tauri
+                        // 2.11.5 / tao 0.35.3 crate source: it flows
+                        // through to `NSWindow.setTitleVisibility(.hidden)`,
+                        // the standard way macOS apps get a clean
+                        // traffic-lights-only titlebar) -- more robust
+                        // than relying on an empty string alone. macOS-only:
+                        // `hidden_title` isn't offered on other platforms'
+                        // window builders.
+                        #[cfg(target_os = "macos")]
+                        {
+                            window_builder = window_builder.hidden_title(true);
+                        }
+
+                        window_builder
+                            .build()
+                            .expect("gigradar: failed to create the main window");
 
                         // Launch-time update check (acceptance criteria:
                         // "checks for updates on launch and via a manual

@@ -1,7 +1,7 @@
 id: remove-window-title-text
 epic: header-layout-cleanup
 title: "Remove the 'gigradar' text from the native macOS window title bar"
-status: pending
+status: complete
 complexity: low
 methodology: classic
 depends_on: []
@@ -61,3 +61,84 @@ steps:
     description: Commit, branch off dev, PR into dev
     agent: developer
     depends_on: [review]
+
+progress_note: |
+  SHIPPED, PR #191 (https://github.com/mdostal/gigradar/pull/191),
+  branch feat/remove-window-title-text -> dev.
+
+  Read the real, installed crate source rather than guessing: Cargo.lock
+  pins tauri 2.11.5 / tao 0.35.3. `WebviewWindowBuilder::title("")` alone
+  only clears the string; the real, purpose-built API for a genuinely
+  clean traffic-lights-only title bar is `hidden_title(bool)`
+  (macOS-only on tauri's own builder) -- traced it through
+  tauri-runtime-wry 2.11.4's `hidden_title` -> tao's
+  `WindowBuilderExtMacOS::with_title_hidden` -> the real AppKit call,
+  `ns_window.setTitleVisibility(NSWindowTitleVisibility::Hidden)`
+  (tao-0.35.3/src/platform_impl/macos/window.rs:269). Changed
+  src-tauri/src/lib.rs's WebviewWindowBuilder (~line 351) from
+  `.title("gigradar")` to `.title("")` plus
+  `#[cfg(target_os = "macos")] .hidden_title(true)` -- gated because
+  `hidden_title` isn't offered on non-macOS builders (matches this
+  file's existing cfg(target_os = "macos") conventions elsewhere).
+  inner_size and the webview URL/server-ready wait logic were untouched,
+  per the story's own scope.
+
+  Verification, all clean, all in an isolated worktree
+  (/Users/mdostal/gigradar-worktrees/remove-window-title-text, branch
+  feat/remove-window-title-text off origin/dev):
+    - npm test: 1782 passed, 3 skipped, 0 failed.
+    - npm run typecheck: clean.
+    - cargo check (src-tauri): clean.
+    - cargo test (src-tauri): 8 passed, 0 failed.
+
+  REAL post-fix verification against the actual packaged app (per this
+  epic's standing procedure):
+    1. Backed up ~/.local/share/gigradar to
+       ~/gigradar-backups/gigradar-data-20260907-193922.tar.gz BEFORE
+       touching the real app; confirmed both config.json and gigs.db
+       are present inside the archive.
+    2. Baseline real gig count from the live gigs.db: 2042 rows.
+    3. Quit the running packaged app cleanly via
+       `osascript -e 'tell application "gigradar" to quit'`.
+    4. Built the real .app: `npm run build` ->
+       `scripts/prepare-tauri-sidecars.sh` -> `npx tauri build`
+       (the release binary + .app bundle built successfully; the
+       downstream .dmg-bundling step failed on this headless run --
+       a known bundle_dmg.sh/Finder-automation flakiness unrelated to
+       this change -- the .app itself is what gets installed/verified,
+       so this did not block verification).
+    5. Rotated the previously-installed /Applications/gigradar.app to
+       /Applications/gigradar.app.old (removing a stale prior .old
+       first), then installed the freshly built .app to
+       /Applications/gigradar.app.
+    6. `xattr -cr /Applications/gigradar.app`, then
+       `codesign -dv /Applications/gigradar.app` confirmed a valid
+       adhoc signature (flags=0x10002(adhoc,runtime), Sealed Resources
+       version=2, 3182 files) -- consistent with this project's
+       existing local/unsigned-dev-build posture.
+    7. Relaunched via `open /Applications/gigradar.app`; confirmed the
+       sidecar Node child process came up and its resolved port
+       answered curl with HTTP 200; re-queried gigs.db and confirmed
+       the real gig count was STILL 2042 -- no data-dir corruption from
+       the rebuild/reinstall.
+    8. Real accessibility-API check on the LIVE relaunched window (not
+       just "the code compiles"):
+       `osascript -e 'tell application "System Events" to tell process
+       "gigradar" to get properties of front window'` returned
+       `title:, name:missing value` -- genuinely empty title text --
+       while `subrole:AXStandardWindow` confirms it's still a normal
+       titled/traffic-lit window, not a borderless one. This is the
+       real evidence the acceptance criteria asked for.
+
+  No browser window, no Playwright, and no OS-level screenshot of the
+  real desktop were used anywhere in this verification, per this
+  session's standing constraints -- evidence is build output, log/API
+  output (curl, sqlite3, codesign, osascript accessibility queries)
+  only.
+
+  dev had moved one commit ahead
+  (.pHive/epics/consistent-gig-detail-access/docs/design-discussion.md,
+  a docs-only addition) by the time this PR was opened; confirmed via
+  `git merge-tree` that this is a clean, non-overlapping addition with
+  no real conflict against src-tauri/src/lib.rs -- no merge-commit
+  resolution was needed.

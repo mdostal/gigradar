@@ -24,12 +24,26 @@
 // hydration-mismatch — React error #418, a real bug caught live during
 // that story's own verification).
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { StatusStripView } from "@/lib/status/status-strip";
 import { formatRelativeTime } from "@/lib/status/status-strip";
 import type { ActionResult } from "@/lib/actions/result";
 import type { SweepResult } from "./actions";
 
 const TICK_INTERVAL_MS = 15_000;
+
+// header-layout-cleanup epic, settings-gear-icon-in-masthead story: the
+// owner's own explicit direction (2026-09-07) is a settings gear icon in
+// the real top-right of the app -- now that SonarSweepHeader is the
+// literal top of every page (sonar-sweep-header-global-masthead story),
+// this is that top-right. Purely additive: /config is the more
+// comprehensive of the two existing settings-shaped pages, picked here
+// without pre-deciding the owner's own explicitly-deferred
+// Setup-vs-Config-nav-tab consolidation call. Exported as a plain data
+// constant -- matching nav-header.test.ts's own established convention
+// for this repo's no-React-Testing-Library test setup -- so the link
+// target is assertable without rendering the DOM.
+export const SETTINGS_GEAR_HREF = "/config";
 
 export function SonarSweepHeader({
   status,
@@ -128,6 +142,14 @@ export function SonarSweepHeader({
         >
           {sweeping ? "Sweeping…" : "Sweep now"}
         </button>
+        <Link
+          href={SETTINGS_GEAR_HREF}
+          aria-label="Settings"
+          title="Settings"
+          className="flex items-center rounded-md border border-theme-surface-border bg-theme-surface p-1.5 text-theme-text-faint transition-colors hover:bg-theme-surface-raised hover:text-theme-text"
+        >
+          <GearIcon />
+        </Link>
       </div>
 
       {toast && (
@@ -137,6 +159,23 @@ export function SonarSweepHeader({
       )}
       {error && <p className="w-full text-sm text-red-600">{error}</p>}
     </div>
+  );
+}
+
+/**
+ * settings-gear-icon-in-masthead story: a plain inline gear SVG, matching
+ * ScopeIcon's own convention below (no icon-library dependency for one
+ * icon) -- stroke uses currentColor so it inherits the wrapping <Link>'s
+ * text color (and its hover state) rather than a hardcoded
+ * --color-theme-* variable, since unlike ScopeIcon this glyph sits inside
+ * an interactive, hoverable control.
+ */
+function GearIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 13a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V19a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H4a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H10a1.65 1.65 0 0 0 1-1.51V4a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V10a1.65 1.65 0 0 0 1.51 1H20a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+    </svg>
   );
 }
 
