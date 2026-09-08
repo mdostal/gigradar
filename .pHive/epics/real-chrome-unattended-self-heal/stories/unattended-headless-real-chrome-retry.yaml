@@ -1,0 +1,117 @@
+id: unattended-headless-real-chrome-retry
+epic: real-chrome-unattended-self-heal
+title: "Add headless support to real-chrome.ts and let withBrowserSession() reach it for attended:false callers"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+progress_note: |
+  SHIPPED. See epic.yaml's root_cause for the full diagnosis.
+
+  Implementation:
+  - `src/lib/auth/real-chrome.ts`: `SpawnRealChromeOptions` gained
+    `headless?: boolean` (default false -- byte-identical behavior for
+    every existing caller). When true, `spawnRealChrome()` adds
+    `--headless=new` (Chrome's modern headless mode) to the direct
+    `child_process.spawn()` args -- still the SAME real Chrome binary,
+    still zero `--enable-automation`/automation flags either way; only
+    headless-ness changes.
+  - `src/lib/auth/browser-session.ts`: `acquireViaPersistentRealChrome()`
+    gained a `headless: boolean` parameter, threaded into
+    `spawnRealChrome({persistent: true, headless})`; skips
+    `minimizeChromeWindow()` when headless (no window exists to
+    minimize).
+  - `withBrowserSession()`'s tier logic: for `attended: false`, a tier-1
+    (headless, Playwright-fingerprinted) session/challenge-error failure
+    now retries via `acquireViaPersistentRealChrome(..., headless: true)`
+    DIRECTLY -- tier 2 (the headED Playwright retry) is skipped entirely
+    for unattended callers, since a visible window is exactly what
+    `attended: false` forbids and tier 2 offers no fingerprint advantage
+    over tier 1 anyway (same Playwright-launched Chromium, just headed).
+    On success, the refreshed storageState is written back (existing
+    write-back logic, unchanged) so tier 1 is self-healed for the NEXT
+    unattended call too. On failure, the original tier-1 error is
+    preserved and re-thrown if it was a `VerificationChallengeError`
+    (matching the existing attended-path precedent, so runner.ts's
+    "Needs human verification" issue routing is unaffected) -- otherwise
+    a new combined error names both failures.
+  - The attended:true path (Capture Login/verification-copilot/
+    profile-assist's own real-chrome usage; today's ONLY previously-
+    reachable path to tier 3) is completely unchanged -- same tier 1 ->
+    tier 2 (headed) -> tier 3 (headed) sequence, same error messages,
+    same `headless: false` passed to tier 3's real-chrome spawn.
+  - Zero changes needed in any adapter (`gofractional.ts`,
+    `gofractional-status.ts`, `wellfound.ts`, `wellfound-status.ts`, or
+    any other `withBrowserSession()` consumer) -- the fix is entirely
+    centralized in `browser-session.ts`/`real-chrome.ts`, so every
+    existing unattended caller benefits automatically.
+
+  Verification:
+  - `npm test`: 1804 passed, 3 skipped, 0 failed. New/updated coverage:
+    `real-chrome.test.ts` (2 new tests: `--headless=new` added only when
+    requested, never the old detectable `--headless`, no automation flag
+    either way) and `browser-session.test.ts` (rewrote the 3 tests that
+    encoded the OLD, buggy "tier 2/3 unreachable for attended:false"
+    assumption to instead prove tier 2 stays unreachable while tier 3
+    IS now reached headlessly; added a new test proving a successful
+    headless tier-3 retry returns its result, never minimizes a
+    nonexistent window, and correctly refreshes/writes back the
+    storageState snapshot).
+  - `npm run typecheck`: clean.
+
+  NOT verified here (deliberately, per this session's own "flag, don't
+  fake, on verification challenges" discipline): a real, live Cloudflare
+  challenge against the owner's actual GoFractional account. This fix
+  closes a real, confirmed dead-code gap in the exact mechanism the
+  codebase's own prior story already documented as THE fix for this
+  failure class -- but Cloudflare's own server-side behavior can't be
+  proven from here. The owner's own next real scan cycle (or a manual
+  "Retry now"/"Sync statuses" click) against GoFractional is the actual
+  test; if it STILL fails after this ships, that is real, new evidence
+  worth investigating further (e.g. whether Cloudflare's challenge also
+  keys on IP-level rate-limiting/reputation, independent of browser
+  fingerprint), not a sign this fix was wrong.
+
+description: |
+  See epic.yaml's trigger/root_cause. Add headless capability to
+  real-chrome.ts and rewire withBrowserSession()'s unattended failure
+  path to actually reach the real-Chrome self-heal tier instead of
+  re-throwing immediately.
+
+acceptance_criteria:
+  - "spawnRealChrome({headless: true}) adds --headless=new to the spawn args; omitted/false is byte-identical to today's behavior."
+  - "withBrowserSession() with attended:false retries a tier-1 session/challenge failure via the real-chrome tier, headlessly -- never opening a visible window."
+  - "The attended:true path's existing tier 1 -> 2 -> 3 sequence and error messages are completely unchanged."
+  - "A successful headless retry returns its result and refreshes the storageState snapshot, self-healing tier 1 for future unattended calls."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/real-chrome.ts
+      purpose: "spawnRealChrome()'s new headless option."
+    - path: src/lib/auth/browser-session.ts
+      purpose: "withBrowserSession()'s tier logic and acquireViaPersistentRealChrome()'s new headless param -- the actual fix."
+
+risks:
+  - severity: medium
+    description: "Touches the real, production scan/reconciliation session-auth pipeline for every browser-session-auth source, not just GoFractional."
+    mitigation: "Purely additive to the attended:true path (unchanged); the new attended:false path only ever engages after a real, already-failing tier-1 attempt, so a source with no session problems is completely unaffected. Full test suite green."
+
+steps:
+  - id: implement
+    description: Add headless spawn support and rewire the unattended tier-flow to reach it
+    agent: developer
+  - id: test
+    description: Rewrite the tests that encoded the old, dead-code assumption; add direct headless-flag coverage; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the attended:true path is byte-identical and the new unattended path is correctly gated
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

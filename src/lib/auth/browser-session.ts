@@ -613,29 +613,53 @@ async function acquireViaStorageStateSnapshot<T>(
  * real, successful result from `run(page)` at that point, and losing the
  * self-heal for THIS call only degrades the next call back to "fast path
  * fails, falls back here again," not a hard failure.
+ *
+ * real-chrome-unattended-self-heal story (real-chrome-session-sharing
+ * epic follow-up, owner's own real complaint 2026-09-08: re-running
+ * Capture Login for GoFractional repeatedly "hadn't gotten the data right
+ * once"). REAL BUG FOUND: `withBrowserSession()` gated this ENTIRE tier
+ * behind `attended: true` — but every real call site in this codebase
+ * (every scan, every status-reconciliation call) passes `attended:
+ * false`, meaning this tier was 100% unreachable dead code in production.
+ * A fresh Capture Login produced a genuinely valid session, but the very
+ * next automated scan replayed it into the SAME automation-fingerprinted
+ * Chromium tier 1 had just failed with — Cloudflare rejected it again
+ * almost immediately, and the call had no path to ever reach the one tier
+ * built specifically to survive that. `withBrowserSession()` now retries
+ * here HEADLESSLY for an unattended caller (see the `headless` param
+ * above) instead of re-throwing tier 1's failure immediately — never a
+ * visible window, honoring the unattended-scans-never-open-a-window rule,
+ * while finally giving the real fix a chance to run.
  */
 async function acquireViaPersistentRealChrome<T>(
   options: BrowserSessionOptions,
   scopedAllowedOrigins: string[],
   storageStatePathToRefresh: string | undefined,
   run: (page: Page) => Promise<T>,
+  /**
+   * real-chrome-unattended-self-heal story. `true` for an unattended
+   * (`attended: false`) caller reaching this tier — real-chrome.ts's
+   * `--headless=new` support, never a visible window. `false` (this
+   * function's original, only behavior) for an attended caller, where a
+   * real, visible window IS the point (see withBrowserSession()'s own doc
+   * comment for the full tier breakdown).
+   */
+  headless: boolean,
 ): Promise<T> {
   const { sourceId, url, isAuthenticated } = options;
-  const handle = await spawnRealChrome({ persistent: true });
+  const handle = await spawnRealChrome({ persistent: true, headless });
   const browser = await attachToRealChrome(handle.cdpPort);
   try {
     const context = browser.contexts()[0] ?? (await browser.newContext());
     const page = await context.newPage();
     try {
       await navigateAndCheckAuth(page, url, sourceId, isAuthenticated);
-      // embedded-browser-and-guided-session epic: this tier only ever runs
-      // from an unattended-scan caller (withBrowserSession()'s own chain) —
-      // never with a human actively present, so minimizing immediately once
-      // auth is confirmed is always correct here, unconditionally.
+      // embedded-browser-and-guided-session epic: only meaningful for the
+      // attended, headed case -- a headless run has no window to minimize.
       // handle.process.pid -- the SPECIFIC spawned Chrome process, never
       // Chrome's own ambiguous shared window list (see
       // minimizeChromeWindow()'s own doc comment).
-      if (handle.process.pid) await minimizeChromeWindow(handle.process.pid);
+      if (!headless && handle.process.pid) await minimizeChromeWindow(handle.process.pid);
       const result = await run(page);
 
       if (storageStatePathToRefresh) {
@@ -675,20 +699,29 @@ async function acquireViaPersistentRealChrome<T>(
  * browser is closed on every exit path. Cleanup is owned centrally here,
  * never left to the caller/adapter.
  *
- * THREE ACQUISITION TIERS, self-healing (see acquireViaPersistentRealChrome()'s
+ * ACQUISITION TIERS, self-healing (see acquireViaPersistentRealChrome()'s
  * own doc comment for the persistent-real-chrome rationale, and this
- * module's header comment for the headless-first rationale):
+ * module's header comment for the headless-first rationale). Tier 1 always
+ * runs; which further tiers are reachable depends on `options.attended`
+ * (real-chrome-unattended-self-heal story — previously tiers 2/3 were
+ * ONLY reachable when `attended: true`, which no real call site in this
+ * codebase ever passed, making them 100% dead code in production):
  *   1. storageState snapshot, HEADLESS — no window ever appears if this
- *      works.
- *   2. storageState snapshot, HEADED (this module's original fast path) —
- *      only reached if tier 1 threw VerificationChallengeError or
- *      SessionAuthError. Minimized immediately once auth is confirmed.
- *   3. persistent-real-chrome retry, HEADED — only reached if tier 2 ALSO
- *      threw one of those same two error types. Refreshes the storageState
- *      snapshot on success so tier 1/2 are self-healed for later calls.
+ *      works. Runs for every call, attended or not.
+ *   2. `attended: true` ONLY — storageState snapshot, HEADED (this
+ *      module's original fast path) — only reached if tier 1 threw
+ *      VerificationChallengeError or SessionAuthError. Minimized
+ *      immediately once auth is confirmed.
+ *   3. `attended: true` — persistent-real-chrome retry, HEADED — only
+ *      reached if tier 2 ALSO threw one of those same two error types.
+ *      `attended: false` — persistent-real-chrome retry, HEADLESS —
+ *      reached DIRECTLY from a tier-1 failure (tier 2 is skipped entirely:
+ *      a headED retry is meaningless/forbidden for an unattended caller).
+ *      Either way, refreshes the storageState snapshot on success so tier
+ *      1 (and tier 2, when attended) are self-healed for later calls.
  * Any OTHER error (including one `run()` itself throws) is never retried —
- * it propagates immediately from whichever tier it came from. If tier 3
- * ALSO fails, throws a combined, actionable error naming both the
+ * it propagates immediately from whichever tier it came from. If the final
+ * tier reached ALSO fails, throws a combined, actionable error naming both the
  * triggering failure and tier 3's own — Capture Login is genuinely the
  * last resort now, not the only path.
  *
@@ -730,16 +763,35 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
     return await acquireViaStorageStateSnapshot(options, scopedStorageState, run, /* headless */ true, /* minimizeAfterAuth */ false);
   } catch (e) {
     if (!isSessionOrChallengeError(e)) throw e; // an unrelated failure (e.g. from run() itself) -- never retried
-    // true-embedded-browser epic, unattended-scans-never-open-a-window
-    // story: attended:false means NO headed browser may ever open for
-    // this call, full stop -- re-throw the headless failure immediately
-    // rather than falling through to tier 2/3's real, visible windows.
-    // The re-thrown error is the SAME VerificationChallengeError/
-    // SessionAuthError tier 1 already produced -- runner.ts/scheduler's
-    // EXISTING error-routing (instanceof VerificationChallengeError ->
-    // "Needs human verification" issue; anything else -> "Source fetch
-    // failed" issue) already handles both correctly, unchanged.
-    if (!attended) throw e;
+
+    if (!attended) {
+      // real-chrome-unattended-self-heal story. Previously re-thrown `e`
+      // immediately here -- true-embedded-browser epic's
+      // unattended-scans-never-open-a-window rule is real and still
+      // honored (tier 2, the HEADED fingerprinted retry, genuinely can't
+      // run for an unattended caller), but that rule does NOT require
+      // giving up on the real self-heal entirely: retry via
+      // acquireViaPersistentRealChrome() HEADLESSLY instead -- a real,
+      // non-fingerprinted Chrome with no visible window (see that
+      // function's own doc comment for the real bug this closes: this
+      // path was previously unreachable by every real caller in this
+      // codebase, since every one passes attended:false).
+      try {
+        return await acquireViaPersistentRealChrome(options, allowedOrigins, resolvedStorageStatePath, run, /* headless */ true);
+      } catch (fallbackError) {
+        // Same "preserve the original, actionable diagnosis" precedent as
+        // the attended path below: a tier-1 VerificationChallengeError is
+        // already routed by runner.ts to a distinct "needs human
+        // verification" issue regardless of why the headless retry ALSO
+        // failed.
+        if (e instanceof VerificationChallengeError) throw e;
+        throw new Error(
+          `${MODULE_PREFIX}: session for source "${sourceId}" (checked against "${url}") is invalid, and the ` +
+            `headless persistent-real-chrome retry ALSO failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}. ` +
+            "Run Capture Login for this source to establish a fresh, real, logged-in session.",
+        );
+      }
+    }
     // Headless failing isn't itself surfaced further -- tier 2 (headed) is
     // always at least as diagnostic, and is what a human capturing a fresh
     // session actually saw, so its own error is what propagates below.
@@ -754,7 +806,7 @@ export async function withBrowserSession<T>(options: BrowserSessionOptions, run:
   }
 
   try {
-    return await acquireViaPersistentRealChrome(options, allowedOrigins, resolvedStorageStatePath, run);
+    return await acquireViaPersistentRealChrome(options, allowedOrigins, resolvedStorageStatePath, run, /* headless */ false);
   } catch (fallbackError) {
     // If tier 2's own failure was a verification challenge, that diagnosis
     // is already actionable (runner.ts's per-source error handling routes
