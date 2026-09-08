@@ -1,0 +1,51 @@
+id: real-chrome-session-sharing
+title: "Fix real-Chrome login sessions to genuinely share the persistent Google login and stop spawning competing browser instances"
+status: in-progress
+created_at: "2026-09-07T21:20:00Z"
+
+trigger: |
+  Owner's own real, live complaint (2026-09-07 evening), verbatim across
+  three messages: "it seems that it can get multiple browsers and multiple
+  instances open at once rather than shared login and one thing at a time
+  on the same issue which is pretty freaking weird and annoying" / "also,
+  i've recaptured these 3 tiems today along -.- so you're doing a shit
+  job" / "also, they are the same google email for both -.- logged in
+  through gauth". Triaged as t-008 (p1, major) in .pHive/triage/queue.yaml.
+
+root_cause: |
+  See t-008's full description in the triage queue. Summary:
+  1. `src/lib/auth/session-capture.ts` was fixed (2026-08-30,
+     ateam-session-lifetime-blocker story) to reuse the persistent Chrome
+     profile's own real default context (`browser.contexts()[0]`) instead
+     of `browser.newContext()`, because `newContext()` always creates a
+     fresh, isolated context that does NOT inherit the profile's real
+     cookies even when the profile itself is shared/persistent.
+  2. That fix was never propagated to the other two real-chrome consumers:
+     `src/lib/auth/verification-copilot-session.ts` (`openCopilotSession()`)
+     and `src/lib/auth/assist-session.ts` (its own session-start function)
+     both still unconditionally call `browser.newContext({storageState})`,
+     silently discarding the shared Google login on every single use.
+  3. The three modules (session-capture.ts, verification-copilot-
+     session.ts, assist-session.ts) each track their own live sessions in
+     an independent globalThis-pinned Map, with zero cross-module
+     awareness. The only cross-module coordination is Chrome's own
+     SingletonLock file on the shared profile directory
+     (real-chrome.ts's isProfileLocked()) -- when a second real-chrome
+     consumer (any module, any sourceId) tries to spawn while a first is
+     still live, spawnRealChrome() silently falls back to a fresh,
+     disposable, completely unrelated Chrome process instead of reusing or
+     queuing behind the live one. This produces the "multiple browsers,
+     multiple instances" symptom directly.
+
+goal: |
+  One real, live Chrome window/process, reused across ALL THREE real-chrome
+  consumers, sharing ONE real login (per Google account) via the profile's
+  own actual context -- opening a NEW TAB in that same browser for a second
+  concurrent flow instead of a second competing Chrome instance.
+
+stories:
+  - id: fix-persistent-context-reuse-in-copilot-and-assist
+    status: pending
+  - id: cross-module-real-chrome-registry
+    status: pending
+    depends_on: [fix-persistent-context-reuse-in-copilot-and-assist]

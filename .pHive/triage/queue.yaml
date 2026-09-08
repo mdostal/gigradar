@@ -1,4 +1,80 @@
 entries:
+  - id: t-008
+    state: prioritized
+    kind: bug
+    title: "Verification-copilot and profile-assist real-Chrome sessions discard the persistent Google login every time -- forces a full re-login on every use, and concurrent sessions spawn separate, unshared Chrome instances"
+    description: |
+      Owner's real, live, repeated complaint (2026-09-07 evening): "it seems
+      that it can get multiple browsers and multiple instances open at once
+      rather than shared login and one thing at a time" plus "i've
+      recaptured these 3 times today" plus confirmed "they are the same
+      google email for both -.- logged in through gauth" -- real, ongoing
+      wasted time, not a one-off.
+
+      Root cause, confirmed by direct code read:
+      - `src/lib/auth/real-chrome.ts`'s `spawnRealChrome()` defaults to a
+        SHARED persistent Chrome profile specifically so a Google/SSO login
+        carries over between sessions (see its own header comment,
+        product-review-followups epic, ateam-session-lifetime-blocker
+        story, 2026-08-30). That story ALSO found and fixed a real bug in
+        `src/lib/auth/session-capture.ts`: `browser.newContext()` always
+        creates a fresh, isolated context that does NOT actually inherit
+        the persistent profile's own cookies, even though the profile
+        itself is shared -- fixed there by reusing
+        `browser.contexts()[0]` (the profile's own real default context)
+        instead of calling `newContext()`.
+      - That fix was NEVER propagated to the other two real-chrome
+        consumers: `src/lib/auth/verification-copilot-session.ts`
+        (`openCopilotSession()`, ~line 127 -- the exact code path behind
+        the Issues page's "Open browser to help clear it" button the owner
+        used for gofractional) and `src/lib/auth/assist-session.ts`
+        (~line 212) both still unconditionally call
+        `browser.newContext({ storageState: ... })`, discarding the
+        persistent profile's real Google session every single time --
+        forcing a full fresh Google login on every use, regardless of a
+        prior successful login minutes earlier with the SAME account.
+      - Additionally, `session-capture.ts`, `verification-copilot-
+        session.ts`, and `assist-session.ts` each keep their OWN separate,
+        module-local concurrency tracking (a globalThis-pinned Map), with
+        NO cross-module awareness of each other. The only cross-module
+        coordination is Chrome's own `SingletonLock` file on the shared
+        profile directory (`real-chrome.ts`'s `isProfileLocked()`) -- if
+        any second real-chrome consumer (a different module, or the same
+        module for a different sourceId) tries to spawn while the first is
+        still live, `spawnRealChrome()` silently falls back to a fresh,
+        DISPOSABLE, unrelated Chrome process/profile instead of reusing or
+        queuing behind the first -- producing exactly the "multiple
+        browsers, multiple instances" the owner described, each with no
+        shared login state at all.
+      - Live-reproduced UI symptom from the owner's own screenshot: the
+        Issues page's VerificationCopilot flow got stuck showing
+        "gigradar session-capture: capture '...' has no open page" --
+        consistent with a tracked context/page reference going stale
+        across one of these fallback/orphan paths.
+
+      Needs a real fix, not a guess: (1) apply the same
+      `contexts()[0]`-reuse fix already proven in session-capture.ts to
+      verification-copilot-session.ts and assist-session.ts; (2) add real
+      cross-module coordination so a second concurrent real-chrome request
+      (any of the three modules, any sourceId) reuses the SAME already-live
+      persistent browser/attaches a new tab in it, rather than silently
+      degrading to a disposable, unshared instance.
+    reporter: owner
+    reported_at: "2026-09-07T21:15:00Z"
+    priority: p1
+    severity: major
+    linked_epic: null
+    linked_story: null
+    closed_reason: null
+    closed_at: null
+    state_history:
+      - state: inbox
+        at: "2026-09-07T21:15:00Z"
+      - state: clarified
+        at: "2026-09-07T21:16:00Z"
+      - state: prioritized
+        at: "2026-09-07T21:17:00Z"
+
   - id: t-007
     state: clarified
     kind: bug
