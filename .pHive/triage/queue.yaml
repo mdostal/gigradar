@@ -1,4 +1,63 @@
 entries:
+  - id: t-005
+    state: clarified
+    kind: feature
+    title: "Decide whether 'Setup' and 'Config' nav tabs consolidate under the new settings gear icon, or coexist"
+    description: |
+      Owner's own explicit deferral (2026-09-07), alongside confirming the
+      new settings gear icon in the masthead (settings-gear-icon-in-masthead
+      story): "we'll figure out setup versus config and if it all goes to
+      the gear or not." The gear icon currently (additively) links to
+      /config, but the real, bigger question -- whether "Setup" and
+      "Config" should merge into one settings surface reachable only via
+      the gear, whether the nav tabs stay as-is alongside it, or some other
+      real consolidation -- is explicitly NOT decided yet. Needs the
+      owner's own direction before any further nav-cleanup work touches
+      Setup/Config.
+    reporter: owner
+    reported_at: "2026-09-07T23:29:00Z"
+    priority: p3
+    severity: minor
+    linked_epic: null
+    linked_story: null
+    closed_reason: null
+    closed_at: null
+    state_history:
+      - state: inbox
+        at: "2026-09-07T23:29:00Z"
+      - state: clarified
+        at: "2026-09-07T23:30:00Z"
+
+  - id: t-006
+    state: clarified
+    kind: feature
+    title: "Turn the 'Chat' nav tab into a persistent hover/floating chat icon usable from any page and its content"
+    description: |
+      Owner's own explicit direction (2026-09-07), explicitly sequenced
+      AFTER other header cleanup: "chat should be a hover chat icon that
+      interacts with any page and content but we can do that after we get
+      the rest working." Currently "Chat" is a dedicated nav tab/page
+      (nav-header.tsx) rather than a persistent, page-aware floating
+      affordance. This is a real, deliberately-deferred feature request --
+      needs its own real /plan pass (not a quick patch) once the header
+      cleanup epic (header-layout-cleanup) is done, given the existing
+      "hover-contextual chat" mechanism referenced elsewhere in this
+      codebase (chat co-pilot self-tuning epic) may already provide a real
+      starting point worth checking before designing from scratch.
+    reporter: owner
+    reported_at: "2026-09-07T23:29:00Z"
+    priority: p3
+    severity: minor
+    linked_epic: null
+    linked_story: null
+    closed_reason: null
+    closed_at: null
+    state_history:
+      - state: inbox
+        at: "2026-09-07T23:29:00Z"
+      - state: clarified
+        at: "2026-09-07T23:30:00Z"
+
   - id: t-001
     state: closed
     kind: bug
