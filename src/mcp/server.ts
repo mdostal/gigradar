@@ -76,6 +76,7 @@ import "../lib/sources/fractionus.js";
 import "../lib/sources/fractionalfinders.js";
 import "../lib/sources/wellfound.js";
 import "../lib/sources/linkedin.js";
+import "../lib/sources/axialsearch.js";
 
 const SERVER_NAME = "gigradar";
 const SERVER_VERSION = "0.9.1";

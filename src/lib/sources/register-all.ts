@@ -35,5 +35,6 @@ export async function registerAllSources(): Promise<void> {
     import("./fractionalfinders.js"),
     import("./wellfound.js"),
     import("./linkedin.js"),
+    import("./axialsearch.js"),
   ]);
 }
