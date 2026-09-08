@@ -65,7 +65,7 @@
 // — filterStorageStateToAllowlist() still runs after decryption, in the
 // same position, with the same safety-critical semantics, unchanged.
 import fs from "node:fs";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { hasAnyEncryptedFile, resolveEnvString } from "../config/load.js";
 import { decrypt, getOrCreateKey, isEncryptedEnvelope, VaultTamperError } from "../security/vault.js";
 import { PORTUNUS_SESSION_ACCOUNT, readSessionViaPortunus, type SessionBackend } from "./session-backend.js";
@@ -325,6 +325,72 @@ export function filterStorageStateToAllowlist(storageState: StorageState, allowe
       return domainMatchesAllowlist(hostname, allowedOrigins);
     }),
   };
+}
+
+/**
+ * real-chrome-session-sharing epic, fix-persistent-context-reuse-in-copilot-
+ * and-assist story. Injects an already-filtered `StorageState` into an
+ * EXISTING BrowserContext — the persistent real-Chrome profile's own real
+ * default context (`browser.contexts()[0]`), which already carries whatever
+ * Google/SSO session that profile has accumulated across separate gigradar
+ * launches (see real-chrome.ts's header comment). This exists because
+ * `browser.newContext({ storageState })` — the alternative — always creates
+ * a FRESH, isolated context that discards the persistent profile's own
+ * cookies entirely (live-verified 2026-08-30, ateam-session-lifetime-blocker
+ * story); reusing `contexts()[0]` is the only way that carry-over actually
+ * works, but a context you didn't just construct has no `storageState`
+ * constructor option to seed it with, so this function does by hand what
+ * Playwright's own `newContext({storageState})` does internally:
+ *   - `context.addCookies(storageState.cookies)` — cookies only, one call.
+ *   - for each `storageState.origins[]` entry, opens a throwaway page,
+ *     navigates it to that origin, and `page.evaluate()`s
+ *     `localStorage.setItem(name, value)` for each entry — Playwright's
+ *     BrowserContext has no bulk "set localStorage for this origin" API, so
+ *     this is the same navigate-then-evaluate mechanism Playwright's own
+ *     internals use, just run ourselves against an already-open context.
+ *
+ * A source whose captured session lives entirely in cookies (the common
+ * case) never touches the origins loop at all. A source that also depends
+ * on localStorage-held auth state (e.g. some SPA-style token storage) still
+ * gets it — this was the real gap a cookies-only `addCookies()` call (sufficient
+ * for session-capture.ts's OWN narrower Google-SSO-only seed use, per that
+ * function's own doc comment) would have silently left unaddressed for
+ * verification-copilot-session.ts's and assist-session.ts's REPLAY of a
+ * source's own full previously-captured session, not just a Google seed.
+ *
+ * Best-effort per origin: one origin's navigation failing (e.g. transient
+ * network hiccup, the origin now redirects somewhere unexpected) is logged
+ * and skipped rather than aborting the whole seed — a partially-seeded
+ * session (still has its cookies, missing one origin's localStorage) is
+ * strictly better than throwing away a real, already-open browser window the
+ * human is about to use.
+ */
+export async function applyStorageStateToContext(context: BrowserContext, storageState: StorageState): Promise<void> {
+  if (storageState.cookies.length > 0) {
+    await context.addCookies(storageState.cookies);
+  }
+
+  for (const entry of storageState.origins) {
+    if (entry.localStorage.length === 0) continue;
+    let page: Page | undefined;
+    try {
+      page = await context.newPage();
+      await page.goto(entry.origin);
+      await page.evaluate((items) => {
+        for (const { name, value } of items) {
+          try {
+            window.localStorage.setItem(name, value);
+          } catch {
+            // a specific key rejected (quota, disabled storage, whatever) — best-effort, keep going.
+          }
+        }
+      }, entry.localStorage);
+    } catch (e) {
+      console.warn(`${MODULE_PREFIX}: seeding localStorage for origin "${entry.origin}" failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      await page?.close().catch(() => {});
+    }
+  }
 }
 
 /**

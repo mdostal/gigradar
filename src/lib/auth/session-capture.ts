@@ -69,8 +69,8 @@ import { encrypt, getOrCreateKey } from "../security/vault.js";
 import { GOOGLE_SSO_ORIGINS, SOURCE_ORIGINS } from "../sources/origins.js";
 import { sendDesktopNotification } from "../notify/desktop.js";
 import { getDefaultDataDir } from "../store/path.js";
-import { filterStorageStateToAllowlist, type StorageState } from "./browser-session.js";
-import { attachToRealChrome, closeRealChrome, spawnRealChrome, type RealChromeHandle } from "./real-chrome.js";
+import { applyStorageStateToContext, filterStorageStateToAllowlist, type StorageState } from "./browser-session.js";
+import { acquireRealChrome, closeRealChrome, releaseRealChrome, type RealChromeHandle } from "./real-chrome.js";
 import {
   PORTUNUS_SESSION_ACCOUNT,
   PORTUNUS_SESSION_TTL_SECONDS,
@@ -86,6 +86,16 @@ export const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 interface CaptureEntry {
   browser: Browser;
   context: BrowserContext;
+  /**
+   * THE specific page THIS capture opened — tracked explicitly (not derived
+   * via `context.pages()[0]`) because `context` may now be a SHARED
+   * persistent-profile context (real-chrome-session-sharing epic,
+   * cross-module-real-chrome-registry story) with other captures'/sessions'
+   * own pages open in it concurrently; `pages()[0]` would return whichever
+   * page happens to be first in that shared list, not necessarily this
+   * capture's own — see getCapturePage()'s own doc comment.
+   */
+  page: Page;
   realChrome: RealChromeHandle;
   sourceId: string;
   /**
@@ -126,22 +136,18 @@ const captures: Map<string, CaptureEntry> = ((globalThis as any).__gigradarCaptu
   new Map<string, CaptureEntry>());
 
 /**
- * Closes both halves of a capture's browser resources — Playwright's CDP
- * connection (`browser`) AND the real, independently-spawned Chrome process
- * + its temp `--user-data-dir` (`realChrome`, via real-chrome.ts's
- * closeRealChrome()) — swallowing any error from the Playwright side (the
- * connection may already be closed/closing, e.g. the user closed the window
- * directly, racing our own cleanup). closeRealChrome() itself already
- * swallows its own errors (see that function's doc comment), so this is
- * never this call's own failure either way.
+ * Releases a capture's browser resources via real-chrome.ts's
+ * releaseRealChrome() — real-chrome-session-sharing epic,
+ * cross-module-real-chrome-registry story: if `realChrome` is the
+ * currently-shared persistent session (another capture/copilot/assist
+ * session may still be using it), this only decrements its refcount and
+ * leaves the real browser open; the underlying Playwright connection + real
+ * Chrome process are only actually closed once every acquirer has released
+ * it. A disposable (non-shared) handle is closed immediately, unchanged
+ * from this function's original behavior.
  */
 async function safeCloseBrowser(browser: Browser, realChrome: RealChromeHandle): Promise<void> {
-  try {
-    await browser.close();
-  } catch {
-    // already closed/closing — nothing more to do.
-  }
-  closeRealChrome(realChrome);
+  await releaseRealChrome(browser, realChrome);
 }
 
 /**
@@ -190,15 +196,21 @@ export async function startCapture(
   seedStorageState?: StorageState,
 ): Promise<{ captureId: string }> {
   const scopedSeed = seedStorageState ? filterStorageStateToAllowlist(seedStorageState, [...GOOGLE_SSO_ORIGINS]) : undefined;
-  const realChrome = await spawnRealChrome();
 
+  // real-chrome-session-sharing epic, cross-module-real-chrome-registry
+  // story. acquireRealChrome() reuses an already-live shared persistent
+  // browser (from THIS or either of the other two real-chrome consumer
+  // modules) when one exists, instead of spawnRealChrome() unconditionally
+  // spawning a new, competing Chrome process/profile whenever a second
+  // real-chrome flow starts while a first is still open — see that
+  // function's own doc comment in real-chrome.ts.
+  let realChrome: RealChromeHandle;
   let browser: Browser;
   try {
-    browser = await attachToRealChrome(realChrome.cdpPort);
+    ({ handle: realChrome, browser } = await acquireRealChrome());
   } catch (e) {
-    closeRealChrome(realChrome);
     throw new Error(
-      `${MODULE_PREFIX}: failed to attach to the spawned Chrome for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
+      `${MODULE_PREFIX}: failed to acquire a real Chrome browser for source "${sourceId}": ${e instanceof Error ? e.message : String(e)}`,
     );
   }
 
@@ -226,13 +238,14 @@ export async function startCapture(
     if (existingContext) {
       // A persistent profile's own default context already exists — its
       // storageState can't be set via a constructor option the way a fresh
-      // context's can, so a seed gets injected via addCookies() instead,
-      // right on this same context, before anything ever navigates.
-      // context.addCookies() only sets cookies (never localStorage/
-      // sessionStorage "origins" entries) — sufficient here since a Google
-      // SSO session is cookie-based, not localStorage-based.
+      // context's can, so a seed gets injected via
+      // browser-session.ts's applyStorageStateToContext() instead, right on
+      // this same context, before anything ever navigates — see that
+      // function's own doc comment (real-chrome-session-sharing epic) for
+      // why a plain addCookies() call alone isn't enough in general (though
+      // a Google SSO seed specifically is cookie-only in practice).
       context = existingContext;
-      if (scopedSeed) await context.addCookies(scopedSeed.cookies);
+      if (scopedSeed) await applyStorageStateToContext(context, scopedSeed);
     } else {
       context = scopedSeed ? await browser.newContext({ storageState: scopedSeed }) : await browser.newContext();
     }
@@ -243,8 +256,9 @@ export async function startCapture(
     );
   }
 
+  let page: Page;
   try {
-    const page = await context.newPage();
+    page = await context.newPage();
     await page.goto(loginUrl);
   } catch (e) {
     await safeCloseBrowser(browser, realChrome);
@@ -286,20 +300,26 @@ export async function startCapture(
     const entry = captures.get(captureId);
     if (!entry) return; // already finished/cancelled
     captures.delete(captureId);
-    // Closing triggers Playwright's own "disconnected" event; remove ONLY
-    // this module's own listener first (never removeAllListeners — see
-    // CaptureEntry.disconnectedListener's doc comment) so that event finds
-    // nothing left for this module to clean up rather than racing this same
-    // deletion a second time, while leaving Playwright's own internal
-    // "disconnected" listener (which close() itself depends on) intact.
+    // Remove ONLY this module's own listener first (never
+    // removeAllListeners — see CaptureEntry.disconnectedListener's doc
+    // comment) so a subsequent real disconnect finds nothing left for this
+    // module to clean up rather than racing this same deletion a second
+    // time, while leaving Playwright's own internal "disconnected" listener
+    // (which close() itself depends on) intact.
     entry.browser.off("disconnected", entry.disconnectedListener);
-    void entry.browser.close().catch(() => {});
-    closeRealChrome(entry.realChrome);
+    // safeCloseBrowser() -> releaseRealChrome(): if `realChrome` is the
+    // shared persistent session and another capture/copilot/assist session
+    // is still actively using it, this only decrements the refcount and
+    // leaves the real browser open for them — it does NOT unconditionally
+    // close it out from under a still-live concurrent flow (real-chrome-
+    // session-sharing epic, cross-module-real-chrome-registry story).
+    void safeCloseBrowser(entry.browser, entry.realChrome);
   }, IDLE_TIMEOUT_MS);
 
   captures.set(captureId, {
     browser,
     context,
+    page,
     realChrome,
     sourceId,
     allowedOrigins,
@@ -330,11 +350,17 @@ export function getCapturePage(captureId: string): Page {
   if (!entry) {
     throw new Error(`${MODULE_PREFIX}: capture not found or already expired (id "${captureId}").`);
   }
-  const page = entry.context.pages()[0];
-  if (!page) {
+  // real-chrome-session-sharing epic, cross-module-real-chrome-registry
+  // story: returns THIS capture's OWN tracked page directly rather than
+  // `entry.context.pages()[0]` — `context` may now be a shared persistent
+  // context with other captures'/sessions' own pages open in it too, so
+  // `pages()[0]` could return someone else's page (or, if this capture's
+  // own page happens to no longer be first in that shared list, incorrectly
+  // report "no open page" even though this capture's page is still open).
+  if (entry.page.isClosed()) {
     throw new Error(`${MODULE_PREFIX}: capture "${captureId}" has no open page.`);
   }
-  return page;
+  return entry.page;
 }
 
 /**

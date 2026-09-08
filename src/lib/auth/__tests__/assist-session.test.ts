@@ -26,12 +26,25 @@ const closeRealChromeMock = vi.fn();
 // positions the window (guided/full-auto) via a real, best-effort osascript
 // call -- mocked to a resolved no-op so this suite never shells out.
 const positionChromeWindowSideBySideMock = vi.fn(async (..._args: unknown[]) => undefined);
+// real-chrome-session-sharing epic, cross-module-real-chrome-registry story:
+// startAssistSession() now calls acquireRealChrome()/releaseRealChrome()
+// instead of spawnRealChrome()/attachToRealChrome() directly. The DEFAULT
+// mock implementations below (reset in beforeEach) trampoline through the
+// already-mocked spawnRealChrome()/attachToRealChrome()/closeRealChrome()
+// so every existing test that configures THOSE mocks keeps working
+// unmodified -- the real refcounted sharing/reuse behavior acquireRealChrome()
+// itself adds is exercised against the REAL real-chrome.ts in
+// real-chrome.test.ts, not re-mocked here.
+const acquireRealChromeMock = vi.fn();
+const releaseRealChromeMock = vi.fn();
 
 vi.mock("../real-chrome.js", () => ({
   spawnRealChrome: (...args: unknown[]) => spawnRealChromeMock(...args),
   attachToRealChrome: (...args: unknown[]) => attachToRealChromeMock(...args),
   closeRealChrome: (...args: unknown[]) => closeRealChromeMock(...args),
   positionChromeWindowSideBySide: (...args: unknown[]) => positionChromeWindowSideBySideMock(...args),
+  acquireRealChrome: (...args: unknown[]) => acquireRealChromeMock(...args),
+  releaseRealChrome: (...args: unknown[]) => releaseRealChromeMock(...args),
 }));
 
 // product-review-followups epic: startAssistSession() now fires a real
@@ -127,6 +140,15 @@ beforeEach(async () => {
   spawnRealChromeMock.mockReset();
   attachToRealChromeMock.mockReset();
   closeRealChromeMock.mockReset();
+  acquireRealChromeMock.mockReset().mockImplementation(async () => {
+    const handle = await spawnRealChromeMock();
+    const browser = await attachToRealChromeMock(handle.cdpPort);
+    return { handle, browser };
+  });
+  releaseRealChromeMock.mockReset().mockImplementation(async (browser: { close: () => Promise<void> }, handle: unknown) => {
+    await browser.close();
+    closeRealChromeMock(handle);
+  });
   readSessionViaPortunusMock.mockReset();
   positionChromeWindowSideBySideMock.mockClear();
   vi.mocked((await import("../../notify/desktop.js")).sendDesktopNotification).mockClear();
@@ -168,12 +190,19 @@ describe("startAssistSession / getAssistSessionPage / endAssistSession: happy pa
     expect(browser.close).toHaveBeenCalledTimes(1);
     expect(browser.off).toHaveBeenCalledWith("disconnected", expect.any(Function));
 
-    // The real, independently-spawned Chrome process + its temp
-    // --user-data-dir are torn down alongside the Playwright CDP connection
-    // -- see real-chrome.ts's closeRealChrome().
+    // The browser is acquired via acquireRealChrome() (which spawns+attaches
+    // via spawnRealChrome()/attachToRealChrome() under the hood -- see the
+    // default mock's trampoline implementation above) and released via
+    // releaseRealChrome() -- real-chrome-session-sharing epic,
+    // cross-module-real-chrome-registry story. releaseRealChrome() itself
+    // (real-chrome.test.ts) owns deciding whether that actually tears down
+    // the underlying Playwright connection + real Chrome process (a shared
+    // session might stay open for another concurrent acquirer), not this
+    // module.
+    expect(acquireRealChromeMock).toHaveBeenCalledTimes(1);
     expect(spawnRealChromeMock).toHaveBeenCalledWith();
     expect(attachToRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE.cdpPort);
-    expect(closeRealChromeMock).toHaveBeenCalledWith(FAKE_REAL_CHROME_HANDLE);
+    expect(releaseRealChromeMock).toHaveBeenCalledWith(browser, FAKE_REAL_CHROME_HANDLE);
   });
 
   it("navigates to the source's registered SOURCE_PROFILE_URLS entry", async () => {
@@ -413,6 +442,10 @@ describe("idle timeout", () => {
     await vi.advanceTimersByTimeAsync(IDLE_TIMEOUT_MS + 1000);
 
     expect(browser.close).toHaveBeenCalledTimes(1);
+    // real-chrome-session-sharing epic: the idle timeout's cleanup path now
+    // goes through releaseRealChrome() (safeCloseBrowser()), same as every
+    // other exit path in this module.
+    expect(releaseRealChromeMock).toHaveBeenCalledWith(browser, FAKE_REAL_CHROME_HANDLE);
     expect(getAssistSessionInfo(info.sessionId)).toBeUndefined();
   });
 
