@@ -1,0 +1,81 @@
+id: settings-gear-icon-in-masthead
+epic: header-layout-cleanup
+title: "Add a settings gear icon button in the top-right of the masthead"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Owner's own explicit direction (2026-09-07): a settings gear icon should
+  appear in the top-right of the app -- now that `SonarSweepHeader`
+  (`sonar-sweep-header-global-masthead` story) is the literal top of every
+  page, this is the real, current top-right of the app.
+
+  Explicitly deferred by the owner, NOT part of this story (do not guess
+  or pre-decide): whether the existing "Setup" and "Config" nav tabs
+  should consolidate into this gear icon, replace it, or coexist
+  alongside it. This story is PURELY ADDITIVE -- add a real, working gear
+  icon button; do NOT remove, hide, merge, or rename the existing "Setup"
+  or "Config" nav tabs in `nav-header.tsx`. That consolidation decision is
+  tracked separately (see the sibling triage entry / backlog item) for a
+  later pass once the owner has decided.
+
+  **The fix**: add a real gear/settings icon button to the right-hand
+  group of `SonarSweepHeader`'s top row (`src/app/sonar-sweep-header.tsx`,
+  the flex row containing the Sources/Profile/Last-sweep Instruments and
+  the "Sweep now" button -- see that file's own real JSX structure), or as
+  its own element pinned to the far-right edge of that same row if that
+  reads better visually once you see it rendered. It should link to
+  `/config` (the more comprehensive of the two existing settings-shaped
+  pages) for now -- a plain, real, working navigation link, not a
+  non-functional placeholder. Use a real SVG gear icon consistent with
+  this app's existing icon style (check `ScopeIcon`'s own inline-SVG-with-
+  theme-CSS-variables convention in this same file, or any other icon
+  component already in the app, for the pattern to match -- do not import
+  an icon library dependency for one icon).
+
+  Do NOT touch: the existing "Setup"/"Config" nav tabs in `nav-header.tsx`
+  (untouched, per the explicit deferral above), `SonarSweepHeader`'s other
+  existing elements (Instruments, Sweep now button, ScopeIcon).
+
+acceptance_criteria:
+  - "A real, visible gear/settings icon button appears in the top-right area of the masthead, on every page (since the masthead is now global)."
+  - "Clicking it navigates to /config -- a real, working link, not a placeholder."
+  - "The existing 'Setup' and 'Config' nav tabs in nav-header.tsx are completely unchanged -- this is additive only."
+  - "Real post-fix verification against the ACTUAL running app: rebuild, relaunch (backup first), and confirm via curl/DOM evidence that the gear icon renders and links correctly on multiple real routes."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/sonar-sweep-header.tsx
+      purpose: "The masthead component -- add the gear icon to its right-hand group/row."
+    - path: src/app/nav-header.tsx
+      purpose: "The existing Setup/Config nav tabs -- read for context, do NOT modify."
+
+design_decisions:
+  - decision: Link the gear icon to /config, not /setup, without removing either existing nav tab.
+    rationale: "The owner explicitly deferred the Setup-vs-Config consolidation decision -- picking /config as this NEW icon's destination is the smallest, safest, purely additive choice that doesn't presuppose that decision's outcome."
+
+risks:
+  - severity: low
+    description: "Small, additive UI change."
+    mitigation: "Acceptance criteria requires the existing nav tabs stay completely untouched, and real verification against the rebuilt app."
+
+steps:
+  - id: implement
+    description: Add the real gear icon button to the masthead, linking to /config
+    agent: developer
+  - id: test
+    description: Add/extend a test covering the gear icon's presence and link; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm existing nav tabs are untouched and the icon works on the real rebuilt app
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

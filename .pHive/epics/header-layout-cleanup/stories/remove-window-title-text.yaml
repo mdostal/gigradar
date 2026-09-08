@@ -1,0 +1,63 @@
+id: remove-window-title-text
+epic: header-layout-cleanup
+title: "Remove the 'gigradar' text from the native macOS window title bar"
+status: pending
+complexity: low
+methodology: classic
+depends_on: []
+
+description: |
+  Owner's own explicit direction (2026-09-07, from a real screenshot of the
+  packaged app's window chrome): the "gigradar" text currently shown next
+  to the traffic-light buttons in the native macOS title bar should go
+  away -- the app's own icon (the dock/Finder icon) already identifies it,
+  a redundant text label in the title bar is unnecessary chrome.
+
+  Real, confirmed location: `src-tauri/src/lib.rs`, the `WebviewWindowBuilder`
+  that creates the app's main window calls `.title("gigradar")` (~line 351).
+
+  **The fix**: change this to an empty title (`.title("")`) so the title
+  bar shows only the traffic-light controls, matching the owner's own
+  screenshot of the desired clean look. If an empty string still leaves
+  visible reserved space or default OS text, check whether this Tauri
+  version's `WebviewWindowBuilder` offers a real, correct way to fully
+  suppress the title area (e.g. a titlebar style option) rather than
+  guessing -- read the installed `tauri` crate's own real API/docs before
+  picking an approach, matching this session's established "read the real
+  SDK, don't guess" discipline.
+
+  Do NOT touch: the window's `inner_size`, the webview URL/server-ready
+  wait logic, or anything else in this window-creation block.
+
+acceptance_criteria:
+  - "The real packaged app's window title bar no longer shows the text 'gigradar' next to the traffic-light controls."
+  - "Real post-fix verification against the ACTUAL running app: rebuild the packaged app (backup the real data dir first per standing procedure), relaunch it, and confirm via a real screenshot-equivalent check (window title read via a real macOS API call like `osascript` querying the window's name, or an accessibility-inspector-style check) that the title text is genuinely gone -- not just that the code compiles."
+  - "npm test and npm run typecheck both pass (this is a Rust-side change -- also run cargo check / cargo test in src-tauri if applicable)."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src-tauri/src/lib.rs
+      purpose: "~line 351, the WebviewWindowBuilder's .title(\"gigradar\") call to change."
+
+risks:
+  - severity: low
+    description: "Very small, isolated change to window chrome."
+    mitigation: "Real post-rebuild verification against the actual packaged app confirms the title bar's real appearance, not just the source change."
+
+steps:
+  - id: implement
+    description: Remove the window title text, verifying the correct real Tauri API for a clean result
+    agent: developer
+  - id: test
+    description: Verify via cargo check / npm test + typecheck; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the real rebuilt app's title bar is genuinely clean
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
