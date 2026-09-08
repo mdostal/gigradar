@@ -1,0 +1,14 @@
+name: consistent-gig-detail-access
+title: "Wire the app's existing, already-reusable GigDetailPanel modal into the Today page, giving Picks/Full Roster the same original-posting + full-detail access Dashboard already has"
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+
+stories:
+  - id: today-page-gig-detail-panel
+    title: "Mount GigDetailPanel in today-client.tsx for Today's Picks and Full Roster, matching dashboard-client.tsx's own proven pattern"
+    complexity: medium
+    depends_on: []
+
+references:
+  - path: .pHive/epics/consistent-gig-detail-access/docs/design-discussion.md
+    relevant_excerpt: "§1 the real per-surface inventory; §2 GigDetailPanel's confirmed reusability with zero new data plumbing needed; §3 the design decision to reuse the existing pattern rather than invent a new one."

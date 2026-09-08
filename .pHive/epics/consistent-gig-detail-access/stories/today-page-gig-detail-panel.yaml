@@ -1,0 +1,112 @@
+id: today-page-gig-detail-panel
+epic: consistent-gig-detail-access
+title: "Mount GigDetailPanel in today-client.tsx for Today's Picks and Full Roster, matching dashboard-client.tsx's own proven pattern"
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  Owner's own real, live complaint (2026-09-07), from Today's Picks:
+  "where is the link, where is the extension, where is seeing it? a modal,
+  SOMETHING!" Confirmed by real research (this epic's own design-discussion.md
+  §1): Today's Picks cards AND Full Roster rows have ZERO way to open the
+  original posting or see full gig detail -- the only real gig-card surface
+  in the app with neither affordance.
+
+  **The real fix, confirmed via research, not invented from scratch**:
+  `src/app/gig-detail-panel.tsx` is ALREADY the app's one real, reusable
+  modal (`role="dialog" aria-modal="true"`, `fixed inset-0 z-20`), already
+  wired internally with `useOpenExternalLink()` and the profile-assist deep
+  link. Its only current usage site in the whole app is
+  `src/app/dashboard-client.tsx:1451`. `today-client.tsx` already receives
+  the full `gigs: StoredGig[]` type `dashboard-client.tsx` already passes
+  into this exact panel -- ZERO new data plumbing is needed. This story is
+  purely about MOUNTING the existing panel in a second place, following the
+  exact pattern already proven at `dashboard-client.tsx`:
+  - A `selectedGigKey` state (or equivalent).
+  - A click handler on a Picks card / Full Roster row that sets it.
+  - `<GigDetailPanel>` rendered conditionally with `gig`, `position`
+    (index/total within whichever list -- Picks and Full Roster are
+    separate lists, decide sensibly whether prev/next navigates within the
+    same list the user clicked from), `onClose`/`onPrev`/`onNext`/
+    `canPrev`/`canNext`, `groupId` (check what `today-client.tsx` already
+    has available for this prop -- see `rankBucketGroupId` or similar
+    already threaded through this file).
+
+  **The three render-prop slots** (`statusChangeSection`, `draftSection`,
+  `prepSection`) should reuse `today-client.tsx`'s OWN existing action
+  logic and components (its "Generate draft"/"Analyze" buttons,
+  `handleGeneratePrep()`, `prepByKey` state -- already fixed to render
+  correctly via the shared `PrepSummary` component from the
+  `today-picks-analyze-feedback` story shipped earlier today) rather than
+  reimplementing or importing `dashboard-client.tsx`'s own separate
+  `renderDraftSection()`/`renderPrepSection()` helpers, which may have
+  different data wiring specific to that page. Reuse `PrepSummary` inside
+  `prepSection` directly.
+
+  **Also keep a direct external-link affordance on the card/row title
+  itself** (not ONLY reachable via opening the modal first) -- match
+  whatever combination `dashboard-client.tsx`'s row already does (a title
+  link via `useOpenExternalLink()` AND a separate way into the modal), so a
+  user never has to open the full detail panel just to reach the real
+  posting.
+
+  **Full Roster must be independently verified, not assumed identical to
+  Picks** -- confirm its real current markup/behavior before wiring it the
+  same way; if it's structured differently, adapt rather than assuming.
+
+  Do NOT touch: `gig-detail-panel.tsx`'s own internals (reused as-is, this
+  is a new mounting site, not a redesign of the panel itself),
+  `dashboard-client.tsx`'s own existing `GigDetailPanel` usage (untouched,
+  a second, independent instance).
+
+acceptance_criteria:
+  - "Clicking a Today's Picks card (or its title) opens the real, shared GigDetailPanel modal showing that gig's full detail, including the real external-posting link and profile-assist deep link the panel already provides internally."
+  - "The same is true for Full Roster rows, independently verified against that section's own real current markup (not assumed identical to Picks)."
+  - "A direct external-link affordance also exists on the card/row itself, not solely reachable through the modal."
+  - "The draft/analyze action sections inside the modal reuse today-client.tsx's own existing Generate-draft/Analyze/PrepSummary logic, not a reimplementation or a copy of dashboard-client.tsx's separate helpers."
+  - "Real post-fix verification against the ACTUAL running app: rebuild, relaunch the real packaged app (backup first per standing procedure), and confirm via curl/DOM evidence (or a real simman click-through) that clicking a real Today's Picks card and a real Full Roster row both open the modal with a real, working external-link inside it."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/gig-detail-panel.tsx
+      purpose: "The EXISTING, already-reusable modal component to mount -- read in full, do not modify its internals."
+    - path: src/app/dashboard-client.tsx
+      purpose: "Lines ~556, ~1239-1248, ~1451-1479 -- the exact, proven selectedGigKey/GigDetailPanel mounting pattern to replicate in today-client.tsx."
+    - path: src/app/today/today-client.tsx
+      purpose: "The Picks cards (~lines 476-515) and Full Roster section -- where GigDetailPanel needs to be mounted; already has the full StoredGig data and its own PrepSummary/handleGeneratePrep logic to reuse in the panel's render-prop slots."
+
+design_decisions:
+  - decision: Reuse the existing GigDetailPanel component rather than building a new detail surface for Today's page.
+    rationale: "Real research (design-discussion.md §2) confirmed the panel is already generic, reusable, and has everything needed (including the external-link mechanism) built in -- inventing a second detail surface would duplicate real, already-working code and risk drifting from it, the same failure class this session has repeatedly had to fix elsewhere."
+  - decision: Reuse today-client.tsx's own draft/prep action logic in the panel's render-prop slots, not dashboard-client.tsx's separate helpers.
+    rationale: "Today's page has its own real, recently-fixed (today-picks-analyze-feedback story) draft/analyze wiring -- duplicating dashboard's separate implementation would reintroduce the exact 'two divergent copies of the same logic' pattern already fixed multiple times today."
+
+risks:
+  - severity: low
+    description: "Reusing an existing, already-tested component is inherently lower risk than building something new."
+    mitigation: "Real post-rebuild verification against the actual app, plus independent confirmation of Full Roster's own real behavior rather than assuming it matches Picks."
+
+steps:
+  - id: research
+    description: Confirm Full Roster's real current markup/behavior (distinct from Picks) before wiring both
+    agent: developer
+  - id: implement
+    description: Mount GigDetailPanel in today-client.tsx for both Picks and Full Roster, reusing today's own draft/prep logic in the render-prop slots
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Add/extend tests covering the panel's presence and correct wiring on both sections; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Verify against the real rebuilt app that both sections open the modal correctly with a working external link
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
