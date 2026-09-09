@@ -1,0 +1,82 @@
+id: log-caught-action-errors
+epic: real-app-diagnosability
+title: "Log every Server Action's caught error server-side, not just uncaught exceptions"
+status: complete
+complexity: low
+methodology: classic
+depends_on: [register-log-plugin-unconditionally]
+
+progress_note: |
+  SHIPPED. Real gap found live diagnosing a GoFractional Capture Login
+  that the owner retried multiple times, believing each time it succeeded
+  ("captured, locked down") -- the stored session file never actually
+  updated (still dated Sep 1st after every retry). Registering
+  tauri_plugin_log unconditionally (this epic's sibling story) fixed
+  UNCAUGHT exceptions/console output being silently discarded in the
+  release build, but every one of this app's ~105 Server Action call
+  sites already CATCHES its own error and returns it as plain
+  `ActionResult` data (src/lib/actions/result.ts's own documented,
+  deliberate convention) -- a caught-and-returned error is never an
+  uncaught exception, so it never reached any log, before or after that
+  fix. The real error text existed only in the in-app toast for the few
+  seconds before it was dismissed.
+
+  Fix: `actionErr()` (src/lib/actions/result.ts) -- the ONE shared
+  function all ~105 call sites already funnel through -- now
+  `console.error()`s the real message before returning it, giving
+  blanket server-side visibility into every action's real failures
+  without touching any of the 105 individual call sites or changing the
+  client-facing return shape.
+
+  Separately: `sweepNowAction()` (src/app/actions.ts) has its OWN gap --
+  a manual "Sweep now"'s per-source errors live inside a SUCCESSFUL
+  ActionResult (`errors[]`), so actionErr()'s new logging never sees
+  them either (live-confirmed: a real sweep that failed 8 of 10 sources
+  left zero durable trace). Added the same "N source(s) errored this
+  cycle" console.error logging scheduler/index.ts's own scheduled-cycle
+  path already had, so a manual sweep is now exactly as diagnosable as a
+  scheduled one.
+
+  Verification: npm test (1804 -> 1807 passed with 3 new tests in the
+  new src/lib/actions/__tests__/result.test.ts, 3 skipped, 0 failed) and
+  npm run typecheck (clean).
+
+description: |
+  See epic.yaml's trigger. Server Actions that catch and return their own
+  errors as data never surface anywhere server-side, even with logging
+  now correctly registered in the release build.
+
+acceptance_criteria:
+  - "actionErr() logs the real error message via console.error before returning it, for every one of this app's Server Action call sites."
+  - "sweepNowAction()'s own per-source errors (embedded in a successful result) are also logged, matching the scheduler's own equivalent logging."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/actions/result.ts
+      purpose: "actionErr() -- the one shared function this fix centralizes logging in."
+    - path: src/app/actions.ts
+      purpose: "sweepNowAction()'s own separate per-source error logging gap."
+
+risks:
+  - severity: low
+    description: "Adds real console.error output for every action failure across the app -- more log volume than before."
+    mitigation: "This is the explicit point of the fix (diagnosability); error-level logging for genuine failures is not noise."
+
+steps:
+  - id: implement
+    description: Add logging to actionErr() and sweepNowAction()'s per-source error path
+    agent: developer
+  - id: test
+    description: Add unit tests for actionErr()'s new logging; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no test asserted the old silent behavior
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

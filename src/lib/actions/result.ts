@@ -20,7 +20,28 @@ export function actionOk<T>(data: T): ActionResult<T> {
 /**
  * Build a failure result from a caught error. Never re-throws or lets the
  * original error value itself cross the boundary — only its message string.
+ *
+ * real-app-diagnosability epic follow-up (2026-09-09): every one of this
+ * app's ~105 actionErr() call sites CATCHES its own error and returns it as
+ * plain data -- exactly the pattern this file's own header comment
+ * describes as the point (a clean, actionable client-side message instead
+ * of an opaque unhandled 500). The real cost, discovered live diagnosing a
+ * GoFractional Capture Login that silently never saved a session despite
+ * the owner retrying it multiple times: a caught-and-returned error is
+ * NEVER an uncaught exception, so it never reached server-side logs either
+ * -- including after this same epic's OTHER real fix (registering
+ * tauri_plugin_log unconditionally in the packaged app). The error message
+ * really did exist, but only for the few seconds it was visible in an
+ * in-app toast before being dismissed; nothing durable ever recorded it.
+ * `console.error` here, in this ONE shared function every action already
+ * funnels through, gives blanket real-server-side visibility into every
+ * action's real failures going forward -- without touching any of the 105
+ * call sites individually, and without changing this function's own
+ * client-facing contract (still just the message string, never the
+ * original error value).
  */
 export function actionErr(e: unknown): ActionResult<never> {
-  return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  const message = e instanceof Error ? e.message : String(e);
+  console.error(`gigradar action error: ${message}`);
+  return { ok: false, error: message };
 }

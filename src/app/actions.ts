@@ -396,6 +396,19 @@ export async function sweepNowAction(): Promise<ActionResult<SweepResult>> {
       sourcesTotal: config.sources.filter((s) => s.enabled).length,
       incompleteSourceIds: errors.map((e) => e.sourceId),
     });
+    // real-app-diagnosability epic follow-up. A manual "Sweep now"'s own
+    // per-source errors live inside a SUCCESSFUL ActionResult (`errors[]`
+    // below) -- actionErr()'s own new logging (see that function's doc
+    // comment) never sees them, since this action itself doesn't fail.
+    // Live-discovered gap: a real sweep that failed 8 of 10 sources left
+    // zero durable trace anywhere once its in-app toast was dismissed.
+    // Mirrors scheduler/index.ts's own identical "N source(s) errored"
+    // logging convention so a manual sweep is exactly as diagnosable as a
+    // scheduled one.
+    if (errors.length > 0) {
+      console.error(`gigradar sweep now: ${errors.length} source(s) errored this cycle:`);
+      for (const e of errors) console.error(`  - ${e.sourceId}: ${e.message}`);
+    }
     revalidatePath("/");
     revalidatePath("/gigs");
     return actionOk({
