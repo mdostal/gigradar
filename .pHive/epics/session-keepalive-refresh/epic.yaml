@@ -1,0 +1,51 @@
+id: session-keepalive-refresh
+title: "Periodically keep browser-session-auth sources' sessions alive instead of only reacting after they die"
+status: complete
+created_at: "2026-09-09T15:00:00Z"
+
+trigger: |
+  Owner's own real, blunt direction (2026-09-09): "the sessions need to be
+  maintained and refreshed -- that's simple, they come with tokens and
+  liveliness and refresh, so just fucking do the work." Follows repeated,
+  justified frustration that GoFractional/A.Team logins keep dying and
+  the only existing response was "log in again."
+
+root_cause: |
+  Real, already-documented (but never acted on) finding in
+  src/lib/sources/ateam.ts's own header comment, dated 2026-08-30
+  (ateam-session-lifetime-blocker story): "the session's own lifetime
+  after capture appears short -- a fresh capture scraped real listings
+  successfully, but a SEPARATE process reconnecting to the saved session
+  file some minutes later failed isAuthenticatedATeam() -- consistent
+  with a short-TTL token needing an active refresh this bare cookie-
+  replay never exercises." This sat open, unfixed, for over a week.
+
+  A normal scan (or the real-chrome self-heal built earlier today,
+  real-chrome-unattended-self-heal epic) opens a browser, authenticates,
+  does its real work in a few seconds, and closes. If a site's own
+  client-side JS silently refreshes its session/access token on a
+  background timer while its tab stays open (a common SPA pattern), a
+  visit that fast never gives that timer a single chance to fire.
+
+goal: |
+  A periodic, unattended, headless "keepalive" visit per browser-session-
+  auth source -- open the real session, dwell on the real authenticated
+  page for a meaningful duration, then re-save whatever the site's own
+  background refresh may have produced -- running MORE OFTEN than the
+  main 30-minute scan cycle, specifically to give a session more chances
+  to stay alive between real uses.
+
+stories:
+  - id: keepalive-mechanism-and-scheduler-wiring
+    status: complete
+
+honest_caveat: |
+  This is real engineering against an OBSERVED symptom (a session dying
+  faster than expected), not a guarantee about any specific third-party
+  site's actual session architecture. A site enforcing a fixed, absolute
+  session expiry regardless of activity would not be helped by this --
+  that's not disprovable without directly observing that site's own
+  server-side logic. Failures are logged, not silently swallowed, so this
+  epic's own real-app-diagnosability fixes (earlier today) make it
+  possible to tell, after the fact, whether keepalive is actually
+  extending real session lifetimes or not.

@@ -21,6 +21,7 @@ import {
   startScheduler,
 } from "../index.js";
 import { BackoffTracker } from "../backoff.js";
+import type { KeepAliveTarget } from "../../lib/auth/session-keepalive.js";
 
 type RunRadarResult = {
   results: MatchResult[];
@@ -987,5 +988,77 @@ describe("startScheduler: runCycle persists the real per-cycle completion signal
     const { getDb } = await import("../../lib/store/db.js");
     const rows = getDb().prepare("SELECT COUNT(*) AS n FROM scan_cycles").get() as { n: number };
     expect(rows.n).toBe(2);
+  });
+});
+
+// session-keepalive-refresh story (real-app-diagnosability epic
+// follow-up). Owner's own real complaint: repeated Capture Login retries
+// for GoFractional/A.Team never lastingly fixed anything, because nothing
+// ever tried to keep an already-captured session alive between uses --
+// see src/lib/auth/session-keepalive.ts's own header comment for the full
+// diagnosis.
+describe("startScheduler: session keepalive (session-keepalive-refresh story)", () => {
+  it("schedules a second, independent Cron job on the keepalive cron pattern once Config.schedule is set", () => {
+    const config = makeConfig({ schedule: "*/1 * * * * *", profile: { name: "T", roles: [], skills: [], timezone: "America/Chicago" } });
+    const handle = start({ loadConfigFn: () => config, runRadarFn: async () => emptyResult(), exitFn: vi.fn() });
+
+    const keepaliveJob = handle.getKeepaliveJob() as Cron;
+    expect(keepaliveJob).toBeDefined();
+    expect(keepaliveJob.options.timezone).toBe("America/Chicago");
+    // A genuinely separate job from the main scan -- different pattern.
+    expect(keepaliveJob.getPattern()).not.toBe(handle.getJob()?.getPattern());
+  });
+
+  it("calls keepAliveSessionFn once per KEEPALIVE_TARGETS entry that has a matching enabled SourceConfig, skipping the rest", async () => {
+    const config = makeConfig({
+      schedule: "*/1 * * * * *",
+      sources: [
+        { id: "braintrust", enabled: true },
+        { id: "gofractional", enabled: true, settings: { sessionStatePath: "/fake/gf.json" } },
+        { id: "ateam", enabled: false, settings: { sessionStatePath: "/fake/ateam.json" } }, // disabled -- must be skipped
+        // "wellfound" (the third real KEEPALIVE_TARGETS entry) has no SourceConfig at all here -- must also be skipped.
+      ],
+    });
+    const keepAliveSessionFn = vi.fn(async (_target: KeepAliveTarget, _cfg: Config["sources"][number]) => undefined);
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn: async () => emptyResult(), exitFn: vi.fn(), keepAliveSessionFn });
+    await (handle.getKeepaliveJob() as Cron).trigger();
+
+    expect(keepAliveSessionFn).toHaveBeenCalledTimes(1);
+    const [target, sourceConfig] = keepAliveSessionFn.mock.calls[0]!;
+    expect(target.sourceId).toBe("gofractional");
+    expect(sourceConfig).toMatchObject({ id: "gofractional", enabled: true });
+  });
+
+  it("one target's keepalive failure is logged, not thrown, and never stops the others from being attempted", async () => {
+    const config = makeConfig({
+      schedule: "*/1 * * * * *",
+      sources: [
+        { id: "gofractional", enabled: true, settings: { sessionStatePath: "/fake/gf.json" } },
+        { id: "ateam", enabled: true, settings: { sessionStatePath: "/fake/ateam.json" } },
+      ],
+    });
+    const keepAliveSessionFn = vi.fn(async (target: { sourceId: string }) => {
+      if (target.sourceId === "gofractional") throw new Error("session expired/invalid");
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn: async () => emptyResult(), exitFn: vi.fn(), keepAliveSessionFn });
+    await expect((handle.getKeepaliveJob() as Cron).trigger()).resolves.not.toThrow();
+
+    expect(keepAliveSessionFn).toHaveBeenCalledTimes(2); // both attempted -- gofractional's failure didn't stop ateam
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('keepalive failed for "gofractional": session expired/invalid'));
+  });
+
+  it("stop() also stops the keepalive job, not just the main scan job", () => {
+    const config = makeConfig({ schedule: "*/1 * * * * *" });
+    const handle = start({ loadConfigFn: () => config, runRadarFn: async () => emptyResult(), exitFn: vi.fn() });
+
+    const keepaliveJob = handle.getKeepaliveJob() as Cron;
+    expect(keepaliveJob.isStopped()).toBe(false);
+
+    handle.stop();
+
+    expect(keepaliveJob.isStopped()).toBe(true);
   });
 });

@@ -214,7 +214,10 @@ async function isSignInPage(page: Page): Promise<boolean> {
  * URL-based check is a natural, named follow-up once live verification
  * captures the real redirect target — see docs/ARCHITECTURE.md's roadmap.
  */
-async function isAuthenticatedATeam(page: Page): Promise<boolean> {
+// Exported (session-keepalive-refresh story, real-app-diagnosability
+// epic) so src/lib/auth/session-keepalive.ts can reuse this exact,
+// already-observed auth-check rather than a second, divergent one.
+export async function isAuthenticatedATeam(page: Page): Promise<boolean> {
   return !(await isSignInPage(page));
 }
 

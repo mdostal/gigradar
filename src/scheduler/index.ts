@@ -47,6 +47,7 @@ import { sendDesktopNotification } from "../lib/notify/desktop.js";
 import { raiseIssue, resolveIssuesForSource } from "../lib/notify/issues.js";
 import { registerAllSources } from "../lib/sources/register-all.js";
 import { getDraft, getGig, gigKey, markDraftFailed, markDraftSubmitted, markDraftSubmitting, recordScanCycle, runStaleGigMaintenance } from "../lib/store/index.js";
+import { KEEPALIVE_TARGETS, keepAliveSession } from "../lib/auth/session-keepalive.js";
 import { getSubmitAdapter } from "../lib/submit/adapter.js";
 import type { ApplyProfileConfig, Config, Gig, MatchResult, SourceConfig } from "../lib/types.js";
 import { BackoffTracker, DEFAULT_MAX_BACKOFF_MS } from "./backoff.js";
@@ -61,6 +62,18 @@ export const AUTO_DRAFT_CAP = 5;
 
 /** Default recheck cadence while idling with `Config.schedule` unset. Exported so tests assert the real production default without needing to wait on it (they override it via `SchedulerOptions.idleRecheckMs`). */
 export const DEFAULT_IDLE_RECHECK_MS = 60 * 60 * 1000; // 1 hour
+
+// session-keepalive-refresh story (real-app-diagnosability epic
+// follow-up). A fixed, internal cadence -- NOT owner-configurable like
+// Config.schedule, since this is an implementation detail of keeping an
+// already-captured session alive, not a scan the owner tunes. Every 10
+// minutes gives KEEPALIVE_TARGETS' own real dwell time (session-keepalive.
+// ts's DEFAULT_KEEPALIVE_DWELL_MS) many more chances per hour to catch
+// whatever background refresh window a site's own client-side JS may use
+// than the 30-min main scan cycle alone ever did (that cycle's own
+// auth-check-then-scrape is fast, by design -- it was never dwelling long
+// enough to exercise a refresh timer even once).
+export const DEFAULT_KEEPALIVE_INTERVAL_CRON = "*/10 * * * *";
 
 export type TimeoutHandle = ReturnType<typeof setTimeout>;
 
@@ -91,6 +104,12 @@ export interface SchedulerOptions {
   onIdleTick?: () => void;
   /** Test hook: called once a Cron job has been created for a now-set Config.schedule, before this function returns. No-op by default — lets a test .trigger() the job immediately instead of waiting for its real schedule. */
   onScheduled?: (job: Cron) => void;
+  /** Defaults to the real keepAliveSession(). Overridable so tests observe/simulate keepalive calls without a real browser session. */
+  keepAliveSessionFn?: typeof keepAliveSession;
+  /** Cron pattern for the keepalive job. Defaults to DEFAULT_KEEPALIVE_INTERVAL_CRON; tests override with a fast-firing pattern or use onKeepaliveScheduled to .trigger() immediately. */
+  keepaliveIntervalCron?: string;
+  /** Test hook: called once the keepalive Cron job has been created, mirroring onScheduled above. No-op by default. */
+  onKeepaliveScheduled?: (job: Cron) => void;
 }
 
 export interface SchedulerHandle {
@@ -100,6 +119,8 @@ export interface SchedulerHandle {
   getJob: () => Cron | undefined;
   /** The active BackoffTracker, once activate() has run — undefined while idling. */
   getTracker: () => BackoffTracker | undefined;
+  /** The active keepalive Cron job, once activate() has run — undefined while idling. */
+  getKeepaliveJob: () => Cron | undefined;
 }
 
 /**
@@ -475,16 +496,42 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
   const setTimeoutFn = options.setTimeoutFn ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const clearTimeoutFn = options.clearTimeoutFn ?? ((handle: TimeoutHandle) => clearTimeout(handle));
   const exitFn = options.exitFn ?? ((code: number) => process.exit(code));
+  const keepAliveSessionFn = options.keepAliveSessionFn ?? keepAliveSession;
+  const keepaliveIntervalCron = options.keepaliveIntervalCron ?? DEFAULT_KEEPALIVE_INTERVAL_CRON;
 
   let stopped = false;
   let idleTimer: TimeoutHandle | undefined;
   let job: Cron | undefined;
+  let keepaliveJob: Cron | undefined;
   let tracker: BackoffTracker | undefined;
 
   function stop(): void {
     stopped = true;
     if (idleTimer !== undefined) clearTimeoutFn(idleTimer);
     job?.stop();
+    keepaliveJob?.stop();
+  }
+
+  /**
+   * session-keepalive-refresh story. One keepalive pass across every real
+   * browser-session-auth target (session-keepalive.ts's KEEPALIVE_TARGETS)
+   * this config has enabled — a target with no matching enabled
+   * SourceConfig is silently skipped (nothing to keep alive). Each
+   * target's own failure is caught and logged individually, never
+   * aborting the others — same per-source isolation discipline as
+   * runCycle()'s own per-source error handling in runner.ts.
+   */
+  async function runKeepaliveCycle(config: Config): Promise<void> {
+    for (const target of KEEPALIVE_TARGETS) {
+      const sourceConfig = config.sources.find((s) => s.id === target.sourceId && s.enabled);
+      if (!sourceConfig) continue;
+      try {
+        await keepAliveSessionFn(target, sourceConfig);
+        console.log(`gigradar scheduler: keepalive succeeded for "${target.sourceId}".`);
+      } catch (e) {
+        console.warn(`gigradar scheduler: keepalive failed for "${target.sourceId}": ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 
   /** The one fatal error boundary: logs, stops any active timer/job, and exits non-zero. Never called for a per-source scan error — those stay inside runRadar()'s own errors[] and this module's per-cycle summary log. */
@@ -636,6 +683,21 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
       `gigradar scheduler: scheduled — cron "${schedule}" in timezone "${timezone}", next run ${job.nextRun()?.toISOString() ?? "unknown"}.`,
     );
     options.onScheduled?.(job);
+
+    // session-keepalive-refresh story. Activated alongside the main scan
+    // job (same lifecycle, same "only runs once Config.schedule is set"
+    // gating) — unattended automated scanning is the whole reason a
+    // session needs to survive between capture and next use, so keepalive
+    // never runs on its own independent of the main scheduler being
+    // active. Own try/catch per target inside runKeepaliveCycle() means a
+    // croner-internal fault is the only thing `catch` here needs to guard.
+    keepaliveJob = new Cron(
+      keepaliveIntervalCron,
+      { timezone, catch: (err: unknown) => console.warn(`gigradar scheduler: keepalive cycle's own croner job faulted (non-fatal): ${err instanceof Error ? err.message : String(err)}`) },
+      () => runKeepaliveCycle(config),
+    );
+    console.log(`gigradar scheduler: keepalive scheduled — cron "${keepaliveIntervalCron}" in timezone "${timezone}".`);
+    options.onKeepaliveScheduled?.(keepaliveJob);
   }
 
   function idleTick(): void {
@@ -662,6 +724,7 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
     stop,
     getJob: () => job,
     getTracker: () => tracker,
+    getKeepaliveJob: () => keepaliveJob,
   };
 }
 
