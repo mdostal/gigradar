@@ -1,0 +1,98 @@
+id: keepalive-mechanism-and-scheduler-wiring
+epic: session-keepalive-refresh
+title: "Build the keepalive mechanism and wire it into the scheduler on its own tighter cron"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+progress_note: |
+  SHIPPED. New module src/lib/auth/session-keepalive.ts:
+  - `KEEPALIVE_TARGETS`: the three real browser-session-auth sources
+    (gofractional, ateam, wellfound), each paired with the SAME real
+    url/isAuthenticated check its own adapter's fetch() already uses
+    (isAuthenticatedATeam newly exported from ateam.ts for this reuse;
+    gofractional.ts's/wellfound.ts's own equivalents were already
+    exported).
+  - `keepAliveSession(target, cfg, dwellMs = 20_000)`: a thin wrapper over
+    the EXISTING withBrowserSession() (same three-tier self-healing
+    acquisition, headless for attended:false, per
+    real-chrome-unattended-self-heal) whose `run(page)` callback dwells
+    for `dwellMs` -- giving a plausible background session-refresh timer
+    a real chance to fire -- then ALWAYS re-extracts and re-saves the
+    (possibly now-refreshed) storageState, regardless of which tier
+    answered. Never overwrites a good session with an empty one (mirrors
+    session-capture.ts's own zero-cookie sanity check).
+
+  Wired into src/scheduler/index.ts: a SECOND, independent Cron job
+  (`DEFAULT_KEEPALIVE_INTERVAL_CRON = "*/10 * * * *"`, an internal,
+  non-owner-configurable cadence) activated alongside the main scan job.
+  `runKeepaliveCycle()` iterates KEEPALIVE_TARGETS, skips any target with
+  no matching enabled SourceConfig, and catches+logs each target's own
+  failure individually -- one target dying never stops the others. A
+  keepalive-job-level croner fault is logged (console.warn), not fatal --
+  this is deliberately best-effort background maintenance, not core scan
+  functionality; a bug here must never take down the main scheduler.
+  `stop()` now stops both jobs; `SchedulerHandle` gained
+  `getKeepaliveJob()`.
+
+  Verification: npm test (1819 passed, 3 skipped, 0 failed -- 8 new tests
+  in session-keepalive.test.ts covering dwell timing, scoped write-back,
+  never-overwrite-with-empty, missing-sessionStatePath error, and
+  propagated session-failure errors; 4 new tests in scheduler's own
+  index.test.ts covering the second Cron job's scheduling, per-target
+  dispatch/skip logic, failure isolation, and stop() symmetry) and
+  npm run typecheck (clean).
+
+  Honest, stated limitation (see epic.yaml's own honest_caveat): this is
+  real engineering against an observed symptom, not a guarantee about any
+  specific site's actual session architecture. The owner's own real
+  account, over the following days, is the actual test of whether this
+  measurably extends GoFractional's/A.Team's real session lifetimes.
+
+description: |
+  See epic.yaml's trigger/root_cause. Build a periodic, headless keepalive
+  visit per browser-session-auth source and wire it into the scheduler on
+  its own tighter cron than the main scan cycle.
+
+acceptance_criteria:
+  - "keepAliveSession() dwells for a real, configurable duration on the source's own real authenticated page before closing."
+  - "A successful keepalive re-saves the (possibly refreshed) storageState regardless of which withBrowserSession() tier answered."
+  - "The scheduler runs keepalive on its own, more frequent cron, independent of the main scan schedule."
+  - "One target's keepalive failure never stops the others from being attempted, and is logged (not silently swallowed)."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/session-keepalive.ts
+      purpose: "The new keepalive mechanism itself."
+    - path: src/scheduler/index.ts
+      purpose: "The second, independent Cron job wiring."
+    - path: src/lib/sources/ateam.ts
+      purpose: "isAuthenticatedATeam newly exported for reuse."
+
+risks:
+  - severity: medium
+    description: "Adds real, recurring browser-session traffic to third-party sites on a fixed internal schedule."
+    mitigation: "Every 10 minutes across at most 3 sources is a modest load; each visit reuses the exact same auth mechanism (and origin-scoping) already proven safe for the existing 30-min scan cycle, just more often."
+  - severity: low
+    description: "The dwell duration (20s default) is a best-effort guess, not derived from any site's documented refresh interval."
+    mitigation: "Exported as a named constant, easy to tune once real evidence (via this epic's own diagnosability fixes) shows whether it's working."
+
+steps:
+  - id: implement
+    description: Build session-keepalive.ts and wire the second scheduler cron job
+    agent: developer
+  - id: test
+    description: Add unit tests for both the mechanism and the scheduler wiring; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm one target's failure never blocks others, and stop() tears down both jobs
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
