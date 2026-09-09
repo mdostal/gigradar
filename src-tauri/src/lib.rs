@@ -212,13 +212,27 @@ pub fn run() {
             embedded_webview_vision_type,
         ])
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // real-app-diagnosability story: this plugin used to be gated
+            // behind `cfg!(debug_assertions)` -- meaning the RELEASE build
+            // every real user actually runs (npx tauri build, never a dev
+            // build) registered NO logger at all. Every `log::info!`/
+            // `log::warn!`/`log::error!` call in this file -- including the
+            // sidecar's own mirrored stdout/stderr just below ("[server]
+            // ...") -- silently went nowhere in production: no file, no
+            // unified-log-visible output, nothing. Real, live-confirmed
+            // consequence: a "Sweep now" click that failed 8 of 10 sources
+            // left zero diagnosable trace anywhere once the in-app toast
+            // describing WHY was dismissed. tauri-plugin-log's own default
+            // targets include LogDir (a real file under this app's log
+            // directory, e.g. ~/Library/Logs/<bundle-id>/) alongside Stdout
+            // -- registering it unconditionally, in every build, is what
+            // actually makes this app's own real behavior diagnosable after
+            // the fact, not just while a human happens to be watching.
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )?;
 
             // tauri-real-auto-update story: a native tray menu, not a
             // Next.js page (see updater.rs's own header comment for why).

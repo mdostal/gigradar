@@ -1,0 +1,41 @@
+id: real-app-diagnosability
+title: "Fix the packaged release build's own logging being silently disabled"
+status: complete
+created_at: "2026-09-09T06:05:00Z"
+
+trigger: |
+  Live-discovered 2026-09-09 while trying to diagnose a real "Sweep now"
+  click that failed 8 of the owner's 10 configured sources: the manual
+  sweep action (src/app/actions.ts's sweepNowAction()) returns real error
+  messages to the UI in the moment, but persists nothing beyond the
+  failing source ids (scan-cycles.ts's own scan_cycles table) -- the WHY
+  is only ever shown as a transient toast. Tried to inspect the packaged
+  app's own real-time logs (macOS unified log stream, `log stream`) to
+  catch a second sweep live instead, and found NOTHING -- not because the
+  logs weren't being generated, but because src-tauri/src/lib.rs's own
+  logging plugin registration was gated behind `cfg!(debug_assertions)`,
+  meaning it was NEVER registered in the actual release build the owner
+  runs. Every `log::info!`/`log::warn!`/`log::error!` call in that file --
+  including the one specifically mirroring the Node sidecar's own
+  stdout/stderr ("[server] ...") -- silently went nowhere in production.
+
+root_cause: |
+  `src-tauri/src/lib.rs`'s `.setup()` only called
+  `app.handle().plugin(tauri_plugin_log::Builder::default()...)` inside
+  `if cfg!(debug_assertions) { ... }`. `npx tauri build` (the only way a
+  real release is produced -- see docs/ARCHITECTURE.md/.github/workflows/
+  tauri-release.yml) compiles with `debug_assertions` false, so this
+  branch never ran in any real, installed build. No logger was ever
+  registered at all in production -- log macro calls are no-ops without a
+  registered backend, they don't error, they just vanish.
+
+goal: |
+  The real, packaged app a user actually runs writes a real, persistent
+  log (tauri-plugin-log's own default LogDir target, alongside Stdout) so
+  a real failure (like 8/10 sources erroring in one sweep) is
+  diagnosable after the fact, not lost the moment the in-app toast is
+  dismissed.
+
+stories:
+  - id: register-log-plugin-unconditionally
+    status: complete

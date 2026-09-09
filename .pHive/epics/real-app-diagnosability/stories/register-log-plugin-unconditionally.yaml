@@ -1,0 +1,65 @@
+id: register-log-plugin-unconditionally
+epic: real-app-diagnosability
+title: "Register tauri_plugin_log unconditionally, not just in debug builds"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+progress_note: |
+  SHIPPED. Removed the `if cfg!(debug_assertions) { ... }` gate around
+  `app.handle().plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())`
+  in src-tauri/src/lib.rs's `.setup()` -- now registers in every build,
+  release included. tauri-plugin-log's own default targets (LogDir +
+  Stdout) mean the sidecar's own mirrored stdout/stderr ("[server] ...",
+  already wired a few lines below this change, untouched) and every other
+  `log::info!`/`log::warn!`/`log::error!` call in this file now actually
+  lands somewhere real and persistent in the packaged app too.
+
+  Verification: `cargo check` and `cargo test` both clean (8 passed, 0
+  failed) in src-tauri; `npm run typecheck` clean (this is a Rust-only
+  change, no JS logic touched, so npm test was not re-run).
+
+  Real, live post-install verification is the natural next step once a
+  release is cut with this change (confirm a real log file appears under
+  this app's LogDir and captures a real sweep's per-source errors) -- see
+  this epic's own trigger for the real gap this closes.
+
+description: |
+  See epic.yaml's root_cause. The packaged, released gigradar.app
+  registered no logger at all -- every log::info!/warn!/error! call
+  (including the sidecar's own mirrored stdout/stderr) silently went
+  nowhere in production.
+
+acceptance_criteria:
+  - "tauri_plugin_log is registered in every build, not just debug_assertions builds."
+  - "cargo check and cargo test both pass."
+  - "npm run typecheck passes (no JS logic touched)."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src-tauri/src/lib.rs
+      purpose: "The .setup() block's log-plugin registration -- the fix target."
+
+risks:
+  - severity: low
+    description: "Adds real log output (a file + stdout) to the release build that didn't exist before."
+    mitigation: "tauri-plugin-log is a well-established, purpose-built dependency already in Cargo.toml; no new dependency added, only its registration gate removed."
+
+steps:
+  - id: implement
+    description: Remove the debug_assertions gate around the log-plugin registration
+    agent: developer
+  - id: test
+    description: cargo check + cargo test + npm run typecheck
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no other code path depends on the plugin being debug-only
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
