@@ -1,8 +1,9 @@
 // Proves source-presets story's acceptance criteria for ../source-presets.ts:
-//   1. exactly 11 presets (indeed, welcome-to-the-jungle, zoho-recruit,
-//      catalant, gun-io, shiny, greenhouse, ashby, workable, contra,
+//   1. exactly 12 presets (indeed, welcome-to-the-jungle, zoho-recruit,
+//      catalant, gun-io, shiny, btg, greenhouse, ashby, workable, contra,
 //      landing-jobs) -- the ats-navigator epic's original 3, plus Catalant,
-//      plus a deep-research expansion pass, plus Gun.io and Shiny.
+//      plus a deep-research expansion pass, plus Gun.io and Shiny, plus
+//      BTG (owner's own direction, 2026-09-10).
 //   2. each preset, wrapped into a full SourceConfig (id/enabled/kind/
 //      settings), validates against the SAME SourceConfigSchema
 //      loadConfig()/saveConfig() use -- schema drift breaks this test,
@@ -21,9 +22,10 @@ import { SOURCE_PRESETS, sourceConfigFromPreset } from "../source-presets.js";
 import { SourceConfigSchema } from "../../config/schema.js";
 
 describe("SOURCE_PRESETS", () => {
-  it("ships exactly the owner-confirmed list of 11 presets", () => {
+  it("ships exactly the owner-confirmed list of 12 presets", () => {
     expect(SOURCE_PRESETS.map((p) => p.id).sort()).toEqual([
       "ashby",
+      "btg",
       "catalant",
       "contra",
       "greenhouse",
@@ -71,15 +73,17 @@ describe("SOURCE_PRESETS", () => {
     });
   }
 
-  it("indeed, catalant, gun-io, and shiny default customAuth to browser-session (bot detection / login-gated)", () => {
+  it("indeed, catalant, gun-io, shiny, and btg default customAuth to browser-session (bot detection / login-gated)", () => {
     const indeed = SOURCE_PRESETS.find((p) => p.id === "indeed")!;
     const catalant = SOURCE_PRESETS.find((p) => p.id === "catalant")!;
     const gunIo = SOURCE_PRESETS.find((p) => p.id === "gun-io")!;
     const shiny = SOURCE_PRESETS.find((p) => p.id === "shiny")!;
+    const btg = SOURCE_PRESETS.find((p) => p.id === "btg")!;
     expect(indeed.settings.customAuth).toBe("browser-session");
     expect(catalant.settings.customAuth).toBe("browser-session");
     expect(gunIo.settings.customAuth).toBe("browser-session");
     expect(shiny.settings.customAuth).toBe("browser-session");
+    expect(btg.settings.customAuth).toBe("browser-session");
   });
 
   it("every other preset leaves customAuth unset (all public by default)", () => {
@@ -106,6 +110,7 @@ describe("SOURCE_PRESETS", () => {
       catalant: false,
       "gun-io": false,
       shiny: false,
+      btg: false,
       greenhouse: true,
       ashby: false,
       workable: true,

@@ -63,6 +63,24 @@
 //     marketing response). customAuth defaults to "browser-session"; the
 //     settings.url is a best-effort placeholder pending live Capture Login
 //     verification, same caveat as Catalant/Gun.io above.
+//   - Business Talent Group / BTG (businesstalentgroup.com): owner's own
+//     direction (2026-09-10). Same shape again -- confirmed by direct
+//     research (live `curl`, not assumed): the marketing site's real
+//     "Talent Login" link points at talent.businesstalentgroup.com (a real,
+//     distinct, client-rendered SPA -- title "BTG Talent", no plain-HTML
+//     sign-in form, consistent with Catalant/Gun.io/Shiny's own SPA-behind-
+//     login shape). A Heidrick & Struggles company; independent-consultant/
+//     interim-executive marketplace, same domain as this app's other
+//     fractional-focused sources. customAuth defaults to "browser-session";
+//     the settings.url is a best-effort placeholder pending live Capture
+//     Login verification, same caveat as Catalant/Gun.io/Shiny above.
+//     `allowedOrigins` also covers `businesstalentgroup.my.salesforce-
+//     sites.com` -- the real, live, PUBLIC "Join as Talent" application
+//     form ("Apply Today" from the marketing site) is Salesforce-hosted on
+//     that separate domain, confirmed live (a real multi-step
+//     Visualforce form: name/email/phone/address fields observed). A
+//     browser-session context scoped to businesstalentgroup.com alone
+//     would drop that domain's cookies mid-flow.
 //
 // `suggestsGmailDigest` flags presets whose platform typically notifies
 // application status/interview invites by email -- consumed by
@@ -198,6 +216,26 @@ export const SOURCE_PRESETS: SourcePreset[] = [
       customAuth: "browser-session",
       loginUrl: "https://app.useshiny.com/sign-in/",
       allowedOrigins: ["useshiny.com"],
+    },
+  },
+  {
+    id: "btg",
+    label: "Business Talent Group (BTG)",
+    description: "An independent-consultant/interim-executive marketplace (a Heidrick & Struggles company) -- entirely login-gated, like Catalant/Gun.io/Shiny.",
+    settings: {
+      url: "https://talent.businesstalentgroup.com/",
+      hint:
+        "BTG's authenticated talent portal, reachable after logging in at talent.businesstalentgroup.com. Look for " +
+        "a projects/opportunities area listing engagements matched to or open to this account -- each card " +
+        "typically has a title, client industry/description, and often an engagement-length or commitment " +
+        "indicator. Use each card's own detail-page url as the extracted Gig's url, not this portal's dashboard " +
+        "url. This is a client-rendered SPA -- wait for the listing to render before extracting.",
+      customAuth: "browser-session",
+      loginUrl: "https://talent.businesstalentgroup.com/",
+      // Covers both the main talent portal AND the separate Salesforce-
+      // hosted "Join as Talent" application domain -- see this file's own
+      // header comment for why both are needed.
+      allowedOrigins: ["businesstalentgroup.com", "businesstalentgroup.my.salesforce-sites.com"],
     },
   },
   {

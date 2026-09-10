@@ -1,0 +1,47 @@
+id: btg-source
+title: "Add Business Talent Group (BTG) as a source preset"
+status: complete
+created_at: "2026-09-10T00:00:00Z"
+
+trigger: |
+  Owner's own direction (2026-09-10): "we're adding BTG as well and i need
+  to dogfood the assisted fill out of the application while we go
+  through."
+
+research: |
+  Real, live research (not assumed): businesstalentgroup.com is a
+  WordPress marketing site for Business Talent Group, an independent-
+  consultant/interim-executive marketplace (a Heidrick & Struggles
+  company). Its real "Talent Login" link points at
+  talent.businesstalentgroup.com -- a distinct, client-rendered SPA
+  (title "BTG Talent", no plain-HTML sign-in form), same shape as
+  Catalant/Gun.io/Shiny already in this codebase: entirely login-gated,
+  no public jobs/opportunities board to scrape anonymously.
+
+  Also found: the marketing site's own "Apply Today" CTA (from "Become an
+  Independent Consultant") points at a real, live, PUBLIC, no-login-
+  needed application form hosted on a SEPARATE domain --
+  businesstalentgroup.my.salesforce-sites.com/consultant/ts2__Register --
+  a genuine multi-step Visualforce form (name/email/phone/address fields
+  confirmed live). This is the real "Join as Talent" onboarding
+  application, distinct from the authenticated talent portal itself.
+
+stories:
+  - id: add-btg-preset
+    status: complete
+
+open_question: |
+  The owner's own "dogfood the assisted fill out of the application"
+  request is genuinely ambiguous between two different real targets this
+  research surfaced, with different technical fit:
+  1. The PUBLIC "Join as Talent" registration form (Salesforce-hosted,
+     no login needed) -- but profile-assist's own existing mechanism
+     (resolveAssistSessionContext()) REQUIRES an already-captured
+     browser session to seed from; it has no path for a brand-new,
+     anonymous, pre-account application form today.
+  2. The AUTHENTICATED talent-portal profile (once the owner already has
+     a real BTG account/login) -- fits profile-assist's existing
+     mechanism exactly, the same way it already works for Catalant/
+     Gun.io/Shiny.
+  Not guessed at -- left for the owner's own next message to resolve,
+  since it changes what gets built next.

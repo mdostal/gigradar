@@ -1,0 +1,67 @@
+id: add-btg-preset
+epic: btg-source
+title: "Add BTG (Business Talent Group) to SOURCE_PRESETS"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+progress_note: |
+  SHIPPED. Added the "btg" entry to src/lib/sources/source-presets.ts,
+  matching Catalant/Gun.io/Shiny's exact shape (customAuth:
+  "browser-session", real researched loginUrl, real researched
+  allowedOrigins covering BOTH the main portal domain and the separate
+  Salesforce-hosted application-form domain -- see epic.yaml's research
+  section for what was confirmed live).
+
+  Updated the co-located source-presets.test.ts (owner-confirmed preset
+  count 11 -> 12; the browser-session-auth list; the Gmail-digest
+  expectation map) to match.
+
+  Verification: npm test (1823 passed, 3 skipped, 0 failed) and
+  npm run typecheck (clean).
+
+  Deliberately NOT built: a dedicated hand-coded adapter (unlike
+  fractionus.ts/fractionaljobs.ts/axialsearch.ts) -- BTG's real portal
+  content is entirely behind a login this session has no account for,
+  same "best-effort placeholder settings.url, pending live Capture Login
+  verification" posture already established for Catalant/Gun.io/Shiny.
+
+description: |
+  See epic.yaml's trigger/research. Add BTG as a real, addable source
+  preset following the established login-gated-marketplace pattern.
+
+acceptance_criteria:
+  - "A new 'btg' preset exists in SOURCE_PRESETS with customAuth: browser-session, a real loginUrl, and allowedOrigins covering both real domains this flow touches."
+  - "source-presets.test.ts's owner-confirmed list/count and per-preset expectation maps are updated to include it."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/sources/source-presets.ts
+      purpose: "The preset entry itself."
+    - path: src/lib/sources/__tests__/source-presets.test.ts
+      purpose: "Owner-confirmed list/count and per-preset expectation maps."
+
+risks:
+  - severity: low
+    description: "settings.url is a best-effort placeholder, not verified against a real logged-in account."
+    mitigation: "Matches this codebase's own established, accepted posture for every other entirely-login-gated preset (Catalant/Gun.io/Shiny) -- pending live Capture Login verification by the owner."
+
+steps:
+  - id: implement
+    description: Add the btg preset entry with real, researched settings
+    agent: developer
+  - id: test
+    description: Update source-presets.test.ts's owner-confirmed expectations; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm both real domains this flow touches are covered by allowedOrigins
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
