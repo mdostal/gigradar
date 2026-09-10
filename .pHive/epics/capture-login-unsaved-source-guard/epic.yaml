@@ -1,0 +1,29 @@
+id: capture-login-unsaved-source-guard
+title: "Clear, actionable error instead of a developer-aimed one when Capture Login runs against an unsaved source"
+status: complete
+created_at: "2026-09-10T18:50:00Z"
+
+trigger: |
+  Live-reproduced 2026-09-10 during the owner's own BTG dogfood session:
+  added BTG from the preset list, clicked "Capture login"/"Run login
+  capture" before clicking "Save config". The real, exact error (now
+  visible thanks to the real-app-diagnosability epic's earlier logging
+  fixes): "gigradar config: no login URL registered for source \"btg\"
+  (see src/lib/sources/origins.ts, or set settings.loginUrl)." -- a
+  message aimed at a developer reading source code, not the person who
+  just clicked a button.
+
+root_cause: |
+  startCaptureAction()/resolveEmbeddedCaptureLoginUrlAction()
+  (src/app/config/actions.ts) both read the SAVED config.json
+  (readRawConfig()) -- never the Config page's own in-memory draft state.
+  A source added to the draft (e.g. via "Add from a preset") but not yet
+  persisted via "Save config" genuinely has no loginUrl on disk yet, so
+  the server action correctly fails -- but a Server Action has no notion
+  of "this exists in the draft, just unsaved" at all, so its error
+  message can only describe the raw missing-data symptom, not the real,
+  simple fix (save first).
+
+stories:
+  - id: guard-capture-login-on-unsaved-source
+    status: complete

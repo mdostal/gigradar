@@ -885,6 +885,10 @@ function EmbeddedCaptureControl({
   onActivate,
   onRelease,
   onCaptured,
+  // Default true: the "google" row's own usage above isn't a regular
+  // draft SourceConfig at all (no save-first concept applies to it) --
+  // only the per-source-row usage further down passes this explicitly.
+  isSaved = true,
 }: {
   sourceId: string;
   isActive: boolean;
@@ -892,6 +896,8 @@ function EmbeddedCaptureControl({
   onActivate: () => void;
   onRelease: () => void;
   onCaptured: (result: { backend: "local"; path: string } | { backend: "portunus" }) => void;
+  /** See isSourceSaved()'s own doc comment for the real bug this guards against. */
+  isSaved?: boolean;
 }) {
   const [state, setState] = useState<EmbeddedCaptureState>({ status: "idle" });
   const paneRef = useRef<HTMLDivElement>(null);
@@ -918,6 +924,10 @@ function EmbeddedCaptureControl({
   }, [state.status === "waiting" ? state.loginUrl : null]);
 
   async function handleStart() {
+    if (!isSaved) {
+      setState({ status: "error", message: "Save config first, then try Capture login again — this source hasn't been saved yet." });
+      return;
+    }
     onActivate();
     setState({ status: "resolving" });
     const result = await resolveEmbeddedCaptureLoginUrlAction(sourceId);
@@ -1676,6 +1686,29 @@ function AutoFireRulesEditor({
 /** "match-quality" and "rank-buckets" are real CONFIG_SECTIONS entries but are NEVER routed through THIS component — see [section]/page.tsx's own branch and match-quality-client.tsx/rank-bucket-client.tsx's own header comments for why: the owner's explicit direction was small, standalone settings surfaces, not more additions to this file. */
 export type ConfigSection = "profile" | "sources" | "groups" | "schedule" | "automation" | "appearance" | "match-quality" | "rank-buckets";
 
+/**
+ * Real bug, live-reproduced 2026-09-10 (owner's own BTG dogfood session):
+ * every Server Action Capture Login goes through (startCaptureAction,
+ * resolveEmbeddedCaptureLoginUrlAction) reads the SAVED config.json
+ * (readRawConfig()), never this page's in-memory draft state — a source
+ * added via "Add from a preset" but not yet persisted via "Save config"
+ * genuinely has no loginUrl on disk yet. The server action's own error in
+ * that case ("no login URL registered... see src/lib/sources/origins.ts")
+ * is aimed at a developer, not the person who just clicked a button.
+ *
+ * Exported (not just inlined in handleStartCapture) so this exact
+ * condition is directly unit-testable without rendering the component —
+ * this repo's established convention for a Client Component's own pure
+ * logic (see today-client.tsx's resolveGigDetailSelection() or
+ * dashboard-filter.ts's own header comment). `initialSources` is this
+ * page's own server-loaded, persisted config's sources — the ONE place
+ * "saved vs. still-only-in-the-draft" is actually visible, since a Server
+ * Action itself has no notion of an unsaved draft at all.
+ */
+export function isSourceSaved(initialSources: readonly SourceConfig[], sourceId: string): boolean {
+  return initialSources.some((s) => s.id === sourceId);
+}
+
 export function ConfigClient({
   initial,
   portunusAvailable,
@@ -1875,6 +1908,12 @@ export function ConfigClient({
   }
 
   async function handleStartCapture(i: number, sourceId: string) {
+    // See isSourceSaved()'s own doc comment for the real bug this guards
+    // against.
+    if (!isSourceSaved(initial.sources, sourceId)) {
+      setRowCapture(i, { status: "error", message: "Save config first, then try Capture login again — this source hasn't been saved yet." });
+      return;
+    }
     setRowCapture(i, { status: "starting" });
     const result = await startCaptureAction(sourceId);
     if (!result.ok) {
@@ -2926,6 +2965,7 @@ export function ConfigClient({
                     onActivate={() => setActiveEmbeddedCaptureKey(`row-${i}`)}
                     onRelease={() => setActiveEmbeddedCaptureKey(null)}
                     onCaptured={(result) => handleEmbeddedCaptured(i, source.id, result)}
+                    isSaved={isSourceSaved(initial.sources, source.id)}
                   />
                 ) : (
                   <CaptureLoginControl

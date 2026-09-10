@@ -1,0 +1,70 @@
+id: guard-capture-login-on-unsaved-source
+epic: capture-login-unsaved-source-guard
+title: "Client-side guard + clear message before calling Capture Login on a not-yet-saved source"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+progress_note: |
+  SHIPPED. New exported pure function `isSourceSaved(initialSources,
+  sourceId)` in src/app/config/config-client.tsx -- checks whether
+  `sourceId` exists in `initial.sources` (this page's own server-loaded,
+  persisted config, from props) BEFORE ever calling a Server Action.
+
+  Wired into both real Capture Login entry points on this page:
+  - `handleStartCapture()` (backs both the full "Capture login" button
+    and the "Run login capture" shortcut on a "Needs login" badge --
+    both already funneled through this one handler).
+  - `EmbeddedCaptureControl`'s own `handleStart()` (the Tauri-only
+    embedded-webview capture path) -- gained a new `isSaved` prop
+    (default `true`, since its OTHER usage site, the standing "google"
+    connection row, isn't a regular draft SourceConfig at all and has no
+    save-first concept).
+  Both now short-circuit with a clear, actionable client-only message
+  ("Save config first, then try Capture login again — this source
+  hasn't been saved yet.") instead of ever reaching the server and its
+  developer-aimed error text.
+
+  Verification: npm test (1826 passed, 3 skipped, 0 failed -- 3 new
+  tests in the new src/app/config/__tests__/config-client.test.ts) and
+  npm run typecheck (clean).
+
+description: |
+  See epic.yaml's trigger/root_cause. Guard Capture Login client-side so
+  a not-yet-saved source produces a clear, actionable message instead of
+  a developer-aimed server error.
+
+acceptance_criteria:
+  - "Clicking Capture login (or its 'Run login capture' shortcut) for a source not yet in the persisted config shows a clear 'save first' message, never calling the server action."
+  - "The same guard applies to the Tauri embedded-webview capture path."
+  - "The existing google-connection row (not a regular draft source) is unaffected."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/config/config-client.tsx
+      purpose: "isSourceSaved() and both its call sites."
+
+risks:
+  - severity: low
+    description: "A source saved once, then edited again without re-saving, still passes isSourceSaved() (id already exists) even though its settings may be stale."
+    mitigation: "This targets the exact, reproduced bug (a brand-new, never-saved source) -- a full dirty-tracking system for edited-but-unsaved existing sources is a separate, larger scope not needed to fix what was actually hit."
+
+steps:
+  - id: implement
+    description: Add isSourceSaved() and wire it into both Capture Login entry points
+    agent: developer
+  - id: test
+    description: Add config-client.test.ts covering isSourceSaved(); run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the google-connection row's own usage is unaffected (default isSaved=true)
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]
