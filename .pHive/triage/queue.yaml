@@ -292,7 +292,7 @@ entries:
         at: "2026-09-07T18:30:00Z"
 
   - id: t-002
-    state: plan-ready
+    state: closed
     kind: bug
     title: "applyRankBucketAiOverlay() spawns one real `claude` CLI subprocess per gig per group, sequentially, with no timeout or cap -- a scan cycle can legitimately take tens of minutes"
     description: |
