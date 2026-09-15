@@ -155,6 +155,89 @@ function killByUserDataDir(userDataDir: string): void {
   }
 }
 
+/** True if any process's command line still contains this exact `--user-data-dir=<userDataDir>` flag. Best-effort: `pgrep` missing/unusable is treated as "can't tell, assume clean" -- never blocks/escalates on an inconclusive check. */
+function anyProcessStillMatches(userDataDir: string): boolean {
+  try {
+    return spawnSync("pgrep", ["-f", `--user-data-dir=${userDataDir}`], { stdio: "ignore" }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * real-chrome-leak-proof-cleanup story (2026-09-15, owner's own real,
+ * live-reproduced incident: session-keepalive-refresh's 10-minute cadence
+ * turned this file's OWN already-documented "process.kill() doesn't
+ * reliably terminate the real Chrome process" quirk from a rare cosmetic
+ * straggler into a genuine, cumulative memory leak -- 5 real, fully-alive
+ * orphaned Chrome instances, each with a full GPU/network/storage/
+ * renderer/audio helper swarm, silently accumulated over 3-4 days,
+ * eventually exhausting system memory and taking the packaged app down
+ * with it. Owner's own explicit direction: "i cannot make it a restart --
+ * that's a hack" / "i need this to work as a long lived app" -- this is a
+ * REAL fix to the cleanup's own reliability, not a periodic sweep papering
+ * over it.
+ *
+ * `process.kill()` + the immediate `pkill -f` sweep above are BOTH sent
+ * synchronously before this function returns (unchanged, so no caller's
+ * own signature/await behavior changes) -- but neither is a GUARANTEE, per
+ * this file's own header comment on the real macOS re-parenting quirk. This
+ * schedules ONE follow-up check, `VERIFY_DELAY_MS` later, that re-greps
+ * for any surviving process matching this exact `--user-data-dir` flag
+ * (immune to the same PID-drift problem, same as the first sweep) and, if
+ * one is STILL alive, escalates with a second `pkill -f` sweep and logs a
+ * real warning (now actually visible, thanks to the real-app-
+ * diagnosability epic's own logging fixes) rather than silently letting it
+ * keep running. A one-shot temp dir's removal is ALSO deferred into this
+ * same follow-up when a straggler was found, rather than unlinking it out
+ * from under a process that's still actually using it.
+ */
+const VERIFY_DELAY_MS = 3_000;
+
+function verifyAndEscalate(handle: RealChromeHandle): void {
+  setTimeout(() => {
+    if (!anyProcessStillMatches(handle.userDataDir)) {
+      // Clean now. The common case: the dir was already removed
+      // synchronously in closeRealChrome() when no straggler was detected
+      // at THAT check. But a straggler present at the synchronous check
+      // (deferring removal, see closeRealChrome() below) that's cleared by
+      // the time THIS delayed check runs still needs its removal done here
+      // -- rmSync's own recursive+force behavior makes this a harmless
+      // no-op if it was, in fact, already removed synchronously.
+      if (!handle.persistent) {
+        try {
+          fs.rmSync(handle.userDataDir, { recursive: true, force: true });
+        } catch {
+          // best-effort
+        }
+      }
+      return;
+    }
+    console.warn(
+      `${MODULE_PREFIX}: a real Chrome process for "${handle.userDataDir}" survived its initial kill -- escalating with a second sweep.`,
+    );
+    killByUserDataDir(handle.userDataDir);
+    if (!handle.persistent) {
+      try {
+        fs.rmSync(handle.userDataDir, { recursive: true, force: true });
+      } catch {
+        // best-effort
+      }
+    }
+    // One more check, purely for an honest log record -- never a further
+    // retry loop (a process that survives TWO SIGKILL sweeps 3+ seconds
+    // apart is a genuinely exceptional case worth a human's attention, not
+    // something to keep silently hammering).
+    setTimeout(() => {
+      if (anyProcessStillMatches(handle.userDataDir)) {
+        console.warn(
+          `${MODULE_PREFIX}: a real Chrome process for "${handle.userDataDir}" is STILL alive after two kill sweeps -- may need a manual "killall 'Google Chrome'" or a machine restart.`,
+        );
+      }
+    }, VERIFY_DELAY_MS);
+  }, VERIFY_DELAY_MS);
+}
+
 /** How long to wait for the spawned Chrome's CDP endpoint to answer before giving up. */
 const READY_TIMEOUT_MS = 15_000;
 const READY_POLL_INTERVAL_MS = 200;
@@ -310,6 +393,13 @@ export async function attachToRealChrome(cdpPort: number): Promise<Browser> {
  * has already exited on its own (e.g. the user quit the window directly) —
  * both the kill and the directory removal swallow their own errors, since
  * there is nothing more to clean up in either case.
+ *
+ * real-chrome-leak-proof-cleanup story: also schedules verifyAndEscalate()
+ * (see its own doc comment) as a real, self-healing follow-up rather than
+ * trusting the synchronous kill+pkill sweep above unconditionally — this
+ * function's own signature/callers are unchanged (still synchronous,
+ * fire-and-forget), but a straggler this sweep misses no longer survives
+ * silently and indefinitely.
  */
 export function closeRealChrome(handle: RealChromeHandle): void {
   try {
@@ -320,8 +410,16 @@ export function closeRealChrome(handle: RealChromeHandle): void {
   // Belt-and-suspenders — see killByUserDataDir()'s own doc comment for why
   // the call above alone isn't reliable enough to trust on its own.
   killByUserDataDir(handle.userDataDir);
+  verifyAndEscalate(handle);
 
   if (handle.persistent) return;
+  // A one-shot temp dir already confirmed clear right now is removed
+  // immediately, unchanged from this function's original behavior. If a
+  // straggler is STILL alive at this exact instant (rare -- the two sweeps
+  // above just fired), leave the directory alone; verifyAndEscalate()'s own
+  // follow-up removes it once the straggler is confirmed dead, rather than
+  // unlinking storage out from under a process that may still be using it.
+  if (anyProcessStillMatches(handle.userDataDir)) return;
   try {
     fs.rmSync(handle.userDataDir, { recursive: true, force: true });
   } catch {

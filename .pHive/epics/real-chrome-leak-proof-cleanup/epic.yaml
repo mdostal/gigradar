@@ -1,0 +1,28 @@
+id: real-chrome-leak-proof-cleanup
+title: "Make real-Chrome cleanup genuinely reliable, and stop hammering known-dead sessions -- for a long-lived app, not a restart-and-forget one"
+status: complete
+created_at: "2026-09-15T04:10:00Z"
+
+trigger: |
+  See triage t-009 for the full incident. Owner's own explicit direction,
+  verbatim, ruling out shortcuts: "i cannot make it a restart -- that's a
+  hack" and "i need this to work as a long lived app."
+
+stories:
+  - id: verify-and-escalate-cleanup-plus-keepalive-backoff
+    status: complete
+
+backlog: |
+  Not built now (deliberately, per the owner's own priority: fix the real
+  leak, then move to match-quality) -- real, legitimate follow-ons if this
+  recurs or the owner wants extra insurance:
+  - A periodic, independent "reaper" sweep (e.g. on its own long-interval
+    cron) that finds any gigradar-real-chrome-* temp dir whose SingletonLock
+    encodes a dead PID and removes it, as a pure DEFENSE-IN-DEPTH backstop
+    -- explicitly NOT a substitute for the real fix already shipped here,
+    which is why it's backlogged rather than built as part of this story.
+  - Reconsidering session-keepalive's own 10-minute cadence more broadly
+    (e.g. per-source, tied to that source's own observed session lifetime
+    rather than one fixed global interval) once real, live evidence (now
+    actually loggable, thanks to the real-app-diagnosability epic) shows
+    whether the current cadence is well-tuned.

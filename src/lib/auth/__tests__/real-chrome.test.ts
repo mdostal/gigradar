@@ -375,6 +375,91 @@ describe("closeRealChrome", () => {
     expect(() => closeRealChrome({ process: child as never, cdpPort: 1, userDataDir: dir, persistent: false })).not.toThrow();
     expect(child.kill).toHaveBeenCalledTimes(1);
   });
+
+  // real-chrome-leak-proof-cleanup story (2026-09-15, owner's own real,
+  // live-reproduced incident): the synchronous kill+pkill sweep above is
+  // NOT a guarantee (this file's own header comment on the real macOS
+  // re-parenting quirk) -- these prove the delayed verify-and-escalate
+  // follow-up actually self-heals a straggler instead of letting it run
+  // forever.
+  describe("verify-and-escalate follow-up (real-chrome-leak-proof-cleanup story)", () => {
+    /** spawnSyncMock is shared across BOTH the synchronous "pkill" sweep and the "pgrep" verification check -- this isolates a return value to ONLY calls matching `command`, leaving the other command's own default (undefined status, i.e. "no match") untouched. */
+    function mockSpawnSyncFor(command: string, status: number) {
+      spawnSyncMock.mockImplementation((cmd: string) => (cmd === command ? { status } : undefined) as never);
+    }
+
+    it("does nothing further when pgrep confirms the process is genuinely gone after the delay", async () => {
+      vi.useFakeTimers();
+      const { closeRealChrome } = await import("../real-chrome.js");
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-real-chrome-test-"));
+      const child = createFakeChildProcess();
+      mockSpawnSyncFor("pgrep", 1); // pgrep exit 1 -- no match, genuinely clean
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      closeRealChrome({ process: child as never, cdpPort: 1, userDataDir: dir, persistent: false });
+      spawnSyncMock.mockClear(); // clear the synchronous sweep's own calls before advancing to the delayed check
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(spawnSyncMock).toHaveBeenCalledWith("pgrep", ["-f", `--user-data-dir=${dir}`], { stdio: "ignore" });
+      expect(spawnSyncMock).not.toHaveBeenCalledWith("pkill", expect.anything(), expect.anything()); // no escalation needed
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("escalates with a second pkill sweep and logs a warning when pgrep finds a real straggler after the delay", async () => {
+      vi.useFakeTimers();
+      const { closeRealChrome } = await import("../real-chrome.js");
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-real-chrome-test-"));
+      const child = createFakeChildProcess();
+      mockSpawnSyncFor("pgrep", 0); // pgrep exit 0 -- a real straggler survived
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      closeRealChrome({ process: child as never, cdpPort: 1, userDataDir: dir, persistent: false });
+      spawnSyncMock.mockClear();
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(spawnSyncMock).toHaveBeenCalledWith("pkill", ["-f", `--user-data-dir=${dir}`], { stdio: "ignore" });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("survived its initial kill"));
+
+      fs.rmSync(dir, { recursive: true, force: true }); // test's own cleanup -- real closeRealChrome() defers removal for a one-shot dir once a straggler was detected
+    });
+
+    it("logs a further warning if the straggler is STILL alive after the escalation, without a third kill attempt", async () => {
+      vi.useFakeTimers();
+      const { closeRealChrome } = await import("../real-chrome.js");
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-real-chrome-test-"));
+      const child = createFakeChildProcess();
+      mockSpawnSyncFor("pgrep", 0); // every pgrep call reports "still alive"
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      closeRealChrome({ process: child as never, cdpPort: 1, userDataDir: dir, persistent: false });
+      await vi.advanceTimersByTimeAsync(6_000); // both the first verify (3s) and the second, log-only check (3s later)
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("survived its initial kill"));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("STILL alive after two kill sweeps"));
+      // Exactly ONE escalation pkill call for this dir (the first check's own) -- the second, later check only logs, never kills again.
+      expect(spawnSyncMock.mock.calls.filter((c) => c[0] === "pkill" && c[1]?.[1] === `--user-data-dir=${dir}`)).toHaveLength(2); // the original sweep + the one escalation
+
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("defers removing a one-shot temp dir when a straggler is detected synchronously, instead of unlinking it out from under a still-running process", async () => {
+      vi.useFakeTimers();
+      const { closeRealChrome } = await import("../real-chrome.js");
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-real-chrome-test-"));
+      const child = createFakeChildProcess();
+      mockSpawnSyncFor("pgrep", 0); // straggler present from the very first synchronous check
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      closeRealChrome({ process: child as never, cdpPort: 1, userDataDir: dir, persistent: false });
+
+      expect(fs.existsSync(dir)).toBe(true); // NOT removed yet -- a straggler may still be using it
+
+      mockSpawnSyncFor("pgrep", 1); // the straggler is gone by the time the delayed check fires
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(fs.existsSync(dir)).toBe(false); // now removed, once confirmed clear
+    });
+  });
 });
 
 describe("acquireRealChrome / releaseRealChrome (real-chrome-session-sharing epic, cross-module-real-chrome-registry story)", () => {
