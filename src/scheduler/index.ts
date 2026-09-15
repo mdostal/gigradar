@@ -121,6 +121,8 @@ export interface SchedulerHandle {
   getTracker: () => BackoffTracker | undefined;
   /** The active keepalive Cron job, once activate() has run — undefined while idling. */
   getKeepaliveJob: () => Cron | undefined;
+  /** The active keepalive BackoffTracker, once activate() has run — undefined while idling. */
+  getKeepaliveTracker: () => BackoffTracker | undefined;
 }
 
 /**
@@ -504,6 +506,23 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
   let job: Cron | undefined;
   let keepaliveJob: Cron | undefined;
   let tracker: BackoffTracker | undefined;
+  // real-chrome-leak-proof-cleanup story (2026-09-15, owner's own real,
+  // live-reproduced incident). REAL ROOT CAUSE, half of it: GoFractional's
+  // session has been Cloudflare-blocked for over a week straight, meaning
+  // EVERY keepalive attempt for it -- every 10 minutes, unconditionally,
+  // for days -- fell through to real-chrome.ts's tier-3 self-heal and
+  // failed there too, hammering the one code path most exposed to the
+  // documented-but-rare Chrome-cleanup race this same incident exposed.
+  // Reuses the EXACT SAME BackoffTracker class the main scan cycle already
+  // uses for the identical reason (a source failing repeatedly backs off
+  // instead of getting hammered every cycle) -- a second, independent
+  // instance, since keepalive has its own cadence. This is real load
+  // reduction on top of (not instead of) real-chrome.ts's own now-
+  // verified-and-escalated cleanup — the owner's own explicit direction
+  // ("i need this to work as a long lived app") is served by BOTH: don't
+  // leak when you DO run, and don't keep running against something that's
+  // been dead for days.
+  let keepaliveTracker: BackoffTracker | undefined;
 
   function stop(): void {
     stopped = true;
@@ -522,13 +541,21 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
    * runCycle()'s own per-source error handling in runner.ts.
    */
   async function runKeepaliveCycle(config: Config): Promise<void> {
+    if (!keepaliveTracker) throw new Error("gigradar scheduler: internal error — runKeepaliveCycle invoked before a keepalive BackoffTracker was created");
     for (const target of KEEPALIVE_TARGETS) {
       const sourceConfig = config.sources.find((s) => s.id === target.sourceId && s.enabled);
       if (!sourceConfig) continue;
+      // A source whose keepalive has been failing every attempt (e.g. a
+      // week-long Cloudflare block) backs off instead of getting hammered
+      // every 10 minutes forever -- see this file's own header comment on
+      // keepaliveTracker for the real incident this fixes.
+      if (keepaliveTracker.isInBackoff(target.sourceId)) continue;
       try {
         await keepAliveSessionFn(target, sourceConfig);
+        keepaliveTracker.recordSuccess(target.sourceId);
         console.log(`gigradar scheduler: keepalive succeeded for "${target.sourceId}".`);
       } catch (e) {
+        keepaliveTracker.recordFailure(target.sourceId);
         console.warn(`gigradar scheduler: keepalive failed for "${target.sourceId}": ${e instanceof Error ? e.message : String(e)}`);
       }
     }
@@ -691,6 +718,9 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
     // never runs on its own independent of the main scheduler being
     // active. Own try/catch per target inside runKeepaliveCycle() means a
     // croner-internal fault is the only thing `catch` here needs to guard.
+    const keepaliveBaseIntervalMs = deriveBaseIntervalMs(keepaliveIntervalCron, timezone);
+    keepaliveTracker = new BackoffTracker({ baseIntervalMs: keepaliveBaseIntervalMs, maxIntervalMs: maxBackoffMs, now: nowFn });
+
     keepaliveJob = new Cron(
       keepaliveIntervalCron,
       { timezone, catch: (err: unknown) => console.warn(`gigradar scheduler: keepalive cycle's own croner job faulted (non-fatal): ${err instanceof Error ? err.message : String(err)}`) },
@@ -725,6 +755,7 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
     getJob: () => job,
     getTracker: () => tracker,
     getKeepaliveJob: () => keepaliveJob,
+    getKeepaliveTracker: () => keepaliveTracker,
   };
 }
 

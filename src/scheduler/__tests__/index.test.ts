@@ -1061,4 +1061,56 @@ describe("startScheduler: session keepalive (session-keepalive-refresh story)", 
 
     expect(keepaliveJob.isStopped()).toBe(true);
   });
+
+  // real-chrome-leak-proof-cleanup story (2026-09-15). Real incident: a
+  // session that's been dead for days (GoFractional's week-long Cloudflare
+  // block) got hammered every 10 minutes forever, with zero backoff --
+  // maximizing exposure to real-chrome.ts's own rare cleanup race and
+  // turning it into a genuine, cumulative memory leak that took the whole
+  // app down. keepaliveTracker reuses the exact same BackoffTracker class
+  // (and its own already-proven doubling/reset/cap behavior -- see
+  // backoff.test.ts) the main scan cycle already uses, on its own
+  // independent, keepalive-cadence-derived base interval.
+  it("backs off a source whose keepalive keeps failing -- does NOT call keepAliveSessionFn for it on the next cycle while in backoff", async () => {
+    const config = makeConfig({
+      schedule: "*/1 * * * * *",
+      sources: [{ id: "gofractional", enabled: true, settings: { sessionStatePath: "/fake/gf.json" } }],
+    });
+    const keepAliveSessionFn = vi.fn(async () => {
+      throw new Error("verification challenge");
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn: async () => emptyResult(), exitFn: vi.fn(), keepAliveSessionFn });
+
+    await (handle.getKeepaliveJob() as Cron).trigger(); // cycle 1: fails, records a failure -> enters backoff
+    await (handle.getKeepaliveJob() as Cron).trigger(); // cycle 2: still within the backoff window -- must be skipped
+
+    expect(keepAliveSessionFn).toHaveBeenCalledTimes(1);
+    expect(handle.getKeepaliveTracker()?.isInBackoff("gofractional")).toBe(true);
+  });
+
+  it("a success resets a previously-backed-off source straight back to healthy", async () => {
+    const config = makeConfig({
+      schedule: "*/1 * * * * *",
+      sources: [{ id: "gofractional", enabled: true, settings: { sessionStatePath: "/fake/gf.json" } }],
+    });
+    let call = 0;
+    const keepAliveSessionFn = vi.fn(async () => {
+      call += 1;
+      if (call === 1) throw new Error("verification challenge");
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let nowMs = 0;
+    const nowFn = () => (nowMs += 60 * 60 * 1000); // jump an hour between cycles so the backoff window has already elapsed
+
+    const handle = start({ loadConfigFn: () => config, runRadarFn: async () => emptyResult(), exitFn: vi.fn(), keepAliveSessionFn, now: nowFn });
+
+    await (handle.getKeepaliveJob() as Cron).trigger(); // cycle 1: fails -> backoff
+    await (handle.getKeepaliveJob() as Cron).trigger(); // cycle 2: backoff window elapsed (nowFn jumped an hour) -> retried, succeeds
+
+    expect(keepAliveSessionFn).toHaveBeenCalledTimes(2);
+    expect(handle.getKeepaliveTracker()?.getState("gofractional")).toMatchObject({ consecutiveFailures: 0 });
+    expect(handle.getKeepaliveTracker()?.isInBackoff("gofractional")).toBe(false);
+  });
 });

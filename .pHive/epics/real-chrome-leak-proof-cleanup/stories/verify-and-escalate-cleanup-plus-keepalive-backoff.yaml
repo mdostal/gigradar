@@ -1,0 +1,94 @@
+id: verify-and-escalate-cleanup-plus-keepalive-backoff
+epic: real-chrome-leak-proof-cleanup
+title: "closeRealChrome() verify-and-escalate follow-up + keepalive backoff via the existing BackoffTracker"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+progress_note: |
+  SHIPPED. Two real, independent fixes, both additive to (never replacing)
+  the existing cleanup mechanism:
+
+  1. src/lib/auth/real-chrome.ts's closeRealChrome() now calls a new
+     verifyAndEscalate(handle) after its existing synchronous kill+pkill
+     sweep. 3 seconds later, it re-`pgrep -f`s for the exact same
+     `--user-data-dir` flag (immune to the same PID-drift the pkill sweep
+     already accounts for); if a straggler is STILL alive, escalates with
+     a second `pkill -f` sweep and a real, now-visible console.warn(). A
+     further 3-second-later check logs (never kills again) if the
+     straggler survived even that, flagging it as genuinely exceptional
+     rather than silently retrying forever. A one-shot temp dir's removal
+     is deferred into this same follow-up when a straggler is detected at
+     the synchronous check, instead of unlinking storage out from under a
+     still-running process. closeRealChrome()'s own signature/callers are
+     completely unchanged (still synchronous, fire-and-forget) -- zero
+     call-site changes needed anywhere in the codebase.
+
+  2. src/scheduler/index.ts's runKeepaliveCycle() now consults a new,
+     independent `keepaliveTracker` (the SAME BackoffTracker class the
+     main scan cycle already uses, on its own keepalive-cadence-derived
+     base interval) -- a source whose keepalive keeps failing backs off
+     instead of being retried every 10 minutes forever, exactly mirroring
+     the main scan's own already-proven "don't hammer something that's
+     failing" discipline. SchedulerHandle gained getKeepaliveTracker() for
+     observability/testability, matching getTracker()'s own precedent.
+
+  Verification: npm test (1832 passed, 3 skipped, 0 failed -- 4 new tests
+  in real-chrome.test.ts's own new "verify-and-escalate follow-up"
+  describe block, including one that caught and fixed a REAL bug in the
+  first draft of verifyAndEscalate() itself: the "clean" branch assumed a
+  one-shot dir was always already removed synchronously, which is false
+  when a straggler was present at the sync check and only cleared by the
+  delayed one; 2 new tests in scheduler's own index.test.ts covering the
+  backoff-skip and success-reset behavior) and npm run typecheck (clean).
+
+  Real, live incident response (before this fix shipped): found 5 orphaned
+  real-Chrome instances (32 total related processes) accumulated over 3-4
+  days, system free memory down to ~138MB, the packaged app itself not
+  running (crashed under the memory pressure). Killed all of them by hand,
+  recovering ~2GB of free memory instantly, and relaunched the app to
+  restore the owner's ability to use it immediately, ahead of shipping this
+  actual fix.
+
+description: |
+  See epic.yaml's trigger. Two real fixes: make closeRealChrome() verify
+  and escalate instead of trusting a synchronous best-effort sweep, and
+  stop hammering a source whose keepalive has been failing for days.
+
+acceptance_criteria:
+  - "A straggler process that survives the initial kill+pkill sweep is detected and escalated within a few seconds, with a real, visible warning logged."
+  - "A one-shot temp dir is never removed while a straggler may still be using it."
+  - "A source whose keepalive fails repeatedly backs off instead of being retried every cycle indefinitely; a success resets it to healthy."
+  - "Neither fix changes any existing caller's signature or behavior in the healthy case."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/auth/real-chrome.ts
+      purpose: "verifyAndEscalate() and closeRealChrome()'s own updated dir-removal timing."
+    - path: src/scheduler/index.ts
+      purpose: "keepaliveTracker and runKeepaliveCycle()'s new backoff-skip logic."
+
+risks:
+  - severity: low
+    description: "The verify-and-escalate follow-up runs on a real 3-6 second delay after every real-chrome close, even in the healthy (no straggler) case."
+    mitigation: "Each check is one cheap pgrep call; the healthy-path cost is negligible against the real problem (silent, unbounded multi-day leaks) it prevents."
+
+steps:
+  - id: implement
+    description: Add verifyAndEscalate() to real-chrome.ts and keepaliveTracker to the scheduler
+    agent: developer
+  - id: test
+    description: Add real-chrome.test.ts and scheduler index.test.ts coverage; run full suite
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no existing caller's behavior changed in the healthy case
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit, branch off dev, PR into dev
+    agent: developer
+    depends_on: [review]

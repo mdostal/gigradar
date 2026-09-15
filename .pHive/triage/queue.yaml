@@ -1,4 +1,57 @@
 entries:
+  - id: t-009
+    state: closed
+    kind: bug
+    title: "Real-Chrome cleanup unreliability + session-keepalive's 10-minute cadence combined into a genuine, app-crashing memory leak"
+    description: |
+      Owner's own real, live-reproduced incident (2026-09-15): "i literally
+      can't use the tool -- clicking causes no action... i'm not sure if
+      this is an issue with it having memory issues." Real, hard evidence:
+      the packaged gigradar.app process was not running at all (crashed or
+      killed by memory pressure); system free memory was ~138MB; 5 separate,
+      fully-alive orphaned real-Chrome instances (each with a full GPU/
+      network/storage/renderer/audio helper swarm) had accumulated over
+      3-4 days across multiple `gigradar-real-chrome-*` temp profiles plus
+      the persistent profile. Killing them recovered ~2GB of free memory
+      instantly.
+
+      Root cause: real-chrome.ts's own already-documented "process.kill()
+      doesn't reliably terminate the real Chrome process" quirk (its
+      belt-and-suspenders `pkill -f` sweep was assumed sufficient but
+      apparently isn't, 100% of the time) combined with
+      session-keepalive-refresh's 10-minute cadence across 3 sources --
+      GoFractional specifically has been Cloudflare-blocked for over a
+      week, meaning EVERY keepalive attempt for it fell through to
+      real-chrome.ts's own tier-3 self-heal and failed there too, hammering
+      the exact code path most exposed to the rare cleanup race roughly
+      144 times/day with zero backoff.
+
+      Owner's explicit direction: "i cannot make it a restart -- that's a
+      hack" / "i need this to work as a long lived app" -- ruled out a
+      periodic cleanup sweep or restart-based mitigation as the PRIMARY
+      fix; the cleanup itself had to become genuinely reliable, and a
+      known-dead session had to stop being retried indefinitely at full
+      frequency.
+    reporter: owner
+    reported_at: "2026-09-15T04:06:00Z"
+    priority: p0
+    severity: critical
+    linked_epic: real-chrome-leak-proof-cleanup
+    linked_story: verify-and-escalate-cleanup-plus-keepalive-backoff
+    closed_reason: "shipped -- real-chrome.ts's closeRealChrome() now schedules a delayed pgrep-based verification with escalation (a second pkill sweep) rather than trusting the synchronous sweep unconditionally; the scheduler's keepalive cycle now backs off a source whose keepalive keeps failing (reusing the same BackoffTracker class the main scan cycle already uses) instead of retrying it every 10 minutes forever. Both are additive to, not replacements for, real-chrome.ts's existing cleanup -- no restart/reaper band-aid."
+    closed_at: "2026-09-15T04:35:00Z"
+    state_history:
+      - state: inbox
+        at: "2026-09-15T04:06:00Z"
+      - state: clarified
+        at: "2026-09-15T04:10:00Z"
+      - state: prioritized
+        at: "2026-09-15T04:12:00Z"
+      - state: plan-ready
+        at: "2026-09-15T04:15:00Z"
+      - state: closed
+        at: "2026-09-15T04:35:00Z"
+
   - id: t-008
     state: closed
     kind: bug
