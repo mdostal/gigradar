@@ -124,3 +124,24 @@ export function sortGigs(gigs: readonly StoredGig[], sort: SortState | null): St
   if (!sort) return [...gigs];
   return [...gigs].sort((a, b) => compareByField(sort.field, sort.direction, a, b));
 }
+
+/**
+ * gigs-picks-rank-by-score story (rate-band-match-quality epic follow-up
+ * to the picks-quality audit). today-client.tsx's "Today's Picks" ranking
+ * -- highest `matchScore` first, most-recently-seen as the tiebreak (and
+ * the fallback ordering for the many gigs with no computed score at all).
+ * A missing score sorts as `-Infinity`, never as `0` ("no score yet" must
+ * never look identical to "scored zero, a confirmed bad match") -- so an
+ * unscored gig always ranks below any real score, and unscored gigs keep
+ * exactly their old firstSeen-only order relative to each other.
+ *
+ * Extracted here (rather than left inline in the component) so it's
+ * directly unit-testable without React Testing Library, matching this
+ * file's own `compareByField()`/`compareTierRank()` precedent.
+ */
+export function comparePicksRank(a: StoredGig, b: StoredGig): number {
+  const scoreA = a.matchScore ?? Number.NEGATIVE_INFINITY;
+  const scoreB = b.matchScore ?? Number.NEGATIVE_INFINITY;
+  if (scoreA !== scoreB) return scoreB - scoreA;
+  return b.firstSeen.localeCompare(a.firstSeen); // ISO 8601 -- lexicographic order IS chronological order, same convention as compareByField("firstSeen", ...)
+}

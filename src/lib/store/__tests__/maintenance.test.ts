@@ -137,3 +137,88 @@ describe("runStaleGigMaintenance: score-based tierScoring groups are skipped for
     expect(getGig("src-a:1", { db })?.tier).toBe("green");
   });
 });
+
+// stale-band-retier-alongside-tier story. Live-confirmed real bug: a gig
+// whose rate falls outside every group's engagement profile never gets
+// its `matchBand` recomputed by this pass at all -- it keeps stale/absent
+// band data forever, which dashboard-filter.ts's resolveDisplayBand()
+// then fails OPEN as "in-band", defeating the "Hide out-of-band" filter
+// (default ON) for the exact population of aging gigs it exists to catch.
+describe("runStaleGigMaintenance: re-band", () => {
+  it("recomputes matchBand against CURRENT config for a gig unseen for RETIER_AFTER_DAYS+, correcting a stale out-of-band rate to in-band", () => {
+    // $500/hr clears g1's $0-999,999/hr band easily -- but this gig was
+    // never scanned through apply/runner.ts (recordScan() here is the raw
+    // store primitive), so it has no matchBand/matchedGroupBands at all
+    // yet, exactly the real, live-confirmed shape of a pre-epic or
+    // never-rescanned gig.
+    recordScan(
+      [{ sourceId: "src-a", gigs: [{ ...makeGig({ sourceId: "src-a", externalId: "1" }), tier: "green", rate: { min: 500, max: 500, unit: "hour" } }] }],
+      { db, now: T0 },
+    );
+    expect(getGig("src-a:1", { db })?.matchBand).toBeUndefined();
+
+    const now = new Date(T0).getTime() + (RETIER_AFTER_DAYS + 1) * 24 * 60 * 60 * 1000;
+    const result = runStaleGigMaintenance(makeConfig(), { db, now });
+
+    expect(result.rebanded).toBe(1);
+    const stored = getGig("src-a:1", { db });
+    expect(stored?.matchBand).toBe("in-band");
+    expect(stored?.matchedGroupBands).toEqual({ g1: "in-band" });
+  });
+
+  it("recomputes matchBand for a gig whose primary group uses percentile tierScoring -- band recompute has no population dependency, unlike tier", () => {
+    // $1/hr fails every profile's real floor below, regardless of tierScoring mode.
+    recordScan(
+      [{ sourceId: "src-a", gigs: [{ ...makeGig({ sourceId: "src-a", externalId: "1" }), tier: "green", rate: { min: 1, max: 1, unit: "hour" } }] }],
+      { db, now: T0 },
+    );
+
+    const config = makeConfig();
+    config.groups[0]!.tierScoring = { kind: "percentile", greenPercentile: 80, yellowPercentile: 50 };
+    config.groups[0]!.needs.engagementProfiles = [
+      { id: "any-hourly", label: "Any (hourly)", types: ["contract"], minRate: 150, highRate: 999_999, maxHours: 999, maxHoursAtHighRate: 999, rateUnit: "hour" },
+    ];
+
+    const now = new Date(T0).getTime() + (RETIER_AFTER_DAYS + 1) * 24 * 60 * 60 * 1000;
+    const result = runStaleGigMaintenance(config, { db, now });
+
+    expect(result.retiered).toBe(0); // still skipped, unchanged behavior
+    expect(result.rebanded).toBe(1); // but band recompute still runs
+    expect(getGig("src-a:1", { db })?.matchBand).toBe("out-of-band");
+  });
+
+  it("does NOT recompute matchBand for a gig re-seen more recently than RETIER_AFTER_DAYS", () => {
+    recordScan(
+      [{ sourceId: "src-a", gigs: [{ ...makeGig({ sourceId: "src-a", externalId: "1" }), tier: "green", rate: { min: 500, max: 500, unit: "hour" } }] }],
+      { db, now: T0 },
+    );
+
+    const now = new Date(T0).getTime() + (RETIER_AFTER_DAYS - 1) * 24 * 60 * 60 * 1000;
+    const result = runStaleGigMaintenance(makeConfig(), { db, now });
+
+    expect(result.rebanded).toBe(0);
+    expect(getGig("src-a:1", { db })?.matchBand).toBeUndefined();
+  });
+
+  it("does not rebanded a gig whose recomputed band is unchanged from its stored value", () => {
+    recordScan(
+      [{ sourceId: "src-a", gigs: [{ ...makeGig({ sourceId: "src-a", externalId: "1" }), tier: "green", rate: { min: 500, max: 500, unit: "hour" }, matchBand: "in-band", matchedGroupBands: { g1: "in-band" } }] }],
+      { db, now: T0 },
+    );
+
+    const now = new Date(T0).getTime() + (RETIER_AFTER_DAYS + 1) * 24 * 60 * 60 * 1000;
+    const result = runStaleGigMaintenance(makeConfig(), { db, now });
+
+    expect(result.rebanded).toBe(0);
+  });
+
+  it("archives instead of re-banding once a gig crosses ARCHIVE_AFTER_DAYS", () => {
+    recordScan([{ sourceId: "src-a", gigs: [{ ...makeGig({ sourceId: "src-a", externalId: "1" }), tier: "green" }] }], { db, now: T0 });
+
+    const now = new Date(T0).getTime() + (ARCHIVE_AFTER_DAYS + 5) * 24 * 60 * 60 * 1000;
+    const result = runStaleGigMaintenance(makeConfig(), { db, now });
+
+    expect(result.archived).toBe(1);
+    expect(result.rebanded).toBe(0);
+  });
+});

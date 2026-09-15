@@ -674,9 +674,11 @@ export function startScheduler(options: SchedulerOptions = {}): SchedulerHandle 
       // its already-stored gigs from being re-tiered/archived against the
       // owner's real, current redKeywords/coreTitles. Only ever touches
       // status:"new" gigs (see maintenance.ts's own header comment).
-      const { retiered, archived } = runStaleGigMaintenance(config);
-      if (retiered > 0 || archived > 0) {
-        console.log(`gigradar scheduler: stale-gig maintenance — ${retiered} re-tiered, ${archived} archived (expired_unapplied).`);
+      const { retiered, rebanded, archived } = runStaleGigMaintenance(config);
+      if (retiered > 0 || rebanded > 0 || archived > 0) {
+        console.log(
+          `gigradar scheduler: stale-gig maintenance — ${retiered} re-tiered, ${rebanded} re-banded, ${archived} archived (expired_unapplied).`,
+        );
       }
     } catch (e) {
       // Anything that reaches here is, by construction, OUTSIDE runRadar()'s

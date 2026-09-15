@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredGig } from "@/lib/store";
-import { compareTierRank, sortGigs } from "../dashboard-sort";
+import { comparePicksRank, compareTierRank, sortGigs } from "../dashboard-sort";
 
 function makeGig(overrides: Partial<StoredGig> & { key: string }): StoredGig {
   return {
@@ -167,5 +167,39 @@ describe("compareTierRank", () => {
 
   it("equal tiers are a tie", () => {
     expect(compareTierRank("green", "green", "asc")).toBe(0);
+  });
+});
+
+// gigs-picks-rank-by-score story. Live-confirmed real bug this closes: a
+// single un-scored, recently-seen gig outranked a $200-250/hr fractional
+// CTO contract scoring 0.41 -- the highest real matchScore in the owner's
+// own database -- purely because Today's Picks sorted by firstSeen alone.
+describe("comparePicksRank", () => {
+  it("ranks a higher matchScore first, even when it was seen earlier", () => {
+    const weak = makeGig({ key: "weak", matchScore: 0.1, firstSeen: "2026-09-14T00:00:00.000Z" });
+    const strong = makeGig({ key: "strong", matchScore: 0.41, firstSeen: "2026-08-22T00:00:00.000Z" });
+    const result = [weak, strong].sort(comparePicksRank);
+    expect(result.map((g) => g.key)).toEqual(["strong", "weak"]);
+  });
+
+  it("falls back to most-recently-seen first when scores are equal", () => {
+    const older = makeGig({ key: "older", matchScore: 0.3, firstSeen: "2026-08-01T00:00:00.000Z" });
+    const newer = makeGig({ key: "newer", matchScore: 0.3, firstSeen: "2026-09-01T00:00:00.000Z" });
+    const result = [older, newer].sort(comparePicksRank);
+    expect(result.map((g) => g.key)).toEqual(["newer", "older"]);
+  });
+
+  it("a missing matchScore always sorts below any real score, even a real score of 0", () => {
+    const zeroScored = makeGig({ key: "zero", matchScore: 0, firstSeen: "2026-01-01T00:00:00.000Z" });
+    const unscored = makeGig({ key: "unscored", matchScore: undefined, firstSeen: "2026-09-01T00:00:00.000Z" });
+    const result = [unscored, zeroScored].sort(comparePicksRank);
+    expect(result.map((g) => g.key)).toEqual(["zero", "unscored"]);
+  });
+
+  it("two unscored gigs fall back to exactly the old firstSeen-only ordering", () => {
+    const older = makeGig({ key: "older", firstSeen: "2026-08-01T00:00:00.000Z" });
+    const newer = makeGig({ key: "newer", firstSeen: "2026-09-01T00:00:00.000Z" });
+    const result = [older, newer].sort(comparePicksRank);
+    expect(result.map((g) => g.key)).toEqual(["newer", "older"]);
   });
 });

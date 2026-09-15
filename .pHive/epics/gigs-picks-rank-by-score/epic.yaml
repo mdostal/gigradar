@@ -1,0 +1,38 @@
+name: gigs-picks-rank-by-score
+title: "Today's Picks ranks by real match quality (matchScore), recency as tiebreak only"
+description: >
+  Owner-directed follow-up to the picks-quality audit (2026-09-15): "Today's
+  Picks" sorted purely by firstSeen, completely ignoring the real,
+  already-computed matchScore a portion of gigs carry. Live-confirmed:
+  a $200-250/hr Fractional CTO contract scoring 0.41 -- the highest real
+  score in the owner's whole database -- was buried at position 25 of 59
+  and never surfaced in Picks, while a same-day, unscored, out-of-band
+  listing took the #1 slot purely on recency. Option A from the audit
+  artifact (score-first, recency as tiebreak) implemented -- the
+  additive, no-judgment-call option: never worse than the old ordering,
+  strictly better whenever a real score exists.
+target_codebase: /Users/mdostal/Documents/work/gigradar
+methodology: classic
+version_bump: none
+
+stories:
+  - id: today-picks-score-first-sort
+    title: comparePicksRank() -- matchScore DESC, firstSeen DESC tiebreak, extracted + unit-tested
+    complexity: low
+    depends_on: []
+
+backlog: |
+  Deliberately NOT built here -- real, owner-facing decisions still open
+  from the audit artifact's own §5:
+  - Option B: extend score-tiering to every source/group so all gigs get
+    a real matchScore, not just the 17% that do today (needs the owner
+    to set real green/yellow thresholds or percentile cutoffs per
+    role-area group -- a config decision, not a default I should guess).
+  - Option C: rank-bucket order as the primary sort key ahead of/instead
+    of matchScore, once the owner declares which named bucket
+    ("Actual Contracts," "TOP TIER CONTRACTS," etc.) beats which.
+  - A dedicated sortable "Score" column on the Dashboard (/gigs,
+    /[group]/gigs) -- matchScore is currently only visible there as a
+    tier-badge tooltip, not a sortable column. Real, additive, low-risk
+    follow-on in the same spirit as this epic; not built in this pass to
+    keep the shipped diff focused on the concrete, audited bug.

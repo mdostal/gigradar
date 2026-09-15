@@ -30,6 +30,7 @@ import {
   type SeenWindow,
 } from "../dashboard-filter";
 import { ALL_STATUSES, formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL } from "../dashboard-client";
+import { comparePicksRank } from "../dashboard-sort";
 import { ContextualChatTrigger } from "../contextual-chat/contextual-chat-trigger";
 import { GigDetailPanel } from "../gig-detail-panel";
 import styles from "./today.module.css";
@@ -288,16 +289,28 @@ export function TodayClient({
 
   const visible = useMemo(() => gigs.filter(matches), [gigs, tier, band, hideOutOfBand, rankBucket, status, source, profile, seenWindow, search]);
 
-  // "Today's Picks" -- green + new, sorted most-recently-seen first, top 4.
-  // Deliberately re-filters the FULL gigs array by the same `matches()`
-  // predicate (not `visible` -- picks always apply the active filters too,
-  // per the verified concept's own behavior) rather than a second data path.
+  // "Today's Picks" -- green + new, ranked by real match quality where one
+  // exists, most-recently-seen first as the tiebreak (and the fallback for
+  // the many gigs with no computed matchScore yet -- see gigs-picks-rank-
+  // by-score story). Deliberately re-filters the FULL gigs array by the
+  // same `matches()` predicate (not `visible` -- picks always apply the
+  // active filters too, per the verified concept's own behavior) rather
+  // than a second data path.
+  //
+  // Live-confirmed real bug this fixes (picks-quality audit, 2026-09-15):
+  // sorting by recency alone let a single un-scored, recently-seen gig
+  // outrank a $200-250/hr fractional CTO contract scoring 0.41 -- the
+  // highest real matchScore in the owner's own database, which recency
+  // sort buried at position 25 of 59 and never surfaced here at all. A
+  // missing matchScore sorts as -Infinity (always below any real score,
+  // never treated as "0 -- bad match"), so unscored gigs fall back to
+  // exactly today's old recency ordering among themselves.
   const picks = useMemo(
     () =>
       gigs
         .filter((g) => g.tier === "green" && g.status === "new" && matches(g))
         .slice()
-        .sort((a, b) => new Date(b.firstSeen).getTime() - new Date(a.firstSeen).getTime())
+        .sort(comparePicksRank)
         .slice(0, 4),
     [gigs, tier, band, hideOutOfBand, rankBucket, status, source, profile, seenWindow, search],
   );
