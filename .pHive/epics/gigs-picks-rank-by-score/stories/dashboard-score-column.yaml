@@ -1,0 +1,41 @@
+id: dashboard-score-column
+epic: gigs-picks-rank-by-score
+title: "Real, sortable \"Score\" column on the Dashboard (/gigs, /[group]/gigs)"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+progress_note: |
+  SHIPPED, same pass as today-picks-score-first-sort. matchScore was
+  previously only visible on the Dashboard as a tier-badge tooltip
+  ("Match score: X.XX", dashboard-client.tsx's Tier column) -- never a
+  column of its own, and never sortable. Added:
+
+  - New "score" SORT_FIELDS entry (dashboard-sort.ts), compareByField
+    case using the existing compareNullable() helper -- same
+    nullable-always-last convention as rate/weeklyHours, plain numeric
+    ascending/descending otherwise (unlike tier, no inverted ranking
+    needed -- a real number already sorts the "right" way).
+  - New Score column in dashboard-client.tsx, right after Tier -- renders
+    the score to 2 decimal places or "—" when absent, sortable via the
+    same sortingFnFor() every other simple numeric column already uses.
+    No filter (filterKind: "none") -- this pass is about visibility and
+    sortability, not a new numeric filter control.
+
+  Verification: npm test (1843 passing -- 2 new tests in
+  dashboard-sort.test.ts covering numeric ascending + missing-sorts-last
+  in both directions) and npm run typecheck (clean).
+
+acceptance_criteria:
+  - "The Dashboard has a Score column showing each gig's real matchScore (2 decimal places) or '—' when absent."
+  - "Clicking the Score column header sorts by it; a missing score always sorts last regardless of direction."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/dashboard-sort.ts
+      purpose: "New 'score' SORT_FIELDS entry + compareByField case."
+    - path: src/app/dashboard-client.tsx
+      purpose: "New Score column definition, right after Tier."

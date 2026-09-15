@@ -504,6 +504,36 @@ export function setTier(key: string, tier: Gig["tier"], opts: DbOption = {}): vo
 }
 
 /**
+ * stale-band-retier-alongside-tier story (rate-band-match-quality epic
+ * follow-up). setTier()'s exact sibling for `matchBand`/`matchedGroupBands`
+ * — explicitly re-stamps a gig's rate-band verdict outside a scan, same
+ * as setTier() does for the keyword tier. Unlike tier's percentile
+ * tierScoring mode, band recompute never needs a score population (see
+ * match-band.ts's own computeMatchBand() — pure per-gig rate check), so
+ * this is always safe to call for every scoped group, regardless of that
+ * group's tierScoring kind. Throws if the key doesn't exist, same
+ * convention as setTier()/setStatus()/setOutcome().
+ */
+export function setMatchBand(
+  key: string,
+  matchBand: Gig["matchBand"],
+  matchedGroupBands: Gig["matchedGroupBands"],
+  opts: DbOption = {},
+): void {
+  const db = opts.db ?? getDb();
+  const result = db
+    .prepare("UPDATE gigs SET match_band = :match_band, matched_group_bands = :matched_group_bands WHERE key = :key")
+    .run({
+      match_band: matchBand ?? null,
+      matched_group_bands: matchedGroupBands === undefined ? null : JSON.stringify(matchedGroupBands),
+      key,
+    });
+  if (Number(result.changes) === 0) {
+    throw new Error(`gigradar store: setMatchBand: no gig with key "${key}"`);
+  }
+}
+
+/**
  * rank-buckets epic, rank-bucket-filter-and-confirm-everywhere story. The
  * real confirm/override write path -- the owner accepting an AI
  * suggestion or manually reassigning a gig's bucket for ONE group. Reads

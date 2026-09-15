@@ -12,6 +12,7 @@ export const SORT_FIELDS = [
   "title",
   "company",
   "tier",
+  "score",
   "status",
   "rate",
   "weeklyHours",
@@ -94,6 +95,13 @@ export function compareByField(field: SortField, direction: SortDirection, a: St
       // compareTierRank()'s own doc comment. `direction` (not `sign`) is
       // passed through since compareTierRank applies its own sign.
       return compareTierRank(a.tier, b.tier, direction);
+    case "score":
+      // gigs-picks-rank-by-score epic follow-up: a real, sortable Dashboard
+      // column for the same matchScore Today's Picks now ranks by --
+      // previously only visible as a tier-badge tooltip, never sortable.
+      // Missing score sorts last regardless of direction, same
+      // nullable-last convention as rate/weeklyHours below.
+      return compareNullable(a.matchScore, b.matchScore, direction, (x, y) => x - y);
     case "status":
       return (
         sign *
@@ -123,4 +131,25 @@ export function compareByField(field: SortField, direction: SortDirection, a: St
 export function sortGigs(gigs: readonly StoredGig[], sort: SortState | null): StoredGig[] {
   if (!sort) return [...gigs];
   return [...gigs].sort((a, b) => compareByField(sort.field, sort.direction, a, b));
+}
+
+/**
+ * gigs-picks-rank-by-score story (rate-band-match-quality epic follow-up
+ * to the picks-quality audit). today-client.tsx's "Today's Picks" ranking
+ * -- highest `matchScore` first, most-recently-seen as the tiebreak (and
+ * the fallback ordering for the many gigs with no computed score at all).
+ * A missing score sorts as `-Infinity`, never as `0` ("no score yet" must
+ * never look identical to "scored zero, a confirmed bad match") -- so an
+ * unscored gig always ranks below any real score, and unscored gigs keep
+ * exactly their old firstSeen-only order relative to each other.
+ *
+ * Extracted here (rather than left inline in the component) so it's
+ * directly unit-testable without React Testing Library, matching this
+ * file's own `compareByField()`/`compareTierRank()` precedent.
+ */
+export function comparePicksRank(a: StoredGig, b: StoredGig): number {
+  const scoreA = a.matchScore ?? Number.NEGATIVE_INFINITY;
+  const scoreB = b.matchScore ?? Number.NEGATIVE_INFINITY;
+  if (scoreA !== scoreB) return scoreB - scoreA;
+  return b.firstSeen.localeCompare(a.firstSeen); // ISO 8601 -- lexicographic order IS chronological order, same convention as compareByField("firstSeen", ...)
 }

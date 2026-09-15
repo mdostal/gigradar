@@ -34,3 +34,7 @@ stories:
     title: autoDraftOnScan/autoFire require matchBand === in-band in addition to tier === green
     complexity: low
     depends_on: [match-band-pipeline-and-storage]
+  - id: stale-band-retier-alongside-tier
+    title: "runStaleGigMaintenance() also recomputes matchBand/matchedGroupBands, not just tier"
+    complexity: medium
+    depends_on: [match-band-pipeline-and-storage]

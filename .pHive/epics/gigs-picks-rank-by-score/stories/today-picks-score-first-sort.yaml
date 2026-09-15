@@ -1,0 +1,42 @@
+id: today-picks-score-first-sort
+epic: gigs-picks-rank-by-score
+title: "comparePicksRank() -- matchScore DESC, firstSeen DESC tiebreak, extracted + unit-tested"
+status: complete
+complexity: low
+methodology: classic
+depends_on: []
+
+progress_note: |
+  SHIPPED. New exported comparePicksRank(a, b) in src/app/dashboard-sort.ts
+  (same file as compareByField()/compareTierRank(), extracted for the same
+  reason those were: directly unit-testable without React Testing
+  Library). today-client.tsx's `picks` useMemo now sorts with
+  `.sort(comparePicksRank)` instead of a bare firstSeen comparator.
+
+  A missing matchScore sorts as -Infinity, never as 0 -- "no score
+  computed yet" must never look identical to "scored zero, a confirmed
+  bad match." Two unscored gigs (the large majority of the pool today --
+  see gigs-picks-rank-by-score epic's own header) fall back to exactly
+  the old firstSeen-only ordering relative to each other, so this is a
+  strictly additive change: never worse than before, better whenever a
+  real score exists.
+
+  Verification: npm test (1841 passing -- 4 new tests in
+  dashboard-sort.test.ts's own new comparePicksRank describe block: score
+  wins over recency, firstSeen tiebreak on equal scores, missing score
+  always below a real score of 0, two unscored gigs keep old ordering)
+  and npm run typecheck (clean).
+
+acceptance_criteria:
+  - "A gig with a higher matchScore ranks ahead of one with a lower score, regardless of which was seen more recently."
+  - "Equal (or both-missing) scores fall back to most-recently-seen-first, matching today's existing behavior exactly."
+  - "A missing matchScore never outranks a real score of 0."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/app/dashboard-sort.ts
+      purpose: "New comparePicksRank() export."
+    - path: src/app/today/today-client.tsx
+      purpose: "picks useMemo now sorts with comparePicksRank."

@@ -1,0 +1,90 @@
+id: stale-band-retier-alongside-tier
+epic: rate-band-match-quality
+title: "runStaleGigMaintenance() also recomputes matchBand/matchedGroupBands, not just tier"
+status: complete
+complexity: medium
+methodology: classic
+depends_on: []
+
+trigger: |
+  Found during a real, owner-requested "manually go through the list and
+  compare to what the app actually surfaced" match-quality audit
+  (2026-09-15, picks-audit artifact). Live evidence from the owner's own
+  gigs.db: the "Hide out-of-band" toggle defaults ON
+  (DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT = true) and the live app confirmed
+  this — yet a $0-scored, genuinely out-of-band JPMorganChase listing
+  still rendered as Today's Picks #1, ahead of a real $200-250/hr
+  Fractional CTO contract scoring 0.41 (the highest real score in the
+  whole database).
+
+  Root-caused by direct code read, not guessed: dashboard-filter.ts's
+  resolveDisplayBand() deliberately fails OPEN — a gig with no band data
+  at all displays as "in-band" (explicitly documented, and correctly so:
+  a fresh-install e2e test proved failing CLOSED here hides every
+  pre-existing gig in a real install until re-scanned). The gap: the
+  existing stale-tier-retier-and-archive maintenance pass (piggybacked on
+  the 30-min scheduler cycle) already recomputes a stale gig's TIER
+  against current config, but never touched matchBand/matchedGroupBands
+  at all — those are stamped once, at ORIGINAL scan time, by
+  apply/runner.ts, and never revisited. Live-confirmed: 43 of the 44
+  stale BuiltIn gigs in the owner's real database had zero band data at
+  all (scanned before the rate-band-match-quality epic shipped, or simply
+  never re-seen since), so all 43 silently failed OPEN as "in-band"
+  forever — defeating the entire "Hide out-of-band" filter for that
+  whole population, without ever surfacing as broken.
+
+progress_note: |
+  SHIPPED. Two real, additive changes:
+
+  1. New src/lib/store/gigs.ts primitive setMatchBand(key, matchBand,
+     matchedGroupBands, opts) -- setTier()'s exact sibling, writes both
+     the flat match_band column and the matched_group_bands JSON column
+     together (mirroring how apply/runner.ts writes them together at
+     real scan time).
+
+  2. src/lib/store/maintenance.ts's runStaleGigMaintenance() now also
+     recomputes matchBand for EVERY group a gig's source is scoped to
+     (not just the primary group), using the exact same
+     computeMatchBand()/resolveNearBandTolerancePct() match-band.ts
+     matchGroups() itself calls at scan time -- byte-identical band
+     result to what a fresh scan of this gig would produce. Unlike tier's
+     percentile tierScoring mode (which needs a population this pass
+     can't reconstruct, and is still correctly skipped), band recompute
+     needs no population at all -- computeMatchBand() is a pure per-gig
+     rate check -- so it ALWAYS runs, even for a group whose tier this
+     pass skips. Only writes when the recomputed band actually differs
+     from what's stored (mirrors the existing tier-recompute's own
+     no-op-when-unchanged discipline).
+
+  StaleGigMaintenanceResult gained a new `rebanded` count, surfaced in
+  the scheduler's own existing "stale-gig maintenance" log line
+  (src/scheduler/index.ts).
+
+  Verification: npm test (1841 passing, up from 1837 -- 4 new tests in
+  maintenance.test.ts's own new "re-band" describe block covering the
+  real bug, the percentile-tierScoring-still-recomputes-band case, the
+  too-recent no-op case, and the unchanged-band no-op case) and npm run
+  typecheck (clean). Real fix takes effect on the scheduler's next 30-min
+  maintenance cycle after this ships -- no backfill migration needed, the
+  existing RETIER_AFTER_DAYS=3 threshold already covers the entire stale
+  population.
+
+acceptance_criteria:
+  - "A stale gig (unseen 3+ days) whose real, current rate fails every scoped group's engagement profile gets its matchBand recomputed to out-of-band, correcting stale/absent band data."
+  - "Band recompute runs even for a group using score-based tierScoring, unlike tier recompute (which is correctly still skipped there)."
+  - "A gig re-seen more recently than RETIER_AFTER_DAYS, or whose recomputed band is unchanged, is never written to."
+  - "npm test and npm run typecheck both pass."
+
+context:
+  codebase: /Users/mdostal/Documents/work/gigradar
+  key_files:
+    - path: src/lib/store/maintenance.ts
+      purpose: "runStaleGigMaintenance()'s new re-band half."
+    - path: src/lib/store/gigs.ts
+      purpose: "New setMatchBand() store primitive."
+    - path: src/lib/matching/group-match.ts
+      purpose: "matchGroups()'s own computeMatchBand()/resolveNearBandTolerancePct() call this pass mirrors exactly."
+
+references:
+  - path: .pHive/epics/rate-band-match-quality/docs/design-discussion.md
+    relevant_excerpt: "Original epic's own resolveDisplayBand() fail-open rationale, still correct -- this story fixes the maintenance gap that made fail-open a permanent state for stale gigs, not the fail-open policy itself."

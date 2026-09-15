@@ -1005,6 +1005,22 @@ export function DashboardClient({
       meta: { filterKind: "select", selectOptions: ["green", "yellow", "red"] },
     },
     {
+      id: "score",
+      header: "Score",
+      // gigs-picks-rank-by-score epic follow-up. Real match quality was
+      // previously only visible as a tier-badge tooltip (see the Tier
+      // column above) -- never a sortable column of its own, which is
+      // exactly the gap the picks-quality audit found in Today's Picks
+      // too. A missing score (most gigs don't have one yet -- only groups
+      // using score-based tierScoring compute one) renders as "—" and
+      // sorts last regardless of direction, same convention as Rate/
+      // Weekly hrs above.
+      accessorFn: (g) => g.matchScore ?? null,
+      cell: ({ row }) => <span className="font-theme-mono">{row.original.matchScore !== undefined ? row.original.matchScore.toFixed(2) : "—"}</span>,
+      sortingFn: sortingFnFor("score"),
+      meta: { filterKind: "none" },
+    },
+    {
       id: "band",
       header: "Band",
       // rate-band-match-quality epic. Orthogonal to Tier above -- tier
