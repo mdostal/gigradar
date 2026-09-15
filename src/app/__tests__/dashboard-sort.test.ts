@@ -105,6 +105,22 @@ describe("sortGigs", () => {
     expect(result.map((g) => g.key)).toEqual(["1", "2"]);
   });
 
+  it("score: numeric ascending, missing sorts last", () => {
+    const gigs = [
+      makeGig({ key: "1", matchScore: 0.41 }),
+      makeGig({ key: "2", matchScore: undefined }),
+      makeGig({ key: "3", matchScore: 0.1 }),
+    ];
+    const result = sortGigs(gigs, { field: "score", direction: "asc" });
+    expect(result.map((g) => g.key)).toEqual(["3", "1", "2"]);
+  });
+
+  it("score: a real score of 0 sorts ahead of a missing score, in either direction", () => {
+    const gigs = [makeGig({ key: "1", matchScore: undefined }), makeGig({ key: "2", matchScore: 0 })];
+    expect(sortGigs(gigs, { field: "score", direction: "asc" }).map((g) => g.key)).toEqual(["2", "1"]);
+    expect(sortGigs(gigs, { field: "score", direction: "desc" }).map((g) => g.key)).toEqual(["2", "1"]);
+  });
+
   it("weeklyHours: numeric ascending, missing sorts last", () => {
     const gigs = [
       makeGig({ key: "1", weeklyHours: 40 }),

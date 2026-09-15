@@ -12,6 +12,7 @@ export const SORT_FIELDS = [
   "title",
   "company",
   "tier",
+  "score",
   "status",
   "rate",
   "weeklyHours",
@@ -94,6 +95,13 @@ export function compareByField(field: SortField, direction: SortDirection, a: St
       // compareTierRank()'s own doc comment. `direction` (not `sign`) is
       // passed through since compareTierRank applies its own sign.
       return compareTierRank(a.tier, b.tier, direction);
+    case "score":
+      // gigs-picks-rank-by-score epic follow-up: a real, sortable Dashboard
+      // column for the same matchScore Today's Picks now ranks by --
+      // previously only visible as a tier-badge tooltip, never sortable.
+      // Missing score sorts last regardless of direction, same
+      // nullable-last convention as rate/weeklyHours below.
+      return compareNullable(a.matchScore, b.matchScore, direction, (x, y) => x - y);
     case "status":
       return (
         sign *

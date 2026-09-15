@@ -20,6 +20,10 @@ stories:
     title: comparePicksRank() -- matchScore DESC, firstSeen DESC tiebreak, extracted + unit-tested
     complexity: low
     depends_on: []
+  - id: dashboard-score-column
+    title: Real, sortable "Score" column on the Dashboard (/gigs, /[group]/gigs)
+    complexity: low
+    depends_on: []
 
 backlog: |
   Deliberately NOT built here -- real, owner-facing decisions still open
@@ -31,8 +35,3 @@ backlog: |
   - Option C: rank-bucket order as the primary sort key ahead of/instead
     of matchScore, once the owner declares which named bucket
     ("Actual Contracts," "TOP TIER CONTRACTS," etc.) beats which.
-  - A dedicated sortable "Score" column on the Dashboard (/gigs,
-    /[group]/gigs) -- matchScore is currently only visible there as a
-    tier-badge tooltip, not a sortable column. Real, additive, low-risk
-    follow-on in the same spirit as this epic; not built in this pass to
-    keep the shipped diff focused on the concrete, audited bug.
