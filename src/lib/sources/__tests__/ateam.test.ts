@@ -247,6 +247,18 @@ describe("ateamSource", () => {
     await expect(ateamSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" })).rejects.toThrow(/session expired\/invalid for source "ateam"/);
   });
 
+  it("normalizes A.Team's own real 'Not Interested' undisclosed-client sentinel to undefined, not a literal fake company name", async () => {
+    const page = createFakePage({
+      evaluateResult: [{ href: "/mission/undisclosed-client-mission", title: "NY based Staff Engineer", client: "Not Interested", locationType: null, commitment: null }],
+    });
+    stubWithBrowserSession(page);
+
+    const gigs = await ateamSource.fetch(cfg, { name: "t", roles: [], skills: [], timezone: "UTC" });
+
+    expect(gigs).toHaveLength(1);
+    expect(gigs[0]?.company).toBeUndefined();
+  });
+
   it("throws (never returns []) when zero mission listings are scraped despite auth succeeding", async () => {
     const page = createFakePage({ evaluateResult: [] });
     stubWithBrowserSession(page);
