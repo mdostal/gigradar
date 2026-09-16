@@ -141,6 +141,22 @@ function externalIdFromHref(href: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+/**
+ * gigs-picks-rank-by-score epic follow-up (picks-quality audit,
+ * 2026-09-15). "Not Interested" is A.Team's OWN real, live-confirmed
+ * literal client-name text for a listing whose engaging client opted not
+ * to be disclosed — not a gigradar placeholder, not a scrape bug (raw
+ * payload confirmed: `{"client":"Not Interested"}`). Displaying it
+ * verbatim as a "company name" reads as a bizarre, confusing artifact
+ * everywhere `Gig.company` renders (Today's Picks, Dashboard, drafts).
+ * Normalized to `undefined` here, at the source boundary, so every
+ * consumer gets the SAME already-existing "—" / "Company undisclosed"
+ * missing-company fallback it already has for a genuinely absent
+ * `client`, rather than each surface needing its own special-case check
+ * for this one literal string.
+ */
+const UNDISCLOSED_CLIENT_SENTINEL = "Not Interested";
+
 function toGig(listing: ATeamRawListing, _now: Date): Gig | null {
   const externalId = externalIdFromHref(listing.href);
   if (!externalId || listing.title.length === 0) return null; // can't build a valid Gig without a stable id and a title
@@ -149,7 +165,7 @@ function toGig(listing: ATeamRawListing, _now: Date): Gig | null {
     sourceId: "ateam",
     externalId,
     title: listing.title,
-    company: listing.client ?? undefined,
+    company: listing.client && listing.client !== UNDISCLOSED_CLIENT_SENTINEL ? listing.client : undefined,
     // The real per-listing permalink, constructed from the listing's own
     // anchor href — never the Mission Control board's own list-view URL.
     url: `${ORIGIN_BASE}${listing.href}`,
