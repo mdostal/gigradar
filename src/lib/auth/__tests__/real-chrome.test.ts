@@ -74,6 +74,9 @@ let xdgDataHomeDir: string;
 beforeEach(() => {
   realExistsSync = fs.existsSync.bind(fs);
   originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+  // The module under test is macOS-only, and every spawn/attach/osascript call is mocked, so run
+  // as darwin on any host (CI and Linux sandboxes alike); the non-macOS tests set win32 themselves.
+  Object.defineProperty(process, "platform", { value: "darwin" });
   xdgDataHomeDir = fs.mkdtempSync(path.join(os.tmpdir(), "gigradar-real-chrome-test-xdg-"));
   process.env.XDG_DATA_HOME = xdgDataHomeDir;
   spawnMock.mockReset();
