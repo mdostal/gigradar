@@ -44,7 +44,8 @@ there; it never shows up as zero results.
 
 Each shortlist gig has the fields `key`, `sourceId`, `externalId`, `title`,
 `company`, `url`, `tier`, `matchBand`, `score`, `pass`, `reasons`, `checks`,
-`status`, and `unavailableSince`:
+`status`, `unavailableSince`, `rate`, `weeklyHours`, `remote`, `postedAt`,
+`stage`, `firstSeen`, `lastSeen`, and `draft`:
 
 - `reasons` is exactly what `runRadar()` returned for that gig, in order.
   It holds every gate rule (`✓ …` / `✗ …`) followed by the tiering note.
@@ -52,6 +53,14 @@ Each shortlist gig has the fields `key`, `sourceId`, `externalId`, `title`,
   (`✗`), or `info` (anything else). The text is unchanged.
 - `status` is the gig's current pipeline status in the store, which may
   have changed since the run.
+- `rate`, `weeklyHours`, `remote`, `postedAt` and `stage` are what the
+  listing said, as gated in that run. A field the source did not state is
+  absent, never zero.
+- `firstSeen`/`lastSeen` are when any scan first and last saw the gig.
+- `draft` is present only when the gig has an application draft:
+  `{status, format?, coverText, answers, generatedAt, approvedAt,
+  submittedAt}`. It is read-only; reading the shortlist never changes it,
+  and `draft`/`approved` mean it has not been sent.
 
 `Gig.raw` (the source's original payload) is never returned.
 

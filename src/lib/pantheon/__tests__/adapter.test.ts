@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config, Gig } from "../../types.js";
 import { gate } from "../../matching/gate.js";
 import { registerSource } from "../../sources/source.js";
-import { closeDb, createAdapterRun, getDb, listDrafts } from "../../store/index.js";
+import { closeDb, createAdapterRun, getDb, getDraft, listDrafts, saveDraft } from "../../store/index.js";
 import { AdapterError, getRunStatus, getShortlist, inFlightRun, stageDraft, startRun, type AdapterDeps } from "../adapter.js";
 
 let nextGigs: Gig[] = [];
@@ -190,6 +190,37 @@ describe("getShortlist", () => {
     expect(rejected[0]!.reasons).toContain("✗ not remote");
     expect(rejected[0]!.checks).toContainEqual({ result: "fail", text: "✗ not remote" });
     expect(rejected[0]!.status).toBe("new");
+  });
+
+  it("carries the listing's rate, hours and freshness, and the store's first/last seen", async () => {
+    nextGigs = [makeGig("ok", { postedAt: "2026-10-01", stage: "fresh" }), makeGig("bare", { rate: undefined, weeklyHours: undefined })];
+    await runToCompletion();
+    const { passed, rejected } = getShortlist();
+    const ok = passed.find((g) => g.externalId === "ok")!;
+    expect(ok.rate).toEqual({ min: 250, max: 250, unit: "hour" });
+    expect(ok.weeklyHours).toBe(15);
+    expect(ok.remote).toBe(true);
+    expect(ok.postedAt).toBe("2026-10-01");
+    expect(ok.stage).toBe("fresh");
+    expect(typeof ok.firstSeen).toBe("string");
+    expect(typeof ok.lastSeen).toBe("string");
+    // Not stated by the source → absent, never a made-up zero.
+    const bare = [...passed, ...rejected].find((g) => g.externalId === "bare")!;
+    expect("rate" in bare).toBe(false);
+    expect("weeklyHours" in bare).toBe(false);
+  });
+
+  it("shows a staged draft read-only, and leaves it exactly as it was", async () => {
+    nextGigs = [makeGig("ok"), makeGig("other")];
+    await runToCompletion();
+    saveDraft("pantheon-adapter-test-source:ok", { coverText: "Hello there", answers: { "Why you?": "Because." } });
+    const before = getDraft("pantheon-adapter-test-source:ok");
+
+    const { passed } = getShortlist();
+    const ok = passed.find((g) => g.externalId === "ok")!;
+    expect(ok.draft).toMatchObject({ status: "draft", coverText: "Hello there", answers: { "Why you?": "Because." }, submittedAt: null });
+    expect(passed.find((g) => g.externalId === "other")!.draft).toBeUndefined();
+    expect(getDraft("pantheon-adapter-test-source:ok")).toEqual(before);
   });
 
   it("never returns the source's raw payload", async () => {
