@@ -27,13 +27,14 @@ import {
   failAdapterRun,
   getAdapterRun,
   getAdapterRunResult,
+  getDraft,
   getGig,
   getLatestAdapterRun,
   listAdapterRunResults,
   recordScanCycle,
 } from "../store/index.js";
-import type { StoredAdapterRun, StoredAdapterRunResult } from "../store/index.js";
-import type { MatchResult } from "../types.js";
+import type { StoredAdapterRun, StoredAdapterRunResult, StoredDraft } from "../store/index.js";
+import type { Gig, MatchResult } from "../types.js";
 import { resolveRunSecrets, withInjectedEnv } from "./secrets.js";
 
 export interface AdapterDeps {
@@ -170,6 +171,31 @@ export interface ShortlistGig {
   /** The gig's CURRENT pipeline status in the store (it may have moved since the run). */
   status?: string;
   unavailableSince?: string;
+  /** What the listing said, as gated in this run. Absent when the source did not state it. */
+  rate?: Gig["rate"];
+  weeklyHours?: number;
+  remote?: boolean;
+  postedAt?: string;
+  stage?: Gig["stage"];
+  /** When the store first and last saw this gig, across every scan. */
+  firstSeen?: string;
+  lastSeen?: string;
+  /**
+   * The gig's application draft, when one has been staged — read-only. Its
+   * status says where it stands (`draft`/`approved` have not been sent);
+   * nothing in this adapter moves it on.
+   */
+  draft?: ShortlistDraft;
+}
+
+export interface ShortlistDraft {
+  status: StoredDraft["status"];
+  format?: string;
+  coverText: string;
+  answers: Record<string, string>;
+  generatedAt: string;
+  approvedAt: string | null;
+  submittedAt: string | null;
 }
 
 export interface Shortlist {
@@ -184,8 +210,22 @@ function checkOf(reason: string): { result: CheckResult; text: string } {
   return { result: "info", text: reason };
 }
 
+function toShortlistDraft(d: StoredDraft): ShortlistDraft {
+  return {
+    status: d.status,
+    ...(d.content.format ? { format: d.content.format } : {}),
+    coverText: d.content.coverText,
+    answers: d.content.answers,
+    generatedAt: d.generatedAt,
+    approvedAt: d.approvedAt,
+    submittedAt: d.submittedAt,
+  };
+}
+
 function toShortlistGig(r: StoredAdapterRunResult): ShortlistGig {
   const current = getGig(r.gigKey);
+  const draft = getDraft(r.gigKey);
+  const g = r.gig;
   return {
     key: r.gigKey,
     sourceId: r.gig.sourceId,
@@ -201,6 +241,13 @@ function toShortlistGig(r: StoredAdapterRunResult): ShortlistGig {
     checks: r.reasons.map(checkOf),
     ...(current ? { status: current.status } : {}),
     ...(current?.unavailableSince ? { unavailableSince: current.unavailableSince } : {}),
+    ...(g.rate ? { rate: g.rate } : {}),
+    ...(g.weeklyHours !== undefined ? { weeklyHours: g.weeklyHours } : {}),
+    ...(g.remote !== undefined ? { remote: g.remote } : {}),
+    ...(g.postedAt ? { postedAt: g.postedAt } : {}),
+    ...(g.stage ? { stage: g.stage } : {}),
+    ...(current ? { firstSeen: current.firstSeen, lastSeen: current.lastSeen } : {}),
+    ...(draft ? { draft: toShortlistDraft(draft) } : {}),
   };
 }
 
