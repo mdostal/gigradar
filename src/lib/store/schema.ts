@@ -193,4 +193,43 @@ CREATE TABLE IF NOT EXISTS scan_cycles (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_scan_cycles_completed_at ON scan_cycles(completed_at);
+
+-- pantheon-adapter story (PANT-1207). One row per scan run triggered
+-- through the Pantheon adapter (src/lib/pantheon/adapter.ts, served at
+-- /api/pantheon/*), so a caller can trigger a run, poll its status, and read
+-- back the shortlist it produced. status is 'running' until runRadar()
+-- returns ('succeeded') or throws ('failed'); a 'running' row whose process
+-- restarted mid-run is settled to 'interrupted' on the next read. errors is
+-- runRadar()'s own per-source {sourceId, message} list, never a secret.
+CREATE TABLE IF NOT EXISTS adapter_runs (
+  id             TEXT PRIMARY KEY,   -- crypto.randomUUID()
+  status         TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'interrupted')),
+  started_at     TEXT NOT NULL,      -- ISO datetime
+  finished_at    TEXT,               -- ISO datetime, NULL while running
+  sources_total  INTEGER,            -- enabled sources the run covered, NULL until loadConfig() succeeded
+  passed_count   INTEGER,
+  rejected_count INTEGER,
+  new_count      INTEGER,
+  errors         TEXT NOT NULL DEFAULT '[]', -- JSON-stringified {sourceId, message, needsVerification?}[]
+  error          TEXT                -- the run-level failure message when status is 'failed'/'interrupted'
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_adapter_runs_started_at ON adapter_runs(started_at);
+
+-- Every MatchResult a Pantheon-triggered run produced, passed AND rejected,
+-- with the gate's reasons stored VERBATIM. runRadar() returns these reasons
+-- but recordScan() never persisted them (gigs holds only the stamped tier),
+-- so without this table the explanation would not survive past the run.
+-- gig is a JSON snapshot of the gig as gated (minus Gig.raw); gig_key is a
+-- real FK, since runRadar() records every gated gig before returning.
+CREATE TABLE IF NOT EXISTS adapter_run_results (
+  run_id   TEXT NOT NULL REFERENCES adapter_runs(id),
+  gig_key  TEXT NOT NULL REFERENCES gigs(key),
+  pass     INTEGER NOT NULL CHECK (pass IN (0, 1)),
+  score    REAL NOT NULL,
+  tier     TEXT CHECK (tier IN ('green', 'yellow', 'red')),
+  reasons  TEXT NOT NULL,            -- JSON-stringified string[], exactly as runRadar() returned it
+  gig      TEXT NOT NULL,            -- JSON-stringified Gig snapshot without raw
+  PRIMARY KEY (run_id, gig_key)
+) STRICT;
 `;

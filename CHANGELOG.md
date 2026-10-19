@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- A Pantheon adapter: when gigradar runs inside Pantheon, Pantheon can
+  start a radar run, check on it, and read the shortlist back — every gig
+  that passed and every one that didn't, each with the reasons the gate
+  gave. It can also stage a draft for a shortlisted gig, but never submit
+  one: approving and sending stay with you in Drafts. See
+  `docs/pantheon-adapter.md`.
+
 ## [0.47.0] - 2026-09-07
 
 ### Changed

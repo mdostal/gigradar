@@ -208,15 +208,20 @@ const PROVIDER_ENV_VARS: Record<LlmProvider, string> = {
  * above), returning `undefined` when that slot is unset, matching
  * readEnvVar()'s own undefined-on-unset behavior — never throws for a
  * missing credential.
+ *
+ * `injected` (pantheon-adapter story) is a caller-supplied map of env-var
+ * values resolved somewhere other than `.env` — today only the Pantheon
+ * secrets facade (src/lib/pantheon/secrets.ts). A value there wins over
+ * `.env`'s; omitted, this behaves exactly as before.
  */
-export function resolveLlmCredential(): LlmCredential | undefined {
+export function resolveLlmCredential(injected: Readonly<Record<string, string>> = {}): LlmCredential | undefined {
   const raw = readRawConfig();
   if (raw.llmCredentialKind === "claude-code-harness") {
     return { kind: "claude-code-harness" };
   }
 
   const provider: LlmProvider = raw.llmProvider === "openai" || raw.llmProvider === "google" ? raw.llmProvider : "anthropic";
-  const value = readEnvVar(PROVIDER_ENV_VARS[provider]);
+  const value = injected[PROVIDER_ENV_VARS[provider]] ?? readEnvVar(PROVIDER_ENV_VARS[provider]);
   if (!value) return undefined;
 
   return { kind: "api-key", provider, value };

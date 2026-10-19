@@ -565,6 +565,7 @@ than assume this one generalizes.
 - [x] Dashboard table rebuilt on TanStack Table (`src/app/dashboard-client.tsx`) — replaces the prior hand-rolled `<table>` + top filter panel. Every column now has both a sort control and its own filter control in the header: independent title/company text filters (previously one combined search box), tier/source/status filters, a min-rate threshold, a max-weekly-hours threshold, and a seen-within-window preset (24h/7d/30d) — the last three genuinely new. Sorting reuses `dashboard-sort.ts`'s `compareByField()` domain logic (tier/status rank, nullable-last, stable) unchanged via a thin `sortingFn` adapter.
 - [x] LLM+Playwright profile-assist, 3 autonomy modes (`profile-assist` epic) — `src/lib/apply/profile-suggest.ts` (single-shot suggest) and `src/lib/apply/profile-assist-loop.ts` (multi-turn `guided`/`full-auto` tool-use loop, ref-validated click/fill), at `/profile-assist`. See "LLM+Playwright profile-assist" below.
 - [x] MCP server (`agent-integration` epic) — `src/mcp/server.ts` (`npm run mcp`), 5 tools over stdio. See "Agent integration: MCP server" below and [`docs/mcp-setup.md`](./mcp-setup.md).
+- [x] Pantheon adapter (`pantheon-adapter` story, PANT-1207) — `/api/pantheon/*`: trigger a run, read its status, read the shortlist with per-rule reasons, stage (never submit) a draft; credentials via Pantheon's secrets facade. See "Pantheon adapter" below and [`docs/pantheon-adapter.md`](./pantheon-adapter.md).
 - [x] Real-Chrome spawn-then-attach + Portunus session backend + LLM capture-readiness check (`oauth-session-capture-v2` epic) — `src/lib/auth/real-chrome.ts`, `src/lib/auth/session-backend.ts`, `src/lib/auth/capture-guidance.ts`. Fixes Google OAuth rejecting Capture Login under `chromium.launch()`'s automation fingerprints. See "Real-Chrome sessions + Portunus backend" below.
 - [x] Custom, config-only LLM-driven `Source` adapters (`llm-custom-sources` epic) — `SourceConfig.kind: "custom-llm"`, `src/lib/sources/custom-llm-source.ts`, `src/lib/sources/custom-source-recipe.ts` (cached-selector-recipe fast path, LLM-derivation fallback), a "Custom (LLM)" toggle + "Test extraction now" in `/config`. The core/user-layer boundary fix this doc's own opening rule has been pointing at since the first epic — an owner adds ANY site with zero edits to this repo. See "Custom LLM sources" below.
 - [x] Verification-challenge detection + in-UI human co-pilot (`verification-copilot` epic) — `src/lib/sources/verification-challenge.ts`'s `VerificationChallengeError` (wired into `withBrowserSession()`), a distinct `"Needs human verification"` issue, and `src/lib/auth/verification-copilot-session.ts` powering "Open browser to help clear it" in `/issues`. See "Verification-challenge co-pilot" below.
@@ -1664,6 +1665,37 @@ the `/config` UI); only `run_scan` calls `loadConfig()`, since a real scan
 needs real resolved credentials. See
 [`docs/mcp-setup.md`](./mcp-setup.md) for copy-pasteable client config for
 both Claude Desktop and Claude Code — not duplicated here.
+
+## Pantheon adapter (`pantheon-adapter` story, PANT-1207)
+
+`src/lib/pantheon/` + `src/app/api/pantheon/*` let Pantheon trigger a run,
+read its status back, read the shortlist with the gate's reasons, and stage
+(never submit) a draft — over HTTP on the app's own port. Full contract:
+[`docs/pantheon-adapter.md`](./pantheon-adapter.md). The points that bind
+the rest of this doc:
+
+- **A client of `src/lib`, like the MCP server.** A run is `runRadar()`
+  (the same call `npm run radar` and "Sweep now" make, and it records a
+  `scan_cycles` row the same way); a draft is `stageApplication()`. The
+  adapter never gates, tiers, or rewrites a reason.
+- **Reasons persist per run.** `recordScan()` only ever stored the stamped
+  tier, so the gate's reasons used to be gone the moment `runRadar()`
+  returned. `adapter_runs`/`adapter_run_results` (`src/lib/store/adapter-runs.ts`)
+  store every MatchResult a Pantheon-triggered run produced, passed and
+  rejected, reasons verbatim, in one transaction with the run's completion.
+- **Assisted, not auto (rule 4) holds across the boundary.** The adapter
+  imports nothing from `src/lib/submit/` or `apply/autofire.ts` and never
+  moves a draft past `draft`.
+  `src/lib/pantheon/__tests__/no-submit-path.test.ts` pins the route set,
+  each route's HTTP methods, the absence of those imports, and that a
+  staged draft stays `draft` with a registered `SubmitAdapter` uncalled.
+- **Credentials via Pantheon's secrets facade only** (`POST
+  /api/secrets/inject`, `target: "file"`): the inbound operator token, and
+  any per-run secrets `GIGRADAR_PANTHEON_SECRETS` maps. Fail closed: no
+  resolvable token means every request is refused. Same never-log,
+  never-return discipline as "Secrets" above.
+- The `127.0.0.1` binding of `dev`/`start` is unchanged; how Pantheon
+  reaches the port is its compose service's concern, not this repo's.
 
 ## Owner's private overlay (Mathew)
 
