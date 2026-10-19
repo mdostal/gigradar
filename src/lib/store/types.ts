@@ -1,6 +1,6 @@
 // Types for the SQLite-backed Gig store. One place; everything in
 // src/lib/store imports from here (mirrors the convention in ../types.ts).
-import type { AutoFireRuleConfig, DraftContent, Gig } from "../types.js";
+import type { AutoFireRuleConfig, DraftContent, Gig, Tier } from "../types.js";
 import type { PrepPacketContent } from "../apply/prep.js";
 
 /**
@@ -199,4 +199,35 @@ export interface StoredScanCycle {
   sourcesTotal: number;
   /** Source ids that errored or were skipped (backoff) this cycle — [] means a full, clean cycle. */
   incompleteSourceIds: string[];
+}
+
+/** pantheon-adapter story (PANT-1207). Lifecycle state of one adapter-triggered run — see schema.ts's `adapter_runs`. */
+export type AdapterRunStatus = "running" | "succeeded" | "failed" | "interrupted";
+
+/** One `adapter_runs` row (adapter-runs.ts). Counts are `null` until the run got far enough to know them. */
+export interface StoredAdapterRun {
+  id: string;
+  status: AdapterRunStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  sourcesTotal: number | null;
+  passedCount: number | null;
+  rejectedCount: number | null;
+  newCount: number | null;
+  /** runRadar()'s own per-source errors — `{sourceId, message}` strings only, never a secret. */
+  errors: { sourceId: string; message: string; needsVerification?: boolean }[];
+  /** Run-level failure message when `status` is `failed`/`interrupted`. */
+  error: string | null;
+}
+
+/** One `adapter_run_results` row: a MatchResult as runRadar() produced it, reasons verbatim. */
+export interface StoredAdapterRunResult {
+  runId: string;
+  gigKey: string;
+  pass: boolean;
+  score: number;
+  tier: Tier | null;
+  reasons: string[];
+  /** The gig as gated, without `Gig.raw`. */
+  gig: Omit<Gig, "raw">;
 }

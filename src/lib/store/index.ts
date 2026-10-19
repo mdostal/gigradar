@@ -19,6 +19,16 @@ export {
 } from "./drafts.js";
 export { getInterviewPrep, listInterviewPrep, saveInterviewPrep } from "./prep.js";
 export { getLastScanCycle, recordScanCycle } from "./scan-cycles.js";
+export {
+  completeAdapterRun,
+  createAdapterRun,
+  failAdapterRun,
+  getAdapterRun,
+  getAdapterRunResult,
+  getLatestAdapterRun,
+  listAdapterRunResults,
+} from "./adapter-runs.js";
+export type { CompleteAdapterRunInput } from "./adapter-runs.js";
 export type { RecordScanCycleInput } from "./scan-cycles.js";
 export { listResumeReviewSuggestions, saveResumeReviewSuggestion } from "./resume-reviews.js";
 export type { ResumeReviewSuggestion } from "./resume-reviews.js";
@@ -31,6 +41,7 @@ export {
 } from "./chat.js";
 export type { GetDbOptions } from "./db.js";
 export type {
+  AdapterRunStatus,
   DraftFilter,
   DraftStatus,
   GigFilter,
@@ -38,6 +49,8 @@ export type {
   OutcomeReason,
   ScanSummary,
   SourceScanBatch,
+  StoredAdapterRun,
+  StoredAdapterRunResult,
   StoredAutoFireDecision,
   StoredChatPreference,
   StoredDraft,
