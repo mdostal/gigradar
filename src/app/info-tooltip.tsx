@@ -49,7 +49,7 @@ export function InfoTooltip({ trigger, label, className }: { trigger: ReactNode;
       {open && (
         <span
           role="tooltip"
-          className="absolute bottom-full left-1/2 z-20 mb-1 w-64 -translate-x-1/2 rounded-md border border-theme-surface-border bg-theme-surface p-2 text-left text-xs font-normal normal-case leading-snug text-theme-text shadow-lg"
+          className="absolute bottom-full left-1/2 z-20 mb-1 w-72 -translate-x-1/2 whitespace-pre-line rounded-md border border-theme-surface-border bg-theme-surface p-2 text-left text-xs font-normal normal-case leading-snug text-theme-text shadow-lg"
         >
           {label}
         </span>

@@ -43,6 +43,11 @@ export default async function globalSetup(): Promise<void> {
       gigs: [
         { sourceId: "braintrust", externalId: "e2e-1", title: "Fractional CTO at Acme", company: "Acme Robotics", url: "https://example.test/e2e-1", tier: "green" },
         { sourceId: "braintrust", externalId: "e2e-2", title: "Fractional CTO at Northwind", company: "Northwind Labs", url: "https://example.test/e2e-2", tier: "yellow" },
+        // gate-reasons-in-dashboard story: two gigs that genuinely fail the seeded config's gate
+        // (rate below p1's $150/hr floor + not remote; contract-to-hire, which p1 doesn't accept)
+        // -- see gate-reasons.spec.ts.
+        { sourceId: "braintrust", externalId: "e2e-3", title: "Fractional CTO at Initech", company: "Initech", url: "https://example.test/e2e-3", tier: "yellow", rate: { min: 26, unit: "hour" }, remote: false },
+        { sourceId: "braintrust", externalId: "e2e-4", title: "Fractional CTO at Globex", company: "Globex", url: "https://example.test/e2e-4", tier: "yellow", rate: { min: 200, unit: "hour" }, contractToHire: true },
       ],
     },
   ]);
