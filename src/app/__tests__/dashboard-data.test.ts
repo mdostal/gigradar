@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, recordScan } from "@/lib/store";
 import { saveConfig } from "@/lib/config/save";
-import { extractEngagementProfiles, extractEngagementProfileSummaries, extractRankBucketLabels, loadDashboardData, loadSonarSweepStatus, resolveGroupLabel, resolveHideOutOfBandDefault } from "../dashboard-data";
+import { extractEngagementProfiles, extractEngagementProfileSummaries, extractGateConfig, extractRankBucketLabels, loadDashboardData, loadSonarSweepStatus, resolveGroupLabel, resolveHideOutOfBandDefault } from "../dashboard-data";
 
 // Same isolation pattern as actions.test.ts: a fresh temp-file DB per test
 // (GIGRADAR_DB_PATH) plus an isolated XDG_DATA_HOME for config.json, so this
@@ -308,5 +308,35 @@ describe("extractRankBucketLabels", () => {
     expect(extractRankBucketLabels({ groups: [{ id: "g1" }] }, "g1")).toEqual([]);
     expect(extractRankBucketLabels({ groups: "not an array" })).toEqual([]);
     expect(extractRankBucketLabels({ groups: [{ id: "g1", rankBuckets: [{ notLabel: "x" }] }] }, "g1")).toEqual([]);
+  });
+});
+
+// gate-reasons-in-dashboard story.
+describe("extractGateConfig", () => {
+  const needs = {
+    engagementProfiles: [{ id: "p1", label: "Hourly", types: ["contract"], minRate: 120, highRate: 200, maxHours: 20, maxHoursAtHighRate: 40, rateUnit: "hour" }],
+    freshStageOnly: false,
+    remoteOnly: true,
+  };
+  const profile = { name: "T", roles: ["CTO"], skills: [], timezone: "UTC" };
+  const raw = {
+    profile,
+    groups: [
+      { id: "a", label: "Group A", needs },
+      { id: "b", label: "Group B", needs: { ...needs, remoteOnly: false }, roleArea: { coreTitles: ["cto"], keywords: [], redKeywords: ["intern"] } },
+    ],
+  };
+
+  it("reads the primary group when unscoped, and the named group when scoped", () => {
+    expect(extractGateConfig(raw)).toMatchObject({ groupId: "a", groupLabel: "Group A", needs: { remoteOnly: true }, profile });
+    expect(extractGateConfig(raw)?.roleArea).toBeUndefined();
+    expect(extractGateConfig(raw, "b")).toMatchObject({ groupId: "b", roleArea: { redKeywords: ["intern"] } });
+  });
+
+  it("returns null (never throws) for a missing group, missing profile, or malformed needs", () => {
+    expect(extractGateConfig(raw, "nope")).toBeNull();
+    expect(extractGateConfig({ groups: raw.groups })).toBeNull();
+    expect(extractGateConfig({ profile, groups: [{ id: "a", label: "A", needs: { engagementProfiles: [] } }] })).toBeNull();
+    expect(extractGateConfig({})).toBeNull();
   });
 });

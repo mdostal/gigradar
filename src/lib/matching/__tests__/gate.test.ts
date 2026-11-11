@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EngagementProfile, Gig, Needs, Profile, RoleAreaConfig } from "../../types.js";
-import { effectiveEngagementType, explainProfileMismatch, gate } from "../gate.js";
+import { effectiveEngagementType, explainGate, explainProfileMismatch, gate } from "../gate.js";
 
 function makeGig(overrides: Partial<Gig> = {}): Gig {
   return {
@@ -322,5 +322,108 @@ describe("explainProfileMismatch", () => {
   it("'real-mismatch': an applicable profile exists and the gig's real weeklyHours exceeded the cap", () => {
     const gig = makeGig({ rate: { min: 260, unit: "hour" }, weeklyHours: 50 });
     expect(explainProfileMismatch(gig, [FRACTIONAL_CONTRACT_PROFILE])).toBe("real-mismatch");
+  });
+});
+
+// gate-reasons-in-dashboard story. explainGate() is the structured,
+// per-rule view the dashboard renders; these pin its reason wording and
+// that it never disagrees with gate()'s own verdict.
+describe("explainGate", () => {
+  const ruleById = <T extends { id: string }>(rules: T[], id: string) => rules.find((r) => r.id === id);
+
+  it("rate below a profile's floor -> that profile's row fails with the concrete numbers", () => {
+    const gig = makeGig({ rate: { min: 26, unit: "hour" } });
+    const { pass, rules } = explainGate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), EMPTY_PROFILE);
+    expect(pass).toBe(false);
+    expect(ruleById(rules, "profile:fractional-contract")).toEqual({
+      id: "profile:fractional-contract",
+      label: "Fractional/contract",
+      outcome: "fail",
+      reason: "$26/hr is below your $250/hr floor",
+      blocking: true,
+    });
+  });
+
+  it("contract-to-hire with no profile accepting it -> engagement-type fails as 'excluded', listing the accepted types, and the other profiles show as skipped", () => {
+    const gig = makeGig({ contractToHire: true, rate: { min: 300, unit: "hour" } });
+    const { pass, rules } = explainGate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE, FULL_TIME_700K_PROFILE]), EMPTY_PROFILE);
+    expect(pass).toBe(false);
+    expect(ruleById(rules, "engagement-type")).toMatchObject({
+      outcome: "fail",
+      blocking: true,
+      reason: "contract-to-hire is excluded — none of your profiles accept it (accepted: contract, fractional, full-time)",
+    });
+    expect(ruleById(rules, "profile:fractional-contract")).toMatchObject({ outcome: "skipped", reason: "covers contract, fractional only; this gig is contract-to-hire" });
+    expect(ruleById(rules, "profile:full-time-700k")).toMatchObject({ outcome: "skipped" });
+  });
+
+  it("hours over the cap -> fail with the cap and the high-rate unlock hint", () => {
+    const gig = makeGig({ rate: { min: 260, unit: "hour" }, weeklyHours: 30 });
+    const { rules } = explainGate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), EMPTY_PROFILE);
+    expect(ruleById(rules, "profile:fractional-contract")).toMatchObject({
+      outcome: "fail",
+      reason: "30 hrs/wk is over your 20 hrs/wk cap (at $300/hr+ the cap rises to 40)",
+    });
+  });
+
+  it("emits one row per CONFIGURED profile (config-driven), and only emits fresh/remote rules when those Needs flags are on", () => {
+    const gig = makeGig({ rate: { min: 260, unit: "hour" } });
+    const off = explainGate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE, CTH_PROFILE]), EMPTY_PROFILE).rules.map((r) => r.id);
+    expect(off).toEqual(["engagement-type", "profile:fractional-contract", "profile:cth", "role-fit"]);
+    const on = explainGate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE], { freshStageOnly: true, remoteOnly: true }), EMPTY_PROFILE).rules.map((r) => r.id);
+    expect(on).toEqual(["engagement-type", "profile:fractional-contract", "fresh-stage", "remote", "role-fit"]);
+  });
+
+  it("a failed profile is non-blocking when another profile cleared (gate still passes)", () => {
+    const gig = makeGig({ rate: { min: 210, unit: "hour" }, contractToHire: true });
+    const strictCth: EngagementProfile = { ...CTH_PROFILE, id: "cth-strict", label: "CTH strict", minRate: 400, highRate: 500 };
+    const { pass, rules } = explainGate(gig, makeNeeds([CTH_PROFILE, strictCth]), EMPTY_PROFILE);
+    expect(pass).toBe(true);
+    expect(ruleById(rules, "profile:cth")).toMatchObject({ outcome: "pass" });
+    expect(ruleById(rules, "profile:cth-strict")).toMatchObject({ outcome: "fail", blocking: false });
+  });
+
+  it("stale stage / not remote / no role-skill fit each fail with a concrete reason", () => {
+    const gig = makeGig({ title: "Plumber", rate: { min: 260, unit: "hour" }, stage: "stale", remote: false });
+    const profile: Profile = { ...EMPTY_PROFILE, roles: ["Fractional CTO"], skills: ["TypeScript"] };
+    const { rules } = explainGate(gig, makeNeeds([FRACTIONAL_CONTRACT_PROFILE], { freshStageOnly: true, remoteOnly: true }), profile);
+    expect(ruleById(rules, "fresh-stage")).toMatchObject({ outcome: "fail", reason: 'listing stage is "stale" — you only accept fresh listings' });
+    expect(ruleById(rules, "remote")).toMatchObject({ outcome: "fail", reason: "listing is not remote — you require remote" });
+    expect(ruleById(rules, "role-fit")).toMatchObject({ outcome: "fail", reason: "none of your roles/skills appear in the title or description" });
+  });
+
+  it("role-area: core title and red keyword come from the configured RoleAreaConfig; red is shown as a non-blocking fail", () => {
+    const roleArea: RoleAreaConfig = { coreTitles: ["fractional cto"], keywords: [], redKeywords: ["intern"] };
+    const green = explainGate(makeGig({ rate: { min: 260, unit: "hour" } }), makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), EMPTY_PROFILE, roleArea);
+    expect(ruleById(green.rules, "role-area")).toMatchObject({ outcome: "pass", reason: 'title matches your core title "fractional cto"' });
+    const red = explainGate(makeGig({ title: "Engineering Intern", rate: { min: 260, unit: "hour" } }), makeNeeds([FRACTIONAL_CONTRACT_PROFILE]), EMPTY_PROFILE, roleArea);
+    expect(ruleById(red.rules, "role-area")).toMatchObject({ outcome: "fail", blocking: false });
+    expect(ruleById(red.rules, "role-area")?.reason).toContain('red keyword "intern"');
+  });
+
+  it("never disagrees with gate(): pass === gate().pass, and a failing verdict always has at least one blocking failed rule", () => {
+    const needsVariants = [
+      makeNeeds([FRACTIONAL_CONTRACT_PROFILE]),
+      makeNeeds([FRACTIONAL_CONTRACT_PROFILE, FULL_TIME_700K_PROFILE, CTH_PROFILE], { freshStageOnly: true, remoteOnly: true }),
+      makeNeeds([FULL_TIME_700K_PROFILE]),
+    ];
+    const gigs: Gig[] = [
+      makeGig(),
+      makeGig({ rate: { min: 26, unit: "hour" } }),
+      makeGig({ rate: { min: 260, unit: "hour" }, weeklyHours: 35 }),
+      makeGig({ rate: { min: 320, unit: "hour" }, weeklyHours: 35, remote: false }),
+      makeGig({ contractToHire: true, rate: { min: 210, unit: "hour" }, stage: "stale" }),
+      makeGig({ rate: { min: 800_000, unit: "year" } }),
+      makeGig({ title: "Barista", rate: { min: 260, unit: "hour" } }),
+    ];
+    const profile: Profile = { ...EMPTY_PROFILE, roles: ["Fractional CTO"] };
+    for (const needs of needsVariants) {
+      for (const gig of gigs) {
+        const g = gate(gig, needs, profile);
+        const e = explainGate(gig, needs, profile);
+        expect(e.pass).toBe(g.pass);
+        expect(e.rules.some((r) => r.outcome === "fail" && r.blocking)).toBe(!g.pass);
+      }
+    }
   });
 });

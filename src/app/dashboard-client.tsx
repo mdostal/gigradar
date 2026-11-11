@@ -34,7 +34,9 @@ import {
   type SeenWindow,
 } from "./dashboard-filter";
 import type { MatchBand } from "@/lib/types";
-import type { ProfileMismatchKind } from "@/lib/matching/gate";
+import { explainGate, type GateExplanation, type ProfileMismatchKind } from "@/lib/matching/gate";
+import type { GateConfigSnapshot } from "./dashboard-data";
+import { formatGateTooltip } from "./gate-reasons";
 import { compareByField, compareTierRank, type SortField } from "./dashboard-sort";
 import { GigDetailPanel } from "./gig-detail-panel";
 import { ContextualChatTrigger } from "./contextual-chat/contextual-chat-trigger";
@@ -432,6 +434,7 @@ export function DashboardClient({
   initialPrepByGigKey = {},
   engagementProfiles = [],
   profileMismatchByGigKey = {},
+  gateConfig = null,
   groupId,
   hideOutOfBandDefault = true,
   rankBucketLabels = [],
@@ -445,6 +448,8 @@ export function DashboardClient({
   engagementProfiles?: { id: string; label: string }[];
   /** match-warning-tooltip-clarity-and-reliability story -- resolved server-side (dashboard-data.ts's loadDashboardData(), reusing matching/gate.ts's explainProfileMismatch()), keyed by StoredGig.key. Drives which of the two ⚠-tooltip messages the Tier column shows; a gig with no entry falls back to the generic "real mismatch" copy. */
   profileMismatchByGigKey?: Readonly<Record<string, ProfileMismatchKind>>;
+  /** gate-reasons-in-dashboard story. The relevant group's own Needs/Profile/RoleAreaConfig (dashboard-data.ts's extractGateConfig()) -- explainGate() runs client-side against it for the ⚠ tooltip and the detail panel's Gate check section. `null`/omitted falls back to the generic tooltip copy and no panel section. */
+  gateConfig?: GateConfigSnapshot | null;
   /** rate-band-match-quality epic. The `/[group]/gigs` route's own group id -- resolveDisplayBand() uses this to show that SPECIFIC group's band rather than the best-across-all-groups fallback `/gigs` (unscoped) needs. Omitted on `/gigs`. */
   groupId?: string;
   /** rate-band-match-quality epic. The relevant group's own real `matchQuality.hideOutOfBandByDefault` setting (resolved server-side, page.tsx) -- seeds the Band column's initial filter, never a hardcoded default here. */
@@ -463,6 +468,22 @@ export function DashboardClient({
   rankBucketGroupId?: string;
 }) {
   const router = useRouter();
+  // gate-reasons-in-dashboard story: explainGate() against the relevant
+  // group's own config, computed lazily per gig and cached per gig object
+  // (a fresh server render hands down new objects, so a stale entry can
+  // never outlive its row).
+  const explainFor = useMemo(() => {
+    const cache = new WeakMap<StoredGig, GateExplanation>();
+    return (gig: StoredGig): GateExplanation | undefined => {
+      if (!gateConfig) return undefined;
+      let e = cache.get(gig);
+      if (!e) {
+        e = explainGate(gig, gateConfig.needs, gateConfig.profile, gateConfig.roleArea);
+        cache.set(gig, e);
+      }
+      return e;
+    };
+  }, [gateConfig]);
   const { openExternalLink, feedback: externalLinkFeedback, dismissFeedback: dismissExternalLinkFeedback } = useOpenExternalLink();
   const [sorting, setSorting] = useState<SortingState>([]);
   // Default landing view is the "To review" pipeline tab (status: new only)
@@ -985,7 +1006,7 @@ export function DashboardClient({
             {tier && tier !== "red" && !clearedAProfile && (
               <InfoTooltip
                 trigger="⚠"
-                label={resolveProfileMismatchTooltip(profileMismatchByGigKey[row.original.key])}
+                label={formatGateTooltip(explainFor(row.original), gateConfig?.groupLabel, profileMismatchByGigKey[row.original.key])}
                 className="text-theme-text-dim"
               />
             )}
@@ -1457,6 +1478,10 @@ export function DashboardClient({
           canPrev={selectedIndex > 0}
           canNext={selectedIndex >= 0 && selectedIndex < rows.length - 1}
           groupId={groupId}
+          gateCheck={(() => {
+            const explanation = explainFor(selectedGig);
+            return explanation && gateConfig ? { groupLabel: gateConfig.groupLabel, explanation } : undefined;
+          })()}
           statusChangeSection={
             <>
               <select

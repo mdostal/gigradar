@@ -43,58 +43,205 @@ import { tier } from "./tiering.js";
  * Pure function — no I/O, fully unit-testable.
  */
 export function gate(gig: Gig, needs: Needs, profile: Profile, roleArea?: RoleAreaConfig): MatchResult {
-  const reasons: string[] = [];
-  let pass = true;
-  const fail = (msg: string) => { pass = false; reasons.push("✗ " + msg); };
-  const ok = (msg: string) => reasons.push("✓ " + msg);
-
-  // ---- engagement type + rate + hours (per-profile) ----
-  const { matched, applicable, profileReasons } = matchProfiles(gig, needs.engagementProfiles);
-  reasons.push(...profileReasons);
-  if (matched.length === 0) {
-    if (applicable.length === 0) {
-      const type = effectiveEngagementType(gig);
-      fail(
-        type
-          ? `engagement type "${type}" not accepted by any configured profile`
-          : "no configured profile applies (no hourly profile configured, and this gig's engagement type couldn't be determined)",
-      );
-    } else {
-      fail("did not clear any applicable profile's rate/hours threshold");
-    }
-  } else {
-    ok(`matched profile${matched.length > 1 ? "s" : ""}: ${matched.map((m) => m.profile.label).join(", ")}`);
-  }
-  const matchedProfiles = matched.map((m) => m.profile.id);
-
-  // ---- stage freshness ----
-  if (needs.freshStageOnly && gig.stage && gig.stage !== "fresh" && gig.stage !== "unknown") {
-    fail(`stage "${gig.stage}" not fresh`);
-  }
-
-  // ---- remote ----
-  if (needs.remoteOnly && gig.remote === false) fail("not remote");
-
-  // ---- fit ----
-  const fit = fitScore(gig, profile);
-  if (fit > 0) {
-    ok(`role/skill fit (${Math.round(fit * 100)}%)`);
-  } else {
-    const roleAreaTier = roleArea ? tier(gig, roleArea) : undefined;
-    if (roleAreaTier && roleAreaTier.tier === "green") {
-      ok(`role/skill fit backed by this group's own role-area tier (green)`);
-    } else {
-      fail("no role/skill keyword match");
-    }
-  }
-
+  const { pass, reasons, matched, fit } = evaluateGate(gig, needs, profile, roleArea);
   return {
     gig,
     pass,
     reasons,
     score: pass ? scoreOf(gig, matched, fit) : 0,
-    matchedProfiles,
+    matchedProfiles: matched.map((m) => m.profile.id),
   };
+}
+
+/**
+ * gate-reasons-in-dashboard story. One structured, per-rule verdict the
+ * dashboard renders (gig detail panel's "Why this gig passed/failed"
+ * section, the All Gigs ⚠ tooltip's failed-rule list). Produced by the SAME
+ * evaluateGate() pass gate() itself uses -- each check is pushed in the
+ * exact branch that pushes gate()'s own legacy `reasons` string, so the
+ * structured view can never disagree with the real verdict.
+ *
+ * `id` is stable per rule kind (`engagement-type`, `profile:<profile id>`,
+ * `fresh-stage`, `remote`, `role-fit`, `role-area`); `label` is the
+ * user-facing rule name, taken from the user's own config where one exists
+ * (an engagement profile's own label). Which rules appear at all is driven
+ * by the config passed in: one row per configured engagement profile (never
+ * a hardcoded list), fresh-stage/remote only when that Needs flag is on,
+ * role-area only when a RoleAreaConfig was passed.
+ *
+ * `blocking` is true when this rule's `fail` alone decides the gate verdict
+ * (engagement-type, fresh-stage, remote, role-fit, and -- only when NO
+ * profile cleared -- each applicable profile row). It is false for a
+ * profile row that failed while another profile cleared, and for the
+ * role-area tier (a classification shown next to the gate, never part of
+ * its pass/fail -- see tiering.ts).
+ */
+export type GateRuleOutcome = "pass" | "fail" | "skipped" | "info";
+
+export interface GateRuleCheck {
+  id: string;
+  label: string;
+  outcome: GateRuleOutcome;
+  reason: string;
+  blocking: boolean;
+}
+
+export interface GateExplanation {
+  pass: boolean;
+  rules: GateRuleCheck[];
+}
+
+/** Structured, per-rule explanation of gate()'s verdict -- see GateRuleCheck. Pure. */
+export function explainGate(gig: Gig, needs: Needs, profile: Profile, roleArea?: RoleAreaConfig): GateExplanation {
+  const { pass, rules } = evaluateGate(gig, needs, profile, roleArea);
+  return { pass, rules };
+}
+
+function evaluateGate(
+  gig: Gig,
+  needs: Needs,
+  profile: Profile,
+  roleArea?: RoleAreaConfig,
+): { pass: boolean; reasons: string[]; rules: GateRuleCheck[]; matched: ProfileMatch[]; fit: number } {
+  const reasons: string[] = [];
+  const rules: GateRuleCheck[] = [];
+  let pass = true;
+  const fail = (msg: string) => { pass = false; reasons.push("✗ " + msg); };
+  const ok = (msg: string) => reasons.push("✓ " + msg);
+  const rule = (id: string, label: string, outcome: GateRuleOutcome, reason: string, blocking: boolean) =>
+    rules.push({ id, label, outcome, reason, blocking });
+
+  // ---- engagement type + rate + hours (per-profile) ----
+  const { matched, applicable, profileReasons, profileOutcomes } = matchProfiles(gig, needs.engagementProfiles);
+  reasons.push(...profileReasons);
+  const type = effectiveEngagementType(gig);
+  const acceptedTypes = [...new Set(needs.engagementProfiles.flatMap((p) => p.types))];
+  if (matched.length === 0) {
+    if (applicable.length === 0) {
+      fail(
+        type
+          ? `engagement type "${type}" not accepted by any configured profile`
+          : "no configured profile applies (no hourly profile configured, and this gig's engagement type couldn't be determined)",
+      );
+      rule(
+        "engagement-type",
+        "Engagement type",
+        "fail",
+        type
+          ? `${type} is excluded — none of your profiles accept it${acceptedTypes.length ? ` (accepted: ${acceptedTypes.join(", ")})` : ""}`
+          : "engagement type isn't stated and you have no hourly profile to check it against",
+        true,
+      );
+    } else {
+      fail("did not clear any applicable profile's rate/hours threshold");
+      rule("engagement-type", "Engagement type", "pass", engagementTypePassReason(type, applicable), false);
+    }
+  } else {
+    ok(`matched profile${matched.length > 1 ? "s" : ""}: ${matched.map((m) => m.profile.label).join(", ")}`);
+    rule("engagement-type", "Engagement type", "pass", engagementTypePassReason(type, applicable), false);
+  }
+  const anyCleared = matched.length > 0;
+  for (const p of needs.engagementProfiles) {
+    const o = profileOutcomes.find((x) => x.profile === p);
+    const id = `profile:${p.id}`;
+    if (!o) {
+      rule(id, p.label, "skipped", notApplicableReason(p, type), false);
+    } else if (o.kind === "rate-unpublished") {
+      rule(id, p.label, "pass", "rate not published — passing, confirm on the call", false);
+    } else if (o.kind === "below-floor") {
+      rule(id, p.label, "fail", `${money(o.rate, p)} is below your ${money(p.minRate, p)} floor`, !anyCleared);
+    } else if (o.kind === "over-hours-cap") {
+      rule(
+        id,
+        p.label,
+        "fail",
+        `${o.hours} hrs/wk is over your ${o.cap} hrs/wk cap` +
+          (o.rate < p.highRate ? ` (at ${money(p.highRate, p)}+ the cap rises to ${p.maxHoursAtHighRate})` : ""),
+        !anyCleared,
+      );
+    } else {
+      const atHigh = o.rate >= p.highRate;
+      rule(
+        id,
+        p.label,
+        "pass",
+        `${money(o.rate, p)} clears your ${money(atHigh ? p.highRate : p.minRate, p)} ${atHigh ? "high-rate tier" : "floor"}` +
+          (o.cap !== undefined && gig.weeklyHours != null ? `; ${gig.weeklyHours} hrs/wk within your ${o.cap} hrs/wk cap` : ""),
+        false,
+      );
+    }
+  }
+
+  // ---- stage freshness ----
+  if (needs.freshStageOnly && gig.stage && gig.stage !== "fresh" && gig.stage !== "unknown") {
+    fail(`stage "${gig.stage}" not fresh`);
+    rule("fresh-stage", "Fresh listings only", "fail", `listing stage is "${gig.stage}" — you only accept fresh listings`, true);
+  } else if (needs.freshStageOnly) {
+    rule("fresh-stage", "Fresh listings only", "pass", gig.stage === "fresh" ? "listing is fresh" : "listing stage not stated — not rejected", false);
+  }
+
+  // ---- remote ----
+  if (needs.remoteOnly && gig.remote === false) {
+    fail("not remote");
+    rule("remote", "Remote only", "fail", "listing is not remote — you require remote", true);
+  } else if (needs.remoteOnly) {
+    rule("remote", "Remote only", "pass", gig.remote === true ? "listing is remote" : "remote not stated — not rejected", false);
+  }
+
+  // ---- fit ----
+  const { score: fit, hits } = fitMatch(gig, profile);
+  const roleAreaTier = roleArea ? tier(gig, roleArea) : undefined;
+  if (fit > 0) {
+    ok(`role/skill fit (${Math.round(fit * 100)}%)`);
+    rule(
+      "role-fit",
+      "Role/skill fit",
+      "pass",
+      hits.length === 0
+        ? "no roles/skills configured — every gig fits"
+        : `matches your ${hits.map((h) => `"${h}"`).join(", ")} (${Math.round(fit * 100)}%)`,
+      false,
+    );
+  } else {
+    if (roleAreaTier && roleAreaTier.tier === "green") {
+      ok(`role/skill fit backed by this group's own role-area tier (green)`);
+      rule("role-fit", "Role/skill fit", "pass", "no role/skill phrase in the listing, but its role-area tier is green", false);
+    } else {
+      fail("no role/skill keyword match");
+      rule("role-fit", "Role/skill fit", "fail", "none of your roles/skills appear in the title or description", true);
+    }
+  }
+
+  // ---- role-area tier (informational, never part of the verdict) ----
+  if (roleAreaTier && roleArea) {
+    const m = roleAreaTier.match;
+    if (m?.kind === "redKeyword") {
+      rule("role-area", "Role area", "fail", `title matches your red keyword "${m.term}" (tier only — doesn't block the gate)`, false);
+    } else if (m?.kind === "coreTitle") {
+      rule("role-area", "Role area", "pass", `title matches your core title "${m.term}"`, false);
+    } else if (m?.kind === "keyword") {
+      rule("role-area", "Role area", "pass", `matches your keyword "${m.term}"`, false);
+    } else {
+      rule("role-area", "Role area", "info", "no core title, red keyword, or keyword matched — yellow, surfaced for review", false);
+    }
+  }
+
+  return { pass, reasons, rules, matched, fit };
+}
+
+function money(n: number, p: EngagementProfile): string {
+  return `$${n.toLocaleString("en-US")}${p.rateUnit === "hour" ? "/hr" : "/yr"}`;
+}
+
+function engagementTypePassReason(type: EngagementType | undefined, applicable: EngagementProfile[]): string {
+  const labels = applicable.map((p) => p.label).join(", ");
+  return type ? `${type} is accepted by: ${labels}` : `engagement type not stated — checked against your hourly profiles: ${labels}`;
+}
+
+function notApplicableReason(p: EngagementProfile, type: EngagementType | undefined): string {
+  return type
+    ? `covers ${p.types.join(", ")} only; this gig is ${type}`
+    : "salaried profile; this gig's engagement type isn't stated, so only hourly profiles are checked";
 }
 
 /**
@@ -142,12 +289,13 @@ export interface ProfileMatch {
 export function matchProfiles(
   gig: Gig,
   profiles: EngagementProfile[],
-): { matched: ProfileMatch[]; applicable: EngagementProfile[]; profileReasons: string[] } {
+): { matched: ProfileMatch[]; applicable: EngagementProfile[]; profileReasons: string[]; profileOutcomes: ProfileOutcome[] } {
   const type = effectiveEngagementType(gig);
   const applicable = profiles.filter((p) => (type ? p.types.includes(type) : p.rateUnit === "hour"));
 
   const matched: ProfileMatch[] = [];
   const profileReasons: string[] = [];
+  const profileOutcomes: ProfileOutcome[] = [];
 
   for (const p of applicable) {
     const rate = normalizeRate(gig, p.rateUnit);
@@ -156,25 +304,29 @@ export function matchProfiles(
     if (rate == null) {
       matched.push({ profile: p, rate: null });
       profileReasons.push(`✓ [${p.label}] rate not published — passing, confirm on the call`);
+      profileOutcomes.push({ profile: p, kind: "rate-unpublished" });
       continue;
     }
 
     const clearsRate = rate >= p.minRate;
     if (!clearsRate) {
       profileReasons.push(`✗ [${p.label}] $${rate.toLocaleString()}${unitLabel} below floor $${p.minRate.toLocaleString()}${unitLabel}`);
+      profileOutcomes.push({ profile: p, kind: "below-floor", rate });
       continue;
     }
 
     // EngagementProfileSchema's .refine() guarantees maxHours/
     // maxHoursAtHighRate are set whenever rateUnit === "hour" — the `!`s
     // below encode that schema-level invariant, not an unchecked guess.
+    let cap: number | undefined;
     if (p.rateUnit === "hour" && gig.weeklyHours != null) {
-      const cap = rate >= p.highRate ? p.maxHoursAtHighRate! : p.maxHours!;
+      cap = rate >= p.highRate ? p.maxHoursAtHighRate! : p.maxHours!;
       if (gig.weeklyHours > cap) {
         profileReasons.push(
           `✗ [${p.label}] ${gig.weeklyHours} hrs/wk over cap ${cap}` +
             (rate < p.highRate ? ` (raise-rate to unlock ${p.maxHoursAtHighRate})` : ""),
         );
+        profileOutcomes.push({ profile: p, kind: "over-hours-cap", rate, hours: gig.weeklyHours, cap });
         continue;
       }
     }
@@ -182,10 +334,25 @@ export function matchProfiles(
     matched.push({ profile: p, rate });
     const tierLabel = rate >= p.highRate ? "high-rate" : "floor";
     profileReasons.push(`✓ [${p.label}] $${rate.toLocaleString()}${unitLabel} ≥ ${tierLabel} $${(rate >= p.highRate ? p.highRate : p.minRate).toLocaleString()}${unitLabel}`);
+    profileOutcomes.push({ profile: p, kind: "cleared", rate, cap });
   }
 
-  return { matched, applicable, profileReasons };
+  return { matched, applicable, profileReasons, profileOutcomes };
 }
+
+/**
+ * gate-reasons-in-dashboard story. The structured twin of each
+ * `profileReasons` line above -- pushed in the same branch, one per
+ * applicable profile tried, so evaluateGate() can phrase per-rule reasons
+ * for the dashboard without re-deriving (or string-parsing) the comparison.
+ * A configured profile with no entry here wasn't applicable to this gig's
+ * engagement type.
+ */
+export type ProfileOutcome =
+  | { profile: EngagementProfile; kind: "rate-unpublished" }
+  | { profile: EngagementProfile; kind: "below-floor"; rate: number }
+  | { profile: EngagementProfile; kind: "over-hours-cap"; rate: number; hours: number; cap: number }
+  | { profile: EngagementProfile; kind: "cleared"; rate: number; cap?: number };
 
 /**
  * match-warning-tooltip-clarity-and-reliability story (crawler-fidelity-and-
@@ -236,13 +403,13 @@ export function normalizeRate(gig: Gig, targetUnit: "hour" | "year"): number | n
   return null;
 }
 
-/** Keyword overlap between the gig and the user's roles+skills. 0..1. */
-function fitScore(gig: Gig, profile: Profile): number {
+/** Keyword overlap between the gig and the user's roles+skills. `score` 0..1; `hits` are the configured roles/skills found (original casing). */
+function fitMatch(gig: Gig, profile: Profile): { score: number; hits: string[] } {
   const hay = `${gig.title} ${gig.description ?? ""}`.toLowerCase();
-  const needles = [...profile.roles, ...profile.skills].map((s) => s.toLowerCase());
-  if (needles.length === 0) return 1; // no filter set => everything "fits"
-  const hits = needles.filter((n) => n.length > 2 && hay.includes(n)).length;
-  return Math.min(1, hits / Math.max(3, Math.ceil(needles.length / 3)));
+  const needles = [...profile.roles, ...profile.skills];
+  if (needles.length === 0) return { score: 1, hits: [] }; // no filter set => everything "fits"
+  const hits = needles.filter((n) => n.length > 2 && hay.includes(n.toLowerCase()));
+  return { score: Math.min(1, hits.length / Math.max(3, Math.ceil(needles.length / 3))), hits };
 }
 
 /**
