@@ -13,6 +13,14 @@ All notable changes to this project are documented in this file.
   one: approving and sending stay with you in Drafts. See
   `docs/pantheon-adapter.md`.
 
+### Changed
+
+- The gig detail panel now has a "Gate check" section showing every rule
+  your config checked for that gig, pass or fail, with the concrete
+  reason (e.g. "$26/hr is below your $150/hr floor", "contract-to-hire is
+  excluded"). The All Gigs ⚠ tooltip now lists the specific rules a gig
+  failed instead of a generic "didn't meet your requirements" message.
+
 ## [0.47.0] - 2026-09-07
 
 ### Changed
