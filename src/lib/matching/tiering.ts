@@ -28,6 +28,8 @@ import type { Gig, RoleAreaConfig, Tier } from "../types.js";
 export interface TierResult {
   tier: Tier;
   reasons: string[];
+  /** Which configured rule decided the tier, and the configured term that matched -- absent for YELLOW (nothing matched). Structured twin of `reasons[0]` for UI callers (gate.ts's explainGate()). */
+  match?: { kind: "coreTitle" | "redKeyword" | "keyword"; term: string };
 }
 
 /** A RoleAreaConfig with no keywords set at all — every gig tiers YELLOW. Used by the runner when the user hasn't configured one. */
@@ -46,21 +48,21 @@ export function tier(gig: Gig, config: RoleAreaConfig): TierResult {
     if (redAlsoPresent) {
       reasons.push(`(red keyword "${redAlsoPresent}" also present in title — core title wins)`);
     }
-    return { tier: "green", reasons };
+    return { tier: "green", reasons, match: { kind: "coreTitle", term: coreHit } };
   }
 
   // ---- 2. redKeywords in TITLE (no coreTitles hit) -> RED ----
   const redHit = firstWholeWordMatch(title, config.redKeywords);
   if (redHit) {
     reasons.push(`✗ RED — title matches red keyword "${redHit}"`);
-    return { tier: "red", reasons };
+    return { tier: "red", reasons, match: { kind: "redKeyword", term: redHit } };
   }
 
   // ---- 3. keywords in TITLE+DESCRIPTION (neither above hit) -> GREEN ----
   const keywordHit = firstWholeWordMatch(titleAndDescription, config.keywords);
   if (keywordHit) {
     reasons.push(`✓ GREEN — keyword "${keywordHit}" matched in title/description`);
-    return { tier: "green", reasons };
+    return { tier: "green", reasons, match: { kind: "keyword", term: keywordHit } };
   }
 
   // ---- 4. nothing matched -> YELLOW (never a hard reject) ----

@@ -12,11 +12,30 @@ import { computeLastScanIso, computeStatusStrip, type StatusStripView } from "@/
 import { DEFAULT_HIDE_OUT_OF_BAND_BY_DEFAULT } from "@/lib/matching/match-band";
 import { z } from "zod";
 import { explainProfileMismatch, type ProfileMismatchKind } from "@/lib/matching/gate";
-import { EngagementProfileSchema } from "@/lib/config/schema";
-import type { EngagementProfile } from "@/lib/types";
+import { EngagementProfileSchema, NeedsSchema, ProfileSchema, RoleAreaConfigSchema } from "@/lib/config/schema";
+import type { EngagementProfile, Needs, Profile, RoleAreaConfig } from "@/lib/types";
+
+/**
+ * gate-reasons-in-dashboard story. Exactly the inputs matching/gate.ts's
+ * explainGate() needs for one group -- the group's own Needs/RoleAreaConfig
+ * plus the root Profile -- read from the RAW (unresolved) config document,
+ * so no secret can ever be in it (Needs/Profile/RoleAreaConfig have no
+ * `env:` fields). Sent to the client once per page, not once per gig;
+ * DashboardClient runs explainGate() itself, lazily, only for the rows it
+ * actually explains (the ⚠ tooltip, the open detail panel).
+ */
+export interface GateConfigSnapshot {
+  groupId: string;
+  groupLabel: string;
+  needs: Needs;
+  profile: Profile;
+  roleArea?: RoleAreaConfig;
+}
 
 export interface DashboardData {
   gigs: StoredGig[];
+  /** gate-reasons-in-dashboard story -- see GateConfigSnapshot. `null` when the relevant group's needs/profile don't parse (first run, no config yet): the UI then falls back to its generic copy. */
+  gateConfig: GateConfigSnapshot | null;
   status: StatusStripView;
   /** Same MAX(gig.lastSeen) computeStatusStrip() already formats into status.lastScanLabel — surfaced separately here so the sonar-sweep header can tick it live client-side rather than render a frozen string (sonar-sweep-header-widget story). */
   lastScanIso: string | null;
@@ -61,6 +80,33 @@ export function extractEngagementProfiles(rawConfig: Record<string, unknown>, gr
   if (!Array.isArray(profiles)) return [];
   const parsed = z.array(EngagementProfileSchema).safeParse(profiles);
   return parsed.success ? parsed.data : [];
+}
+
+/**
+ * gate-reasons-in-dashboard story. Same group-lookup convention as
+ * extractEngagementProfiles() above (`groupId` omitted = first/primary
+ * group). Schema-validated and tolerant: any missing/malformed piece yields
+ * `null`, never a throw. An invalid `roleArea` is treated as absent, the
+ * same do-nothing default gate()/tier() already give an omitted one.
+ */
+export function extractGateConfig(rawConfig: Record<string, unknown>, groupId?: string): GateConfigSnapshot | null {
+  const groups = rawConfig.groups;
+  if (!Array.isArray(groups)) return null;
+  const group = groupId ? groups.find((g) => typeof g === "object" && g !== null && (g as Record<string, unknown>).id === groupId) : groups[0];
+  if (typeof group !== "object" || group === null) return null;
+  const g = group as Record<string, unknown>;
+  if (typeof g.id !== "string" || typeof g.label !== "string") return null;
+  const needs = NeedsSchema.safeParse(g.needs);
+  const profile = ProfileSchema.safeParse(rawConfig.profile);
+  if (!needs.success || !profile.success) return null;
+  const roleArea = g.roleArea === undefined ? undefined : RoleAreaConfigSchema.safeParse(g.roleArea);
+  return {
+    groupId: g.id,
+    groupLabel: g.label,
+    needs: needs.data,
+    profile: profile.data,
+    ...(roleArea?.success ? { roleArea: roleArea.data } : {}),
+  };
 }
 
 /**
@@ -220,7 +266,9 @@ export function loadDashboardData(groupId?: string): DashboardData {
     if (kind) profileMismatchByGigKey[gig.key] = kind;
   }
 
-  return { gigs, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey };
+  const gateConfig = extractGateConfig(rawConfig, groupId);
+
+  return { gigs, gateConfig, status, lastScanIso, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey };
 }
 
 export interface SonarSweepStatusData {

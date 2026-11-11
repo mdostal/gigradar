@@ -24,6 +24,8 @@ import type { StoredGig } from "@/lib/store";
 import { useOpenExternalLink } from "@/lib/tauri/use-open-external-link";
 import { ExternalLinkFeedbackToast } from "@/lib/tauri/external-link-feedback-toast";
 import { resolveDisplayTier } from "./dashboard-filter";
+import type { GateExplanation, GateRuleCheck } from "@/lib/matching/gate";
+import { isProfileRule, OUTCOME_ICON } from "./gate-reasons";
 import { formatDate, formatRate, OUTCOME_LABEL, STATUS_LABEL, TIER_BADGE_FALLBACK_STYLE, TIER_BADGE_STYLE } from "./dashboard-client";
 
 /**
@@ -59,6 +61,7 @@ export function GigDetailPanel({
   draftSection,
   prepSection,
   groupId,
+  gateCheck,
 }: {
   gig: StoredGig;
   position: { index: number; total: number };
@@ -72,6 +75,8 @@ export function GigDetailPanel({
   prepSection: ReactNode;
   /** remaining-cross-group-tier-leaks story. The `/[group]/gigs` route's own group id, threaded straight through from DashboardClient's own `groupId` prop -- resolveDisplayTier() uses it so the panel's tier badge shows THAT group's own verdict, mirroring dashboard-client.tsx's Tier column (PR #163) instead of the flat/primary-group `gig.tier`. Omitted on the unscoped `/gigs` giglist. */
   groupId?: string;
+  /** gate-reasons-in-dashboard story. explainGate() for this gig against `groupLabel`'s own config (computed by DashboardClient). Omitted when no config could be read -- the section is then not rendered. */
+  gateCheck?: { groupLabel: string; explanation: GateExplanation };
 }) {
   // Escape closes; Left/Right steps Prev/Next -- the natural "flip through
   // a stack of listings" keys, matching the owner's own "go through the
@@ -177,6 +182,8 @@ export function GigDetailPanel({
             </div>
           </dl>
 
+          {gateCheck && <GateCheckSection groupLabel={gateCheck.groupLabel} explanation={gateCheck.explanation} />}
+
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1">
             {/* tauri-shell-open-external-links story. Kept as a real `<a href>` (accessible
                 role="link", degrades gracefully, middle-click/right-click "open in new tab"
@@ -238,5 +245,66 @@ export function GigDetailPanel({
 
       <ExternalLinkFeedbackToast feedback={externalLinkFeedback} onDismiss={dismissExternalLinkFeedback} />
     </div>
+  );
+}
+
+const OUTCOME_CLASS: Record<GateRuleCheck["outcome"], string> = {
+  pass: "text-emerald-600",
+  fail: "text-red-600",
+  skipped: "text-theme-text-dim",
+  info: "text-theme-text-dim",
+};
+
+function GateRuleRow({ rule }: { rule: GateRuleCheck }) {
+  return (
+    <li className="flex gap-2" data-rule-id={rule.id} data-outcome={rule.outcome}>
+      <span aria-hidden className={`w-3 shrink-0 font-theme-mono ${OUTCOME_CLASS[rule.outcome]}`}>
+        {OUTCOME_ICON[rule.outcome]}
+      </span>
+      <span className="min-w-0">
+        <span className="font-medium text-theme-text">{rule.label}</span>
+        <span className="sr-only"> ({rule.outcome})</span>
+        <span className="text-theme-text-dim"> — {rule.reason}</span>
+      </span>
+    </li>
+  );
+}
+
+/**
+ * gate-reasons-in-dashboard story. Every rule gate() checked for this gig,
+ * pass or fail, with its concrete reason -- rendered straight from
+ * explainGate()'s rule list (config-driven: one row per configured
+ * engagement profile, fresh/remote only when enabled), never a fixed list.
+ */
+function GateCheckSection({ groupLabel, explanation }: { groupLabel: string; explanation: GateExplanation }) {
+  const profileRules = explanation.rules.filter(isProfileRule);
+  const otherRules = explanation.rules.filter((r) => !isProfileRule(r));
+  const engagementRule = otherRules.find((r) => r.id === "engagement-type");
+  const restRules = otherRules.filter((r) => r.id !== "engagement-type");
+  return (
+    <section aria-label="Gate check" className="mt-4 rounded-md border border-theme-surface-border p-3 text-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-xs font-medium uppercase tracking-wide text-theme-text-dim">Gate check · {groupLabel}</h3>
+        <span className={`text-xs font-semibold ${explanation.pass ? "text-emerald-600" : "text-red-600"}`}>
+          {explanation.pass ? "Passed" : "Didn't pass"}
+        </span>
+      </div>
+      <ul className="mt-2 flex flex-col gap-1">
+        {engagementRule && <GateRuleRow rule={engagementRule} />}
+        {profileRules.length > 0 && (
+          <li>
+            <p className="text-xs text-theme-text-dim">Engagement profiles (any one must clear)</p>
+            <ul className="mt-1 flex flex-col gap-1 pl-3">
+              {profileRules.map((r) => (
+                <GateRuleRow key={r.id} rule={r} />
+              ))}
+            </ul>
+          </li>
+        )}
+        {restRules.map((r) => (
+          <GateRuleRow key={r.id} rule={r} />
+        ))}
+      </ul>
+    </section>
   );
 }

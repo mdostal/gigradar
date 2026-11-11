@@ -22,7 +22,7 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
 
   // sonar-sweep-header-global-masthead story: SonarSweepHeader renders once,
   // globally, from layout.tsx now -- see that file's own header comment.
-  const { gigs, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey } = loadDashboardData(groupId);
+  const { gigs, gateConfig, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey } = loadDashboardData(groupId);
   // rate-band-match-quality epic: THIS specific group's own real setting.
   const hideOutOfBandDefault = resolveHideOutOfBandDefault(rawConfig, groupId);
   // rank-buckets epic: THIS specific group's own real bucket labels.
@@ -45,6 +45,7 @@ export default async function GroupAllGigsPage({ params }: { params: Promise<{ g
         initialPrepByGigKey={prepByGigKey}
         engagementProfiles={engagementProfiles}
         profileMismatchByGigKey={profileMismatchByGigKey}
+        gateConfig={gateConfig}
         groupId={groupId}
         hideOutOfBandDefault={hideOutOfBandDefault}
         rankBucketLabels={rankBucketLabels}

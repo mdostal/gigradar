@@ -32,7 +32,7 @@ export default function AllGigsPage() {
   // once, globally, from layout.tsx now -- see that file's own header
   // comment. `status`/`lastScanIso` are no longer destructured since
   // nothing on this page needs them anymore.
-  const { gigs, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey } = loadDashboardData();
+  const { gigs, gateConfig, engagementProfiles, draftedGigKeys, prepByGigKey, profileMismatchByGigKey } = loadDashboardData();
   const rawConfig = readRawConfig();
   // rate-band-match-quality epic: the primary group's own real setting,
   // same anchoring convention every other unscoped-route default uses.
@@ -59,6 +59,7 @@ export default function AllGigsPage() {
         initialPrepByGigKey={prepByGigKey}
         engagementProfiles={engagementProfiles}
         profileMismatchByGigKey={profileMismatchByGigKey}
+        gateConfig={gateConfig}
         hideOutOfBandDefault={hideOutOfBandDefault}
         rankBucketLabels={rankBucketLabels}
         rankBucketGroupId={rankBucketGroupId}
