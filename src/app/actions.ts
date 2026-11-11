@@ -11,6 +11,7 @@ import { resolveLlmCredential } from "@/lib/config/env-store";
 import { readRawConfig } from "@/lib/config/save";
 import { ConfigSchema } from "@/lib/config/schema";
 import { reconcileGoFractionalStatuses, type ReconciliationResult } from "@/lib/sources/gofractional-status";
+import { registerAllSources } from "@/lib/sources/register-all";
 import { reconcileWellfoundStatuses } from "@/lib/sources/wellfound-status";
 import type { MatchResult, RankBucketAssignment } from "@/lib/types";
 
@@ -383,6 +384,11 @@ export async function sweepNowAction(): Promise<ActionResult<SweepResult>> {
   }
 
   try {
+    // Same fix as issues/actions.ts's retrySourceAction(): the app-server
+    // process has no startup hook that registers the adapter modules, so
+    // without this every configured source reports "no such registered
+    // source" (live-reproduced on a clean `next start`, 7 of 7 sources).
+    await registerAllSources();
     const { passed, errors, newlyInsertedKeys } = await runRadar(config, {}, { credential: resolveLlmCredential() });
     // status-strip-reflects-cycle-completion story: a manual "Sweep now"
     // is a real, complete cycle across every enabled source exactly like
